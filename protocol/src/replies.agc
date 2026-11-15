@@ -1,7 +1,10 @@
 ## The bodies the server answers with.
 
+import Events from "events"
 import Wire from "wire"
 
+## Who wrote a message of the history. The history is display text: an entry of another kind (a tool call) will be a
+## new type, not a new `Role`, so a `case` on `Role` stays exhaustive.
 enum Role
   User
   Assistant
@@ -33,20 +36,30 @@ struct SessionList
   sessions: List[SessionSummary]
 end
 
+## A finished message, as the text to draw.
 struct Message
   role: Role
   text: String
 end
 
 ## The answer of `GET /v1/sessions/ID`. Subscribe with `Last-Event-ID` set to `last_event_id` to miss and repeat no
-## event; 0 is before the first event.
+## event; 0 is before the first event, and it is never negative.
+##
+## `history` holds the finished messages. A client that attaches during a turn also gets `turn_id` (none when no turn
+## runs) and the approvals still waiting for an answer, so it can answer them. The partial text of the running turn is
+## not here: the server sends it through the normal event replay.
 struct Session
   id: String
   cwd: String
   model: String
   last_event_id: Int
+  turn_id: Optional[String]
+  pending_approvals: List[Events.ApprovalRequested]
   history: List[Message]
 end
+
+## Every role, in a fixed order.
+def roles() -> List[Role] = Wire.chain(Role.User, &following)
 
 def role_name(role: Role) -> String
   case role
@@ -55,7 +68,7 @@ def role_name(role: Role) -> String
   end
 end
 
-def parse_role(name: String) -> Result[Role] = Wire.lookup(ROLES, &role_name, "role", name)
+def parse_role(name: String) -> Result[Role] = Wire.lookup(roles(), &role_name, "role", name)
 
 def encode_health(reply: Health) -> String = JSON.encode(reply)
 
@@ -81,6 +94,8 @@ def encode_session(reply: Session) -> String
       cwd: reply.cwd,
       model: reply.model,
       last_event_id: reply.last_event_id,
+      turn_id: reply.turn_id,
+      pending_approvals: reply.pending_approvals,
       history: history,
     ),
   )
@@ -88,17 +103,26 @@ end
 
 def decode_session(text: String) -> Result[Session]
   wire = try Wire.decode(text, SessionWire.codec)
+  try Wire.non_negative("last_event_id", wire.last_event_id)
   history: List[Message] = []
   for item in wire.history
     history = history.push(Message(role: try parse_role(item.role), text: item.text))
   end
 
-  ok(Session(id: wire.id, cwd: wire.cwd, model: wire.model, last_event_id: wire.last_event_id, history: history))
+  ok(
+    Session(
+      id: wire.id,
+      cwd: wire.cwd,
+      model: wire.model,
+      last_event_id: wire.last_event_id,
+      turn_id: wire.turn_id,
+      pending_approvals: wire.pending_approvals,
+      history: history,
+    ),
+  )
 end
 
 private
-
-ROLES = [Role.User, Role.Assistant]
 
 struct MessageWire
   role: String
@@ -110,5 +134,14 @@ struct SessionWire
   cwd: String
   model: String
   last_event_id: Int
+  turn_id: Optional[String]
+  pending_approvals: List[Events.ApprovalRequested]
   history: List[MessageWire]
+end
+
+def following(role: Role) -> Optional[Role]
+  case role
+    Role.User -> some(Role.Assistant)
+    Role.Assistant -> none
+  end
 end

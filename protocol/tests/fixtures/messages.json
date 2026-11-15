@@ -12,10 +12,27 @@
     "cwd": "/home/ana/project",
     "model": "qwen2.5-0.5b",
     "last_event_id": 42,
+    "turn_id": null,
+    "pending_approvals": [],
     "history": [
       {"role": "user", "text": "Write hello.txt."},
       {"role": "assistant", "text": "Done."}
     ]
   },
-  "failure": {"kind": "session.busy", "message": "a turn is running"}
+  "session_mid_turn": {
+    "id": "s1",
+    "cwd": "/home/ana/project",
+    "model": "qwen2.5-0.5b",
+    "last_event_id": 57,
+    "turn_id": "t2",
+    "pending_approvals": [
+      {"approval_id": "a1", "call_id": "call_2", "tool": "bash", "preview": "rm -r b"}
+    ],
+    "history": [
+      {"role": "user", "text": "Write hello.txt."},
+      {"role": "assistant", "text": "Done."},
+      {"role": "user", "text": "Now delete the build folder."}
+    ]
+  },
+  "failure": {"kind": "approval.resolved", "message": "the approval was answered already"}
 }

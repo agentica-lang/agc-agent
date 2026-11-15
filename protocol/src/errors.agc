@@ -3,7 +3,7 @@
 import Wire from "wire"
 
 struct Failure
-  ## A dotted name to branch on (`session.busy`), never the message.
+  ## A dotted name to branch on, never the message: one of the `KIND_` constants.
   kind: String
   message: String
 end

@@ -1,7 +1,11 @@
 ## The events the server streams on `GET /v1/sessions/ID/events`: the SSE `event:` is the kind's name, `id:` the event
 ## id and `data:` the JSON of the payload.
+##
+## An event id is a counter per session: the first event is 1, and each one is the last plus one. The session keeps the
+## counter across a restart, so a `Last-Event-ID` stays valid. A reader ignores a key it does not know.
 
 import Errors from "errors"
+import Kinds from "kinds"
 import Requests from "requests"
 import Wire from "wire"
 
@@ -17,6 +21,30 @@ enum EventKind
   TurnFinished
   Error
   Resync
+end
+
+## Who resolved an approval.
+enum ApprovalSource
+  ## A client answered.
+  Client
+  ## Nobody answered in time (the approval is denied).
+  Timeout
+  ## The turn was stopped (the approval is denied).
+  Stop
+  ## An `allow` or `deny` rule of the config answered.
+  Rule
+end
+
+## Why a turn ended. `Other` keeps a reason this package does not know by its name.
+enum StopReason
+  EndTurn
+  MaxTokens
+  Refusal
+  ## The client stopped the turn.
+  Cancelled
+  ## The loop guard ended the turn.
+  LoopGuard
+  Other(String)
 end
 
 struct TurnStarted
@@ -54,9 +82,10 @@ end
 struct ApprovalResolved
   approval_id: String
   decision: Requests.Decision
+  source: ApprovalSource
 end
 
-## Token counts of one model call; `context` is the size of the context after it.
+## Token counts of one model call; `context` is the size of the context after it. None is negative.
 struct Usage
   input: Int
   output: Int
@@ -67,7 +96,7 @@ end
 
 struct TurnFinished
   turn_id: String
-  stop_reason: String
+  stop_reason: StopReason
 end
 
 ## `Resync` says the `Last-Event-ID` is unknown or too old: read the session again.
@@ -85,7 +114,10 @@ enum Event
   Resync
 end
 
-def kind(event: Event) -> EventKind
+## Every kind of event, in a fixed order.
+def event_kinds() -> List[EventKind] = Wire.chain(EventKind.TurnStarted, &following_kind)
+
+def event_kind(event: Event) -> EventKind
   case event
     Event.TurnStarted(_) -> EventKind.TurnStarted
     Event.TextDelta(_) -> EventKind.TextDelta
@@ -117,10 +149,48 @@ def kind_name(kind: EventKind) -> String
   end
 end
 
-def parse_kind(name: String) -> Result[EventKind] = Wire.lookup(KINDS, &kind_name, "event", name)
+def parse_kind(name: String) -> Result[EventKind] = Wire.lookup(event_kinds(), &kind_name, "event", name)
+
+## Every source of an approval's resolution, in a fixed order.
+def approval_sources() -> List[ApprovalSource] = Wire.chain(ApprovalSource.Client, &following_source)
+
+def source_name(source: ApprovalSource) -> String
+  case source
+    ApprovalSource.Client -> "client"
+    ApprovalSource.Timeout -> "timeout"
+    ApprovalSource.Stop -> "stop"
+    ApprovalSource.Rule -> "rule"
+  end
+end
+
+def parse_source(name: String) -> Result[ApprovalSource]
+  Wire.lookup(approval_sources(), &source_name, "source", name)
+end
+
+## Every stop reason but `Other`, in a fixed order.
+def known_stop_reasons() -> List[StopReason] = Wire.chain(StopReason.EndTurn, &following_reason)
+
+def stop_reason_name(reason: StopReason) -> String
+  case reason
+    StopReason.EndTurn -> "end_turn"
+    StopReason.MaxTokens -> "max_tokens"
+    StopReason.Refusal -> "refusal"
+    StopReason.Cancelled -> "cancelled"
+    StopReason.LoopGuard -> "loop_guard"
+    StopReason.Other(name) -> name
+  end
+end
+
+## The reason with that name on the wire; a name that is not known is `Other(name)`.
+def parse_stop_reason(name: String) -> StopReason
+  case Wire.lookup(known_stop_reasons(), &stop_reason_name, "stop reason", name)
+    ok(reason) -> reason
+    error(_) -> StopReason.Other(name)
+  end
+end
 
 ## The SSE `event:` of an event.
-def event_name(event: Event) -> String = kind_name(kind(event))
+def event_name(event: Event) -> String = kind_name(event_kind(event))
 
 ## The SSE `data:` of an event.
 def encode_event(event: Event) -> String
@@ -132,72 +202,130 @@ def encode_event(event: Event) -> String
     Event.ToolFinished(data) -> JSON.encode(data)
     Event.ApprovalRequested(data) -> JSON.encode(data)
     Event.ApprovalResolved(data) ->
-      JSON.encode(ResolvedWire(approval_id: data.approval_id, decision: Requests.decision_name(data.decision)))
+      JSON.encode(
+        ResolvedWire(
+          approval_id: data.approval_id,
+          decision: Requests.decision_name(data.decision),
+          source: source_name(data.source),
+        ),
+      )
     Event.Usage(data) -> JSON.encode(data)
-    Event.TurnFinished(data) -> JSON.encode(data)
+    Event.TurnFinished(data) ->
+      JSON.encode(TurnFinishedWire(turn_id: data.turn_id, stop_reason: stop_reason_name(data.stop_reason)))
     Event.Error(data) -> Errors.encode_failure(data)
     Event.Resync -> "{}"
   end
 end
 
-## An event from its SSE `event:` and `data:`. An unknown name is `protocol.unknown`; bad data is `protocol.invalid`.
+## An event from its SSE `event:` and `data:`. An unknown name is `protocol.unknown`; bad data (a missing field, a
+## wrong type, a negative count or duration) is `protocol.invalid`.
 def decode_event(name: String, data: String) -> Result[Event]
   case try parse_kind(name)
     EventKind.TurnStarted -> ok(Event.TurnStarted(try Wire.decode(data, TurnStarted.codec)))
     EventKind.TextDelta -> ok(Event.TextDelta(try Wire.decode(data, TextDelta.codec)))
     EventKind.ThinkingDelta -> ok(Event.ThinkingDelta(try Wire.decode(data, ThinkingDelta.codec)))
     EventKind.ToolStarted -> ok(Event.ToolStarted(try Wire.decode(data, ToolStarted.codec)))
-    EventKind.ToolFinished -> ok(Event.ToolFinished(try Wire.decode(data, ToolFinished.codec)))
+    EventKind.ToolFinished -> decode_tool_finished(data)
     EventKind.ApprovalRequested -> ok(Event.ApprovalRequested(try Wire.decode(data, ApprovalRequested.codec)))
     EventKind.ApprovalResolved -> decode_resolved(data)
-    EventKind.Usage -> ok(Event.Usage(try Wire.decode(data, Usage.codec)))
-    EventKind.TurnFinished -> ok(Event.TurnFinished(try Wire.decode(data, TurnFinished.codec)))
+    EventKind.Usage -> decode_usage(data)
+    EventKind.TurnFinished -> decode_turn_finished(data)
     EventKind.Error -> ok(Event.Error(try Errors.decode_failure(data)))
     EventKind.Resync -> decode_resync(data)
   end
 end
 
-## The text of an event id (the SSE `id:`; an event id starts at 1).
+## The text of an event id (the SSE `id:`).
 def format_event_id(id: Int) -> String = id.to_s
 
 ## The id of a `Last-Event-ID` header; anything but a whole number from 0 up is `protocol.invalid`.
 def parse_event_id(text: String) -> Result[Int]
   case text.to_i
     ok(id) if id >= 0 and format_event_id(id) == text -> ok(id)
-    _ -> error("invalid event id: #{text}", kind: "protocol.invalid")
+    _ -> error("invalid event id: #{text}", kind: Kinds.KIND_INVALID)
   end
 end
 
 private
 
-KINDS = [
-  EventKind.TurnStarted,
-  EventKind.TextDelta,
-  EventKind.ThinkingDelta,
-  EventKind.ToolStarted,
-  EventKind.ToolFinished,
-  EventKind.ApprovalRequested,
-  EventKind.ApprovalResolved,
-  EventKind.Usage,
-  EventKind.TurnFinished,
-  EventKind.Error,
-  EventKind.Resync,
-]
-
 struct ResolvedWire
   approval_id: String
   decision: String
+  source: String
+end
+
+struct TurnFinishedWire
+  turn_id: String
+  stop_reason: String
+end
+
+def following_kind(kind: EventKind) -> Optional[EventKind]
+  case kind
+    EventKind.TurnStarted -> some(EventKind.TextDelta)
+    EventKind.TextDelta -> some(EventKind.ThinkingDelta)
+    EventKind.ThinkingDelta -> some(EventKind.ToolStarted)
+    EventKind.ToolStarted -> some(EventKind.ToolFinished)
+    EventKind.ToolFinished -> some(EventKind.ApprovalRequested)
+    EventKind.ApprovalRequested -> some(EventKind.ApprovalResolved)
+    EventKind.ApprovalResolved -> some(EventKind.Usage)
+    EventKind.Usage -> some(EventKind.TurnFinished)
+    EventKind.TurnFinished -> some(EventKind.Error)
+    EventKind.Error -> some(EventKind.Resync)
+    EventKind.Resync -> none
+  end
+end
+
+def following_source(source: ApprovalSource) -> Optional[ApprovalSource]
+  case source
+    ApprovalSource.Client -> some(ApprovalSource.Timeout)
+    ApprovalSource.Timeout -> some(ApprovalSource.Stop)
+    ApprovalSource.Stop -> some(ApprovalSource.Rule)
+    ApprovalSource.Rule -> none
+  end
+end
+
+def following_reason(reason: StopReason) -> Optional[StopReason]
+  case reason
+    StopReason.EndTurn -> some(StopReason.MaxTokens)
+    StopReason.MaxTokens -> some(StopReason.Refusal)
+    StopReason.Refusal -> some(StopReason.Cancelled)
+    StopReason.Cancelled -> some(StopReason.LoopGuard)
+    StopReason.LoopGuard -> none
+    StopReason.Other(_) -> none
+  end
+end
+
+def decode_tool_finished(data: String) -> Result[Event]
+  finished = try Wire.decode(data, ToolFinished.codec)
+  try Wire.non_negative("duration_ms", finished.duration_ms)
+  ok(Event.ToolFinished(finished))
+end
+
+def decode_usage(data: String) -> Result[Event]
+  usage = try Wire.decode(data, Usage.codec)
+  try Wire.non_negative("input", usage.input)
+  try Wire.non_negative("output", usage.output)
+  try Wire.non_negative("cache_read", usage.cache_read)
+  try Wire.non_negative("cache_write", usage.cache_write)
+  try Wire.non_negative("context", usage.context)
+  ok(Event.Usage(usage))
 end
 
 def decode_resolved(data: String) -> Result[Event]
   wire = try Wire.decode(data, ResolvedWire.codec)
   decision = try Requests.parse_decision(wire.decision)
-  ok(Event.ApprovalResolved(ApprovalResolved(approval_id: wire.approval_id, decision: decision)))
+  source = try parse_source(wire.source)
+  ok(Event.ApprovalResolved(ApprovalResolved(approval_id: wire.approval_id, decision: decision, source: source)))
+end
+
+def decode_turn_finished(data: String) -> Result[Event]
+  wire = try Wire.decode(data, TurnFinishedWire.codec)
+  ok(Event.TurnFinished(TurnFinished(turn_id: wire.turn_id, stop_reason: parse_stop_reason(wire.stop_reason))))
 end
 
 def decode_resync(data: String) -> Result[Event]
   case JSON.parse(data)
     ok(json) if JSON.kind(json) == "object" -> ok(Event.Resync)
-    _ -> error("resync data must be a JSON object", kind: "protocol.invalid")
+    _ -> error("resync data must be a JSON object", kind: Kinds.KIND_INVALID)
   end
 end
