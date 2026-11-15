@@ -1,0 +1,21 @@
+{
+  "new_session": {"cwd": "/home/ana/project", "model": "qwen2.5-0.5b"},
+  "new_session_default_model": {"cwd": "/home/ana/project", "model": null},
+  "send_message": {"text": "Write hello.txt, then run it."},
+  "approve": {"decision": "allow"},
+  "health": {"version": "0.0.1"},
+  "session_created": {"id": "s1"},
+  "message_accepted": {"turn_id": "t1"},
+  "session_list": {"sessions": [{"id": "s1", "cwd": "/home/ana/project", "model": "qwen2.5-0.5b"}]},
+  "session": {
+    "id": "s1",
+    "cwd": "/home/ana/project",
+    "model": "qwen2.5-0.5b",
+    "last_event_id": 42,
+    "history": [
+      {"role": "user", "text": "Write hello.txt."},
+      {"role": "assistant", "text": "Done."}
+    ]
+  },
+  "failure": {"kind": "session.busy", "message": "a turn is running"}
+}

@@ -9,6 +9,8 @@ and its phases are issue #1 and its sub-issues.
 agentica.toml        the workspace: its members are the packages below
 sse/                 Server-Sent Events: parser and writer, pure; sse.agc is its public module
 llm/                 client for LLM APIs; llm.agc is its public module, src/ the rest
+protocol/            commands, replies and events between server and clients, with JSON codecs, pure;
+                     protocol.agc is its public module
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point
 <pkg>/tests/         *_test.agc tests of that package; fixtures/ the recorded data they read
@@ -16,7 +18,7 @@ Makefile             check, fmt-check, unit, smoke, test over every package
 .github/workflows/   ci.yml: the pinned Agentica release, then fmt-check and test
 ```
 
-Later phases add `protocol`, `cli` and `tui_client`. A package is added
+Later phases add `cli` and `tui_client`. A package is added
 by the phase that needs it, never as an empty folder.
 
 ## Commands

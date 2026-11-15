@@ -1,7 +1,7 @@
 AGENTICA ?= agentica
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
-PACKAGES = sse llm core
+PACKAGES = sse llm protocol core
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
 LEAVES = llm sse protocol
 SERVER_AND_CLIENTS = core|cli|tui_client|web_client
