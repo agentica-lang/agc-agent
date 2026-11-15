@@ -22,6 +22,7 @@ The repo is an Agentica workspace (`agentica.toml`): one folder per package.
 |---|---|
 | `sse` | Server-Sent Events: a parser and a writer |
 | `llm` | client for LLM APIs |
+| `protocol` | the records, events and JSON codecs between the server and its clients |
 | `core` | the server: agent loop, tools, approval, sessions, extensions |
 
 ## Try it
