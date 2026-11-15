@@ -5,8 +5,10 @@ A coding agent for the terminal, like Claude Code or OpenCode, written in
 
 - The agent runs as a server on localhost; clients connect to it over HTTP and
   Server-Sent Events. A line-mode client comes first, then a TUI.
-- The `llm` package is the client for LLM APIs: Anthropic Messages, then
-  OpenAI Responses and Codex.
+- The `llm` package is the client for LLM APIs: one provider-neutral API with
+  providers underneath. The first is `openai_chat` (llama.cpp's
+  `llama-server`, Fireworks); Anthropic Messages, OpenAI Responses and Codex
+  come later.
 - Extensions are Agentica packages that your own `main.agc` registers, or MCP
   servers on stdio.
 

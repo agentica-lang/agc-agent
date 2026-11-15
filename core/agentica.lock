@@ -6,3 +6,10 @@ git = "https://github.com/agentica-lang/agc-agent"
 subdir = "llm"
 tag = "llm-0.0.1"
 workspace = true
+
+[[package]]
+name = "sse"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "sse"
+tag = "sse-0.0.1"
+workspace = true
