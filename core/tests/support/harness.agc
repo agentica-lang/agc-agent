@@ -39,6 +39,13 @@ struct Sub
   seen: List[Seen]
 end
 
+## The model answers with the fixtures `replies` in order (names under `openai_chat/`).
+struct Setup
+  replies: List[String]
+  keep_events: Int = 1000
+  approval_timeout_ms: Int = 90000
+end
+
 def fake_env(name: String) -> Result[String]
   case name
     "PATH" -> System.env("PATH")
@@ -47,13 +54,29 @@ def fake_env(name: String) -> Result[String]
   end
 end
 
-## A server whose model answers with the fixtures `replies` in order (names under `openai_chat/`).
-def start(replies: List[String], keep_events: Int = 1000, approval_timeout_ms: Int = 90000) -> Result[Harness]
-  fake = try Fake.start(try fixtures(replies))
+## Runs `body` against a server of `setup`, and stops the server and the fake and removes the folder however it ends.
+def using(setup: Setup, body: Fn[Harness, Result[Void]]) -> Result[Void]
   tmp = System.env("TMPDIR").unwrap_or("/tmp")
   base = "#{tmp}/agc-core-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(base)
-  base = try Path.real(base)
+  fake = Fake.start(try fixtures(setup.replies))
+  started = start(setup, try Path.real(base), try fake)
+  result = case started
+    ok(h) -> body.call(h)
+    error(e) -> error(e)
+  end
+
+  case started
+    ok(h) -> Server.stop(h.server)
+    error(_) -> nil
+  end
+
+  _ = Fake.stop(try fake)
+  _ = Path.remove(base)
+  result
+end
+
+def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   work = "#{base}/work"
   try Dir.mkdir(work)
   options = Server.Options(
@@ -62,8 +85,8 @@ def start(replies: List[String], keep_events: Int = 1000, approval_timeout_ms: I
     model: "qwen2.5-0.5b-instruct",
     env: &fake_env,
     rules: no_rules(),
-    keep_events: keep_events,
-    approval_timeout_ms: approval_timeout_ms,
+    keep_events: setup.keep_events,
+    approval_timeout_ms: setup.approval_timeout_ms,
   )
 
   server = try Server.start(options)
@@ -82,12 +105,6 @@ def start(replies: List[String], keep_events: Int = 1000, approval_timeout_ms: I
 end
 
 def no_rules() -> Tools.Rules = Tools.Rules(allow: [], deny: [])
-
-def stop(h: Harness) -> Result[Void]
-  Server.stop(h.server)
-  try Fake.stop(h.fake)
-  Path.remove(h.base)
-end
 
 def fixtures(names: List[String]) -> Result[List[Fake.Reply]]
   replies: List[Fake.Reply] = []
@@ -112,12 +129,10 @@ def get(h: Harness, path: String) -> Result[Answer] = call(h, "GET", path, "", a
 
 def post(h: Harness, path: String, body: String) -> Result[Answer] = call(h, "POST", path, body, auth(h))
 
-def new_session(h: Harness) -> Result[String]
-  answer = try post(
-    h,
-    Protocol.SESSIONS_PATH,
-    Protocol.encode_new_session(Protocol.NewSession(cwd: h.work, model: none)),
-  )
+def new_session(h: Harness) -> Result[String] = new_session_in(h, h.work)
+
+def new_session_in(h: Harness, cwd: String) -> Result[String]
+  answer = try post(h, Protocol.SESSIONS_PATH, Protocol.encode_new_session(Protocol.NewSession(cwd: cwd, model: none)))
 
   return error("POST /v1/sessions: #{answer.status} #{answer.text}") if answer.status != 201
 
@@ -177,6 +192,18 @@ def close(sub: Sub) -> Void
   Task.cancel(sub.stream.done)
 end
 
+## Waits until no turn runs.
+def idle(h: Harness, id: String) -> Result[Protocol.Session]
+  for _i in 1..100
+    snapshot = try session(h, id)
+    return ok(snapshot) if snapshot.turn_id.none?
+
+    Task.sleep(50)
+  end
+
+  error("the turn did not end")
+end
+
 def kinds(seen: List[Seen]) -> List[String] = seen.map { |s| Protocol.event_name(s.event) }
 
 ## The last approval request a client saw.
@@ -189,6 +216,19 @@ def approval(sub: Sub) -> Result[Protocol.ApprovalRequested]
   end
 
   error("no approval_requested")
+end
+
+def resolved_by(sub: Sub) -> List[String]
+  sources: List[String] = []
+  for seen in sub.seen
+    case seen.event
+      Protocol.Event.ApprovalResolved(r) ->
+        sources = sources.push("#{Protocol.decision_name(r.decision)} #{Protocol.source_name(r.source)}")
+      _ -> nil
+    end
+  end
+
+  sources
 end
 
 def stop_reason(sub: Sub) -> String

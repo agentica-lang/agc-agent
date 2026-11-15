@@ -9,6 +9,7 @@ import Actor from "std/actor"
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Sandbox from "sandbox"
 import Session from "session"
 import Tools from "tools"
 
@@ -16,6 +17,7 @@ VERSION = "0.0.1"
 SERVER_JSON = "server.json"
 LOCK_FILE = "core.lock"
 MAX_BODY_BYTES = 1_048_576
+MAX_INSTRUCTIONS_BYTES = 65_536
 CALL_MS = 5000
 SYSTEM_PROMPT = <<~TEXT
   You are a coding agent. You work in the session folder with the tools you have: read before you change a file, keep
@@ -51,22 +53,21 @@ end
 def start(options: Options) -> Result[Server]
   try state_folder(options.state_dir)
   lock = try File.open("#{options.state_dir}/#{LOCK_FILE}", "append")
-  return error("a server already runs for #{options.state_dir}") if not try File.try_lock(lock, 1000)
+  locked = File.try_lock(lock, 1000)
+  if locked != ok(true)
+    _ = File.close(lock)
+    return error("a server already runs for #{options.state_dir}")
+  end
 
-  token = OpenSSL.Random.hex(32)
   behaviour = Actor.Behaviour(init: -> { Registry(options: options) }, handle: &handle, terminate: some(&terminate))
   registry = Actor.start(behaviour)
-  address = registry.address
-  http = try HTTP.serve(
-    "127.0.0.1",
-    options.port,
-    ->(request, body) { route(token, address, request, body) },
-    HTTP.ServerOptions(max_body_bytes: MAX_BODY_BYTES),
-  )
+  started = serve(options, registry, lock)
+  if not started.ok?
+    _ = Actor.stop(registry, CALL_MS)
+    _ = File.close(lock)
+  end
 
-  port = HTTP.local_port(http)
-  try write_server_json(options.state_dir, Protocol.ServerInfo(port: port, token: token, pid: System.pid))
-  ok(Server(http: http, port: port, token: token, registry: registry, lock: lock, state_dir: options.state_dir))
+  started
 end
 
 def stop(server: Server) -> Void
@@ -94,8 +95,29 @@ enum Msg
   List(Channel[Protocol.SessionList])
 end
 
+def serve(options: Options, registry: Actor.Ref[Registry, Msg], lock: File.Handle) -> Result[Server]
+  token = OpenSSL.Random.hex(32)
+  address = registry.address
+  http = try HTTP.serve(
+    "127.0.0.1",
+    options.port,
+    ->(request, body) { route(token, address, request, body) },
+    HTTP.ServerOptions(max_body_bytes: MAX_BODY_BYTES),
+  )
+
+  port = HTTP.local_port(http)
+  case write_server_json(options.state_dir, Protocol.ServerInfo(port: port, token: token, pid: System.pid))
+    ok(_) ->
+      ok(Server(http: http, port: port, token: token, registry: registry, lock: lock, state_dir: options.state_dir))
+    error(e) ->
+      HTTP.close_server(http)
+      error(e)
+  end
+end
+
 def state_folder(path: String) -> Result[Void]
   if not File.stat(path).ok?
+    try Dir.mkdir(Sandbox.parent(path))
     try Dir.mkdir_private(path)
   end
 
@@ -173,11 +195,21 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   ok(Entry(summary: summary, session: Session.start(setup)))
 end
 
+# `AGENTS.md` goes to the model only when it is a regular file inside the folder: a link out of it could be any file.
 def system_prompt(root: String) -> String
-  case File.read_text("#{root}/AGENTS.md")
+  case project_instructions(root)
     ok(text) -> "#{SYSTEM_PROMPT}\n# AGENTS.md of the session folder\n\n#{text}"
     error(_) -> SYSTEM_PROMPT
   end
+end
+
+def project_instructions(root: String) -> Result[String]
+  path = try Sandbox.resolve(root, "AGENTS.md")
+  info = try File.stat(path)
+  return error("not a regular file") if info.kind != "file"
+  return error("larger than #{MAX_INSTRUCTIONS_BYTES} bytes") if info.size_bytes > MAX_INSTRUCTIONS_BYTES
+
+  File.read_text(path)
 end
 
 def route(token: String, registry: Address[Msg], request: HTTP.Request, body: HTTP.RequestBody) -> Result[HTTP.Answer]
@@ -185,12 +217,18 @@ def route(token: String, registry: Address[Msg], request: HTTP.Request, body: HT
     return ok(HTTP.Answer.Whole(refusal))
   end
 
-  parts = request.path.split("/").drop(1)
   if request.method == "GET" and request.path == Protocol.HEALTH_PATH
     return whole(200, Protocol.encode_health(Protocol.Health(version: VERSION)))
   end
 
-  return events(registry, request, parts[2]) if request.method == "GET" and parts.size == 4 and parts[3] == "events"
+  prefix = Protocol.SESSIONS_PATH
+  if request.path != prefix and not request.path.start_with?("#{prefix}/")
+    return ok(HTTP.Answer.Whole(no_route(request.method, request.path)))
+  end
+
+  # The parts after /v1/sessions: an id, then a sub-resource.
+  parts = request.path.slice(prefix.length, request.path.length - prefix.length).split("/").drop(1)
+  return events(registry, request, parts[0]) if request.method == "GET" and parts.size == 2 and parts[1] == "events"
 
   case HTTP.read_all(body, MAX_BODY_BYTES)
     ok(bytes) -> ok(HTTP.Answer.Whole(answered(registry, request.method, parts, bytes)))
@@ -239,27 +277,27 @@ end
 def answer(registry: Address[Msg], method: String, parts: List[String], bytes: Bytes) -> Result[HTTP.Response]
   text = try String.from_bytes(bytes)
   case "#{method} #{parts.size}"
-    "POST 2" if parts[1] == "sessions" ->
+    "POST 0" ->
       request = try Protocol.decode_new_session(text)
       created: Result[Result[String]] = Actor.call(registry, CALL_MS) do |reply| Msg.Create(request, reply) end
       id = try try created
       response(201, Protocol.encode_session_created(Protocol.SessionCreated(id: id)))
-    "GET 2" if parts[1] == "sessions" ->
+    "GET 0" ->
       list: Result[Protocol.SessionList] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
       response(200, Protocol.encode_session_list(try list))
-    "GET 3" -> response(200, Protocol.encode_session(try Session.snapshot(try find(registry, parts[2]))))
-    "POST 4" if parts[3] == "messages" ->
+    "GET 1" -> response(200, Protocol.encode_session(try Session.snapshot(try find(registry, parts[0]))))
+    "POST 2" if parts[1] == "messages" ->
       message = try Protocol.decode_send_message(text)
-      turn_id = try Session.send(try find(registry, parts[2]), message.text)
+      turn_id = try Session.send(try find(registry, parts[0]), message.text)
       response(202, Protocol.encode_message_accepted(Protocol.MessageAccepted(turn_id: turn_id)))
-    "POST 4" if parts[3] == "stop" ->
-      _ = try Session.stop(try find(registry, parts[2]))
+    "POST 2" if parts[1] == "stop" ->
+      _ = try Session.stop(try find(registry, parts[0]))
       response(200, "{}")
-    "POST 5" if parts[3] == "approvals" ->
+    "POST 3" if parts[1] == "approvals" ->
       approve = try Protocol.decode_approve(text)
-      try Session.answer(try find(registry, parts[2]), parts[4], approve.decision)
+      try Session.answer(try find(registry, parts[0]), parts[2], approve.decision)
       response(200, "{}")
-    _ -> ok(failure_response(404, "not_found", "no route for #{method} /#{parts.join("/")}"))
+    _ -> ok(no_route(method, "#{Protocol.SESSIONS_PATH}/#{parts.join("/")}"))
   end
 end
 
@@ -288,6 +326,10 @@ def find(registry: Address[Msg], id: String) -> Result[Address[Session.Msg]]
     some(address) -> ok(address)
     none -> error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND)
   end
+end
+
+def no_route(method: String, path: String) -> HTTP.Response
+  failure_response(404, "not_found", "no route for #{method} #{path}")
 end
 
 def failure(e: Error) -> HTTP.Response = failure_response(status_of(e.kind), e.kind, e.message)

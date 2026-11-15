@@ -1,8 +1,8 @@
 data: {"choices":[{"finish_reason":null,"index":0,"delta":{"role":"assistant","content":null}}],"id":"chatcmpl-core-3","model":"m","object":"chat.completion.chunk"}
 
-data: {"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_sleep","type":"function","function":{"name":"bash","arguments":"{\"command\":"}}]}}],"id":"chatcmpl-core-3","model":"m","object":"chat.completion.chunk"}
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_sleep","type":"function","function":{"name":"bash","arguments":"{\"command\": \"echo $$ > "}}]}}],"id":"chatcmpl-core-3","model":"m","object":"chat.completion.chunk"}
 
-data: {"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":" \"sleep 30\"}"}}]}}],"id":"chatcmpl-core-3","model":"m","object":"chat.completion.chunk"}
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"pid.txt; exec sleep 30\"}"}}]}}],"id":"chatcmpl-core-3","model":"m","object":"chat.completion.chunk"}
 
 data: {"choices":[{"finish_reason":"tool_calls","index":0,"delta":{}}],"id":"chatcmpl-core-3","model":"m","object":"chat.completion.chunk"}
 

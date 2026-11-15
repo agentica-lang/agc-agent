@@ -29,7 +29,7 @@
     "turn_id": "t2",
     "turn_from_event_id": 50,
     "pending_approvals": [
-      {"approval_id": "a1", "call_id": "call_2", "tool": "bash", "preview": "rm -r b"}
+      {"approval_id": "a1", "call_id": "call_2", "tool": "bash", "preview": "rm -r b", "detail": ""}
     ],
     "history": [
       {"role": "user", "text": "Write hello.txt."},

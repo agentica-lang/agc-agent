@@ -34,8 +34,8 @@ enum Msg
   Answer(String, Protocol.Decision, Channel[Result[Void]])
   Stop(Channel[Bool])
   Emit(String, Protocol.Event)
-  Ask(String, Protocol.ApprovalRequested, Channel[Protocol.Decision])
-  Expire(String, String)
+  Ask(String, Agent.Ask, Channel[Protocol.Decision])
+  Expire(String)
   Commit(String, List[LLM.Message])
   Finished(String, Protocol.StopReason)
 end
@@ -48,6 +48,8 @@ end
 struct Waiting
   request: Protocol.ApprovalRequested
   reply: Channel[Protocol.Decision]
+  key: String
+  asked_ms: Int
 end
 
 struct Running
@@ -67,8 +69,13 @@ struct State
   turn: Optional[Running] = none
   turns: Int = 0
   pending: List[Waiting] = []
+  approvals: Int = 0
+  ## The approvals answered in the running turn, so a late answer is told it came late.
   resolved: List[String] = []
+  ## The `tool` and target pairs that `allow_session` allowed.
   allowed: List[String] = []
+  ## Since when no client is attached.
+  alone_since: Optional[Int] = none
 end
 
 def start(setup: Setup) -> Actor.Ref[State, Msg]
@@ -118,8 +125,8 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
       Actor.reply(reply, state.turn.some?)
       Actor.continue(stop_turn(state))
     Msg.Emit(turn_id, event) -> Actor.continue(if_current(state, turn_id, ->(s) { emit(s, event) }))
-    Msg.Ask(turn_id, request, reply) -> Actor.continue(if_current(state, turn_id, ->(s) { ask(s, request, reply) }))
-    Msg.Expire(turn_id, approval_id) -> Actor.continue(if_current(state, turn_id, ->(s) { expire(s, approval_id) }))
+    Msg.Ask(turn_id, call, reply) -> Actor.continue(if_current(state, turn_id, ->(s) { ask(s, call, reply) }))
+    Msg.Expire(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { expire(s) }))
     Msg.Commit(turn_id, history) -> Actor.continue(if_current(state, turn_id, ->(s) { s.with(history: history) }))
     Msg.Finished(turn_id, reason) -> Actor.continue(if_current(state, turn_id, ->(s) { finish(s, reason) }))
   end
@@ -185,7 +192,16 @@ def attach(state: State, last: Optional[Int], reply: Channel[Channel[Bytes]]) ->
   end
 
   Actor.reply(reply, out)
-  state.with(subscribers: state.subscribers.push(out))
+  prune(state.with(subscribers: state.subscribers.push(out)))
+end
+
+# Drops the clients that left, and notes when the last one did.
+def prune(state: State) -> State
+  live = state.subscribers.select { |out| not out.closed? }
+  return state.with(subscribers: live, alone_since: none) if not live.empty?
+  return state.with(subscribers: live) if state.alone_since.some?
+
+  state.with(subscribers: live, alone_since: some(Time.monotonic_ms))
 end
 
 def frame(id: String, event: Protocol.Event) -> String
@@ -198,7 +214,7 @@ def emit(state: State, event: Protocol.Event) -> State
   text = frame(Protocol.format_event_id(id), event)
   live = state.subscribers.select { |out| out.send(text.bytes, 0).ok? or close(out) }
   log = trim(state.log.push(Logged(id: id, event: event)), state)
-  state.with(counter: id, log: log, subscribers: live)
+  prune(state.with(counter: id, log: log, subscribers: live))
 end
 
 def close(out: Channel[Bytes]) -> Bool
@@ -227,9 +243,9 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
   address = inbox.address
   setup = state.setup
   link = Agent.Link(
-    emit: ->(event) { _ = Actor.cast(address, Msg.Emit(turn_id, event), CALL_MS) },
-    approve: ->(request) { wait_approval(address, turn_id, request, setup.approval_timeout_ms) },
-    commit: ->(history) { _ = Actor.cast(address, Msg.Commit(turn_id, history), CALL_MS) },
+    emit: ->(event) { tell(address, Msg.Emit(turn_id, event)) },
+    approve: ->(call) { wait_approval(address, turn_id, call, setup.approval_timeout_ms) },
+    commit: ->(history) { tell(address, Msg.Commit(turn_id, history)) },
   )
 
   turn = Agent.Turn(
@@ -256,37 +272,50 @@ def run_turn(job: Job) -> Void
   _ = Actor.cast(job.address, Msg.Finished(job.turn.id, outcome.reason), CALL_MS)
 end
 
-# With a client attached, an approval waits for its answer; with none, it is denied after `timeout_ms`.
-def wait_approval(
-  address: Address[Msg],
-  turn_id: String,
-  request: Protocol.ApprovalRequested,
-  timeout_ms: Int,
-) -> Protocol.Decision
+# A session that is gone cannot take the turn's events: the turn ends.
+def tell(address: Address[Msg], msg: Msg) -> Void
+  if not Actor.cast(address, msg, CALL_MS).ok?
+    Task.cancel(Task.current)
+  end
+end
+
+# The session denies an approval once no client has been attached for `timeout_ms`; the turn asks it to check now and
+# then.
+def wait_approval(address: Address[Msg], turn_id: String, call: Agent.Ask, timeout_ms: Int) -> Protocol.Decision
   reply: Channel[Protocol.Decision] = Channel.new(1)
-  _ = Actor.cast(address, Msg.Ask(turn_id, request, reply), CALL_MS)
+  return Protocol.Decision.Deny if not Actor.cast(address, Msg.Ask(turn_id, call, reply), CALL_MS).ok?
+
+  poll_ms = [timeout_ms, 1000].min.unwrap!
   while true
-    case reply.recv(timeout_ms)
+    case reply.recv(poll_ms)
       ok(decision) -> return decision
       error(_) if reply.closed? -> return Protocol.Decision.Deny
-      error(_) -> _ = Actor.cast(address, Msg.Expire(turn_id, request.approval_id), CALL_MS)
+      error(_) -> return Protocol.Decision.Deny if not Actor.cast(address, Msg.Expire(turn_id), CALL_MS).ok?
     end
   end
 
   Protocol.Decision.Deny
 end
 
-def ask(state: State, request: Protocol.ApprovalRequested, reply: Channel[Protocol.Decision]) -> State
-  if state.allowed.include?(approval_key(request))
+def ask(state: State, call: Agent.Ask, reply: Channel[Protocol.Decision]) -> State
+  key = "#{call.tool}\n#{call.target}"
+  if state.allowed.include?(key)
     _ = reply.send(Protocol.Decision.Allow, 0)
     return state
   end
 
-  waiting = state.with(pending: state.pending.push(Waiting(request: request, reply: reply)))
-  emit(waiting, Protocol.Event.ApprovalRequested(request))
-end
+  request = Protocol.ApprovalRequested(
+    approval_id: "a#{state.approvals + 1}",
+    call_id: call.call_id,
+    tool: call.tool,
+    preview: call.target,
+    detail: call.detail,
+  )
 
-def approval_key(request: Protocol.ApprovalRequested) -> String = "#{request.tool}\n#{request.preview}"
+  waiting = Waiting(request: request, reply: reply, key: key, asked_ms: Time.monotonic_ms)
+  asked = state.with(pending: state.pending.push(waiting), approvals: state.approvals + 1)
+  emit(asked, Protocol.Event.ApprovalRequested(request))
+end
 
 def answer_approval(
   state: State,
@@ -308,10 +337,19 @@ def answer_approval(
   resolve(state, approval_id, decision, Protocol.ApprovalSource.Client)
 end
 
-def expire(state: State, approval_id: String) -> State
-  return state if not state.subscribers.empty?
+def expire(state: State) -> State
+  pruned = prune(state)
+  now = Time.monotonic_ms
+  out = pruned
+  for alone in option_list(pruned.alone_since)
+    for waiting in pruned.pending
+      if now >= [waiting.asked_ms, alone].max.unwrap! + state.setup.approval_timeout_ms
+        out = resolve(out, waiting.request.approval_id, Protocol.Decision.Deny, Protocol.ApprovalSource.Timeout)
+      end
+    end
+  end
 
-  resolve(state, approval_id, Protocol.Decision.Deny, Protocol.ApprovalSource.Timeout)
+  out
 end
 
 def resolve(state: State, approval_id: String, decision: Protocol.Decision, source: Protocol.ApprovalSource) -> State
@@ -321,7 +359,7 @@ def resolve(state: State, approval_id: String, decision: Protocol.Decision, sour
       _ = waiting.reply.send(decision, 0)
       allowed = state.allowed
       if decision == Protocol.Decision.AllowSession
-        allowed = allowed.push(approval_key(waiting.request))
+        allowed = allowed.push(waiting.key)
       end
 
       next_state = state.with(
@@ -361,7 +399,7 @@ def finish(state: State, reason: Protocol.StopReason) -> State
         display = display.push(Protocol.Message(role: Protocol.Role.Assistant, text: text))
       end
 
-      emit(state.with(display: display), finished).with(turn: none)
+      emit(state.with(display: display), finished).with(turn: none, resolved: [])
     none -> state
   end
 end

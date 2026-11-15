@@ -12,8 +12,16 @@ SAME_ROUNDS = 3
 ## round, so a stopped turn keeps no unfinished tool call.
 struct Link
   emit: Fn[Protocol.Event, Void]
-  approve: Fn[Protocol.ApprovalRequested, Protocol.Decision]
+  approve: Fn[Ask, Protocol.Decision]
   commit: Fn[List[LLM.Message], Void]
+end
+
+## A call that waits for an approval. `allow_session` allows the same `tool` on the same `target` again.
+struct Ask
+  call_id: String
+  tool: String
+  target: String
+  detail: String
 end
 
 struct Turn
@@ -117,7 +125,7 @@ def run_call(turn: Turn, call: LLM.ToolCall) -> LLM.Block
   )
 
   started = Time.monotonic_ms
-  output = checked_run(turn, call, summary)
+  output = checked_run(turn, call)
   finished = Protocol.ToolFinished(
     call_id: call.id,
     ok: not output.is_error,
@@ -129,25 +137,24 @@ def run_call(turn: Turn, call: LLM.ToolCall) -> LLM.Block
   LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: output.text, is_error: output.is_error))
 end
 
-def checked_run(turn: Turn, call: LLM.ToolCall, summary: String) -> Tools.Output
+def checked_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
   for problem in option_list(call.input_error)
     return Tools.Output(text: problem, is_error: true)
   end
 
-  return Tools.Output(text: "unknown tool: #{call.name}", is_error: true) if not Tools.find(call.name).ok?
+  case Tools.target(turn.ctx, call.name, call.input)
+    ok(target) -> approved_run(turn, call, target)
+    error(e) -> Tools.Output(text: e.message, is_error: true)
+  end
+end
 
+def approved_run(turn: Turn, call: LLM.ToolCall, target: String) -> Tools.Output
   case Tools.verdict(turn.ctx, call.name, call.input)
     Tools.Verdict.Deny -> Tools.Output(text: "denied by a rule of the config", is_error: true)
     Tools.Verdict.Allow -> Tools.run(turn.ctx, call.name, call.input)
     Tools.Verdict.Ask ->
-      request = Protocol.ApprovalRequested(
-        approval_id: "#{turn.id}-#{call.id}",
-        call_id: call.id,
-        tool: call.name,
-        preview: summary,
-      )
-
-      case turn.link.approve.call(request)
+      ask = Ask(call_id: call.id, tool: call.name, target: target, detail: Tools.detail(call.name, call.input))
+      case turn.link.approve.call(ask)
         Protocol.Decision.Deny -> Tools.Output(text: "the user denied this call", is_error: true)
         _ -> Tools.run(turn.ctx, call.name, call.input)
       end

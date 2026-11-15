@@ -7,5 +7,8 @@ The fake LLM of the server tests streams these, in the order a test gives.
 - The others are written by hand in the same shape: one tool call whose
   arguments come in two pieces, `finish_reason: "tool_calls"`, then the usage.
   `write_file.sse` writes `hello.txt`, `bash.sse` runs `cat hello.txt`,
-  `slow_bash.sse` runs `sleep 30`, `read_file.sse` reads a missing file, and
+  `bash_echo.sse` runs `echo other`, `slow_bash.sse` writes its pid to
+  `pid.txt` and sleeps 30 s, `read_file.sse` reads a missing file, and
   `long_text_then_write.sse` streams 12 text pieces before a `write_file` call.
+- `length_tool.sse` stops with `finish_reason: "length"` in the middle of a
+  `write_file` call.
