@@ -3,12 +3,16 @@ import LLM from "pkg/llm/llm"
 VERSION = "0.0.1"
 
 USAGE = <<~TEXT
-  usage: agentica core/main.agc [--version | --help]
+  usage: agentica core/main.agc [serve | --version | --help]
 
-  The agc-agent core: it will serve the agent loop to its clients. Nothing works yet.
+  The agc-agent core. `serve` runs the server on 127.0.0.1 and writes server.json in the state folder:
+  AGC_AGENT_STATE_DIR, else $XDG_STATE_HOME/agc-agent, else ~/.local/state/agc-agent. The model API is
+  AGC_AGENT_BASE_URL (OpenAI chat format, a local llama-server by default), with AGC_AGENT_API_KEY and
+  AGC_AGENT_MODEL.
 TEXT
 
 enum Command
+  Serve
   Version
   Help
 end
@@ -18,6 +22,7 @@ def parse(args: List[String]) -> Result[Command]
   case text
     "", "--help", "-h" -> ok(Command.Help)
     "--version" -> ok(Command.Version)
+    "serve" -> ok(Command.Serve)
     _ -> error("unknown arguments: #{text}")
   end
 end
@@ -25,6 +30,6 @@ end
 def output(command: Command) -> String
   case command
     Command.Version -> "agc-agent core #{VERSION} (llm #{LLM.VERSION})"
-    Command.Help -> USAGE.strip
+    Command.Help, Command.Serve -> USAGE.strip
   end
 end

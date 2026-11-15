@@ -1,0 +1,214 @@
+## One turn of the agent: the model answers, the tools it calls run (after an approval when they ask), their results go
+## back in one user message, and so on until the model ends the turn, a limit stops it or the loop guard does.
+
+import LLM from "pkg/llm/llm"
+import Protocol from "pkg/protocol/protocol"
+import Tools from "tools"
+
+MAX_ROUNDS = 50
+SAME_ROUNDS = 3
+
+## How a turn reaches its session. `approve` waits for the answer; `commit` gets the history after each finished
+## round, so a stopped turn keeps no unfinished tool call.
+struct Link
+  emit: Fn[Protocol.Event, Void]
+  approve: Fn[Protocol.ApprovalRequested, Protocol.Decision]
+  commit: Fn[List[LLM.Message], Void]
+end
+
+struct Turn
+  id: String
+  provider: LLM.Provider
+  model: String
+  system: String
+  history: List[LLM.Message]
+  text: String
+  ctx: Tools.Context
+  link: Link
+  max_rounds: Int = MAX_ROUNDS
+end
+
+struct Outcome
+  history: List[LLM.Message]
+  reason: Protocol.StopReason
+end
+
+def run(turn: Turn) -> Outcome
+  messages = turn.history.push(LLM.Message(role: LLM.Role.User, content: [text_block(turn.text)]))
+  turn.link.commit.call(messages)
+  last_round = ""
+  same = 0
+  for _round in 1..turn.max_rounds
+    called = call_model(turn, messages)
+    response = called.unwrap_or(EMPTY)
+    case called
+      ok(_) -> nil
+      error(e) ->
+        turn.link.emit.call(Protocol.Event.Error(Protocol.Failure(kind: e.kind, message: e.message)))
+        return Outcome(history: messages, reason: Protocol.StopReason.Other("error"))
+    end
+
+    if response.stop_reason != LLM.StopReason.ToolUse
+      messages = messages.push(without_calls(response.message))
+      turn.link.commit.call(messages)
+      return Outcome(history: messages, reason: stop_reason(response.stop_reason))
+    end
+
+    calls = tool_calls(response.message)
+    results = calls.map { |call| run_call(turn, call) }
+    messages = messages + [response.message, LLM.Message(role: LLM.Role.User, content: results)]
+    turn.link.commit.call(messages)
+    this_round = JSON.encode(JSON.from([calls.map { |c| "#{c.name} #{c.arguments}" }, results.map { |r| text_of(r) }]))
+    same = same_count(this_round, last_round, same)
+    last_round = this_round
+    return Outcome(history: messages, reason: Protocol.StopReason.LoopGuard) if same >= SAME_ROUNDS
+  end
+
+  Outcome(history: messages, reason: Protocol.StopReason.LoopGuard)
+end
+
+def text_block(text: String) -> LLM.Block = LLM.Block.Text(LLM.TextPart(text: text))
+
+## The text of the model's blocks, for the history a client draws.
+def assistant_text(message: LLM.Message) -> String = message.content.map { |b| text_of(b) }.join("")
+
+private
+
+EMPTY = LLM.Response(
+  message: LLM.Message(role: LLM.Role.Assistant, content: []),
+  stop_reason: LLM.StopReason.EndTurn,
+  usage: LLM.Usage(),
+)
+
+def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
+  tools = Tools.all().map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }
+  request = LLM.Request(model: turn.model, system: turn.system, messages: messages, tools: tools)
+  stream = try LLM.stream(turn.provider, request)
+  while true
+    case stream.events.recv(60000)
+      ok(LLM.Event.TextDelta(piece)) ->
+        turn.link.emit.call(Protocol.Event.TextDelta(Protocol.TextDelta(text: piece.text)))
+      ok(LLM.Event.ThinkingDelta(piece)) ->
+        turn.link.emit.call(Protocol.Event.ThinkingDelta(Protocol.ThinkingDelta(text: piece.text)))
+      ok(_) -> next
+      error(_) -> break if stream.events.closed?
+    end
+  end
+
+  response = try LLM.response(stream)
+  turn.link.emit.call(Protocol.Event.Usage(usage(response.usage)))
+  ok(response)
+end
+
+def usage(u: LLM.Usage) -> Protocol.Usage
+  Protocol.Usage(
+    input: u.input,
+    output: u.output,
+    cache_read: u.cache_read,
+    cache_write: u.cache_write,
+    context: u.input + u.cache_read + u.cache_write + u.output,
+  )
+end
+
+def run_call(turn: Turn, call: LLM.ToolCall) -> LLM.Block
+  summary = Tools.target(turn.ctx, call.name, call.input).unwrap_or(call.name)
+  turn.link.emit.call(
+    Protocol.Event.ToolStarted(Protocol.ToolStarted(call_id: call.id, name: call.name, summary: summary)),
+  )
+
+  started = Time.monotonic_ms
+  output = checked_run(turn, call, summary)
+  finished = Protocol.ToolFinished(
+    call_id: call.id,
+    ok: not output.is_error,
+    summary: first_line(output.text),
+    duration_ms: Time.monotonic_ms - started,
+  )
+
+  turn.link.emit.call(Protocol.Event.ToolFinished(finished))
+  LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: output.text, is_error: output.is_error))
+end
+
+def checked_run(turn: Turn, call: LLM.ToolCall, summary: String) -> Tools.Output
+  for problem in option_list(call.input_error)
+    return Tools.Output(text: problem, is_error: true)
+  end
+
+  return Tools.Output(text: "unknown tool: #{call.name}", is_error: true) if not Tools.find(call.name).ok?
+
+  case Tools.verdict(turn.ctx, call.name, call.input)
+    Tools.Verdict.Deny -> Tools.Output(text: "denied by a rule of the config", is_error: true)
+    Tools.Verdict.Allow -> Tools.run(turn.ctx, call.name, call.input)
+    Tools.Verdict.Ask ->
+      request = Protocol.ApprovalRequested(
+        approval_id: "#{turn.id}-#{call.id}",
+        call_id: call.id,
+        tool: call.name,
+        preview: summary,
+      )
+
+      case turn.link.approve.call(request)
+        Protocol.Decision.Deny -> Tools.Output(text: "the user denied this call", is_error: true)
+        _ -> Tools.run(turn.ctx, call.name, call.input)
+      end
+  end
+end
+
+def tool_calls(message: LLM.Message) -> List[LLM.ToolCall]
+  calls: List[LLM.ToolCall] = []
+  for block in message.content
+    case block
+      LLM.Block.ToolUse(call) -> calls = calls.push(call)
+      _ -> nil
+    end
+  end
+
+  calls
+end
+
+# A call the model did not finish (a `max_tokens` stop) has no result, which the next request could not carry.
+def without_calls(message: LLM.Message) -> LLM.Message
+  message.with(
+    content: message.content.select { |b| tool_calls(LLM.Message(role: message.role, content: [b])).empty? },
+  )
+end
+
+def stop_reason(reason: LLM.StopReason) -> Protocol.StopReason
+  case reason
+    LLM.StopReason.EndTurn -> Protocol.StopReason.EndTurn
+    LLM.StopReason.MaxTokens -> Protocol.StopReason.MaxTokens
+    LLM.StopReason.Refusal -> Protocol.StopReason.Refusal
+    LLM.StopReason.ToolUse -> Protocol.StopReason.Other("tool_use")
+    LLM.StopReason.StopSequence -> Protocol.StopReason.Other("stop_sequence")
+    LLM.StopReason.PauseTurn -> Protocol.StopReason.Other("pause_turn")
+    LLM.StopReason.Other(name) -> Protocol.parse_stop_reason(name)
+  end
+end
+
+def same_count(this_round: String, last_round: String, same: Int) -> Int
+  return same + 1 if this_round == last_round
+
+  1
+end
+
+def text_of(block: LLM.Block) -> String
+  case block
+    LLM.Block.Text(part) -> part.text
+    LLM.Block.ToolResult(output) -> output.content
+    _ -> ""
+  end
+end
+
+def first_line(text: String) -> String
+  line = text.split("\n").first
+  return line if line.length <= 120
+
+  line.slice(0, 120) + "..."
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
+end
