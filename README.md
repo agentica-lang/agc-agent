@@ -31,4 +31,5 @@ Needs Agentica 0.32.0 or later.
 ```sh
 agentica core/main.agc --version
 make test
+make smoke-llama   # fetches llama.cpp and a 0.5B model (about 500 MB) into .tools/
 ```

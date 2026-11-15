@@ -12,8 +12,11 @@ llm/                 client for LLM APIs; llm.agc is its public module, src/ the
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point
 <pkg>/tests/         *_test.agc tests of that package; fixtures/ the recorded data they read
-Makefile             check, fmt-check, unit, smoke, test over every package
-.github/workflows/   ci.yml: the pinned Agentica release, then fmt-check and test
+llm/smoke/           tests against a real llama-server (make smoke-llama)
+llm/live/            tests against a paid API (make live-fireworks): never in CI
+scripts/             fetch the pinned llama.cpp release and model into .tools/ (sha256)
+Makefile             check, fmt-check, unit, smoke, test over every package; smoke-llama, live-fireworks
+.github/workflows/   ci.yml: the pinned Agentica release, then fmt-check and test; the llama job
 ```
 
 Later phases add `protocol`, `cli` and `tui_client`. A package is added
@@ -28,6 +31,13 @@ by the phase that needs it, never as an empty folder.
   below, with `rg`), `unit` (`agentica test tests` in each package; a package
   that passes no test fails) and `smoke` (runs `core/main.agc`).
 - `make fmt-check AGENTICA=...`: `agentica fmt --check` in each package.
+- `make smoke-llama`: fetches llama.cpp and Qwen2.5-0.5B (pinned in
+  `scripts/`, one tag and its sha256 to bump), then runs `llm/smoke` against a
+  llama-server it starts on port 0 and stops; `LLAMA_URL` uses a running one.
+  CI runs it in the `llama` job.
+- `make live-fireworks`: one real call to Fireworks (`FIREWORKS_API_KEY`,
+  `FIREWORKS_MODEL`); it skips without the key. It costs money: only with the
+  owner's yes, never in CI.
 - After a change of a package's dependencies: `agentica update` in that
   package's folder, and commit its `agentica.lock`.
 

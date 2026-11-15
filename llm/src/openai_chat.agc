@@ -54,9 +54,8 @@ struct Job
 end
 
 def start_stream(config: Config, request: Types.Request) -> Result[Api.Stream]
-  body = Wire.request_body(request).bytes
-  headers = request.headers.keys.map { |name| HTTP.Header(name: name, value: request.headers[name]) }
-  http = try Errors.with_retry(retry(config), -> { open(config, body, headers) })
+  body = (try Wire.request_body(request)).bytes
+  http = try Errors.with_retry(retry(config), -> { open(config, body, request.headers) })
   events: Channel[Types.Event] = Channel.new(EVENTS_CAPACITY)
   reader = Task.spawn(&read, Job(config: config, http: http, events: events))
   ok(Api.Stream(events: events, done: reader, stop: -> { stop(http, reader, events) }))
@@ -75,14 +74,15 @@ def end_http(http: HTTP.Stream) -> Void
 end
 
 # A 2xx answer comes back with its body unread; any other is read whole and becomes its error.
-def open(config: Config, body: Bytes, extra: List[HTTP.Header]) -> Result[HTTP.Stream]
-  headers = [
+def open(config: Config, body: Bytes, extra: Map[String, String]) -> Result[HTTP.Stream]
+  own = [
     HTTP.Header(name: "Content-Type", value: "application/json"),
     HTTP.Header(name: "Accept", value: "text/event-stream"),
   ]
 
+  headers = merge_headers(own + auth(config), extra)
   url = "#{config.base_url}/chat/completions"
-  http = try network(HTTP.open("POST", url, body, headers + auth(config) + extra, client_options(config)))
+  http = try network(HTTP.open("POST", url, body, headers, client_options(config)))
   return ok(http) if http.status >= 200 and http.status < 300
 
   Errors.from_status(http.status, http.headers, drain(http))
@@ -156,6 +156,13 @@ def retry(config: Config) -> Errors.Retry
     max_ms: options.retry_max_ms,
     retry_after_max_ms: options.retry_after_max_ms,
   )
+end
+
+# A header of the caller replaces the provider's header of the same name.
+def merge_headers(own: List[HTTP.Header], extra: Map[String, String]) -> List[HTTP.Header]
+  names = Set.new(extra.keys.map { |name| name.downcase })
+  kept = own.select { |h| not names.include?(h.name.downcase) }
+  kept + extra.keys.map { |name| HTTP.Header(name: name, value: extra[name]) }
 end
 
 def auth(config: Config) -> List[HTTP.Header]
