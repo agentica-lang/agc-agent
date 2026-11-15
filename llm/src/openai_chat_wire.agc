@@ -1,6 +1,7 @@
 ## The OpenAI chat completions wire format: the request JSON, and the stream chunks folded into events and a
 ## response. Pure.
 
+import Body from "body"
 import {StopReason} from "stop_reason"
 import Types from "types"
 
@@ -68,11 +69,7 @@ def request_body(request: Types.Request) -> Result[String]
     body = body.put("seed", JSON.from(seed))
   end
 
-  for key in request.extra.keys
-    body = body.put(key, request.extra[key])
-  end
-
-  ok(JSON.encode(JSON.object(body)))
+  ok(JSON.encode(JSON.object(Body.merge_extra(body, request.extra))))
 end
 
 ## Folds the `data` of one SSE event. Errors: `llm.api` (an error object in the stream), `llm.protocol` (bad JSON).

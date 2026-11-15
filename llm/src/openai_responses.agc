@@ -7,7 +7,7 @@ import Wire from "openai_responses_wire"
 
 ## The provider for an API at `base_url` (such as `https://api.openai.com/v1`). An empty `api_key` sends no
 ## `Authorization` header. Fields such as `store: false` and `include: ["reasoning.encrypted_content"]` go in
-## `Request.extra`.
+## `Request.extra`. A reasoning item goes back in the next request only when it came with `encrypted_content`.
 def openai_responses(base_url: String, api_key: String = "", options: Http.Options = Http.Options()) -> Api.Provider
   wire = Http.Wire(
     path: "/responses",

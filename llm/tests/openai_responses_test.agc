@@ -31,7 +31,7 @@ def test_streams_text_and_sends_the_request() -> Result[Void]
   try Test.eq(Ev.texts(events), text)
   try Test.eq(events[0], LLM.Event.TextDelta(LLM.Piece(index: 0, text: "Hello", item_id: item_id)))
   try Test.eq(events.last, LLM.Event.Stop(LLM.StopReason.EndTurn))
-  replay = try JSON.parse("{\"id\": \"#{item_id}\"}")
+  replay = try JSON.parse("{\"id\": \"#{item_id}\", \"status\": \"completed\"}")
   try Test.eq(response.message.content, [LLM.Block.Text(LLM.TextPart(text: text, replay: some(replay)))])
   try Test.eq(response.usage, LLM.Usage(input: 22, output: 9))
   try Test.eq(response.id, "resp_LNUiJlrkTe61bkFFnOTExTPJXSuLRUsw")
@@ -116,7 +116,7 @@ def test_reasoning_items_and_message_phase_round_trip() -> Result[Void]
   call = try LLM.stream(provider(fake), LLM.Request(model: MODEL, messages: [ask]))
   events = Ev.collect(call)
   response = try LLM.response(call)
-  try Test.eq(events.map { |e| Ev.thinking_of(e) }.join(""), "Need the README first.")
+  try Test.eq(events.map { |e| Ev.thinking_of(e) }.join(""), "Need the README first.\n\nThen answer.")
   try Test.eq(response.stop_reason, LLM.StopReason.ToolUse)
   try Test.eq(response.usage, LLM.Usage(input: 20, output: 40, cache_read: 100, reasoning: 25))
   _ = try LLM.response(try LLM.stream(provider(fake), LLM.Request(model: MODEL, messages: [ask, response.message])))
@@ -125,14 +125,75 @@ def test_reasoning_items_and_message_phase_round_trip() -> Result[Void]
   try Fake.stop(fake)
   expected = <<~JSON
     [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Read README.md."}]},
-     {"id": "rs_hand_1", "type": "reasoning", "summary": [{"type": "summary_text", "text": "Need the README first."}],
+     {"id": "rs_hand_1", "type": "reasoning",
+      "summary": [{"type": "summary_text", "text": "Need the README first."},
+                  {"type": "summary_text", "text": "Then answer."}],
       "encrypted_content": "gAAAAABoHandMadeOpaqueReasoning=="},
-     {"type": "message", "role": "assistant", "id": "msg_hand_1", "phase": "commentary",
+     {"type": "message", "role": "assistant", "id": "msg_hand_1", "phase": "commentary", "status": "completed",
       "content": [{"type": "output_text", "text": "Reading it.", "annotations": []}]},
      {"type": "function_call", "id": "fc_hand_1", "call_id": "call_hand_1", "name": "read_file",
       "arguments": "{\\"path\\": \\"README.md\\"}"}]
   JSON
   Test.eq(JSON.get(try JSON.parse(second.body), "input"), JSON.parse(expected))
+end
+
+# A reasoning item with no `encrypted_content` (llama-server's, or `store: false` without the include) is not
+# sent back.
+def test_a_reasoning_item_without_encrypted_content_is_not_sent_back() -> Result[Void]
+  fake = try Fake.start([
+    try Fake.sse("openai_responses/reasoning.sse", piece_bytes: 64),
+    try Fake.sse("openai_responses/text.sse"),
+  ])
+
+  ask = Ev.user("What is 2 + 3?")
+  request = LLM.Request(model: "qwen3-0.6b", messages: [ask])
+  response = try LLM.response(try LLM.stream(provider(fake), request))
+  _ = try LLM.response(try LLM.stream(provider(fake), request.with(messages: [ask, response.message])))
+  _ = try Fake.next_request(fake)
+  second = try Fake.next_request(fake)
+  try Fake.stop(fake)
+  input: List[JSON.Value] = JSON.list(try JSON.get(try JSON.parse(second.body), "input")).unwrap_or([])
+  Test.eq(input.map { |i| JSON.get(i, "type") }, [ok(JSON.from("message")), ok(JSON.from("message"))])
+end
+
+# A refusal streams as text, stops with Refusal and goes back as a refusal part.
+def test_a_refusal_stops_with_refusal_and_round_trips() -> Result[Void]
+  fake = try Fake.start([try Fake.sse("openai_responses/refusal.sse"), try Fake.sse("openai_responses/text.sse")])
+  ask = Ev.user("Help me.")
+  request = LLM.Request(model: MODEL, messages: [ask])
+  call = try LLM.stream(provider(fake), request)
+  events = Ev.collect(call)
+  response = try LLM.response(call)
+  _ = try LLM.response(try LLM.stream(provider(fake), request.with(messages: [ask, response.message])))
+  _ = try Fake.next_request(fake)
+  second = try Fake.next_request(fake)
+  try Fake.stop(fake)
+  try Test.eq(Ev.texts(events), "I can't help with that.")
+  try Test.eq(response.stop_reason, LLM.StopReason.Refusal)
+  expected = <<~JSON
+    {"type": "message", "role": "assistant", "id": "msg_hand_2", "status": "completed",
+     "content": [{"type": "refusal", "refusal": "I can't help with that."}]}
+  JSON
+  input: List[JSON.Value] = JSON.list(try JSON.get(try JSON.parse(second.body), "input")).unwrap_or([])
+  Test.eq(input.map { |i| ok(i) }.last, JSON.parse(expected))
+end
+
+# `effort` and a `reasoning` object of `extra` merge; `seed` is not sent.
+def test_extra_reasoning_merges_with_effort_and_seed_is_not_sent() -> Result[Void]
+  fake = try Fake.start([try Fake.sse("openai_responses/text.sse")])
+  request = LLM.Request(
+    model: MODEL,
+    messages: [Ev.user("Say hello.")],
+    effort: some("low"),
+    seed: some(7),
+    extra: {"reasoning": try JSON.parse("{\"summary\": \"auto\"}")},
+  )
+
+  _ = try LLM.response(try LLM.stream(provider(fake), request))
+  body = try JSON.parse((try Fake.next_request(fake)).body)
+  try Fake.stop(fake)
+  try Test.eq(JSON.get(body, "reasoning"), JSON.parse("{\"effort\": \"low\", \"summary\": \"auto\"}"))
+  Test.error?(JSON.get(body, "seed"))
 end
 
 def test_streams_reasoning_text_as_thinking() -> Result[Void]

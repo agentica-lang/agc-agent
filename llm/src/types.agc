@@ -67,8 +67,10 @@ struct Request
   cache: Bool = false
   tool_choice: ToolChoice = ToolChoice.Auto
   temperature: Optional[Float] = none
+  ## Sent by openai_chat only: the Responses API has no seed.
   seed: Optional[Int] = none
-  ## Fields of the provider's own request body, put in last (they replace the fields above).
+  ## Fields of the provider's own request body, put in last: they replace the fields above, except that an object
+  ## merges into the object of the same key, one level deep (`reasoning: {summary: "auto"}` keeps `effort`).
   extra: Map[String, JSON.Value] = {}
   ## HTTP headers sent with the request. One replaces the provider's header of the same name (`Authorization`, say);
   ## names are compared without case, and of two that differ only in case the last one is sent.

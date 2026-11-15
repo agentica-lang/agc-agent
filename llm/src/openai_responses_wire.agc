@@ -5,6 +5,7 @@
 ## `custom_tool_call` a `ToolUse`. What goes back unchanged sits in `replay`: the message `id` (and Codex `phase`), the
 ## whole reasoning item (its `encrypted_content` too), the call's item `id` (`fc_…`).
 
+import Body from "body"
 import {StopReason} from "stop_reason"
 import Types from "types"
 
@@ -30,6 +31,8 @@ struct Part
   name: String = ""
   ## The item as `response.output_item.done` gave it.
   item: Optional[JSON.Value] = none
+  ## A message whose text is a refusal.
+  refused: Bool = false
 end
 
 enum PartKind
@@ -73,15 +76,8 @@ def request_body(request: Types.Request) -> Result[String]
     body = body.put("temperature", JSON.from(temperature))
   end
 
-  for seed in option_list(request.seed)
-    body = body.put("seed", JSON.from(seed))
-  end
-
-  for key in request.extra.keys
-    body = body.put(key, request.extra[key])
-  end
-
-  ok(JSON.encode(JSON.object(body)))
+  # No `seed`: the Responses API has none.
+  ok(JSON.encode(JSON.object(Body.merge_extra(body, request.extra))))
 end
 
 ## Folds the `data` of one SSE event. Errors: `llm.api` (`response.failed`, an `error` event), `llm.protocol` (bad
@@ -92,7 +88,9 @@ def take(turn: Turn, data: String) -> Result[Types.Fold[Turn]]
   case kind
     "response.created", "response.in_progress" -> ok(fold(turn.with(id: response_id(json, turn.id)), []))
     "response.output_item.added" -> ok(add_item(turn, json))
-    "response.output_text.delta", "response.refusal.delta" -> ok(add_piece(turn, json, PieceKind.Text))
+    "response.output_text.delta" -> ok(add_piece(turn, json, PieceKind.Text))
+    "response.refusal.delta" -> ok(add_piece(turn, json, PieceKind.Refusal))
+    "response.reasoning_summary_part.added" -> ok(summary_break(turn, json))
     "response.reasoning_text.delta", "response.reasoning_summary_text.delta" ->
       ok(add_piece(turn, json, PieceKind.Thinking))
     "response.function_call_arguments.delta", "response.custom_tool_call_input.delta" ->
@@ -119,6 +117,7 @@ private
 
 enum PieceKind
   Text
+  Refusal
   Thinking
   Input
 end
@@ -272,11 +271,13 @@ def output_item(result: Types.ToolOutput, custom_ids: Set[String]) -> JSON.Value
   JSON.object({"type": JSON.from(kind), "call_id": JSON.from(result.tool_use_id), "output": JSON.from(content)})
 end
 
-# Reasoning goes back as the item that came, or not at all.
+# Reasoning goes back as the item that came, and only with its `encrypted_content`: without it (`store: false` and
+# no `include: ["reasoning.encrypted_content"]`, or a server that has none) the API could not find the item by id.
 def assistant_items(block: Types.Block) -> List[JSON.Value]
   case block
     Types.Block.Text(part) -> [assistant_message(part)]
-    Types.Block.Thinking(part) -> option_list(part.replay)
+    Types.Block.Thinking(part) ->
+      option_list(part.replay).select { |item| not text_at(item, "encrypted_content").empty? }
     Types.Block.ToolUse(call) -> [call_item(call)]
     Types.Block.ToolResult(_) -> []
   end
@@ -284,6 +285,12 @@ end
 
 def assistant_message(part: Types.TextPart) -> JSON.Value
   text = JSON.object({"type": JSON.from("output_text"), "text": JSON.from(part.text), "annotations": JSON.array([])})
+  for replay in option_list(part.replay)
+    if text_at(replay, "part") == "refusal"
+      text = JSON.object({"type": JSON.from("refusal"), "refusal": JSON.from(part.text)})
+    end
+  end
+
   fields: Map[String, JSON.Value] = {
     "type": JSON.from("message"),
     "role": JSON.from("assistant"),
@@ -352,8 +359,17 @@ end
 
 # A piece goes to the item of its `output_index`; one for an item that never started is dropped.
 def add_piece(turn: Turn, json: JSON.Value, kind: PieceKind) -> Types.Fold[Turn]
-  output_index = int_at(json, "output_index")
-  text = text_at(json, "delta")
+  add_text(turn, int_at(json, "output_index"), text_at(json, "delta"), kind)
+end
+
+# The summary parts of one reasoning item are paragraphs: a blank line goes between them.
+def summary_break(turn: Turn, json: JSON.Value) -> Types.Fold[Turn]
+  return fold(turn, []) if int_at(json, "summary_index") == 0
+
+  add_text(turn, int_at(json, "output_index"), "\n\n", PieceKind.Thinking)
+end
+
+def add_text(turn: Turn, output_index: Int, text: String, kind: PieceKind) -> Types.Fold[Turn]
   case (turn.parts.find_index { |p| p.output_index == output_index })
     some(index) ->
       part = turn.parts[index]
@@ -363,6 +379,9 @@ def add_piece(turn: Turn, json: JSON.Value, kind: PieceKind) -> Types.Fold[Turn]
       event = Types.Event.TextDelta(piece)
       case kind
         PieceKind.Text -> event = Types.Event.TextDelta(piece)
+        PieceKind.Refusal ->
+          event = Types.Event.TextDelta(piece)
+          part = part.with(refused: true)
         PieceKind.Thinking -> event = Types.Event.ThinkingDelta(piece)
         PieceKind.Input -> event = Types.Event.ToolInputDelta(piece)
       end
@@ -424,6 +443,7 @@ end
 
 def stop_reason(turn: Turn) -> StopReason
   return incomplete_reason(turn.reason) if turn.status == "incomplete"
+  return StopReason.Refusal if (turn.parts.any? { |p| refused?(p) })
 
   return StopReason.ToolUse if (turn.parts.any? { |p| p.kind == PartKind.Call or p.kind == PartKind.CustomCall })
 
@@ -461,17 +481,27 @@ def block(part: Part) -> Types.Block
   end
 end
 
-# The text of a message item as its `done` event gave it, else as it streamed.
+# The text of a message item as its `done` event gave it (a refusal part has its text in `refusal`), else as it
+# streamed.
 def item_text(part: Part, streamed: String) -> String
+  contents = content_parts(part)
+  return streamed if contents.empty?
+
+  contents.map { |c| text_at(c, "text") + text_at(c, "refusal") }.join("")
+end
+
+def content_parts(part: Part) -> List[JSON.Value]
   for item in option_list(part.item)
     for content in option_list(json_at(item, "content"))
-      items: List[JSON.Value] = JSON.list(content).unwrap_or([])
-      texts = items.map { |c| text_at(c, "text") }
-      return texts.join("") if not texts.empty?
+      return JSON.list(content).unwrap_or([])
     end
   end
 
-  streamed
+  []
+end
+
+def refused?(part: Part) -> Bool
+  part.kind == PartKind.Text and (part.refused or content_parts(part).any? { |c| text_at(c, "type") == "refusal" })
 end
 
 def item_field(part: Part, key: String, streamed: String) -> String
@@ -485,21 +515,27 @@ def item_field(part: Part, key: String, streamed: String) -> String
   streamed
 end
 
+# An input message with an `id` is an output message, which needs its `status` too.
 def message_replay(part: Part) -> Optional[JSON.Value]
-  fields: Map[String, JSON.Value] = {}
-  if not part.item_id.empty?
-    fields = fields.put("id", JSON.from(part.item_id))
-  end
+  return none if part.item_id.empty?
 
+  status = "completed"
+  fields: Map[String, JSON.Value] = {"id": JSON.from(part.item_id)}
   for item in option_list(part.item)
     for phase in option_list(json_at(item, "phase"))
       fields = fields.put("phase", phase)
     end
+
+    if not text_at(item, "status").empty?
+      status = text_at(item, "status")
+    end
   end
 
-  return none if fields.empty?
+  if refused?(part)
+    fields = fields.put("part", JSON.from("refusal"))
+  end
 
-  some(JSON.object(fields))
+  some(JSON.object(fields.put("status", JSON.from(status))))
 end
 
 def id_replay(part: Part) -> Optional[JSON.Value]

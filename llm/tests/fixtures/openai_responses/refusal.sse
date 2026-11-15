@@ -1,0 +1,24 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_hand_3","object":"response","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"msg_hand_2","type":"message","role":"assistant","status":"in_progress","content":[]}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","item_id":"msg_hand_2","output_index":0,"content_index":0,"part":{"type":"refusal","refusal":""}}
+
+event: response.refusal.delta
+data: {"type":"response.refusal.delta","item_id":"msg_hand_2","output_index":0,"content_index":0,"delta":"I can't help "}
+
+event: response.refusal.delta
+data: {"type":"response.refusal.delta","item_id":"msg_hand_2","output_index":0,"content_index":0,"delta":"with that."}
+
+event: response.refusal.done
+data: {"type":"response.refusal.done","item_id":"msg_hand_2","output_index":0,"content_index":0,"refusal":"I can't help with that."}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"msg_hand_2","type":"message","role":"assistant","status":"completed","content":[{"type":"refusal","refusal":"I can't help with that."}]}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_hand_3","object":"response","status":"completed","usage":{"input_tokens":12,"input_tokens_details":{"cached_tokens":0},"output_tokens":7,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":19}}}
+

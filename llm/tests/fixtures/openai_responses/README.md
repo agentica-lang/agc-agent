@@ -20,11 +20,13 @@ Changed or written by hand, from the documented event shapes:
   as OpenAI sends it.
 - `stream_error.sse`: the first events of `text.sse`, then `response.failed`.
 - `encrypted_reasoning.sse`: as OpenAI and Codex stream it: a reasoning item
-  with a summary and `encrypted_content`, a message with `phase:
+  with a summary of two parts and `encrypted_content`, a message with `phase:
   "commentary"`, then a `function_call` in two pieces; usage with cached and
   reasoning tokens.
 - `custom_tool_call.sse`: a freeform `custom_tool_call` (`apply_patch`) whose
   input comes in two pieces.
+- `refusal.sse`: a message whose content is one `refusal` part, streamed by
+  `response.refusal.delta`.
 
 The 429 and 401 tests use the bodies in `../openai_chat/` (the same error
 shape). Files here are compared byte for byte (`.gitattributes`: `-text`).
