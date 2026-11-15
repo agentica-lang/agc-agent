@@ -1,8 +1,38 @@
-## A client for LLM APIs. Phase 0 has only the stop reasons; the providers come in phase 1.
+## A client for LLM APIs: one provider-neutral API (messages, tools, a stream of events, usage, stop reasons and
+## errors) with providers underneath. Callers see only these records; each provider maps them to its wire format.
+##
+## Errors have a kind and, for an HTTP answer, the status as `code`: `llm.auth`, `llm.rate_limit` (`retry_after_ms` in
+## `details`), `llm.overloaded`, `llm.invalid_request`, `llm.server`, `llm.network`, `llm.protocol` (bad SSE or JSON,
+## a cut stream), `llm.api` (an error inside the stream), `llm.cancelled`. A request is tried again only before the
+## first byte of its stream, on 429, 5xx and network errors.
 
+import Api from "src/api"
+import OpenAIChat from "src/openai_chat"
 import Stop from "src/stop_reason"
+import Types from "src/types"
 
 VERSION = "0.0.1"
 
+export OpenAIChat.OpenAIChatOptions
+export OpenAIChat.openai_chat
+export Api.Provider
+export Api.Stream
+export Api.stream
+export Api.cancel
+export Api.response
+export Api.models
 export Stop.StopReason
 export Stop.from_anthropic
+export Stop.from_openai
+export Types.Block
+export Types.Event
+export Types.Message
+export Types.Model
+export Types.Request
+export Types.Response
+export Types.Role
+export Types.Tool
+export Types.ToolCall
+export Types.ToolChoice
+export Types.ToolOutput
+export Types.Usage

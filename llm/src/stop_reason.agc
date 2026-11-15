@@ -21,3 +21,14 @@ def from_anthropic(name: String) -> StopReason
     _ -> StopReason.Other(name)
   end
 end
+
+## The stop reason of an OpenAI chat completion (`finish_reason`).
+def from_openai(name: String) -> StopReason
+  case name
+    "stop" -> StopReason.EndTurn
+    "tool_calls", "function_call" -> StopReason.ToolUse
+    "length" -> StopReason.MaxTokens
+    "content_filter" -> StopReason.Refusal
+    _ -> StopReason.Other(name)
+  end
+end

@@ -1,0 +1,8 @@
+version = 1
+
+[[package]]
+name = "sse"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "sse"
+tag = "sse-0.0.1"
+workspace = true
