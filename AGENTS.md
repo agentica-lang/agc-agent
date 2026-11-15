@@ -7,15 +7,16 @@ and its phases are issue #1 and its sub-issues.
 
 ```text
 agentica.toml        the workspace: its members are the packages below
+sse/                 Server-Sent Events: parser and writer, pure; sse.agc is its public module
 llm/                 client for LLM APIs; llm.agc is its public module, src/ the rest
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point
-<pkg>/tests/         *_test.agc unit tests of that package
+<pkg>/tests/         *_test.agc tests of that package; fixtures/ the recorded data they read
 Makefile             check, fmt-check, unit, smoke, test over every package
 .github/workflows/   ci.yml: the pinned Agentica release, then fmt-check and test
 ```
 
-Later phases add `sse`, `protocol`, `cli` and `tui_client`. A package is added
+Later phases add `protocol`, `cli` and `tui_client`. A package is added
 by the phase that needs it, never as an empty folder.
 
 ## Commands
@@ -24,8 +25,8 @@ by the phase that needs it, never as an empty folder.
   (`AGENTICA_VERSION`, with its sha256). Keep a local copy under `.tools/`
   (gitignored), never `/tmp`.
 - `make test AGENTICA=...`: `check` (first `coupling`: the package rules
-  below, with `rg`), `unit` (`agentica test tests` in each package) and
-  `smoke` (runs `core/main.agc`).
+  below, with `rg`), `unit` (`agentica test tests` in each package; a package
+  that passes no test fails) and `smoke` (runs `core/main.agc`).
 - `make fmt-check AGENTICA=...`: `agentica fmt --check` in each package.
 - After a change of a package's dependencies: `agentica update` in that
   package's folder, and commit its `agentica.lock`.
@@ -56,8 +57,12 @@ by the phase that needs it, never as an empty folder.
   yes.
 - Never commit a key or a token. Fixtures recorded from a real API have them
   removed.
-- Prefer few end-to-end tests (a client against the server against a fake API)
-  over many unit tests; unit tests for pure helpers (codecs, parsers).
+- Tests: functional tests first (a client against the server against a fake
+  API, or a provider against a fake API server), then unit tests, only for pure
+  parts with many edge cases (codecs, parsers). Fixtures over factories: the
+  recorded SSE and JSON go in `<pkg>/tests/fixtures/`. Few tests, high value.
+  Every `.agc` test run shows how many tests passed, and a run that passes
+  none fails.
 - Changes that need the agentica, packages or agentica-tui repos are
   follow-up issues there, not work here.
 - Every user-visible change adds a line under `## [Unreleased]` of
