@@ -91,6 +91,8 @@ def encode_session_list(reply: SessionList) -> String = JSON.encode(reply)
 
 def decode_session_list(text: String) -> Result[SessionList] = Wire.decode(text, SessionList.codec)
 
+## It trusts its input: it does not check what `decode_session` checks about `turn_id`, `turn_from_event_id` and
+## `last_event_id`, so the server must build a consistent `Session`.
 def encode_session(reply: Session) -> String
   history = reply.history.map { |m| MessageWire(role: role_name(m.role), text: m.text) }
   JSON.encode(

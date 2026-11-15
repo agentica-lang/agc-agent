@@ -2,6 +2,7 @@
 ## nothing outside the session folder is reached through one.
 
 import Regex from "std/regex"
+import Approval from "approval"
 import Sandbox from "sandbox"
 import Spec from "spec"
 
@@ -10,6 +11,11 @@ MAX_DEPTH = 32
 MAX_RESULTS = 500
 MAX_FILE_BYTES = 1048576
 MAX_LINE_CHARS = 300
+
+struct Walked
+  files: List[String]
+  cut: Bool
+end
 
 struct GlobArgs
   pattern: String
@@ -26,10 +32,10 @@ def glob(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, GlobArgs.codec)
   matcher = try glob_regex(args.pattern)
   base = try folder(ctx, args.path)
-  files = try walk(base, "", 0, [])
-  found = files.select { |file| Regex.match?(file, matcher) }
+  walked = try walk(base, "", 0, Walked(files: [], cut: false))
+  found = readable(ctx, base, walked.files).select { |file| Regex.match?(file, matcher) }
   lines = found.take(MAX_RESULTS).map { |file| Sandbox.relative(ctx.root, "#{base}/#{file}") }
-  ok(listing(lines, found.size))
+  ok("#{listing(lines, found.size)}#{cut_note(walked.cut)}")
 end
 
 def grep(ctx: Spec.Context, input: JSON.Value) -> Result[String]
@@ -37,8 +43,8 @@ def grep(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   pattern = try Regex.compile(args.pattern)
   filter = try glob_regex(args.glob.unwrap_or("**"))
   base = try folder(ctx, args.path)
-  files = try walk(base, "", 0, [])
-  wanted = files.select { |name| Regex.match?(name, filter) }
+  walked = try walk(base, "", 0, Walked(files: [], cut: false))
+  wanted = readable(ctx, base, walked.files).select { |name| Regex.match?(name, filter) }
   hits: List[String] = []
   for file in wanted
     break if hits.size > MAX_RESULTS
@@ -46,7 +52,17 @@ def grep(ctx: Spec.Context, input: JSON.Value) -> Result[String]
     hits = hits + matches(pattern, "#{base}/#{file}", Sandbox.relative(ctx.root, "#{base}/#{file}"))
   end
 
-  ok(listing(hits.take(MAX_RESULTS), hits.size))
+  ok("#{listing(hits.take(MAX_RESULTS), hits.size)}#{cut_note(walked.cut)}")
+end
+
+def glob_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
+  args = try Spec.args(input, GlobArgs.codec)
+  ok(Sandbox.relative(ctx.root, try Sandbox.resolve(ctx.root, args.path.unwrap_or("."))))
+end
+
+def grep_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
+  args = try Spec.args(input, GrepArgs.codec)
+  ok(Sandbox.relative(ctx.root, try Sandbox.resolve(ctx.root, args.path.unwrap_or("."))))
 end
 
 ## The regex of a glob: `*` and `?` stay inside a folder name, `**` crosses folders.
@@ -111,21 +127,35 @@ def child(dir: String, name: String) -> String
   end
 end
 
-def walk(base: String, dir: String, depth: Int, found: List[String]) -> Result[List[String]]
-  files = found
+def walk(base: String, dir: String, depth: Int, found: Walked) -> Result[Walked]
+  walked = found
   for name in try Dir.list(child(base, dir))
     next if name == ".git"
-    return ok(files) if files.size >= MAX_FILES
+    return ok(walked.with(cut: true)) if walked.files.size >= MAX_FILES
 
     entry = child(dir, name)
     case File.lstat(child(base, entry))
-      ok(info) if info.kind == "file" -> files = files.push(entry)
-      ok(info) if info.kind == "directory" and depth < MAX_DEPTH -> files = try walk(base, entry, depth + 1, files)
+      ok(info) if info.kind == "file" -> walked = walked.with(files: walked.files.push(entry))
+      ok(info) if info.kind == "directory" and depth < MAX_DEPTH -> walked = try walk(base, entry, depth + 1, walked)
+      ok(info) if info.kind == "directory" -> walked = walked.with(cut: true)
       _ -> nil
     end
   end
 
-  ok(files)
+  ok(walked)
+end
+
+## The files of the walk that no deny rule of `read_file` covers.
+def readable(ctx: Spec.Context, base: String, files: List[String]) -> List[String]
+  files.select { |file| not Approval.read_denied?(ctx.rules, Sandbox.relative(ctx.root, child(base, file))) }
+end
+
+def cut_note(cut: Bool) -> String
+  if cut
+    "\n[the walk stopped at #{MAX_FILES} files or depth #{MAX_DEPTH}: the list may be incomplete]"
+  else
+    ""
+  end
 end
 
 def matches(pattern: Regex.Regex, path: String, shown: String) -> List[String]

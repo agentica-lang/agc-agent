@@ -18,6 +18,9 @@ end
 def resolve(root: String, path: String) -> Result[String]
   return error("empty path") if path == ""
 
+  control = path.split("").any? { |char| char.code < 32 or char.code == 127 }
+  return error("path has a control character: #{path.inspect}") if control
+
   found = try nearest(absolute(root, path).split("/").select { |part| part != "" }, [])
   for name in found.tail
     return error("path has #{name}: #{path}") if name == ".." or name == "."

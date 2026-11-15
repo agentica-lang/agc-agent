@@ -27,7 +27,9 @@ def link(target: String, path: String) -> Result[Void]
 end
 
 # A session folder `work` with a file, a folder and a .git, next to a folder `outside` with a secret.
-def setup() -> Result[Setup]
+def setup() -> Result[Setup] = setup_with([], [])
+
+def setup_with(allow: List[String], deny: List[String]) -> Result[Setup]
   tmp = System.env("TMPDIR").unwrap_or("/tmp")
   base = "#{tmp}/agc-tools-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(base)
@@ -46,7 +48,8 @@ def setup() -> Result[Setup]
   try link(outside, "#{root}/out_dir")
   try link("#{outside}/new.txt", "#{root}/dangling")
   try link("#{root}/a.txt", "#{root}/inside_link")
-  ctx = try Tools.context(root, &fake_env)
+  rules = try Approval.parse_rules(allow, deny)
+  ctx = try Tools.context(root, &fake_env, rules)
   ok(Setup(base: base, root: root, outside: outside, ctx: ctx))
 end
 
@@ -65,7 +68,7 @@ end
 
 def test_read_file_reads_inside_and_refuses_every_way_out() -> Result[Void]
   s = try setup()
-  try Test.eq(call(s, "read_file", {"path": "a.txt"}), Tools.Output(text: "one\ntwo\nthree\nfour\n", is_error: false))
+  try Test.eq(call(s, "read_file", {"path": "a.txt"}), Tools.Output(text: "one\ntwo\nthree\nfour", is_error: false))
   try Test.eq(raw(s, "read_file", "{\"path\": \"a.txt\", \"offset\": 1, \"limit\": 2}").text, "two\nthree")
   try Test.eq(call(s, "read_file", {"path": "inside_link"}).is_error, false)
   try refused(call(s, "read_file", {"path": "../outside/secret.txt"}))
@@ -147,7 +150,6 @@ def test_bash_runs_in_the_folder_with_a_clean_environment() -> Result[Void]
   try Test.eq(env.is_error, false)
   try Test.assert(env.text.include?("HOME=/home/tester"), "HOME is kept")
   try Test.assert(not env.text.include?("sk-secret-key"), "the provider key reached bash")
-  try Test.assert(not env.text.include?("OPENAI_API_KEY"), "the provider key name reached bash")
   try Test.assert(not env.text.include?("server.json"), "the path of server.json reached bash")
 
   # stdin is closed, so `cat` ends at once instead of waiting for input.
@@ -155,6 +157,25 @@ def test_bash_runs_in_the_folder_with_a_clean_environment() -> Result[Void]
   long = call(s, "bash", {"command": "head -c 40000 /dev/zero | tr '\\0' a"})
   try Test.assert(long.text.include?("[output cut"), "a long output is cut")
   try refused(raw(s, "bash", "{\"command\": \"true\", \"timeout_ms\": 700000}"))
+  done(s)
+end
+
+def test_bash_gets_only_the_kept_variables_of_the_real_environment() -> Result[Void]
+  # `make unit` puts AGC_TEST_SECRET in the environment of the test process; `env -i` keeps it out of bash.
+  secret = System.env("AGC_TEST_SECRET").unwrap_or("")
+  try Test.assert(secret != "", "run the tests through make unit, which sets AGC_TEST_SECRET")
+  s = try setup()
+  env = call(s, "bash", {"command": "env"})
+  try Test.eq(env.is_error, false)
+  try Test.assert(not env.text.include?(secret), "a variable of the server reached bash")
+  kept = ["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "TZ", "SHELL"]
+  allowed = kept + ["PWD", "SHLVL", "_", "OLDPWD"]
+  lines = env.text.split("\n").select { |text| text.include?("=") }
+  for line in lines
+    name = line.split("=").first
+    try Test.assert(allowed.include?(name), "bash got the variable #{name}")
+  end
+
   done(s)
 end
 
@@ -171,16 +192,23 @@ def test_bash_timeout_kills_the_whole_process_group() -> Result[Void]
   done(s)
 end
 
-def test_approval_rules_match_only_simple_commands() -> Result[Void]
+def decide(rules: Approval.Rules, command: String) -> Approval.Verdict = Approval.decide(rules, "bash", command, true)
+
+def test_a_bash_rule_matches_only_a_plain_command_and_whole_words() -> Result[Void]
   rules = try Approval.parse_rules(
-    ["bash(git status*)", "write_file(src/*)"],
-    ["bash(git status --evil*)", "read_file(*.pem)"],
+    ["bash(git status*)", "bash(ls)", "write_file(src/*)"],
+    ["bash(git status --evil*)"],
   )
 
-  try Test.eq(Approval.decide(rules, "bash", "git status", true), Approval.Verdict.Allow)
-  try Test.eq(Approval.decide(rules, "bash", "git status --short", true), Approval.Verdict.Allow)
-  try Test.eq(Approval.decide(rules, "bash", "git status --evil", true), Approval.Verdict.Deny)
-  try Test.eq(Approval.decide(rules, "bash", "git log", true), Approval.Verdict.Ask)
+  try Test.eq(decide(rules, "git status"), Approval.Verdict.Allow)
+  try Test.eq(decide(rules, "git status --short"), Approval.Verdict.Allow)
+  try Test.eq(decide(rules, "git status\t-s"), Approval.Verdict.Allow)
+  try Test.eq(decide(rules, "git status --evil"), Approval.Verdict.Deny)
+  try Test.eq(decide(rules, "git log"), Approval.Verdict.Ask)
+  try Test.eq(decide(rules, "ls"), Approval.Verdict.Allow)
+  # A `*` after a word does not cross into the next word: `statusx` can be a git alias.
+  try Test.eq(decide(rules, "git statusx"), Approval.Verdict.Ask)
+  try Test.eq(decide(rules, "git status-x"), Approval.Verdict.Ask)
   for command in [
     "git status; rm x",
     "git status && rm x",
@@ -193,12 +221,31 @@ def test_approval_rules_match_only_simple_commands() -> Result[Void]
     "git status < in",
     "git status\nrm x",
     "git status\r\nrm x",
+    "git status <(id)",
+    "git status >(id)",
+    "git status <<EOF",
+    "git status $((1+1))",
+    "git status ${PATH:0:1}",
+    "git status${IFS}--short",
+    "git status \"a;b\"",
+    "git status 'a'",
+    "git status \\;",
+    "git status *",
+    "git status ?",
+    "git status ~",
+    "git status !x",
+    "git status {a,b}",
+    "git status #{String.from_code(65307)}touch x",
+    "FOO=1 git status",
+    "exec git status",
+    "eval git status",
   ]
-    try Test.eq(Approval.decide(rules, "bash", command, true), Approval.Verdict.Ask)
+    try Test.eq(decide(rules, command), Approval.Verdict.Ask)
   end
 
-  try Test.eq(Approval.decide(rules, "read_file", "key.pem", false), Approval.Verdict.Deny)
-  try Test.eq(Approval.decide(rules, "read_file", "a.txt", false), Approval.Verdict.Allow)
+  # A bash prompt expansion turns octal escapes into `$(...)`: it asks, because `$` and `\` are not plain.
+  prompt = "git status '\\044(touch pwned\\073 kill -9 \\044\\044)' ${BASH_EXECUTION_STRING@P}"
+  try Test.eq(decide(rules, prompt), Approval.Verdict.Ask)
   try Test.eq(Approval.decide(rules, "write_file", "src/a.agc", true), Approval.Verdict.Allow)
   try Test.eq(Approval.decide(rules, "edit_file", "src/a.agc", true), Approval.Verdict.Ask)
   try Test.error?(Approval.parse_rule("bash"))
@@ -206,23 +253,120 @@ def test_approval_rules_match_only_simple_commands() -> Result[Void]
   Test.error?(Approval.parse_rule("(x)"))
 end
 
-def test_verdicts_follow_the_defaults_and_judge_the_real_path() -> Result[Void]
-  s = try setup()
-  defaults = try Approval.parse_rules([], [])
-  rules = try Approval.parse_rules(["write_file(sub/*)", "bash(git status*)"], [])
-  try Test.eq(Tools.verdict(s.ctx, defaults, "read_file", JSON.from({"path": "a.txt"})), Approval.Verdict.Allow)
-  try Test.eq(Tools.verdict(s.ctx, defaults, "glob", JSON.from({"pattern": "*"})), Approval.Verdict.Allow)
-  try Test.eq(Tools.verdict(s.ctx, defaults, "grep", JSON.from({"pattern": "x"})), Approval.Verdict.Allow)
-  try Test.eq(Tools.verdict(s.ctx, defaults, "write_file", JSON.from({"path": "a.txt"})), Approval.Verdict.Ask)
-  try Test.eq(Tools.verdict(s.ctx, defaults, "edit_file", JSON.from({"path": "a.txt"})), Approval.Verdict.Ask)
-  try Test.eq(Tools.verdict(s.ctx, defaults, "bash", JSON.from({"command": "ls"})), Approval.Verdict.Ask)
-  try Test.eq(Tools.verdict(s.ctx, defaults, "nope", JSON.from({"path": "a.txt"})), Approval.Verdict.Deny)
+def test_a_change_under_git_always_asks() -> Result[Void]
+  rules = try Approval.parse_rules(["write_file(*)", "edit_file(*)"], ["write_file(.git/hooks/*)"])
+  try Test.eq(Approval.decide(rules, "write_file", "a.txt", true), Approval.Verdict.Allow)
+  try Test.eq(Approval.decide(rules, "write_file", ".git/config", true), Approval.Verdict.Ask)
+  try Test.eq(Approval.decide(rules, "edit_file", "sub/.git/config", true), Approval.Verdict.Ask)
+  try Test.eq(Approval.decide(rules, "write_file", ".git/hooks/pre-commit", true), Approval.Verdict.Deny)
+  Test.eq(Approval.decide(rules, "write_file", ".github/ci.yml", true), Approval.Verdict.Allow)
+end
 
-  try Test.eq(Tools.verdict(s.ctx, rules, "write_file", JSON.from({"path": "sub/x.txt"})), Approval.Verdict.Allow)
-  try Test.eq(Tools.verdict(s.ctx, rules, "write_file", JSON.from({"path": "sub/../a.txt"})), Approval.Verdict.Ask)
-  try Test.eq(Tools.verdict(s.ctx, rules, "write_file", JSON.from({"path": "inside_link"})), Approval.Verdict.Ask)
-  try Test.eq(Tools.verdict(s.ctx, rules, "bash", JSON.from({"command": "git status; rm x"})), Approval.Verdict.Ask)
-  try Test.eq(Tools.verdict(s.ctx, rules, "bash", JSON.from({"command": " git status "})), Approval.Verdict.Allow)
+def write(path: String) -> JSON.Value = JSON.from({"path": path, "content": ""})
+
+def edit(path: String) -> JSON.Value = JSON.from({"path": path, "old_string": "a", "new_string": "b"})
+
+def test_verdicts_follow_the_defaults_and_judge_the_real_path() -> Result[Void]
+  s = try setup_with(["write_file(sub/*)", "bash(git status*)"], [])
+  try Test.eq(Tools.verdict(s.ctx, "read_file", JSON.from({"path": "a.txt"})), Approval.Verdict.Allow)
+  try Test.eq(Tools.verdict(s.ctx, "glob", JSON.from({"pattern": "*"})), Approval.Verdict.Allow)
+  try Test.eq(Tools.verdict(s.ctx, "grep", JSON.from({"pattern": "x"})), Approval.Verdict.Allow)
+  try Test.eq(Tools.verdict(s.ctx, "write_file", write("a.txt")), Approval.Verdict.Ask)
+  try Test.eq(Tools.verdict(s.ctx, "edit_file", edit("a.txt")), Approval.Verdict.Ask)
+  try Test.eq(Tools.verdict(s.ctx, "bash", JSON.from({"command": "ls"})), Approval.Verdict.Ask)
+  try Test.eq(Tools.verdict(s.ctx, "nope", JSON.from({"path": "a.txt"})), Approval.Verdict.Deny)
+
+  try Test.eq(Tools.verdict(s.ctx, "write_file", write("sub/x.txt")), Approval.Verdict.Allow)
+
+  try Test.eq(Tools.verdict(s.ctx, "write_file", write("sub/../a.txt")), Approval.Verdict.Ask)
+
+  try Test.eq(Tools.verdict(s.ctx, "write_file", write("inside_link")), Approval.Verdict.Ask)
+
+  try Test.eq(Tools.verdict(s.ctx, "bash", JSON.from({"command": "git status; rm x"})), Approval.Verdict.Ask)
+  try Test.eq(Tools.verdict(s.ctx, "bash", JSON.from({"command": " git status "})), Approval.Verdict.Allow)
+  done(s)
+end
+
+# A call whose target cannot be worked out is never allowed, with or without rules for the tool.
+def test_a_call_with_a_bad_target_is_denied_and_fails() -> Result[Void]
+  s = try setup_with(["write_file(*)", "bash(*)"], ["grep(*)"])
+  for json in [
+    "{\"path\": \"../outside/x\", \"content\": \"\"}",
+    "{\"path\": \"dangling/x\", \"content\": \"\"}",
+    "{\"path\": 3, \"content\": \"\"}",
+    "{\"path\": null, \"content\": \"\"}",
+    "{\"content\": \"\"}",
+    "{\"path\": \"a.txt\", \"content\": \"\", \"paht\": \"x\"}",
+    "[]",
+    "null",
+  ]
+    input = JSON.parse(json).unwrap!
+    try Test.eq(Tools.verdict(s.ctx, "write_file", input), Approval.Verdict.Deny)
+    try refused(Tools.run(s.ctx, "write_file", input))
+  end
+
+  for json in ["{}", "{\"command\": null}", "{\"command\": 3}", "{\"command\": \"ls\", \"x\": 1}"]
+    try Test.eq(Tools.verdict(s.ctx, "bash", JSON.parse(json).unwrap!), Approval.Verdict.Deny)
+    try refused(Tools.run(s.ctx, "bash", JSON.parse(json).unwrap!))
+  end
+
+  # A `null` path is not "no path": it is refused, and it cannot dodge a rule by being read as `.`.
+  null_path = JSON.parse("{\"pattern\": \"needle\", \"path\": null}").unwrap!
+  try Test.eq(Tools.verdict(s.ctx, "grep", null_path), Approval.Verdict.Deny)
+  try refused(Tools.run(s.ctx, "grep", null_path))
+  try Test.eq(Tools.verdict(s.ctx, "grep", JSON.from({"pattern": "needle"})), Approval.Verdict.Deny)
+  try refused(raw(s, "read_file", "{\"path\": \"a.txt\", \"offset\": null}"))
+  done(s)
+end
+
+def test_a_deny_rule_of_read_file_hides_the_file_from_glob_and_grep() -> Result[Void]
+  s = try setup_with([], ["read_file(.env)", "read_file(*/.env)", "read_file(*.pem)"])
+  try File.write_text("#{s.root}/.env", "API_KEY=hunter2\nneedle\n")
+  try File.write_text("#{s.root}/sub/.env", "needle\n")
+  try File.write_text("#{s.root}/k.pem", "needle\n")
+  try Test.eq(Tools.verdict(s.ctx, "read_file", JSON.from({"path": ".env"})), Approval.Verdict.Deny)
+  grep = call(s, "grep", {"pattern": "needle|KEY"})
+  try Test.eq(grep.text, "sub/b.txt:1:needle in sub")
+  all = call(s, "glob", {"pattern": "**"})
+  try Test.eq(all.text, "a.txt\nblob.bin\nsub/b.txt")
+  try Test.eq(call(s, "grep", {"pattern": "needle", "path": "sub"}).text, "sub/b.txt:1:needle in sub")
+  done(s)
+end
+
+def test_read_file_reads_a_range_of_a_file_over_1_mib() -> Result[Void]
+  s = try setup()
+  line = "y" * 100000
+  big = "#{s.root}/big.txt"
+  try File.write_text(big, "first\n")
+  for _i in 1..12
+    try File.append_text(big, "#{line}\n")
+  end
+
+  try File.append_text(big, "last\n")
+  try Test.eq(raw(s, "read_file", "{\"path\": \"big.txt\", \"limit\": 1}").text, "first")
+  try Test.eq(raw(s, "read_file", "{\"path\": \"big.txt\", \"offset\": 13, \"limit\": 5}").text, "last")
+  done(s)
+end
+
+def test_glob_and_grep_say_when_the_walk_stops_early() -> Result[Void]
+  s = try setup()
+  deep = (1..40).map { |_i| "d" }.join("/")
+  try Dir.mkdir("#{s.root}/#{deep}")
+  try File.write_text("#{s.root}/#{deep}/deep.txt", "needle deep\n")
+  glob = call(s, "glob", {"pattern": "**/deep.txt"})
+  try Test.assert(glob.text.include?("the walk stopped"), "glob does not say that it stopped: #{glob.text}")
+  grep = call(s, "grep", {"pattern": "needle deep"})
+  try Test.assert(grep.text.include?("the walk stopped"), "grep does not say that it stopped: #{grep.text}")
+  try Test.assert(not call(s, "glob", {"pattern": "*.txt", "path": "sub"}).text.include?("stopped"), "no cut here")
+  done(s)
+end
+
+def test_write_file_refuses_control_characters_in_a_name() -> Result[Void]
+  s = try setup()
+  try refused(call(s, "write_file", {"path": "new\nline.txt", "content": "x"}))
+  try refused(call(s, "write_file", {"path": "sub/tab\there", "content": "x"}))
+  try refused(call(s, "write_file", {"path": "a#{String.from_code(127)}b", "content": "x"}))
+  try Test.eq(Dir.list(s.root).unwrap!.select { |name| name.include?("line") }, [])
   done(s)
 end
 
@@ -232,6 +376,7 @@ def test_bad_input_is_an_error_for_the_model() -> Result[Void]
   try refused(raw(s, "write_file", "{\"path\": 3}"))
   try refused(call(s, "no_such_tool", {"path": "a.txt"}))
   try refused(call(s, "read_file", {"path": ""}))
+  try refused(call(s, "read_file", {"path": "a.txt", "paht": "b.txt"}))
   done(s)
 end
 

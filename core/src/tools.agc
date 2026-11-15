@@ -1,4 +1,16 @@
 ## The six base tools, and the rules around them: which run without asking, and what a call touches.
+##
+## Security model. The tools keep a call inside the session folder and the approval rules decide what asks, but neither
+## is a sandbox:
+## - An allow pattern is a convenience. Allowing a program allows every option it takes and every config file it reads:
+##   `bash(git diff*)` allows `git diff --output=../x`, which writes outside the folder, and `bash(git *)` allows
+##   `git -c alias.x=!cmd x`, which runs `cmd`. Allow only what is harmless with any option.
+## - A bash rule matches only a plain command, so a deny rule of `bash` is best effort: `rm x; true` asks and is not
+##   denied. A command that is not plain always asks, never runs on a rule.
+## - A deny rule of `read_file` also hides the file from `glob` and `grep`.
+## - Bash runs as the user of the server and can read what the server reads (see `Shell`). A path is checked before it
+##   is used, and bash is the only way to run something in parallel, so the check can race with a swapped link.
+## - On a case-insensitive filesystem a rule on `.env` may not match `.ENV`.
 
 import Approval from "approval"
 import Files from "files"
@@ -13,21 +25,24 @@ export Spec.Tool
 export Approval.Verdict
 export Approval.Rules
 
-## The context of a session in `cwd`: the real path of the folder, and where bash reads its few environment variables.
-def context(cwd: String, env: Fn[String, Result[String]]) -> Result[Spec.Context]
+## The context of a session in `cwd`: the real path of the folder, where bash reads its few environment variables, and
+## the approval rules. Change the rules with `ctx.with(rules: ...)`.
+def context(cwd: String, env: Fn[String, Result[String]], rules: Approval.Rules) -> Result[Spec.Context]
   root = try Sandbox.open(cwd)
-  ok(Spec.Context(root: root, env: env))
+  ok(Spec.Context(root: root, env: env, rules: rules))
 end
 
 def all() -> List[Spec.Tool]
   [
     Spec.Tool(
       name: "read_file",
-      description: "Read a text file of the session folder. Lines from `offset` (0 is the first), at most `limit`.",
+      description: (
+        "Read a text file of the session folder, of any size. Lines from `offset` (0 is the first), at most `limit`."
+      ),
       input_schema: JSON.schema(Files.ReadFileArgs),
       asks: false,
       run: &Files.read_file,
-      target: &Files.path_target,
+      target: &Files.read_target,
     ),
     Spec.Tool(
       name: "write_file",
@@ -35,7 +50,7 @@ def all() -> List[Spec.Tool]
       input_schema: JSON.schema(Files.WriteFileArgs),
       asks: true,
       run: &Files.write_file,
-      target: &Files.path_target,
+      target: &Files.write_target,
     ),
     Spec.Tool(
       name: "edit_file",
@@ -45,7 +60,7 @@ def all() -> List[Spec.Tool]
       input_schema: JSON.schema(Files.EditFileArgs),
       asks: true,
       run: &Files.edit_file,
-      target: &Files.path_target,
+      target: &Files.edit_target,
     ),
     Spec.Tool(
       name: "glob",
@@ -53,7 +68,7 @@ def all() -> List[Spec.Tool]
       input_schema: JSON.schema(Search.GlobArgs),
       asks: false,
       run: &Search.glob,
-      target: &Files.path_target,
+      target: &Search.glob_target,
     ),
     Spec.Tool(
       name: "grep",
@@ -61,7 +76,7 @@ def all() -> List[Spec.Tool]
       input_schema: JSON.schema(Search.GrepArgs),
       asks: false,
       run: &Search.grep,
-      target: &Files.path_target,
+      target: &Search.grep_target,
     ),
     Spec.Tool(
       name: "bash",
@@ -90,11 +105,10 @@ def run(ctx: Spec.Context, name: String, input: JSON.Value) -> Spec.Output
   end
 end
 
-## Whether a call runs, waits for an answer or is refused. A path that leaves the folder is not asked about: the tool
-## refuses it when it runs.
-def verdict(ctx: Spec.Context, rules: Approval.Rules, name: String, input: JSON.Value) -> Approval.Verdict
+## Whether a call runs, waits for an answer or is refused. A call whose input or path is not valid is refused.
+def verdict(ctx: Spec.Context, name: String, input: JSON.Value) -> Approval.Verdict
   case find(name)
-    ok(tool) -> verdict_of(ctx, rules, tool, input)
+    ok(tool) -> verdict_of(ctx, tool, input)
     error(_) -> Approval.Verdict.Deny
   end
 end
@@ -107,10 +121,10 @@ end
 
 private
 
-def verdict_of(ctx: Spec.Context, rules: Approval.Rules, tool: Spec.Tool, input: JSON.Value) -> Approval.Verdict
+def verdict_of(ctx: Spec.Context, tool: Spec.Tool, input: JSON.Value) -> Approval.Verdict
   case tool.target(ctx, input)
-    ok(target) -> Approval.decide(rules, tool.name, target, tool.asks)
-    error(_) -> Approval.Verdict.Allow
+    ok(target) -> Approval.decide(ctx.rules, tool.name, target, tool.asks)
+    error(_) -> Approval.Verdict.Deny
   end
 end
 

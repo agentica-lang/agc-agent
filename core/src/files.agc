@@ -29,8 +29,14 @@ def read_file(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   limit = args.limit.unwrap_or(DEFAULT_LINES)
   return error("offset and limit must not be negative") if offset < 0 or limit < 0
 
-  text = try read(ctx, args.path)
-  ok(text.split("\n").drop(offset).take(limit).join("\n"))
+  path = try Sandbox.resolve(ctx.root, args.path)
+  info = try File.stat(path)
+  return error("not a file: #{args.path}") if info.kind != "file"
+
+  file = try File.open(path)
+  lines = read_lines(file, offset, limit)
+  _ = File.close(file)
+  lines
 end
 
 def write_file(ctx: Spec.Context, input: JSON.Value) -> Result[String]
@@ -58,17 +64,49 @@ def edit_file(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   ok("replaced #{count} in #{args.path}")
 end
 
-## The path of a call, relative to the session folder, for the approval rules and the preview.
-def path_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
-  path = case JSON.get(input, "path")
-    ok(value) -> try JSON.string(value)
-    error(_) -> "."
-  end
+## The path of each call, relative to the session folder, for the approval rules and the preview.
+def read_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
+  args = try Spec.args(input, ReadFileArgs.codec)
+  relative_path(ctx, args.path)
+end
 
+def write_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
+  args = try Spec.args(input, WriteFileArgs.codec)
+  relative_path(ctx, args.path)
+end
+
+def edit_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
+  args = try Spec.args(input, EditFileArgs.codec)
+  relative_path(ctx, args.path)
+end
+
+def relative_path(ctx: Spec.Context, path: String) -> Result[String]
   ok(Sandbox.relative(ctx.root, try Sandbox.resolve(ctx.root, path)))
 end
 
 private
+
+# A file is read line by line, so `offset` and `limit` reach into a file of any size.
+def read_lines(file: File.Handle, offset: Int, limit: Int) -> Result[String]
+  lines: List[String] = []
+  number = 0
+  while lines.size < limit
+    case File.read_line(file)
+      ok(line) ->
+        if number >= offset
+          lines = lines.push(line)
+        end
+
+        number += 1
+      error(e) ->
+        return ok(lines.join("\n")) if e.kind == "io.eof"
+
+        return error(e.message)
+    end
+  end
+
+  ok(lines.join("\n"))
+end
 
 def read(ctx: Spec.Context, requested: String) -> Result[String]
   path = try Sandbox.resolve(ctx.root, requested)

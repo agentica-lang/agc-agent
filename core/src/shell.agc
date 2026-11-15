@@ -1,4 +1,12 @@
 ## The bash tool: a command in its own process group, in the session folder, with a clean environment and no input.
+##
+## Bash is not a security boundary: the command runs as the user of the server and can do what that user can. Three
+## limits to know:
+## - `env -i` keeps the server's keys out of the command's own environment, not out of reach: the server is the parent
+##   of the command, and `/proc/$PPID/environ` of a process of the same user shows the environment it started with.
+## - A timeout and a stop kill the process group. A command that leaves it (`setsid`, `nohup ... &`) outlives them.
+## - The files a call reaches are checked before they are used, not as they are used: a command that runs in parallel
+##   can swap a folder for a link between the check and the use.
 
 import Spec from "spec"
 
@@ -19,14 +27,15 @@ def bash(ctx: Spec.Context, input: JSON.Value) -> Result[String]
 
   options = Process.Options(chdir: ctx.root, pgroup: true, timeout_ms: timeout_ms)
   words = ["-i"] + environment(ctx.env) + ["bash", "-c", args.command]
-  process = try Process.spawn_captured("env", words, options)
+  process = try Process.spawn_captured("/usr/bin/env", words, options)
   _ = Process.close_stdin(process, 1000)
   result = finish(process, timeout_ms)
   Process.close(process)
   result
 end
 
-## `NAME=value` words for `env -i`: only the variables bash needs, so no key or token of the server reaches a command.
+## `NAME=value` words for `env -i`: only the variables bash needs, so the command's environment has none of the keys of
+## the server.
 def environment(read: Fn[String, Result[String]]) -> List[String]
   words: List[String] = []
   for name in KEPT_ENV
