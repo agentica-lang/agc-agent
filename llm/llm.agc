@@ -9,13 +9,16 @@
 
 import Api from "src/api"
 import OpenAIChat from "src/openai_chat"
+import Http from "src/openai_http"
+import OpenAIResponses from "src/openai_responses"
 import Stop from "src/stop_reason"
 import Types from "src/types"
 
 VERSION = "0.0.1"
 
-export OpenAIChat.OpenAIChatOptions
+export Http.Options
 export OpenAIChat.openai_chat
+export OpenAIResponses.openai_responses
 export Api.Provider
 export Api.Stream
 export Api.stream

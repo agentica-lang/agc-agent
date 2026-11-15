@@ -1,0 +1,57 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_HgCh0j8SJv8MjrEQZQPtss0DPo4U0UcR","object":"response","status":"in_progress"}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_HgCh0j8SJv8MjrEQZQPtss0DPo4U0UcR","object":"response","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","arguments":"","call_id":"call_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","name":"read_file","type":"function_call","status":"in_progress"}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"{","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"\"","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"path","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"\":","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" \"","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"README","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":".md","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"\",","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" \"","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"limit","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"\":","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":" 1","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"0","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","delta":"}","item_id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","output_index":0}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","type":"function_call","status":"completed","arguments":"{\"path\": \"README.md\", \"limit\": 10}","call_id":"call_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","name":"read_file"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_HgCh0j8SJv8MjrEQZQPtss0DPo4U0UcR","object":"response","created_at":1794779562,"status":"completed","model":"qwen2.5-0.5b-instruct","output":[{"id":"fc_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","type":"function_call","status":"completed","arguments":"{\"path\": \"README.md\", \"limit\": 10}","call_id":"call_CeNRDe1rL888N7ebWb3qSDMgBVGJX8dy","name":"read_file"}],"usage":{"input_tokens":185,"output_tokens":28,"total_tokens":213,"input_tokens_details":{"cached_tokens":0}}},"timings":{"cache_n":0,"prompt_n":185,"prompt_ms":3037.679,"prompt_per_token_ms":16.419886486486487,"prompt_per_second":60.90176085096549,"predicted_n":28,"predicted_ms":1073.655,"predicted_per_token_ms":39.765,"predicted_per_second":25.14774299006664}}
+

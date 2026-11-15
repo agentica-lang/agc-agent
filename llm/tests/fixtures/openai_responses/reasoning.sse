@@ -1,0 +1,366 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_eM4uGNVn48vxLa5ZbUV8jnW7mvSecGVC","object":"response","status":"in_progress"}}
+
+event: response.in_progress
+data: {"type":"response.in_progress","response":{"id":"resp_eM4uGNVn48vxLa5ZbUV8jnW7mvSecGVC","object":"response","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1","summary":[],"type":"reasoning","content":[],"encrypted_content":"","status":"in_progress"}}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"Okay","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":",","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" so","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" the","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" question","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" is","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" asking","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" what","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" is","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" ","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"2","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" plus","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" ","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"3","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":",","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" and","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" I","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" need","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" to","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" answer","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" with","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" the","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" number","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":".","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" Let","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" me","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" think","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":".","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" Well","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":",","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" when","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" you","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" add","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" ","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"2","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" and","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" ","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"3","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":",","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" you","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" just","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" do","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" ","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"2","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" +","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" ","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"3","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":".","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" Let","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" me","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" do","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" that","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" math","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":".","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" ","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"2","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" plus","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" ","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"3","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"...","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" that","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"'s","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" ","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"5","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":".","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" So","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" the","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" answer","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" should","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" be","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" ","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"5","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":".","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" I","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" don","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"'t","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" think","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" there","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"'s","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" any","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" trick","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" here","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":".","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" It","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"'s","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" straightforward","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" addition","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":".","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" Yeah","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":",","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" I","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":"'m","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" pretty","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" sure","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":".","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" No","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" need","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" to","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" use","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" any","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" complex","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" operations","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" or","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" anything","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":".","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" Just","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" add","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" the","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" numbers","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":" directly","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.reasoning_text.delta
+data: {"type":"response.reasoning_text.delta","output_index":0,"content_index":0,"delta":".\n","item_id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1"}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":1,"item":{"content":[],"id":"msg_NQmJjGd6RPljwa7zAWa9kJcm8esZX00p","role":"assistant","status":"in_progress","type":"message"}}
+
+event: response.content_part.added
+data: {"type":"response.content_part.added","item_id":"msg_NQmJjGd6RPljwa7zAWa9kJcm8esZX00p","output_index":1,"content_index":0,"part":{"type":"output_text","text":""}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_NQmJjGd6RPljwa7zAWa9kJcm8esZX00p","output_index":1,"content_index":0,"delta":"5"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1","summary":[],"type":"reasoning","content":[{"text":"Okay, so the question is asking what is 2 plus 3, and I need to answer with the number. Let me think. Well, when you add 2 and 3, you just do 2 + 3. Let me do that math. 2 plus 3... that's 5. So the answer should be 5. I don't think there's any trick here. It's straightforward addition. Yeah, I'm pretty sure. No need to use any complex operations or anything. Just add the numbers directly.\n","type":"reasoning_text"}],"encrypted_content":""}}
+
+event: response.output_text.done
+data: {"type":"response.output_text.done","item_id":"msg_NQmJjGd6RPljwa7zAWa9kJcm8esZX00p","output_index":1,"content_index":0,"text":"5"}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","item_id":"msg_NQmJjGd6RPljwa7zAWa9kJcm8esZX00p","output_index":1,"content_index":0,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"5"}}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":1,"item":{"type":"message","status":"completed","id":"msg_NQmJjGd6RPljwa7zAWa9kJcm8esZX00p","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"5"}],"role":"assistant"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_eM4uGNVn48vxLa5ZbUV8jnW7mvSecGVC","object":"response","created_at":1794779595,"status":"completed","model":"qwen3-0.6b","output":[{"id":"rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1","summary":[],"type":"reasoning","content":[{"text":"Okay, so the question is asking what is 2 plus 3, and I need to answer with the number. Let me think. Well, when you add 2 and 3, you just do 2 + 3. Let me do that math. 2 plus 3... that's 5. So the answer should be 5. I don't think there's any trick here. It's straightforward addition. Yeah, I'm pretty sure. No need to use any complex operations or anything. Just add the numbers directly.\n","type":"reasoning_text"}],"encrypted_content":""},{"type":"message","status":"completed","id":"msg_NQmJjGd6RPljwa7zAWa9kJcm8esZX00p","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"5"}],"role":"assistant"}],"usage":{"input_tokens":21,"output_tokens":117,"total_tokens":138,"input_tokens_details":{"cached_tokens":0}}},"timings":{"cache_n":0,"prompt_n":21,"prompt_ms":324.565,"prompt_per_token_ms":15.45547619047619,"prompt_per_second":64.70198573475267,"predicted_n":117,"predicted_ms":3594.79,"predicted_per_token_ms":30.98956896551724,"predicted_per_second":32.2689225239861}}
+

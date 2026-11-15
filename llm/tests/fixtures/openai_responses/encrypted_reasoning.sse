@@ -1,0 +1,42 @@
+event: response.created
+data: {"type":"response.created","response":{"id":"resp_hand_1","object":"response","status":"in_progress"}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":0,"item":{"id":"rs_hand_1","type":"reasoning","summary":[],"encrypted_content":null}}
+
+event: response.reasoning_summary_part.added
+data: {"type":"response.reasoning_summary_part.added","item_id":"rs_hand_1","output_index":0,"summary_index":0,"part":{"type":"summary_text","text":""}}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_hand_1","output_index":0,"summary_index":0,"delta":"Need the "}
+
+event: response.reasoning_summary_text.delta
+data: {"type":"response.reasoning_summary_text.delta","item_id":"rs_hand_1","output_index":0,"summary_index":0,"delta":"README first."}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":0,"item":{"id":"rs_hand_1","type":"reasoning","summary":[{"type":"summary_text","text":"Need the README first."}],"encrypted_content":"gAAAAABoHandMadeOpaqueReasoning=="}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":1,"item":{"id":"msg_hand_1","type":"message","role":"assistant","status":"in_progress","content":[],"phase":"commentary"}}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","item_id":"msg_hand_1","output_index":1,"content_index":0,"delta":"Reading it."}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":1,"item":{"id":"msg_hand_1","type":"message","role":"assistant","status":"completed","phase":"commentary","content":[{"type":"output_text","annotations":[],"text":"Reading it."}]}}
+
+event: response.output_item.added
+data: {"type":"response.output_item.added","output_index":2,"item":{"id":"fc_hand_1","type":"function_call","status":"in_progress","arguments":"","call_id":"call_hand_1","name":"read_file"}}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_hand_1","output_index":2,"delta":"{\"path\": "}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_hand_1","output_index":2,"delta":"\"README.md\"}"}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","output_index":2,"item":{"id":"fc_hand_1","type":"function_call","status":"completed","arguments":"{\"path\": \"README.md\"}","call_id":"call_hand_1","name":"read_file"}}
+
+event: response.completed
+data: {"type":"response.completed","response":{"id":"resp_hand_1","object":"response","status":"completed","usage":{"input_tokens":120,"input_tokens_details":{"cached_tokens":100},"output_tokens":40,"output_tokens_details":{"reasoning_tokens":25},"total_tokens":160}}}
+

@@ -76,28 +76,13 @@ def request_body(request: Types.Request) -> Result[String]
 end
 
 ## Folds the `data` of one SSE event. Errors: `llm.api` (an error object in the stream), `llm.protocol` (bad JSON).
-def take(turn: Turn, data: String) -> Result[Step]
-  return ok(Step(turn: turn.with(done: true), events: [])) if data.strip == "[DONE]"
-
-  json = try protocol(JSON.parse(data))
-  case JSON.get(json, "error")
-    ok(err) -> return error("llm: the API failed in the stream: #{err}", kind: "llm.api")
-    error(_) -> nil
-  end
-
-  chunk = try protocol(JSON.decode(json, Chunk))
-  step = Step(turn: turn.with(id: chunk.id.unwrap_or(turn.id)), events: [])
-  for choice in chunk.choices.unwrap_or([])
-    step = take_choice(step, choice)
-  end
-
-  for usage in option_list(chunk.usage)
-    used = to_usage(usage)
-    step = Step(turn: step.turn.with(usage: used), events: step.events.push(Types.Event.UsageUpdate(used)))
-  end
-
-  ok(step)
+def take(turn: Turn, data: String) -> Result[Types.Fold[Turn]]
+  step = try take_step(turn, data)
+  ok(Types.Fold(state: step.turn, events: step.events))
 end
+
+## The stream sent `data: [DONE]`.
+def ended?(turn: Turn) -> Bool = turn.done
 
 ## The response of a stream that ended. Error `llm.protocol`: it ended before a `finish_reason`.
 def finish(turn: Turn) -> Result[Types.Response]
@@ -107,12 +92,6 @@ def finish(turn: Turn) -> Result[Types.Response]
       ok(Types.Response(message: message, stop_reason: stop_reason(reason), usage: turn.usage, id: turn.id))
     none -> error("llm: the stream ended before its finish_reason", kind: "llm.protocol")
   end
-end
-
-## The models of `GET /models`, with the context of llama.cpp (`meta.n_ctx`) or `context_length` when given.
-def models(body: String) -> Result[List[Types.Model]]
-  list = try protocol(JSON.decode(body, ModelList))
-  ok(list.data.map { |m| Types.Model(id: m.id, context: context_of(m)) })
 end
 
 private
@@ -160,18 +139,27 @@ struct CompletionDetails
   reasoning_tokens: Optional[Int]
 end
 
-struct ModelList
-  data: List[WireModel]
-end
+def take_step(turn: Turn, data: String) -> Result[Step]
+  return ok(Step(turn: turn.with(done: true), events: [])) if data.strip == "[DONE]"
 
-struct WireModel
-  id: String
-  context_length: Optional[Int]
-  meta: Optional[ModelMeta]
-end
+  json = try protocol(JSON.parse(data))
+  case JSON.get(json, "error")
+    ok(err) -> return error("llm: the API failed in the stream: #{err}", kind: "llm.api")
+    error(_) -> nil
+  end
 
-struct ModelMeta
-  n_ctx: Optional[Int]
+  chunk = try protocol(JSON.decode(json, Chunk))
+  step = Step(turn: turn.with(id: chunk.id.unwrap_or(turn.id)), events: [])
+  for choice in chunk.choices.unwrap_or([])
+    step = take_choice(step, choice)
+  end
+
+  for usage in option_list(chunk.usage)
+    used = to_usage(usage)
+    step = Step(turn: step.turn.with(usage: used), events: step.events.push(Types.Event.UsageUpdate(used)))
+  end
+
+  ok(step)
 end
 
 def stop_reason(name: String) -> StopReason
@@ -455,12 +443,5 @@ def tool_call(id: String, name: String, arguments: String) -> Types.ToolCall
     ok(json) if JSON.kind(json) == "object" -> call.with(input: json)
     ok(json) -> call.with(input_error: some("the arguments are a JSON #{JSON.kind(json)}, not an object"))
     error(e) -> call.with(input_error: some("the arguments are not JSON: #{e.message}"))
-  end
-end
-
-def context_of(model: WireModel) -> Optional[Int]
-  case model.context_length
-    some(n) -> some(n)
-    none -> model.meta.map { |meta| meta.n_ctx }.unwrap_or(none)
   end
 end

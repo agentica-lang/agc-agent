@@ -1,7 +1,8 @@
 # openai_chat fixtures
 
 Recorded from llama.cpp `llama-server` build `b12012` (the prebuilt
-`ubuntu-x64` archive), started with `--jinja -c 4096 -t 2` and `--alias` (so
+`ubuntu-x64` archive; the smoke tests now run `b12426`, and these recordings
+were kept as they are), started with `--jinja -c 4096 -t 2` and `--alias` (so
 `model` is the alias, not a local path). Requests: `stream: true`,
 `stream_options.include_usage`, `temperature: 0`, `seed: 1`.
 

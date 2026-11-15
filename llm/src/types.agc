@@ -121,6 +121,12 @@ struct ToolStart
   item_id: String = ""
 end
 
+## What a provider's wire made of one piece of its stream: the next state and the events it gave. Not exported.
+struct Fold[S]
+  state: S
+  events: List[Event]
+end
+
 enum Role
   User
   Assistant
