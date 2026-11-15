@@ -3,7 +3,8 @@
 
 import HTTP from "std/http"
 
-FIXTURES = "tests/fixtures/openai_chat"
+# The fixtures, from the package folder (`make unit`) or from the repository root.
+FIXTURE_DIRS = ["tests/fixtures/openai_chat", "llm/tests/fixtures/openai_chat"]
 WAIT_MS = 5000
 
 ## One answer of the fake.
@@ -25,11 +26,13 @@ struct Seen
   body: String
 end
 
-## A running fake. `url` is the base URL a provider takes.
+## A running fake. `url` is the base URL a provider takes. `left` gets one value each time a client left a streamed
+## answer before its end.
 struct Fake
   server: HTTP.Server
   url: String
   seen: Channel[Seen]
+  left: Channel[Bool]
 end
 
 ## Starts a fake that gives `replies` in order, then 500.
@@ -40,8 +43,14 @@ def start(replies: List[Reply]) -> Result[Fake]
   end
 
   seen: Channel[Seen] = Channel.new(replies.size + 1)
-  server = try HTTP.serve("127.0.0.1", 0, ->(request, body) { answer(script, seen, request, body) })
-  ok(Fake(server: server, url: "http://127.0.0.1:#{HTTP.local_port(server)}/v1", seen: seen))
+  left: Channel[Bool] = Channel.new(replies.size + 1)
+  server = try HTTP.serve(
+    "127.0.0.1",
+    0,
+    ->(request, body) { answer(Script(replies: script, seen: seen, left: left), request, body) },
+  )
+
+  ok(Fake(server: server, url: "http://127.0.0.1:#{HTTP.local_port(server)}/v1", seen: seen, left: left))
 end
 
 ## Stops the fake and its connections.
@@ -67,35 +76,44 @@ end
 
 ## The bytes of a fixture file.
 def fixture(name: String) -> Result[Bytes]
-  text = try File.read_text("#{FIXTURES}/#{name}")
-  ok(text.bytes)
+  for dir in FIXTURE_DIRS
+    path = "#{dir}/#{name}"
+    if File.stat(path).ok?
+      text = try File.read_text(path)
+      return ok(text.bytes)
+    end
+  end
+
+  error("no fixture #{name} in #{FIXTURE_DIRS.join(", ")}")
 end
 
 private
 
+struct Script
+  replies: Channel[Reply]
+  seen: Channel[Seen]
+  left: Channel[Bool]
+end
+
 struct Pieces
   channel: Channel[Bytes]
   reply: Reply
+  left: Channel[Bool]
 end
 
 def content_type(value: String) -> HTTP.Header = HTTP.Header(name: "Content-Type", value: value)
 
-def answer(
-  script: Channel[Reply],
-  seen: Channel[Seen],
-  request: HTTP.Request,
-  body: HTTP.RequestBody,
-) -> Result[HTTP.Answer]
+def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Result[HTTP.Answer]
   bytes = try HTTP.read_all(body, 1_048_576)
   text = try String.from_bytes(bytes)
-  try seen.send(Seen(method: request.method, path: request.path, headers: request.headers, body: text), WAIT_MS)
-  reply = script.recv(0).unwrap_or(Reply(status: 500, body: "{\"error\": \"no reply left\"}".bytes))
+  try script.seen.send(Seen(method: request.method, path: request.path, headers: request.headers, body: text), WAIT_MS)
+  reply = script.replies.recv(0).unwrap_or(Reply(status: 500, body: "{\"error\": \"no reply left\"}".bytes))
   if reply.piece_bytes == 0 and not reply.cut
     return ok(HTTP.Answer.Whole(HTTP.Response(status: reply.status, headers: reply.headers, body: reply.body)))
   end
 
   pieces: Channel[Bytes] = Channel.new(8)
-  Task.spawn(&produce, Pieces(channel: pieces, reply: reply))
+  Task.spawn(&produce, Pieces(channel: pieces, reply: reply, left: script.left))
   length: Optional[Int] = none
   if reply.cut
     length = some(reply.body.size + 1)
@@ -112,7 +130,10 @@ def produce(job: Pieces) -> Void
   size = [job.reply.piece_bytes, 1].max.unwrap!
   start = 0
   while start < job.reply.body.size
-    break if not job.channel.send(job.reply.body.drop(start).take(size), WAIT_MS).ok?
+    if not job.channel.send(job.reply.body.drop(start).take(size), WAIT_MS).ok?
+      _ = job.left.send(true, 0)
+      break
+    end
 
     start = start + size
   end

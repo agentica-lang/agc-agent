@@ -3,7 +3,8 @@
 ##
 ## Errors have a kind and, for an HTTP answer, the status as `code`: `llm.auth`, `llm.rate_limit` (`retry_after_ms` in
 ## `details`), `llm.overloaded`, `llm.invalid_request`, `llm.server`, `llm.network`, `llm.protocol` (bad SSE or JSON,
-## a cut stream), `llm.api` (an error inside the stream), `llm.cancelled`. A request is tried again only before the
+## a cut stream), `llm.api` (an error inside the stream), `llm.cancelled`, `llm.slow_reader` (the events were not read
+## in time). A request is tried again only before the
 ## first byte of its stream, on 429, 5xx and network errors.
 
 import Api from "src/api"
@@ -22,17 +23,20 @@ export Api.cancel
 export Api.response
 export Api.models
 export Stop.StopReason
-export Stop.from_anthropic
-export Stop.from_openai
 export Types.Block
 export Types.Event
 export Types.Message
 export Types.Model
+export Types.Piece
 export Types.Request
 export Types.Response
 export Types.Role
+export Types.TextPart
+export Types.ThinkingPart
 export Types.Tool
 export Types.ToolCall
 export Types.ToolChoice
+export Types.ToolKind
 export Types.ToolOutput
+export Types.ToolStart
 export Types.Usage

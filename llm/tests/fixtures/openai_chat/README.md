@@ -10,6 +10,7 @@ Recorded from llama.cpp `llama-server` build `b12012` (the prebuilt
 | `text.sse` | Qwen2.5-0.5B-Instruct Q4_K_M | system "Answer in one short sentence.", user "Say hello.", `max_tokens` 32 |
 | `tool_call.sse` | Qwen2.5-0.5B-Instruct Q4_K_M | the `read_file` tool, `tool_choice: "required"`, user "Read the first 10 lines of README.md." |
 | `length.sse` | Qwen2.5-0.5B-Instruct Q4_K_M | user "Count from one to twenty in words.", `max_tokens` 4 |
+| `parallel_tool_calls.sse` | Qwen2.5-0.5B-Instruct Q4_K_M | the `read_file` tool, `parallel_tool_calls: true`, `tool_choice: "required"`, system "Call read_file once for each file the user names, all in one answer.", user "Read README.md and also read AGENTS.md." |
 | `reasoning.sse` | Qwen3-0.6B Q4_K_M | user "What is 2 + 3? Answer with the number.", `max_tokens` 200 |
 | `models.json` | Qwen2.5-0.5B-Instruct Q4_K_M | `GET /v1/models` |
 | `unauthorized.json` | Qwen2.5-0.5B-Instruct Q4_K_M | the 401 body, server started with `--api-key` |
@@ -25,5 +26,8 @@ Written by hand, since llama-server does not send them on demand:
 - `rate_limited.json`: a 429 body in the OpenAI error shape.
 - `stream_error.sse`: the first lines of `text.sse`, then an error object in
   the stream, as llama-server sends one when decoding fails.
+- `tool_calls_no_index.sse`: two whole tool calls with no `index`, as some
+  compatible APIs (Gemini's OpenAI layer) send them.
+- `bad_arguments.sse`: a tool call whose arguments are not JSON.
 
 Files here are compared byte for byte (`.gitattributes`: `-text`).

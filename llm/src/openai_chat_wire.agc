@@ -1,16 +1,16 @@
 ## The OpenAI chat completions wire format: the request JSON, and the stream chunks folded into events and a
 ## response. Pure.
 
-import Stop from "stop_reason"
+import {StopReason} from "stop_reason"
 import Types from "types"
 
 ## What the chunks so far gave.
 struct Turn
-  text: List[String] = []
-  thinking: List[String] = []
-  calls: List[Call] = []
+  ## The blocks of the answer in the order they started; a block's index is its place here.
+  parts: List[Part] = []
   finish: Optional[String] = none
   usage: Types.Usage
+  id: String = ""
   ## `data: [DONE]` came.
   done: Bool = false
 end
@@ -21,12 +21,20 @@ struct Step
   events: List[Types.Event]
 end
 
-## A tool call being streamed: its pieces of arguments, by the `index` of the API.
-struct Call
-  index: Int
-  id: String
-  name: String
-  arguments: List[String] = []
+## A block being streamed.
+struct Part
+  kind: PartKind
+  pieces: List[String] = []
+  ## A tool call: the `index` of the API (`index:N`), else its id (`id:X`).
+  key: String = ""
+  call_id: String = ""
+  name: String = ""
+end
+
+enum PartKind
+  Text
+  Thinking
+  Call
 end
 
 ## The state before the first chunk.
@@ -59,6 +67,10 @@ def request_body(request: Types.Request) -> String
     body = body.put("seed", JSON.from(seed))
   end
 
+  for key in request.extra.keys
+    body = body.put(key, request.extra[key])
+  end
+
   JSON.encode(JSON.object(body))
 end
 
@@ -73,7 +85,7 @@ def take(turn: Turn, data: String) -> Result[Step]
   end
 
   chunk = try protocol(JSON.decode(json, Chunk))
-  step = Step(turn: turn, events: [])
+  step = Step(turn: turn.with(id: chunk.id.unwrap_or(turn.id)), events: [])
   for choice in chunk.choices.unwrap_or([])
     step = take_choice(step, choice)
   end
@@ -90,8 +102,8 @@ end
 def finish(turn: Turn) -> Result[Types.Response]
   case turn.finish
     some(reason) ->
-      message = Types.Message(role: Types.Role.Assistant, content: blocks(turn))
-      ok(Types.Response(message: message, stop_reason: Stop.from_openai(reason), usage: turn.usage))
+      message = Types.Message(role: Types.Role.Assistant, content: turn.parts.map { |p| block(p) })
+      ok(Types.Response(message: message, stop_reason: stop_reason(reason), usage: turn.usage, id: turn.id))
     none -> error("llm: the stream ended before its finish_reason", kind: "llm.protocol")
   end
 end
@@ -105,6 +117,7 @@ end
 private
 
 struct Chunk
+  id: Optional[String]
   choices: Optional[List[Choice]]
   usage: Optional[WireUsage]
 end
@@ -135,10 +148,15 @@ struct WireUsage
   prompt_tokens: Int
   completion_tokens: Int
   prompt_tokens_details: Optional[PromptDetails]
+  completion_tokens_details: Optional[CompletionDetails]
 end
 
 struct PromptDetails
   cached_tokens: Optional[Int]
+end
+
+struct CompletionDetails
+  reasoning_tokens: Optional[Int]
 end
 
 struct ModelList
@@ -153,6 +171,16 @@ end
 
 struct ModelMeta
   n_ctx: Optional[Int]
+end
+
+def stop_reason(name: String) -> StopReason
+  case name
+    "stop" -> StopReason.EndTurn
+    "tool_calls", "function_call" -> StopReason.ToolUse
+    "length" -> StopReason.MaxTokens
+    "content_filter" -> StopReason.Refusal
+    _ -> StopReason.Other(name)
+  end
 end
 
 def protocol[T](result: Result[T]) -> Result[T]
@@ -177,13 +205,24 @@ def tool_choice(choice: Types.ToolChoice) -> String
 end
 
 def tool_json(tool: Types.Tool) -> JSON.Value
-  function = JSON.object({
-    "name": JSON.from(tool.name),
-    "description": JSON.from(tool.description),
-    "parameters": tool.input_schema,
-  })
+  case tool.kind
+    Types.ToolKind.Function ->
+      function = JSON.object({
+        "name": JSON.from(tool.name),
+        "description": JSON.from(tool.description),
+        "parameters": tool.input_schema,
+      })
 
-  JSON.object({"type": JSON.from("function"), "function": function})
+      JSON.object({"type": JSON.from("function"), "function": function})
+    Types.ToolKind.Custom ->
+      custom = JSON.object({
+        "name": JSON.from(tool.name),
+        "description": JSON.from(tool.description),
+        "format": tool.input_schema,
+      })
+
+      JSON.object({"type": JSON.from("custom"), "custom": custom})
+  end
 end
 
 def messages(request: Types.Request) -> List[JSON.Value]
@@ -209,7 +248,7 @@ def user_messages(blocks: List[Types.Block]) -> List[JSON.Value]
   for block in blocks
     case block
       Types.Block.ToolResult(result) -> out = out.push(tool_message(result))
-      Types.Block.Text(text) -> texts = texts.push(text)
+      Types.Block.Text(part) -> texts = texts.push(part.text)
       _ -> nil
     end
   end
@@ -239,7 +278,7 @@ def assistant_message(blocks: List[Types.Block]) -> JSON.Value
   calls: List[JSON.Value] = []
   for block in blocks
     case block
-      Types.Block.Text(text) -> texts = texts.push(text)
+      Types.Block.Text(part) -> texts = texts.push(part.text)
       Types.Block.ToolUse(call) -> calls = calls.push(call_json(call))
       _ -> nil
     end
@@ -249,7 +288,7 @@ def assistant_message(blocks: List[Types.Block]) -> JSON.Value
   if texts.empty?
     fields = fields.put("content", JSON.null())
   else
-    fields = fields.put("content", JSON.from(texts.join("\n")))
+    fields = fields.put("content", JSON.from(texts.join("")))
   end
 
   if not calls.empty?
@@ -259,16 +298,20 @@ def assistant_message(blocks: List[Types.Block]) -> JSON.Value
   JSON.object(fields)
 end
 
+# The arguments go back as the model wrote them, so the prompt prefix (and its cache) stays the same.
 def call_json(call: Types.ToolCall) -> JSON.Value
-  function = JSON.object({"name": JSON.from(call.name), "arguments": JSON.from(arguments_text(call.input))})
-  JSON.object({"id": JSON.from(call.id), "type": JSON.from("function"), "function": function})
-end
+  case call.kind
+    Types.ToolKind.Function ->
+      arguments = call.arguments
+      if arguments.empty?
+        arguments = "{}"
+      end
 
-# An input kept as raw text goes back as that text.
-def arguments_text(input: JSON.Value) -> String
-  case JSON.string(input)
-    ok(raw) -> raw
-    error(_) -> JSON.encode(input)
+      function = JSON.object({"name": JSON.from(call.name), "arguments": JSON.from(arguments)})
+      JSON.object({"id": JSON.from(call.id), "type": JSON.from("function"), "function": function})
+    Types.ToolKind.Custom ->
+      custom = JSON.object({"name": JSON.from(call.name), "input": JSON.from(call.arguments)})
+      JSON.object({"id": JSON.from(call.id), "type": JSON.from("custom"), "custom": custom})
   end
 end
 
@@ -277,70 +320,96 @@ def role_text(role: String, text: String) -> JSON.Value
 end
 
 def take_choice(step: Step, choice: Choice) -> Step
-  turn = step.turn
-  events = step.events
+  result = step
   for delta in option_list(choice.delta)
     for text in option_list(delta.reasoning_content)
-      if not text.empty?
-        turn = turn.with(thinking: turn.thinking.push(text))
-        events = events.push(Types.Event.ThinkingDelta(text))
-      end
+      result = take_text(result, PartKind.Thinking, text)
     end
 
     for text in option_list(delta.content)
-      if not text.empty?
-        turn = turn.with(text: turn.text.push(text))
-        events = events.push(Types.Event.TextDelta(text))
-      end
+      result = take_text(result, PartKind.Text, text)
     end
 
     for call in delta.tool_calls.unwrap_or([])
-      taken = take_call(Step(turn: turn, events: events), call)
-      turn = taken.turn
-      events = taken.events
+      result = take_call(result, call)
     end
   end
 
   for reason in option_list(choice.finish_reason)
-    turn = turn.with(finish: some(reason))
+    result = result.with(turn: result.turn.with(finish: some(reason)))
   end
 
-  Step(turn: turn, events: events)
+  result
 end
 
+# The API streams one text and one reasoning: each is one block, placed where it first came.
+def take_text(step: Step, kind: PartKind, text: String) -> Step
+  return step if text.empty?
+
+  parts = step.turn.parts
+  index = parts.find_index { |p| p.kind == kind }.unwrap_or(parts.size)
+  part = Part(kind: kind)
+  if index < parts.size
+    part = parts[index]
+  end
+
+  piece = Types.Piece(index: index, text: text)
+  event = Types.Event.TextDelta(piece)
+  if kind == PartKind.Thinking
+    event = Types.Event.ThinkingDelta(piece)
+  end
+
+  turn = step.turn.with(parts: put_part(parts, index, part.with(pieces: part.pieces.push(text))))
+  Step(turn: turn, events: step.events.push(event))
+end
+
+# A call is found by its `index`; an API that sends none (whole calls, as Gemini's) by its id; a piece with neither
+# goes on with the last call.
 def take_call(step: Step, delta: CallDelta) -> Step
-  turn = step.turn
-  events = step.events
-  index = delta.index.unwrap_or(0)
+  parts = step.turn.parts
   function = delta.function.unwrap_or(FunctionDelta(name: none, arguments: none))
-  call = Call(index: index, id: "", name: "")
-  case (turn.calls.find { |c| c.index == index })
-    ok(found) -> call = found
-    error(_) ->
-      # Some APIs leave out the id; one is made from the index so results can still point at the call.
-      call = Call(index: index, id: delta.id.unwrap_or("call_#{index}"), name: function.name.unwrap_or(""))
-      events = events.push(Types.Event.ToolUseStart(call.id, call.name))
+  key = call_key(parts, delta)
+  events = step.events
+  index = parts.find_index { |p| p.kind == PartKind.Call and p.key == key }.unwrap_or(parts.size)
+  part = Part(kind: PartKind.Call)
+  if index < parts.size
+    part = parts[index]
+  else
+    # Some APIs leave out the id; one is made from the place so a result can still point at the call.
+    part = part.with(key: key, call_id: delta.id.unwrap_or("call_#{index}"), name: function.name.unwrap_or(""))
+    events = events.push(Types.Event.ToolUseStart(Types.ToolStart(index: index, id: part.call_id, name: part.name)))
   end
 
   piece = function.arguments.unwrap_or("")
   if not piece.empty?
-    call = call.with(arguments: call.arguments.push(piece))
-    events = events.push(Types.Event.ToolInputDelta(call.id, piece))
+    part = part.with(pieces: part.pieces.push(piece))
+    events = events.push(Types.Event.ToolInputDelta(Types.Piece(index: index, text: piece)))
   end
 
-  Step(turn: turn.with(calls: put_call(turn.calls, call)), events: events)
+  Step(turn: step.turn.with(parts: put_part(parts, index, part)), events: events)
 end
 
-def put_call(calls: List[Call], call: Call) -> List[Call]
-  return calls.push(call) if (not calls.any? { |c| c.index == call.index })
+def call_key(parts: List[Part], delta: CallDelta) -> String
+  case delta.index
+    some(i) -> return "index:#{i}"
+    none -> nil
+  end
 
-  calls.map { |c| replaced(c, call) }
+  case delta.id
+    some(id) -> return "id:#{id}"
+    none -> nil
+  end
+
+  calls = parts.select { |p| p.kind == PartKind.Call }
+  return "index:0" if calls.empty?
+
+  calls.last.key
 end
 
-def replaced(old: Call, call: Call) -> Call
-  return call if old.index == call.index
+def put_part(parts: List[Part], index: Int, part: Part) -> List[Part]
+  return parts.push(part) if index == parts.size
 
-  old
+  parts.set(index, part)
 end
 
 def to_usage(usage: WireUsage) -> Types.Usage
@@ -349,30 +418,37 @@ def to_usage(usage: WireUsage) -> Types.Usage
     cached = details.cached_tokens.unwrap_or(0)
   end
 
-  Types.Usage(input: usage.prompt_tokens - cached, output: usage.completion_tokens, cache_read: cached)
-end
-
-def blocks(turn: Turn) -> List[Types.Block]
-  out: List[Types.Block] = []
-  if not turn.thinking.empty?
-    out = out.push(Types.Block.Thinking(turn.thinking.join(""), JSON.null()))
+  reasoning = 0
+  for details in option_list(usage.completion_tokens_details)
+    reasoning = details.reasoning_tokens.unwrap_or(0)
   end
 
-  if not turn.text.empty?
-    out = out.push(Types.Block.Text(turn.text.join("")))
-  end
-
-  out + turn.calls.map { |c| Types.Block.ToolUse(Types.ToolCall(id: c.id, name: c.name, input: input_of(c))) }
+  Types.Usage(
+    input: usage.prompt_tokens - cached,
+    output: usage.completion_tokens,
+    cache_read: cached,
+    reasoning: reasoning,
+  )
 end
 
-# No arguments is an empty object; anything that is not a JSON object stays raw text for the caller to refuse.
-def input_of(call: Call) -> JSON.Value
-  raw = call.arguments.join("")
-  return JSON.object({}) if raw.strip.empty?
+def block(part: Part) -> Types.Block
+  text = part.pieces.join("")
+  case part.kind
+    PartKind.Text -> Types.Block.Text(Types.TextPart(text: text))
+    PartKind.Thinking -> Types.Block.Thinking(Types.ThinkingPart(text: text))
+    PartKind.Call -> Types.Block.ToolUse(tool_call(part.call_id, part.name, text))
+  end
+end
 
-  case JSON.parse(raw)
-    ok(json) if JSON.kind(json) == "object" -> json
-    _ -> JSON.from(raw)
+def tool_call(id: String, name: String, arguments: String) -> Types.ToolCall
+  call = Types.ToolCall(id: id, name: name, arguments: arguments, input: JSON.object({}))
+  # No arguments at all is an empty object.
+  return call if arguments.strip.empty?
+
+  case JSON.parse(arguments)
+    ok(json) if JSON.kind(json) == "object" -> call.with(input: json)
+    ok(json) -> call.with(input_error: some("the arguments are a JSON #{JSON.kind(json)}, not an object"))
+    error(e) -> call.with(input_error: some("the arguments are not JSON: #{e.message}"))
   end
 end
 

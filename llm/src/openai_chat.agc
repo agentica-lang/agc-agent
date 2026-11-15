@@ -16,10 +16,12 @@ struct OpenAIChatOptions
   ## The longest wait for the API: the connect, the head, and each piece of the stream.
   timeout_ms: Int = 120_000
   ## Tries of a request that fails before its stream starts (429, 5xx, network), with waits from `retry_base_ms`,
-  ## doubled each time, at most `retry_max_ms` (or longer when `Retry-After` asks).
+  ## doubled each time, at most `retry_max_ms`, or what `Retry-After` asks when it asks for longer.
   tries: Int = 3
   retry_base_ms: Int = 500
   retry_max_ms: Int = 30_000
+  ## The longest `Retry-After` that is waited for; a longer one gives its error at once.
+  retry_after_max_ms: Int = 120_000
 end
 
 ## The provider for an API at `base_url` (such as `http://127.0.0.1:8080/v1`). An empty `api_key` sends no
@@ -53,7 +55,8 @@ end
 
 def start_stream(config: Config, request: Types.Request) -> Result[Api.Stream]
   body = Wire.request_body(request).bytes
-  http = try Errors.with_retry(retry(config), -> { open(config, body) })
+  headers = request.headers.keys.map { |name| HTTP.Header(name: name, value: request.headers[name]) }
+  http = try Errors.with_retry(retry(config), -> { open(config, body, headers) })
   events: Channel[Types.Event] = Channel.new(EVENTS_CAPACITY)
   reader = Task.spawn(&read, Job(config: config, http: http, events: events))
   ok(Api.Stream(events: events, done: reader, stop: -> { stop(http, reader, events) }))
@@ -72,14 +75,14 @@ def end_http(http: HTTP.Stream) -> Void
 end
 
 # A 2xx answer comes back with its body unread; any other is read whole and becomes its error.
-def open(config: Config, body: Bytes) -> Result[HTTP.Stream]
+def open(config: Config, body: Bytes, extra: List[HTTP.Header]) -> Result[HTTP.Stream]
   headers = [
     HTTP.Header(name: "Content-Type", value: "application/json"),
     HTTP.Header(name: "Accept", value: "text/event-stream"),
   ]
 
   url = "#{config.base_url}/chat/completions"
-  http = try network(HTTP.open("POST", url, body, headers + auth(config), client_options(config)))
+  http = try network(HTTP.open("POST", url, body, headers + auth(config) + extra, client_options(config)))
   return ok(http) if http.status >= 200 and http.status < 300
 
   Errors.from_status(http.status, http.headers, drain(http))
@@ -124,7 +127,9 @@ end
 def send(job: Job, event: Types.Event) -> Result[Void]
   case job.events.send(event, job.config.options.timeout_ms)
     ok(_) -> ok()
-    error(e) -> error("llm: the reader of the events left", kind: "llm.cancelled", cause: e)
+    error(e) ->
+      message = "llm: the events were not read for #{job.config.options.timeout_ms} ms"
+      error(message, kind: "llm.slow_reader", cause: e)
   end
 end
 
@@ -145,7 +150,12 @@ end
 
 def retry(config: Config) -> Errors.Retry
   options = config.options
-  Errors.Retry(tries: options.tries, base_ms: options.retry_base_ms, max_ms: options.retry_max_ms)
+  Errors.Retry(
+    tries: options.tries,
+    base_ms: options.retry_base_ms,
+    max_ms: options.retry_max_ms,
+    retry_after_max_ms: options.retry_after_max_ms,
+  )
 end
 
 def auth(config: Config) -> List[HTTP.Header]

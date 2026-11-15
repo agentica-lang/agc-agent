@@ -8,11 +8,13 @@ MAX_MESSAGE_CHARS = 500
 RETRYABLE = Set.new(["llm.rate_limit", "llm.overloaded", "llm.server", "llm.network"])
 
 ## How a request is tried again: at most `tries` times in all, waiting `base_ms`, then twice as long each time, at
-## most `max_ms`, or what `Retry-After` asks when it asks for longer.
+## most `max_ms`. A `Retry-After` that asks for longer is followed as it is, up to `retry_after_max_ms`; one that asks
+## for more gives the error at once instead of a wait that long.
 struct Retry
   tries: Int = 3
   base_ms: Int = 500
   max_ms: Int = 30_000
+  retry_after_max_ms: Int = 120_000
 end
 
 ## The error of a response that is not a 2xx: `llm.auth` (401, 403), `llm.rate_limit` (429, with `retry_after_ms` in
@@ -32,18 +34,19 @@ end
 ## Calls `attempt` until it succeeds, fails with a kind that is not worth another try, or used its tries.
 def with_retry[T](retry: Retry, attempt: Fn[Result[T]]) -> Result[T]
   tries = [retry.tries, 1].max.unwrap!
-  wait_ms = [retry.base_ms, 0].max.unwrap!
+  wait_ms = backoff(retry, retry.base_ms)
   for n in 1..tries
     result = attempt.call()
     case result
       ok(_) -> return result
       error(e) ->
-        return result if n == tries or not RETRYABLE.include?(e.kind)
+        asked = asked_ms(e)
+        return result if n == tries or not RETRYABLE.include?(e.kind) or asked > retry.retry_after_max_ms
 
-        Task.sleep([[wait_ms, asked_ms(e)].max.unwrap!, [retry.max_ms, 0].max.unwrap!].min.unwrap!)
+        Task.sleep([wait_ms, asked].max.unwrap!)
     end
 
-    wait_ms = [wait_ms * 2, retry.max_ms].min.unwrap!
+    wait_ms = backoff(retry, wait_ms * 2)
   end
 
   # Not reached: the last try returns above.
@@ -79,6 +82,8 @@ def retry_after(headers: List[HTTP.Header]) -> Map[String, String]
     _ -> {}
   end
 end
+
+def backoff(retry: Retry, ms: Int) -> Int = [[ms, retry.max_ms].min.unwrap!, 0].max.unwrap!
 
 def asked_ms(e: Error) -> Int
   case e.details.get("retry_after_ms")
