@@ -6,7 +6,9 @@ import SSE from "../sse"
 STREAM = (
   String.from_code(65_279) +
   "data: first\r\n: a comment\r\n\r\n" +
-  "event: delta\nid: 7\ndata:{\"a\": \"é\"}\ndata:  two\nfoo: bar\n\n" +
+  "event: delta\nid: 7\ndata:{\"a\": \"é\"}\ndata:  two\nfoo: bar\nretry: 3000\nid: 8" +
+  String.from_code(0) +
+  "\n\n" +
   "event: crlf\r\ndata: 😀\r\rdata\r\n\r\n" +
   "id\nevent: empty\n\n" +
   "data: cut"
