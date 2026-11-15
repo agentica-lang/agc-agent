@@ -35,7 +35,8 @@ enum ApprovalSource
   Rule
 end
 
-## Why a turn ended. `Other` keeps a reason this package does not know by its name.
+## Why a turn ended. `Other` keeps a reason this package does not know by its name, never a known one: build it with
+## `parse_stop_reason`, and `encode_event` writes `Other` of a known name as that reason.
 enum StopReason
   EndTurn
   MaxTokens
@@ -72,11 +73,15 @@ struct ToolFinished
   duration_ms: Int
 end
 
+## `preview` is what the call touches: the path, or the command for `bash`; an `allow_session` answer allows the same
+## tool on the same `preview`. `detail` is what it would write (the content, or the old and new text of an edit), cut
+## to a few KB; empty when there is nothing more to show.
 struct ApprovalRequested
   approval_id: String
   call_id: String
   tool: String
   preview: String
+  detail: String
 end
 
 struct ApprovalResolved

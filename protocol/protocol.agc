@@ -8,8 +8,8 @@
 ## know and an empty required string. The decoders of the replies and the events ignore extra keys, so a reader older
 ## than the writer still works, and leave empty strings to the server.
 ##
-## Resume: `Session.last_event_id` is the `Last-Event-ID` that misses and repeats no event. A client that attaches while
-## a turn runs uses `Session.turn_from_event_id` instead, so the replay gives it the whole running turn.
+## Resume: `Session.last_event_id` is the `Last-Event-ID` that misses and repeats no event. A client that attaches
+## while a turn runs uses `Session.turn_from_event_id` instead, so the replay gives it the whole running turn.
 
 import Errors from "src/errors"
 import Events from "src/events"
@@ -54,6 +54,7 @@ export Requests.decode_approve
 
 export Replies.Role
 export Replies.Health
+export Replies.ServerInfo
 export Replies.SessionCreated
 export Replies.MessageAccepted
 export Replies.SessionSummary
@@ -65,6 +66,8 @@ export Replies.role_name
 export Replies.parse_role
 export Replies.encode_health
 export Replies.decode_health
+export Replies.encode_server_info
+export Replies.decode_server_info
 export Replies.encode_session_created
 export Replies.decode_session_created
 export Replies.encode_message_accepted

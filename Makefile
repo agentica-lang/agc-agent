@@ -10,6 +10,9 @@ SERVER_AND_CLIENTS = core|cli|tui_client|web_client
 # A client reaches the server only through the protocol: it never depends on these.
 NOT_FOR_CLIENTS = core|llm|tui_client|web_client
 
+# A fake key in the environment of every recipe: the bash test of core checks that the tool does not pass it on.
+export AGC_TEST_SECRET = sk-test-secret-must-not-reach-bash
+
 # $(call none,DESCRIPTION,RG ARGS): fails when rg finds a match or cannot search (rg: 0 found, 1 none, 2 error).
 none = rg -n $(2); case $$? in 1) ;; 0) echo "coupling: $(1)" >&2; exit 1 ;; *) exit 2 ;; esac
 

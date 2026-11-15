@@ -4,6 +4,7 @@
   "send_message": {"text": "Write hello.txt, then run it."},
   "approve": {"decision": "allow"},
   "health": {"version": "0.0.1"},
+  "server_info": {"port": 41234, "token": "3f9a0c", "pid": 4242},
   "session_created": {"id": "s1"},
   "message_accepted": {"turn_id": "t1"},
   "session_list": {"sessions": [{"id": "s1", "cwd": "/home/ana/project", "model": "qwen2.5-0.5b"}]},
@@ -28,7 +29,7 @@
     "turn_id": "t2",
     "turn_from_event_id": 50,
     "pending_approvals": [
-      {"approval_id": "a1", "call_id": "call_2", "tool": "bash", "preview": "rm -r b"}
+      {"approval_id": "a1", "call_id": "call_2", "tool": "bash", "preview": "rm -r b", "detail": ""}
     ],
     "history": [
       {"role": "user", "text": "Write hello.txt."},
