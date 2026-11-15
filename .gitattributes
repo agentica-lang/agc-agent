@@ -1,0 +1,12 @@
+*.agc text eol=lf linguist-language=Ruby
+*.feature text eol=lf
+*.md text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+*.sh text eol=lf
+*.agcb binary
+*.gguf binary
+# Recorded fixtures (SSE streams, JSON bodies) are compared byte for byte: no line-ending changes.
+**/tests/fixtures/** -text
+# Open PRs all add lines under [Unreleased] of a CHANGELOG.md: keep both sides when merging.
+CHANGELOG.md merge=union
