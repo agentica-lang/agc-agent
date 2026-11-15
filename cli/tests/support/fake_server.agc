@@ -4,11 +4,11 @@
 
 import HTTP from "std/http"
 import Protocol from "pkg/protocol/protocol"
+import Fixtures from "fixtures"
 
 TOKEN = "test-token"
 VERSION = "0.0.1"
 HEALTH = "GET /v1/health"
-FIXTURE_DIRS = ["tests/fixtures", "cli/tests/fixtures"]
 WAIT_MS = 5000
 POLL_MS = 100
 PIECE_BYTES = 13
@@ -17,8 +17,12 @@ PIECE_BYTES = 13
 struct Reply
   status: Int = 200
   body: String = ""
-  ## A fixture served as the body instead of `body`: the replayed events of the events route.
+  ## An `.sse` fixture: the replayed events of the events route.
   fixture: String = ""
+  ## A `session_*.json` fixture served as the body instead of `body`.
+  session: String = ""
+  ## The answer waits this long first.
+  delay_ms: Int = 0
   ## Fixtures put on the held event stream after this answer.
   push: List[String] = []
   ## The events route only: the stream stays open for pushes.
@@ -49,7 +53,7 @@ struct Fake
   bus: Channel[Bytes]
 end
 
-## Starts a fake with `routes`; `GET /v1/health` is always there.
+## Starts a fake with `routes`; `GET /v1/health` is always there, and a route of it replaces the answer.
 def start(routes: List[Route]) -> Result[Fake]
   queues: Map[String, Channel[Reply]] = {}
   seen: Map[String, Channel[Seen]] = {HEALTH: Channel.new(16)}
@@ -90,34 +94,29 @@ def request(fake: Fake, method: String, path: String) -> Result[Seen]
   end
 end
 
-## How many requests the fake got on a route that nobody has read yet.
-def unread(fake: Fake, method: String, path: String) -> Int
+## The requests the fake got on a route that nobody has read yet, in order.
+def unread_requests(fake: Fake, method: String, path: String) -> List[Seen]
   case fake.seen.get(key_of(method, path))
     some(channel) -> drained(channel)
-    none -> 0
+    none -> []
   end
 end
 
+## How many requests the fake got on a route that nobody has read yet.
+def unread(fake: Fake, method: String, path: String) -> Int = unread_requests(fake, method, path).size
+
 ## How many requests of no route the fake got.
-def strays(fake: Fake) -> Int = drained(fake.stray)
+def strays(fake: Fake) -> Int = drained(fake.stray).size
 
 ## Puts a fixture on the held event stream.
 def push(fake: Fake, name: String) -> Result[Void]
-  body = try fixture(name)
+  body = try Fixtures.stream(name)
   fake.bus.send(body, WAIT_MS)
 end
 
-## The bytes of a fixture file.
-def fixture(name: String) -> Result[Bytes]
-  for dir in FIXTURE_DIRS
-    path = "#{dir}/#{name}"
-    if File.stat(path).ok?
-      text = try File.read_text(path)
-      return ok(text.bytes)
-    end
-  end
-
-  error("no fixture #{name} in #{FIXTURE_DIRS.join(", ")}")
+## Writes a file only its owner can read, as the server does with `server.json`.
+def write_private(path: String, text: String) -> Result[Void]
+  File.open(path, "create_private") do |file| File.write(file, text) end
 end
 
 private
@@ -138,13 +137,16 @@ end
 
 def key_of(method: String, path: String) -> String = "#{method} #{path}"
 
-def drained(channel: Channel[Seen]) -> Int
-  count = 0
-  while channel.recv(0).ok?
-    count = count + 1
+def drained(channel: Channel[Seen]) -> List[Seen]
+  all: List[Seen] = []
+  while true
+    case channel.recv(0)
+      ok(seen) -> all = all.push(seen)
+      error(_) -> break
+    end
   end
 
-  count
+  all
 end
 
 def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Result[HTTP.Answer]
@@ -158,7 +160,7 @@ def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Res
   end
 
   return refuse(401, Protocol.KIND_UNAUTHORIZED, "the token is missing or wrong") if not authorized?(request)
-  return json(200, "{\"version\": \"#{VERSION}\"}") if key == HEALTH
+  return json(200, "{\"version\": \"#{VERSION}\"}") if key == HEALTH and not script.queues.has_key?(key)
 
   case script.queues.get(key)
     some(replies) -> reply_with(script, replies.recv(0).unwrap_or(Reply(status: 500)), request)
@@ -171,27 +173,30 @@ def authorized?(request: HTTP.Request) -> Bool
 end
 
 def reply_with(script: Script, reply: Reply, request: HTTP.Request) -> Result[HTTP.Answer]
-  first = "".bytes
-  if reply.fixture != ""
-    first = try fixture(reply.fixture)
+  if reply.delay_ms > 0
+    Task.sleep(reply.delay_ms)
   end
 
-  if request.path.end_with?("/events")
+  if request.path.end_with?("/events") and reply.status == 200
+    first = "".bytes
+    if reply.fixture != ""
+      first = try Fixtures.stream(reply.fixture)
+    end
+
     return stream(Held(out: Channel.new(8), first: first, hold: reply.hold, bus: script.bus))
   end
 
   for name in reply.push
-    try script.bus.send(try fixture(name), WAIT_MS)
+    try script.bus.send(try Fixtures.stream(name), WAIT_MS)
+  end
+
+  body = reply.body.bytes
+  if reply.session != ""
+    body = try Fixtures.session_body(reply.session)
   end
 
   headers = [HTTP.Header(name: "Content-Type", value: "application/json")]
-  ok(HTTP.Answer.Whole(HTTP.Response(status: reply.status, headers: headers, body: body_of(reply, first))))
-end
-
-def body_of(reply: Reply, first: Bytes) -> Bytes
-  return first if reply.fixture != ""
-
-  reply.body.bytes
+  ok(HTTP.Answer.Whole(HTTP.Response(status: reply.status, headers: headers, body: body)))
 end
 
 def json(status: Int, body: String) -> Result[HTTP.Answer]
@@ -213,7 +218,13 @@ def produce(held: Held) -> Void
   if relay(held, held.first)
     while held.hold and not held.out.closed?
       case held.bus.recv(POLL_MS)
-        ok(piece) -> break if not relay(held, piece)
+        ok(piece) ->
+          # A stream the client left may still take a piece: the next stream gets it back.
+          if not relay(held, piece)
+            _ = held.bus.send(piece, 0)
+            break
+          end
+
         error(_) -> next
       end
     end

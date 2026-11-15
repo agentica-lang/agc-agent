@@ -5,8 +5,14 @@ import HTTP from "std/http"
 import Protocol from "pkg/protocol/protocol"
 
 CALL_TIMEOUT_MS = 10_000
+PROBE_TIMEOUT_MS = 2_000
+# A session can be quiet for as long as the model thinks, and the protocol has no heartbeat: the stream is read without
+# a timeout of practical size.
+EVENTS_TIMEOUT_MS = 86_400_000
 ERROR_BODY_BYTES = 65_536
-KIND_NETWORK = "cli.network"
+## The server did not answer: nothing listens, or the connection failed.
+KIND_UNREACHABLE = "cli.unreachable"
+KIND_TIMEOUT = "cli.timeout"
 
 ## Where a server listens and the token it wants.
 struct Server
@@ -14,8 +20,9 @@ struct Server
   token: String
 end
 
+## The health check is short: a server that does not answer in time is not started again, it is reported.
 def health(server: Server) -> Result[Protocol.Health]
-  body = try call(server, "GET", Protocol.HEALTH_PATH, "")
+  body = try call_within(server, "GET", Protocol.HEALTH_PATH, "", PROBE_TIMEOUT_MS)
   Protocol.decode_health(body)
 end
 
@@ -65,7 +72,7 @@ def open_events(server: Server, id: String, last_event_id: Int) -> Result[HTTP.S
       .push(HTTP.Header(name: Protocol.LAST_EVENT_ID_HEADER, value: Protocol.format_event_id(last_event_id)))
   )
 
-  options = HTTP.ClientOptions(timeout_ms: CALL_TIMEOUT_MS)
+  options = HTTP.ClientOptions(timeout_ms: EVENTS_TIMEOUT_MS, idle_timeout_ms: EVENTS_TIMEOUT_MS)
   http = try network(HTTP.open("GET", "#{server.url}#{Protocol.events_path(id)}", "".bytes, headers, options))
   return ok(http) if http.status >= 200 and http.status < 300
 
@@ -78,7 +85,11 @@ end
 private
 
 def call(server: Server, method: String, path: String, body: String) -> Result[String]
-  client = try network(HTTP.client(HTTP.ClientOptions(timeout_ms: CALL_TIMEOUT_MS)))
+  call_within(server, method, path, body, CALL_TIMEOUT_MS)
+end
+
+def call_within(server: Server, method: String, path: String, body: String, timeout_ms: Int) -> Result[String]
+  client = try network(HTTP.client(HTTP.ClientOptions(timeout_ms: timeout_ms)))
   result = HTTP.request(client, method, "#{server.url}#{path}", body.bytes, headers(server, body))
   HTTP.close_client(client)
   response = try network(result)
@@ -97,15 +108,21 @@ end
 def network[T](result: Result[T]) -> Result[T]
   case result
     ok(value) -> ok(value)
-    error(e) -> error("cannot reach the server: #{e.message}", kind: KIND_NETWORK, cause: e)
+    error(e) -> error("cannot reach the server: #{e.message}", kind: unreachable_kind(e.message), cause: e)
   end
+end
+
+def unreachable_kind(message: String) -> String
+  return KIND_TIMEOUT if message.include?("timed out")
+
+  KIND_UNREACHABLE
 end
 
 def failure[T](status: Int, headers: List[HTTP.Header], body: Bytes) -> Result[T]
   text = HTTP.text(body, headers).unwrap_or("")
   case Protocol.decode_failure(text)
     ok(wire) -> error(wire.message, kind: wire.kind, code: status)
-    error(_) -> error("the server answered HTTP #{status}", kind: KIND_NETWORK, code: status)
+    error(_) -> error("the server answered HTTP #{status}", kind: "cli.http", code: status)
   end
 end
 

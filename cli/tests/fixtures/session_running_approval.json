@@ -1,0 +1,22 @@
+{
+  "id": "s1",
+  "cwd": "/work",
+  "model": "fake-model",
+  "last_event_id": 8,
+  "turn_id": "t1",
+  "turn_from_event_id": 4,
+  "pending_approvals": [
+    {
+      "approval_id": "a1",
+      "call_id": "c1",
+      "tool": "bash",
+      "preview": "make test"
+    }
+  ],
+  "history": [
+    {
+      "role": "user",
+      "text": "run the tests"
+    }
+  ]
+}

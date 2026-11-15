@@ -12,6 +12,7 @@ FAKE_MAINS = ["tests/support/fake_main.agc", "cli/tests/support/fake_main.agc"]
 struct Rig
   fake: Fake.Fake
   dir: String
+  token: String
 end
 
 ## What a client printed and how it ended.
@@ -21,33 +22,60 @@ struct Done
   errors: String
 end
 
-## A fake server with `routes` and a state folder whose `server.json` names it with `token`.
-def rig(routes: List[Fake.Route], token: String = Fake.TOKEN) -> Result[Rig]
+## A fake server with `routes` and a state folder, whose `server.json` names it with `token` once published.
+def rig(routes: List[Fake.Route], token: String = Fake.TOKEN, published: Bool = true) -> Result[Rig]
   fake = try Fake.start(routes)
   dir = try make_dir()
-  try File.write_text(try Path.join([dir, "server.json"]), Fake.server_file(fake, token))
-  ok(Rig(fake: fake, dir: dir))
+  made = Rig(fake: fake, dir: dir, token: token)
+  if published
+    try publish(made)
+  end
+
+  ok(made)
 end
 
-## A state folder with no `server.json`.
-def empty_dir() -> Result[String] = make_dir()
+## Writes the `server.json` of the rig.
+def publish(rig: Rig) -> Result[Void]
+  Fake.write_private("#{rig.dir}/server.json", Fake.server_file(rig.fake, rig.token))
+end
 
-## Stops the fake and removes the state folder.
-def clean_up(rig: Rig) -> Result[Void]
-  try Fake.stop(rig.fake)
-  Path.remove(rig.dir)
+## Runs `body` on a rig, and stops the fake and removes the state folder after it, whether it passed or not.
+def within(
+  routes: List[Fake.Route],
+  body: Fn[Rig, Result[Void]],
+  token: String = Fake.TOKEN,
+  published: Bool = true,
+) -> Result[Void]
+  made = try rig(routes, token, published)
+  result = body.call(made)
+  cleaned = clean_up(made)
+  try result
+  cleaned
+end
+
+## Runs `body` on an empty state folder, which is removed after it, whether it passed or not.
+def within_dir(body: Fn[String, Result[Void]]) -> Result[Void]
+  dir = try make_dir()
+  result = body.call(dir)
+  cleaned = Path.remove(dir)
+  try result
+  cleaned
 end
 
 ## The client on `dir`, with `NO_COLOR` set to `no_color` ("" turns the colors on).
 def start(dir: String, args: List[String], no_color: String = "1") -> Result[Process]
   entry = try existing(ENTRIES)
-  Process.spawn_captured(binary(), [entry, "--state-dir", dir] + args, Process.Options(env: {"NO_COLOR": no_color}))
+  Process.spawn_captured(
+    binary(),
+    [entry, "--state-dir", dir] + args,
+    Process.Options(env: {"NO_COLOR": no_color, "AGC_AGENT_SERVER_COMMAND": ""}),
+  )
 end
 
-## The command that starts the fake server program, for `--server-command`.
-def fake_command() -> Result[String]
+## The words that start the fake server program.
+def fake_command() -> Result[List[String]]
   main = try existing(FAKE_MAINS)
-  ok("#{binary()} #{main}")
+  ok([binary(), main])
 end
 
 def say(cli: Process, text: String) -> Result[Void] = Process.send(cli, "#{text}\n", READ_MS)
@@ -67,6 +95,11 @@ end
 ## Closes the input of the client and waits for it to end.
 def finish(cli: Process) -> Result[Done]
   _ = Process.close_stdin(cli, READ_MS)
+  exited(cli)
+end
+
+## Waits for the client to end by itself, with its input open.
+def exited(cli: Process) -> Result[Done]
   lines: List[String] = []
   while true
     case Process.read_line(cli, EXIT_MS)
@@ -88,6 +121,12 @@ end
 def header(seen: Fake.Seen, name: String) -> List[String] = HTTP.header_values(seen.headers, name)
 
 private
+
+# The stop of a rig comes last, so what a test read from the fake is read before it goes.
+def clean_up(rig: Rig) -> Result[Void]
+  try Fake.stop(rig.fake)
+  Path.remove(rig.dir)
+end
 
 def binary() -> String
   case System.env("AGENTICA")

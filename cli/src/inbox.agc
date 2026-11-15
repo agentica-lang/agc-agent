@@ -13,6 +13,8 @@ enum Input
 end
 
 enum Item
+  ## The server accepted the subscription.
+  Opened
   ## The event and its id (none when the stream gave none).
   Event(Optional[Int], Protocol.Event)
   ## The stream ended, or could not start: the reason.

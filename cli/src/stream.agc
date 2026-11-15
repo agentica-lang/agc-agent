@@ -33,10 +33,23 @@ end
 
 def read(feed: Feed) -> Result[Void]
   http = try Client.open_events(feed.server, feed.session_id, feed.last_event_id)
+  try tell(feed, Inbox.Item.Opened)
   result = pump(feed, http)
+  if result.ok?
+    # The body ended: only the connection task tells a whole stream from a cut one.
+    return Task.await(http.done)
+  end
+
   Task.cancel(http.done)
   _ = Task.await(http.done)
   result
+end
+
+def tell(feed: Feed, item: Inbox.Item) -> Result[Void]
+  case feed.inbox.send(Inbox.Input.Stream(feed.generation, item), SEND_MS)
+    ok(_) -> ok()
+    error(e) -> error("the inbox is full: #{e.message}", kind: "cli.stream", cause: e)
+  end
 end
 
 def pump(feed: Feed, http: HTTP.Stream) -> Result[Void]
@@ -67,12 +80,7 @@ end
 # An event this client does not know (a newer server) or cannot read is reported and skipped.
 def deliver(feed: Feed, sse: SSE.Event) -> Result[Void]
   case Protocol.decode_event(sse.name, sse.data)
-    ok(event) ->
-      item = Inbox.Item.Event(event_id(sse), event)
-      case feed.inbox.send(Inbox.Input.Stream(feed.generation, item), SEND_MS)
-        ok(_) -> ok()
-        error(e) -> error("the inbox is full: #{e.message}", kind: "cli.stream", cause: e)
-      end
+    ok(event) -> tell(feed, Inbox.Item.Event(event_id(sse), event))
 
     error(e) ->
       IO.warn("skipped event #{sse.name}: #{e.message}")

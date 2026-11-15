@@ -17,7 +17,7 @@ end
 private
 
 def serve(dir: String) -> Result[Void]
-  idle = Fake.Reply(fixture: "session_idle.json")
+  idle = Fake.Reply(session: "session_idle.json")
   stream = Fake.Reply(hold: true)
   fake = try Fake.start([
     Fake.Route(method: "GET", path: Protocol.session_path("s1"), replies: [idle, idle]),
@@ -26,7 +26,7 @@ def serve(dir: String) -> Result[Void]
 
   file = try Path.join([dir, "server.json"])
   try File.append_text(try Path.join([dir, "starts.log"]), "started\n")
-  try File.write_text(file, Fake.server_file(fake, Fake.TOKEN))
+  try Fake.write_private(file, Fake.server_file(fake, Fake.TOKEN))
   waited = 0
   while waited < DEADLINE_MS and File.stat(file).ok?
     Task.sleep(POLL_MS)

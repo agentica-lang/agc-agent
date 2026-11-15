@@ -12,7 +12,8 @@ INBOX_CAPACITY = 256
 WAIT_MS = 3_600_000
 SEND_MS = 30_000
 RECONNECT_MS = 300
-MAX_FAILURES = 3
+MAX_RECONNECTS = 3
+MAX_RESYNCS = 2
 EXIT_INTERRUPTED = 130
 EXIT_TERMINATED = 143
 
@@ -37,13 +38,18 @@ struct Chat
   last_event_id: Int = 0
   ## The events up to this id are a replay: their approval requests ask nothing, the pending ones are asked after it.
   replay_until: Int = 0
+  ## The highest event id already printed, so a replay after a resync prints nothing twice.
+  shown_id: Int = 0
   turn: Bool = false
   stopping: Bool = false
   pending: List[Protocol.ApprovalRequested] = []
   asked: Bool = false
   flow: Render.Flow = Render.Flow.Idle
   eof: Bool = false
-  failures: Int = 0
+  ## Streams that ended in a row without a subscription the server accepted.
+  reconnects: Int = 0
+  ## `resync` events in a row, with no other event between.
+  resyncs: Int = 0
 end
 
 struct Step
@@ -102,21 +108,33 @@ def resume(chat: Chat, id: String) -> Result[Chat]
     print_line(Render.history(session.history))
   end
 
+  ok(attach(chat, session, false))
+end
+
+# Subscribes to what the snapshot of the session says. While a turn runs, the replay from the start of the turn gives
+# the whole turn; `skip_replay` reads only what comes next, for a server that no longer has that start.
+def attach(chat: Chat, session: Protocol.Session, skip_replay: Bool) -> Chat
   running = session.turn_id.some?
   from = session.last_event_id
-  if running
+  if running and not skip_replay
     from = session.turn_from_event_id.unwrap_or(session.last_event_id)
   end
 
-  resumed = chat.with(turn: running, pending: session.pending_approvals, replay_until: session.last_event_id)
-  ok(prompted(subscribe(resumed, from)))
+  fresh = chat.with(
+    turn: running,
+    stopping: false,
+    pending: session.pending_approvals,
+    asked: false,
+    replay_until: session.last_event_id,
+  )
+
+  prompted(subscribe(fresh, from))
 end
 
 # Reads the events after `from`; what an older stream still sends is dropped by its generation.
 def subscribe(chat: Chat, from: Int) -> Chat
-  case chat.stream
-    some(old) -> Task.cancel(old)
-    none -> Task.sleep(0)
+  if chat.stream.some?
+    Task.cancel(chat.stream.unwrap!)
   end
 
   generation = chat.generation + 1
@@ -138,10 +156,7 @@ def loop(chat: Chat) -> Result[Int]
       ok(input) ->
         step = try handle(state, input)
         state = step.chat
-        case step.exit
-          some(code) -> return ok(code)
-          none -> Task.sleep(0)
-        end
+        return ok(step.exit.unwrap!) if step.exit.some?
 
       error(_) -> next
     end
@@ -153,7 +168,7 @@ end
 def handle(chat: Chat, input: Inbox.Input) -> Result[Step]
   case input
     Inbox.Input.Line(text) -> on_line(chat, text)
-    Inbox.Input.Eof -> on_eof(chat.with(eof: true))
+    Inbox.Input.Eof -> settled(prompted(chat.with(eof: true)))
     Inbox.Input.Interrupt -> on_interrupt(chat)
     Inbox.Input.Terminate -> ok(Step(chat: chat, exit: some(EXIT_TERMINATED)))
     Inbox.Input.Stream(generation, item) -> on_stream(chat, generation, item)
@@ -164,15 +179,21 @@ def on_stream(chat: Chat, generation: Int, item: Inbox.Item) -> Result[Step]
   return ok(Step(chat: chat)) if generation != chat.generation
 
   case item
-    Inbox.Item.Event(id, Protocol.Event.Resync) -> resync(chat.with(last_event_id: id.unwrap_or(chat.last_event_id)))
-    Inbox.Item.Event(id, event) ->
-      on_event(chat.with(last_event_id: id.unwrap_or(chat.last_event_id), failures: 0), event)
+    Inbox.Item.Opened -> ok(Step(chat: chat.with(reconnects: 0)))
+    Inbox.Item.Event(_, Protocol.Event.Resync) -> resync(chat)
+    Inbox.Item.Event(id, event) -> on_event(chat.with(resyncs: 0), id, event)
     Inbox.Item.Ended(reason) -> reconnect(chat, reason)
   end
 end
 
-def on_event(chat: Chat, event: Protocol.Event) -> Result[Step]
-  shown = show(chat, Render.event(event, chat.style))
+def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Step]
+  seen = id.unwrap_or(chat.last_event_id)
+  repeated = id.some? and seen <= chat.shown_id
+  shown = chat.with(last_event_id: seen, shown_id: [chat.shown_id, seen].max.unwrap!)
+  if not repeated
+    shown = show(shown, Render.event(event, chat.style))
+  end
+
   changed = case event
     Protocol.Event.TurnStarted(_) -> shown.with(turn: true, stopping: false)
     Protocol.Event.TurnFinished(_) -> shown.with(turn: false, stopping: false)
@@ -209,29 +230,27 @@ end
 
 def answered(chat: Chat, text: String) -> Result[Step]
   case Render.answer(text)
-    some(decision) -> decide(chat, decision)
+    some(decision) -> settled(prompted(answer_head(chat, decision)))
     none -> ok(Step(chat: note(chat, Render.ANSWER_HINT)))
   end
 end
 
-# Sends the decision for the first pending approval. Another client may have answered first: that is not a failure.
-def decide(chat: Chat, decision: Protocol.Decision) -> Result[Step]
+# Sends the decision for the first pending approval. Another client may have answered first: that is not a failure. A
+# POST that failed leaves the question pending, to be answered again.
+def answer_head(chat: Chat, decision: Protocol.Decision) -> Chat
   request = chat.pending[0]
-  sent = Client.approve(chat.server, chat.id, request.approval_id, decision)
-  informed = case sent
-    ok(_) -> chat
+  case Client.approve(chat.server, chat.id, request.approval_id, decision)
+    ok(_) -> forgotten(chat, request.approval_id)
     error(e) if e.kind == Protocol.KIND_APPROVAL_RESOLVED or e.kind == Protocol.KIND_APPROVAL_NOT_FOUND ->
-      note(chat, "[approval #{request.approval_id}] already answered")
-    error(e) -> note(chat, "[error] #{e.message}")
+      forgotten(note(chat, "[approval #{request.approval_id}] already answered"), request.approval_id)
+    error(e) -> note(chat, "[error] the answer was not sent: #{e.message}")
   end
-
-  settled(prompted(forgotten(informed, request.approval_id)))
 end
 
 def stop(chat: Chat) -> Result[Step]
   case Client.stop(chat.server, chat.id)
     ok(_) -> ok(Step(chat: note(chat, "[stopping the turn: Ctrl+C again leaves]").with(stopping: true)))
-    error(e) -> ok(Step(chat: note(chat, "[error] #{e.message}")))
+    error(e) -> ok(Step(chat: note(chat, "[error] the stop was not sent: #{e.message}").with(stopping: true)))
   end
 end
 
@@ -241,13 +260,7 @@ def on_interrupt(chat: Chat) -> Result[Step]
   ok(Step(chat: note(chat, "[interrupted]"), exit: some(EXIT_INTERRUPTED)))
 end
 
-# The end of the input leaves once no turn runs; a pending approval is denied, as nobody can answer it.
-def on_eof(chat: Chat) -> Result[Step]
-  return decide(chat, Protocol.Decision.Deny) if chat.asked
-
-  settled(chat)
-end
-
+# The end of the input leaves once no turn runs.
 def settled(chat: Chat) -> Result[Step]
   return ok(Step(chat: chat, exit: some(0))) if chat.eof and not chat.turn
 
@@ -255,37 +268,20 @@ def settled(chat: Chat) -> Result[Step]
 end
 
 def resync(chat: Chat) -> Result[Step]
-  if chat.failures >= MAX_FAILURES
-    return error("the server keeps asking to read the session again", kind: "cli.resync")
-  end
+  return error("the server keeps asking to read the session again", kind: "cli.resync") if chat.resyncs >= MAX_RESYNCS
 
   noted = note(chat, "[resync: reading the session again]")
   session = try Client.session(noted.server, noted.id)
-  running = session.turn_id.some?
-  from = session.last_event_id
-  if running
-    from = session.turn_from_event_id.unwrap_or(session.last_event_id)
-  end
-
-  fresh = noted.with(
-    turn: running,
-    stopping: false,
-    pending: session.pending_approvals,
-    asked: false,
-    replay_until: session.last_event_id,
-    failures: noted.failures + 1,
-  )
-
-  ok(Step(chat: prompted(subscribe(fresh, from))))
+  ok(Step(chat: attach(noted.with(resyncs: chat.resyncs + 1), session, chat.resyncs >= 1)))
 end
 
 def reconnect(chat: Chat, reason: String) -> Result[Step]
-  failures = chat.failures + 1
-  return error("lost the event stream: #{reason}", kind: "cli.stream") if failures > MAX_FAILURES
+  reconnects = chat.reconnects + 1
+  return error("lost the event stream: #{reason}", kind: "cli.stream") if reconnects > MAX_RECONNECTS
 
   IO.warn("[the event stream ended: #{reason}; reconnecting]")
-  Task.sleep(RECONNECT_MS * failures)
-  ok(Step(chat: subscribe(chat.with(failures: failures), chat.last_event_id)))
+  Task.sleep(RECONNECT_MS * reconnects)
+  ok(Step(chat: subscribe(chat.with(reconnects: reconnects), chat.last_event_id)))
 end
 
 def added(
@@ -307,10 +303,27 @@ def forgotten(chat: Chat, approval_id: String) -> Chat
   chat.with(pending: rest)
 end
 
+# Asks the first pending approval once the replay is over. With the input at its end nobody can answer: every
+# pending approval is denied, however many come.
 def prompted(chat: Chat) -> Chat
-  return chat if chat.asked or chat.pending.empty? or chat.last_event_id < chat.replay_until
+  return chat if chat.pending.empty? or chat.last_event_id < chat.replay_until
+  return denied(chat) if chat.eof
+  return chat if chat.asked
 
   show(chat, some(Render.prompt(chat.pending[0]))).with(asked: true)
+end
+
+def denied(chat: Chat) -> Chat
+  state = chat
+  while not state.pending.empty?
+    head = state.pending[0]
+    state = answer_head(state, Protocol.Decision.Deny)
+    if not state.pending.empty? and state.pending[0].approval_id == head.approval_id
+      state = forgotten(state, head.approval_id)
+    end
+  end
+
+  state
 end
 
 def note(chat: Chat, text: String) -> Chat = show(chat, some(Render.line(text)))
