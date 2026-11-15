@@ -63,6 +63,13 @@ struct Session
   history: List[Message]
 end
 
+## `server.json` in the state folder, which only its user can read: where the server listens and its Bearer token.
+struct ServerInfo
+  port: Int
+  token: String
+  pid: Int
+end
+
 ## Every role, in a fixed order.
 def roles() -> List[Role] = Wire.chain(Role.User, &following)
 
@@ -78,6 +85,10 @@ def parse_role(name: String) -> Result[Role] = Wire.lookup(roles(), &role_name, 
 def encode_health(reply: Health) -> String = JSON.encode(reply)
 
 def decode_health(text: String) -> Result[Health] = Wire.decode(text, Health.codec)
+
+def encode_server_info(info: ServerInfo) -> String = JSON.encode(info)
+
+def decode_server_info(text: String) -> Result[ServerInfo] = Wire.decode(text, ServerInfo.codec)
 
 def encode_session_created(reply: SessionCreated) -> String = JSON.encode(reply)
 

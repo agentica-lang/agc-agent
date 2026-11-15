@@ -54,6 +54,7 @@ export Requests.decode_approve
 
 export Replies.Role
 export Replies.Health
+export Replies.ServerInfo
 export Replies.SessionCreated
 export Replies.MessageAccepted
 export Replies.SessionSummary
@@ -65,6 +66,8 @@ export Replies.role_name
 export Replies.parse_role
 export Replies.encode_health
 export Replies.decode_health
+export Replies.encode_server_info
+export Replies.decode_server_info
 export Replies.encode_session_created
 export Replies.decode_session_created
 export Replies.encode_message_accepted

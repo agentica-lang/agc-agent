@@ -112,6 +112,9 @@ def test_replies_round_trip() -> Result[Void]
   health = try decode_fixture("health", &Protocol.decode_health, &Protocol.encode_health)
   try Test.eq(Protocol.decode_health(Protocol.encode_health(health)), ok(health))
 
+  info = try decode_fixture("server_info", &Protocol.decode_server_info, &Protocol.encode_server_info)
+  try Test.eq(Protocol.decode_server_info(Protocol.encode_server_info(info)), ok(info))
+
   created = try decode_fixture("session_created", &Protocol.decode_session_created, &Protocol.encode_session_created)
   try Test.eq(Protocol.decode_session_created(Protocol.encode_session_created(created)), ok(created))
 
