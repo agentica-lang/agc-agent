@@ -1,6 +1,7 @@
 ## The bodies the server answers with.
 
 import Events from "events"
+import Kinds from "kinds"
 import Wire from "wire"
 
 ## Who wrote a message of the history. The history is display text: an entry of another kind (a tool call) will be a
@@ -49,7 +50,8 @@ end
 ## id just before its `turn_started` (none when no turn runs). A client that attaches mid-turn subscribes with
 ## `Last-Event-ID` set to `turn_from_event_id` instead: the normal replay then gives it the whole running turn, its
 ## deltas, tool events and approval requests. `pending_approvals` lists the approvals still waiting, for a client that
-## only needs to answer them.
+## only needs to answer them. The server keeps every event of the running turn, however many, so that replay never
+## answers `resync`; a client that already drew part of the turn keeps using the last id it saw.
 struct Session
   id: String
   cwd: String
@@ -89,6 +91,8 @@ def encode_session_list(reply: SessionList) -> String = JSON.encode(reply)
 
 def decode_session_list(text: String) -> Result[SessionList] = Wire.decode(text, SessionList.codec)
 
+## It trusts its input: it does not check what `decode_session` checks about `turn_id`, `turn_from_event_id` and
+## `last_event_id`, so the server must build a consistent `Session`.
 def encode_session(reply: Session) -> String
   history = reply.history.map { |m| MessageWire(role: role_name(m.role), text: m.text) }
   JSON.encode(
@@ -109,6 +113,7 @@ def decode_session(text: String) -> Result[Session]
   wire = try Wire.decode(text, SessionWire.codec)
   try Wire.non_negative("last_event_id", wire.last_event_id)
   try Wire.non_negative("turn_from_event_id", wire.turn_from_event_id.unwrap_or(0))
+  try check_turn(wire)
   history: List[Message] = []
   for item in wire.history
     history = history.push(Message(role: try parse_role(item.role), text: item.text))
@@ -144,6 +149,18 @@ struct SessionWire
   turn_from_event_id: Optional[Int]
   pending_approvals: List[Events.ApprovalRequested]
   history: List[MessageWire]
+end
+
+def check_turn(wire: SessionWire) -> Result[Void]
+  if wire.turn_id.some? != wire.turn_from_event_id.some?
+    return error("turn_id and turn_from_event_id come together", kind: Kinds.KIND_INVALID)
+  end
+
+  if wire.turn_from_event_id.unwrap_or(0) > wire.last_event_id
+    return error("turn_from_event_id is after last_event_id", kind: Kinds.KIND_INVALID)
+  end
+
+  ok()
 end
 
 def following(role: Role) -> Optional[Role]

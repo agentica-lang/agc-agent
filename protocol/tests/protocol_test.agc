@@ -213,6 +213,28 @@ def test_negative_numbers_are_refused() -> Result[Void]
   )
 end
 
+def test_session_turn_fields_agree() -> Result[Void]
+  base = "{\"id\": \"s\", \"cwd\": \"/\", \"model\": \"m\", \"pending_approvals\": [], \"history\": []"
+  late = "#{base}, \"last_event_id\": 5, \"turn_id\": \"t\", \"turn_from_event_id\": 9}"
+  try Test.eq(error_kind(Protocol.decode_session(late)), "protocol.invalid")
+  only_id = "#{base}, \"last_event_id\": 5, \"turn_id\": \"t\"}"
+  try Test.eq(error_kind(Protocol.decode_session(only_id)), "protocol.invalid")
+  only_from = "#{base}, \"last_event_id\": 5, \"turn_from_event_id\": 2}"
+  try Test.eq(error_kind(Protocol.decode_session(only_from)), "protocol.invalid")
+  edge = "#{base}, \"last_event_id\": 5, \"turn_id\": \"t\", \"turn_from_event_id\": 5}"
+  Test.assert(Protocol.decode_session(edge).ok?, "a turn that starts at the last event is valid")
+end
+
+def test_other_stop_reason_is_never_a_known_name() -> Result[Void]
+  try Test.eq(Protocol.parse_stop_reason("end_turn"), Protocol.StopReason.EndTurn)
+  known = Protocol.Event.TurnFinished(
+    Protocol.TurnFinished(turn_id: "t", stop_reason: Protocol.StopReason.Other("end_turn")),
+  )
+
+  expected = Protocol.Event.TurnFinished(Protocol.TurnFinished(turn_id: "t", stop_reason: Protocol.StopReason.EndTurn))
+  Test.eq(Protocol.decode_event("turn_finished", Protocol.encode_event(known)), ok(expected))
+end
+
 def test_event_ids() -> Result[Void]
   try Test.eq(Protocol.parse_event_id("0"), ok(0))
   try Test.eq(Protocol.parse_event_id(Protocol.format_event_id(1234)), ok(1234))

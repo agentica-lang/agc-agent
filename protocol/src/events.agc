@@ -35,7 +35,8 @@ enum ApprovalSource
   Rule
 end
 
-## Why a turn ended. `Other` keeps a reason this package does not know by its name.
+## Why a turn ended. `Other` keeps a reason this package does not know by its name, never a known one: build it with
+## `parse_stop_reason`, and `encode_event` writes `Other` of a known name as that reason.
 enum StopReason
   EndTurn
   MaxTokens
