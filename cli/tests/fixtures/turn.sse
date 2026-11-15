@@ -1,0 +1,36 @@
+id: 1
+event: turn_started
+data: {"turn_id":"t1"}
+
+id: 2
+event: thinking_delta
+data: {"text":"The user wants the README."}
+
+id: 3
+event: text_delta
+data: {"text":"I'll read "}
+
+id: 4
+event: text_delta
+data: {"text":"the file.\n"}
+
+id: 5
+event: tool_started
+data: {"call_id":"c1","name":"read_file","summary":"README.md"}
+
+id: 6
+event: tool_finished
+data: {"call_id":"c1","ok":true,"summary":"read 120 bytes","duration_ms":8}
+
+id: 7
+event: text_delta
+data: {"text":"It says \"agc-agent\"."}
+
+id: 8
+event: usage
+data: {"input":1200,"output":85,"cache_read":1000,"cache_write":0,"context":1285}
+
+id: 9
+event: turn_finished
+data: {"turn_id":"t1","stop_reason":"end_turn"}
+

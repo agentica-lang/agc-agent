@@ -1,0 +1,16 @@
+id: 1
+event: turn_started
+data: {"turn_id":"t1"}
+
+id: 2
+event: text_delta
+data: {"text":"I need to run commands.\n"}
+
+id: 3
+event: tool_started
+data: {"call_id":"c1","name":"bash","summary":"rm -r build"}
+
+id: 4
+event: approval_requested
+data: {"approval_id":"a1","call_id":"c1","tool":"bash","preview":"rm -r build","detail":""}
+

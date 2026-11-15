@@ -1,0 +1,12 @@
+id: 1
+event: turn_started
+data: {"turn_id":"t1"}
+
+id: 2
+event: approval_requested
+data: {"approval_id":"a1","call_id":"c1","tool":"bash","preview":"make build","detail":""}
+
+id: 3
+event: approval_requested
+data: {"approval_id":"a2","call_id":"c2","tool":"write_file","preview":"notes.txt, 12 bytes","detail":""}
+

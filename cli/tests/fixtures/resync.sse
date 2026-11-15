@@ -1,0 +1,7 @@
+event: resync
+data: {}
+
+id: 8
+event: text_delta
+data: {"text":"stale\n"}
+

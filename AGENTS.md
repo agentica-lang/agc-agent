@@ -13,6 +13,7 @@ protocol/            commands, replies and events between server and clients, wi
                      protocol.agc is its public module
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point
+cli/                 the line-mode client: depends only on sse and protocol; main.agc is the entry point
 <pkg>/tests/         *_test.agc tests of that package; fixtures/ the recorded data they read
 llm/smoke/           tests against a real llama-server (make smoke-llama)
 llm/live/            tests against a paid API (make live-fireworks): never in CI
@@ -21,7 +22,7 @@ Makefile             check, fmt-check, unit, smoke, test over every package; smo
 .github/workflows/   ci.yml: the pinned Agentica release, then fmt-check and test; the llama job
 ```
 
-Later phases add `cli` and `tui_client`. A package is added
+Later phases add `tui_client`. A package is added
 by the phase that needs it, never as an empty folder.
 
 ## Commands
@@ -32,6 +33,15 @@ by the phase that needs it, never as an empty folder.
 - `make test AGENTICA=...`: `check` (first `coupling`: the package rules
   below, with `rg`), `unit` (`agentica test tests` in each package; a package
   that passes no test fails) and `smoke` (runs `core/main.agc`).
+- `cli` tests run the client as a child process on pipes (the Makefile
+  exports `AGENTICA` for it) against a fake protocol server in
+  `cli/tests/support/`. The client finds the server in the state folder
+  (`--state-dir`, `AGC_AGENT_STATE_DIR`, else `$XDG_STATE_HOME/agc-agent`):
+  `server.json` `{port, token, pid}`, and `server.lock` for the start. A
+  server command that is started gets the folder in `AGC_AGENT_STATE_DIR`;
+  without `--server-command` (or words after `--`) and
+  `AGC_AGENT_SERVER_COMMAND` it is `core/main.agc serve` next to the client's
+  own main file, never one of the current folder.
 - `make fmt-check AGENTICA=...`: `agentica fmt --check` in each package.
 - `make smoke-llama`: fetches llama.cpp and Qwen2.5-0.5B (pinned in
   `scripts/`, one tag and its sha256 to bump), then runs `llm/smoke` against a
@@ -58,7 +68,9 @@ by the phase that needs it, never as an empty folder.
   - Keep them loosely coupled, so one can move to its own repo: `llm`, `sse`
     and `protocol` never depend on `core` or a client, and a package imports
     another only through its public module (`pkg/llm/llm`), never its `src/`.
-    `make coupling` checks both.
+    `make coupling` checks both. A client (`cli`, later `tui_client`) reaches
+    the server only through `protocol` and `sse`: it never depends on `core` or
+    `llm`.
   - Each package has one `VERSION` constant in its public module, equal to its
     tag (`llm-0.0.1` is `VERSION = "0.0.1"`). A release goes in this order: tag
     the dependency (`llm-X`), then a PR that bumps the dependent's entry and

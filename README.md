@@ -24,6 +24,7 @@ The repo is an Agentica workspace (`agentica.toml`): one folder per package.
 | `llm` | client for LLM APIs |
 | `protocol` | the records, events and JSON codecs between the server and its clients |
 | `core` | the server: agent loop, tools, approval, sessions, extensions |
+| `cli` | the line-mode client: sends messages, prints the events, answers approvals, stops with Ctrl+C |
 
 ## Try it
 
@@ -31,6 +32,7 @@ Needs Agentica 0.32.0 or later.
 
 ```sh
 agentica core/main.agc --version
+agentica cli/main.agc --help
 agentica core/main.agc serve   # a llama-server at AGC_AGENT_BASE_URL (default http://127.0.0.1:8080/v1)
 make test
 make smoke-llama   # fetches llama.cpp and a 0.5B model (about 500 MB) into .tools/

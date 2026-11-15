@@ -1,0 +1,12 @@
+id: 4
+event: approval_resolved
+data: {"approval_id":"a1","decision":"deny","source":"client"}
+
+id: 5
+event: approval_resolved
+data: {"approval_id":"a2","decision":"deny","source":"client"}
+
+id: 6
+event: turn_finished
+data: {"turn_id":"t1","stop_reason":"end_turn"}
+

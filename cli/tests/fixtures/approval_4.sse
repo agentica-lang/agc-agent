@@ -1,0 +1,16 @@
+id: 13
+event: approval_resolved
+data: {"approval_id":"a3","decision":"allow_session","source":"client"}
+
+id: 14
+event: tool_finished
+data: {"call_id":"c3","ok":true,"summary":"exit 0","duration_ms":950}
+
+id: 15
+event: text_delta
+data: {"text":"All done.\n"}
+
+id: 16
+event: turn_finished
+data: {"turn_id":"t1","stop_reason":"end_turn"}
+

@@ -1,0 +1,16 @@
+id: 5
+event: approval_resolved
+data: {"approval_id":"a1","decision":"allow","source":"client"}
+
+id: 6
+event: tool_finished
+data: {"call_id":"c1","ok":true,"summary":"exit 0","duration_ms":31}
+
+id: 7
+event: tool_started
+data: {"call_id":"c2","name":"write_file","summary":"notes.txt"}
+
+id: 8
+event: approval_requested
+data: {"approval_id":"a2","call_id":"c2","tool":"write_file","preview":"notes.txt, 12 bytes","detail":"line one\nline two"}
+
