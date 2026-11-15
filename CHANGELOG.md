@@ -8,3 +8,4 @@
 - The `llm` common API (messages, tools, a stream of events, usage, stop reasons, errors, retry) and its first provider, `openai_chat`.
 - The six base tools of `core` (`read_file`, `write_file`, `edit_file`, `glob`, `grep`, `bash`), the path rule, the approval rules and the bash environment.
 - `protocol`: `decode_session` checks that `turn_id` and `turn_from_event_id` come together and agree with `last_event_id`; `StopReason.Other` is never a known name.
+- `make smoke-llama` (and the CI `llama` job) runs the `llm` tests against a real llama-server; `make live-fireworks` makes one real Fireworks call.

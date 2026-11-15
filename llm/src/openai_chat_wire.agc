@@ -40,8 +40,9 @@ end
 ## The state before the first chunk.
 def new_turn() -> Turn = Turn(usage: Types.Usage())
 
-## The JSON body of a streamed call.
-def request_body(request: Types.Request) -> String
+## The JSON body of a streamed call. Error `llm.unsupported`: a `Custom` tool, which only Responses has.
+def request_body(request: Types.Request) -> Result[String]
+  try check_custom(request)
   body: Map[String, JSON.Value] = {
     "model": JSON.from(request.model),
     "messages": JSON.array(messages(request)),
@@ -71,7 +72,7 @@ def request_body(request: Types.Request) -> String
     body = body.put(key, request.extra[key])
   end
 
-  JSON.encode(JSON.object(body))
+  ok(JSON.encode(JSON.object(body)))
 end
 
 ## Folds the `data` of one SSE event. Errors: `llm.api` (an error object in the stream), `llm.protocol` (bad JSON).
@@ -205,24 +206,13 @@ def tool_choice(choice: Types.ToolChoice) -> String
 end
 
 def tool_json(tool: Types.Tool) -> JSON.Value
-  case tool.kind
-    Types.ToolKind.Function ->
-      function = JSON.object({
-        "name": JSON.from(tool.name),
-        "description": JSON.from(tool.description),
-        "parameters": tool.input_schema,
-      })
+  function = JSON.object({
+    "name": JSON.from(tool.name),
+    "description": JSON.from(tool.description),
+    "parameters": tool.input_schema,
+  })
 
-      JSON.object({"type": JSON.from("function"), "function": function})
-    Types.ToolKind.Custom ->
-      custom = JSON.object({
-        "name": JSON.from(tool.name),
-        "description": JSON.from(tool.description),
-        "format": tool.input_schema,
-      })
-
-      JSON.object({"type": JSON.from("custom"), "custom": custom})
-  end
+  JSON.object({"type": JSON.from("function"), "function": function})
 end
 
 def messages(request: Types.Request) -> List[JSON.Value]
@@ -300,19 +290,35 @@ end
 
 # The arguments go back as the model wrote them, so the prompt prefix (and its cache) stays the same.
 def call_json(call: Types.ToolCall) -> JSON.Value
-  case call.kind
-    Types.ToolKind.Function ->
-      arguments = call.arguments
-      if arguments.empty?
-        arguments = "{}"
-      end
-
-      function = JSON.object({"name": JSON.from(call.name), "arguments": JSON.from(arguments)})
-      JSON.object({"id": JSON.from(call.id), "type": JSON.from("function"), "function": function})
-    Types.ToolKind.Custom ->
-      custom = JSON.object({"name": JSON.from(call.name), "input": JSON.from(call.arguments)})
-      JSON.object({"id": JSON.from(call.id), "type": JSON.from("custom"), "custom": custom})
+  arguments = call.arguments
+  if arguments.empty?
+    arguments = "{}"
   end
+
+  function = JSON.object({"name": JSON.from(call.name), "arguments": JSON.from(arguments)})
+  JSON.object({"id": JSON.from(call.id), "type": JSON.from("function"), "function": function})
+end
+
+# Chat completions streams no freeform calls, so a `Custom` tool or call is refused before anything is sent.
+def check_custom(request: Types.Request) -> Result[Void]
+  for tool in request.tools
+    return unsupported(tool.name) if tool.kind == Types.ToolKind.Custom
+  end
+
+  for message in request.messages
+    for block in message.content
+      case block
+        Types.Block.ToolUse(call) if call.kind == Types.ToolKind.Custom -> return unsupported(call.name)
+        _ -> nil
+      end
+    end
+  end
+
+  ok()
+end
+
+def unsupported(name: String) -> Result[Void]
+  error("llm: openai_chat has no custom (freeform) tools: #{name}", kind: "llm.unsupported")
 end
 
 def role_text(role: String, text: String) -> JSON.Value
