@@ -23,8 +23,9 @@ by the phase that needs it, never as an empty folder.
 - Binary: the release pinned in `.github/workflows/ci.yml`
   (`AGENTICA_VERSION`, with its sha256). Keep a local copy under `.tools/`
   (gitignored), never `/tmp`.
-- `make test AGENTICA=...`: `check`, `unit` (`agentica test tests` in each
-  package) and `smoke` (runs `core/main.agc`).
+- `make test AGENTICA=...`: `check` (first `coupling`: the package rules
+  below, with `rg`), `unit` (`agentica test tests` in each package) and
+  `smoke` (runs `core/main.agc`).
 - `make fmt-check AGENTICA=...`: `agentica fmt --check` in each package.
 - After a change of a package's dependencies: `agentica update` in that
   package's folder, and commit its `agentica.lock`.
@@ -44,6 +45,11 @@ by the phase that needs it, never as an empty folder.
   - Keep them loosely coupled, so one can move to its own repo: `llm`, `sse`
     and `protocol` never depend on `core` or a client, and a package imports
     another only through its public module (`pkg/llm/llm`), never its `src/`.
+    `make coupling` checks both.
+  - Each package has one `VERSION` constant in its public module, equal to its
+    tag (`llm-0.0.1` is `VERSION = "0.0.1"`). A release goes in this order: tag
+    the dependency (`llm-X`), then a PR that bumps the dependent's entry and
+    `agentica.lock`, then tag the dependent (`core-Y`).
 - Tests are hermetic: localhost, port 0, no network, no keys. LLM APIs are
   faked by a local server that streams recorded fixtures. A real API call costs
   money: only through a `live` target, never in CI, and only with the owner's

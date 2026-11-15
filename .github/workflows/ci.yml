@@ -30,7 +30,10 @@ jobs:
 
       - run: agentica --version
 
+      # make check uses rg for the coupling rules of the packages.
+      - run: command -v rg || { sudo apt-get update && sudo apt-get install -y ripgrep; }
+
       - run: make fmt-check
 
-      # Checks every .agc file, runs the unit tests and runs the entry point.
+      # The coupling rules, then check, unit tests and a run of the entry point for every package.
       - run: make test
