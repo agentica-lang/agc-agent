@@ -4,7 +4,7 @@
 import HTTP from "std/http"
 
 # The fixtures, from the package folder (`make unit`) or from the repository root.
-FIXTURE_DIRS = ["tests/fixtures/openai_chat", "llm/tests/fixtures/openai_chat"]
+FIXTURE_DIRS = ["tests/fixtures", "llm/tests/fixtures"]
 WAIT_MS = 5000
 
 ## One answer of the fake.
@@ -62,7 +62,7 @@ end
 ## The next request the fake got.
 def next_request(fake: Fake) -> Result[Seen] = fake.seen.recv(WAIT_MS)
 
-## A 200 event stream of the fixture `name`, in pieces of `piece_bytes`.
+## A 200 event stream of the fixture `name` (a path under `tests/fixtures`), in pieces of `piece_bytes`.
 def sse(name: String, piece_bytes: Int = 7) -> Result[Reply]
   body = try fixture(name)
   ok(Reply(status: 200, body: body, headers: [content_type("text/event-stream")], piece_bytes: piece_bytes))

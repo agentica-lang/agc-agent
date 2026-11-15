@@ -6,7 +6,8 @@ READ_FILE_SCHEMA = (
   "\"required\":[\"path\"]}"
 )
 
-# Small models are not reliable: these check shapes, not words, at temperature 0 with a seed.
+# Small models are not reliable: these check shapes, not words, at temperature 0 with a seed. Each test runs both
+# providers against one server.
 def test_a_real_server_streams_text() -> Result[Void]
   request = LLM.Request(
     model: "qwen",
@@ -18,18 +19,13 @@ def test_a_real_server_streams_text() -> Result[Void]
   )
 
   server = try Llama.start("text")
-  result = call(server, request)
+  results = providers(server).map { |provider| call(provider, request) }
   Llama.stop(server)
-  answer = try result
-  try Test.assert(texts(answer.response).strip.length > 0, "no text")
-  try Test.assert(answer.deltas > 0, "no text delta")
-  try Test.assert(
-    [LLM.StopReason.EndTurn, LLM.StopReason.MaxTokens].include?(answer.response.stop_reason),
-    "stop reason #{answer.response.stop_reason}",
-  )
+  for result in results
+    try check_text(try result)
+  end
 
-  usage = answer.response.usage
-  Test.assert(usage.input + usage.cache_read > 0 and usage.output > 0, "usage #{usage}")
+  ok()
 end
 
 def test_a_real_server_calls_a_tool_with_json_arguments() -> Result[Void]
@@ -50,9 +46,49 @@ def test_a_real_server_calls_a_tool_with_json_arguments() -> Result[Void]
   )
 
   server = try Llama.start("tool_call")
-  result = call(server, request)
+  results = providers(server).map { |provider| tool_round(provider, request) }
   Llama.stop(server)
-  answer = try result
+  for result in results
+    try result
+  end
+
+  ok()
+end
+
+private
+
+struct Answer
+  response: LLM.Response
+  deltas: Int
+end
+
+def providers(server: Llama.Server) -> List[LLM.Provider]
+  [LLM.openai_chat(server.url, ""), LLM.openai_responses(server.url, "")]
+end
+
+def check_text(answer: Answer) -> Result[Void]
+  try Test.assert(texts(answer.response).strip.length > 0, "no text")
+  try Test.assert(answer.deltas > 0, "no text delta")
+  try Test.assert(
+    [LLM.StopReason.EndTurn, LLM.StopReason.MaxTokens].include?(answer.response.stop_reason),
+    "stop reason #{answer.response.stop_reason}",
+  )
+
+  usage = answer.response.usage
+  Test.assert(usage.input + usage.cache_read > 0 and usage.output > 0, "usage #{usage}")
+end
+
+# The call, then its result sent back with the call as the model gave it: the real server takes both.
+def tool_round(provider: LLM.Provider, request: LLM.Request) -> Result[Void]
+  answer = try call(provider, request)
+  try check_tool_call(answer)
+  results = answer.response.message.content.select { |b| tool_use?(b) }.map { |b| result_of(b) }
+  messages = request.messages + [answer.response.message, LLM.Message(role: LLM.Role.User, content: results)]
+  again = try call(provider, request.with(messages: messages, tool_choice: LLM.ToolChoice.Auto, max_tokens: 24))
+  Test.assert(not again.response.message.content.empty?, "no answer after the tool result")
+end
+
+def check_tool_call(answer: Answer) -> Result[Void]
   try Test.eq(answer.response.stop_reason, LLM.StopReason.ToolUse)
   calls = answer.response.message.content.select { |b| tool_use?(b) }
   try Test.assert(not calls.empty?, "no tool call: #{answer.response.message.content}")
@@ -65,15 +101,7 @@ def test_a_real_server_calls_a_tool_with_json_arguments() -> Result[Void]
   end
 end
 
-private
-
-struct Answer
-  response: LLM.Response
-  deltas: Int
-end
-
-def call(server: Llama.Server, request: LLM.Request) -> Result[Answer]
-  provider = LLM.openai_chat(server.url, "")
+def call(provider: LLM.Provider, request: LLM.Request) -> Result[Answer]
   stream = try LLM.stream(provider, request)
   deltas = 0
   while true
@@ -103,6 +131,14 @@ def text_of(block: LLM.Block) -> String
   case block
     LLM.Block.Text(part) -> part.text
     _ -> ""
+  end
+end
+
+def result_of(block: LLM.Block) -> LLM.Block
+  case block
+    LLM.Block.ToolUse(tool_call) ->
+      LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: tool_call.id, content: "# agc-agent\nA coding agent."))
+    _ -> block
   end
 end
 
