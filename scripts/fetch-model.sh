@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # Fetches Qwen2.5-0.5B-Instruct Q4_K_M, the model of the llama-server smoke tests, into .tools/models (gitignored),
-# checked against its sha256. A partial or wrong download never takes the final name.
+# checked against its sha256. A partial or wrong download never takes the final name. The file is pinned by its
+# Hugging Face revision: a bump changes REVISION and SHA256 together.
 set -euo pipefail
 REPO="Qwen/Qwen2.5-0.5B-Instruct-GGUF"
 FILE="qwen2.5-0.5b-instruct-q4_k_m.gguf"
+REVISION="9217f5db79a29953eb74d5343926648285ec7e67"
 SHA256="74a4da8c9fdbcd15bd1f6d01d621410d31c6fc00986f5eb687824e7b93d7a9db"
-URL="https://huggingface.co/$REPO/resolve/main/$FILE"
+URL="https://huggingface.co/$REPO/resolve/$REVISION/$FILE"
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/.tools/models/$FILE"

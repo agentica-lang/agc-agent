@@ -69,6 +69,6 @@ jobs:
 
       - run: make smoke-llama
 
-      - name: llama-server log
+      - name: llama-server logs
         if: failure()
-        run: cat llm/_build/llama-server.log || true
+        run: tail -n +1 llm/_build/llama-logs/*.log || true

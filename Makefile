@@ -46,10 +46,12 @@ test: check unit smoke
 # LLAMA_URL.
 smoke-llama:
 	if [ -z "$$LLAMA_URL" ]; then scripts/fetch-llama.sh && scripts/fetch-model.sh; fi
-	mkdir -p llm/_build
-	export LLAMA_SERVER='$(LLAMA_SERVER)' LLAMA_MODEL='$(LLAMA_MODEL)'; $(call tests,llm,smoke)
+	mkdir -p llm/_build/llama-logs
+	export LLAMA_SERVER='$(LLAMA_SERVER)' LLAMA_MODEL='$(LLAMA_MODEL)' LLAMA_LOG_DIR='$(CURDIR)/llm/_build/llama-logs'; \
+	$(call tests,llm,smoke)
 
 # A real Fireworks call, which costs money: local only, with the owner's yes, never in CI. Skips without the key.
 live-fireworks:
-	@if [ -z "$$FIREWORKS_API_KEY" ]; then echo "live-fireworks: FIREWORKS_API_KEY is unset, skipped"; exit 0; fi; \
+	@if [ -n "$$CI" ]; then echo "live-fireworks: refused in CI" >&2; exit 1; fi; \
+	if [ -z "$$FIREWORKS_API_KEY" ]; then echo "live-fireworks: FIREWORKS_API_KEY is unset, skipped"; exit 0; fi; \
 	export FIREWORKS_MODEL='$(FIREWORKS_MODEL)'; $(call tests,llm,live)

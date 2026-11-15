@@ -158,11 +158,18 @@ def retry(config: Config) -> Errors.Retry
   )
 end
 
-# A header of the caller replaces the provider's header of the same name.
+# A header of the caller replaces the provider's header of the same name, without regard to case.
 def merge_headers(own: List[HTTP.Header], extra: Map[String, String]) -> List[HTTP.Header]
-  names = Set.new(extra.keys.map { |name| name.downcase })
-  kept = own.select { |h| not names.include?(h.name.downcase) }
-  kept + extra.keys.map { |name| HTTP.Header(name: name, value: extra[name]) }
+  by_name: Map[String, HTTP.Header] = {}
+  for header in own
+    by_name = by_name.put(header.name.downcase, header)
+  end
+
+  for name in extra.keys
+    by_name = by_name.put(name.downcase, HTTP.Header(name: name, value: extra[name]))
+  end
+
+  by_name.values
 end
 
 def auth(config: Config) -> List[HTTP.Header]

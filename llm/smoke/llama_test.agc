@@ -8,7 +8,6 @@ READ_FILE_SCHEMA = (
 
 # Small models are not reliable: these check shapes, not words, at temperature 0 with a seed.
 def test_a_real_server_streams_text() -> Result[Void]
-  server = try Llama.start()
   request = LLM.Request(
     model: "qwen",
     system: "Answer in one short sentence.",
@@ -18,6 +17,7 @@ def test_a_real_server_streams_text() -> Result[Void]
     seed: some(1),
   )
 
+  server = try Llama.start("text")
   result = call(server, request)
   Llama.stop(server)
   answer = try result
@@ -33,7 +33,6 @@ def test_a_real_server_streams_text() -> Result[Void]
 end
 
 def test_a_real_server_calls_a_tool_with_json_arguments() -> Result[Void]
-  server = try Llama.start()
   tool = LLM.Tool(
     name: "read_file",
     description: "Read a file of the project.",
@@ -50,6 +49,7 @@ def test_a_real_server_calls_a_tool_with_json_arguments() -> Result[Void]
     seed: some(1),
   )
 
+  server = try Llama.start("tool_call")
   result = call(server, request)
   Llama.stop(server)
   answer = try result
