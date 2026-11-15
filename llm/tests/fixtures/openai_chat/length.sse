@@ -1,0 +1,16 @@
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"role":"assistant","content":null}}],"created":1794777257,"id":"chatcmpl-N6hVFr23pCYf4APEEsS9MldTHKS3ljbn","model":"qwen2.5-0.5b-instruct","system_fingerprint":"b12012-1ab23c33b","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":"Sure"}}],"created":1794777257,"id":"chatcmpl-N6hVFr23pCYf4APEEsS9MldTHKS3ljbn","model":"qwen2.5-0.5b-instruct","system_fingerprint":"b12012-1ab23c33b","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":","}}],"created":1794777257,"id":"chatcmpl-N6hVFr23pCYf4APEEsS9MldTHKS3ljbn","model":"qwen2.5-0.5b-instruct","system_fingerprint":"b12012-1ab23c33b","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" here"}}],"created":1794777257,"id":"chatcmpl-N6hVFr23pCYf4APEEsS9MldTHKS3ljbn","model":"qwen2.5-0.5b-instruct","system_fingerprint":"b12012-1ab23c33b","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"content":" are"}}],"created":1794777257,"id":"chatcmpl-N6hVFr23pCYf4APEEsS9MldTHKS3ljbn","model":"qwen2.5-0.5b-instruct","system_fingerprint":"b12012-1ab23c33b","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":"length","index":0,"delta":{}}],"created":1794777257,"id":"chatcmpl-N6hVFr23pCYf4APEEsS9MldTHKS3ljbn","model":"qwen2.5-0.5b-instruct","system_fingerprint":"b12012-1ab23c33b","object":"chat.completion.chunk"}
+
+data: {"choices":[],"created":1794777257,"id":"chatcmpl-N6hVFr23pCYf4APEEsS9MldTHKS3ljbn","model":"qwen2.5-0.5b-instruct","system_fingerprint":"b12012-1ab23c33b","object":"chat.completion.chunk","usage":{"completion_tokens":4,"prompt_tokens":37,"total_tokens":41,"prompt_tokens_details":{"cached_tokens":0}},"timings":{"cache_n":0,"prompt_n":37,"prompt_ms":701.13,"prompt_per_token_ms":18.949459459459458,"prompt_per_second":52.771953845934426,"predicted_n":4,"predicted_ms":102.642,"predicted_per_token_ms":34.214,"predicted_per_second":29.227801484772314}}
+
+data: [DONE]
+

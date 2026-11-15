@@ -42,8 +42,8 @@ def test_empty_pieces_keep_a_cr_and_lf_together() -> Result[Void]
   Test.eq(parse(["data: x\r".bytes, "".bytes, "\n".bytes, "".bytes, "\r\n".bytes]), ok([SSE.Event(data: "x")]))
 end
 
-# The same stream, cut at random points with empty pieces between some cuts, gives the same events. The run's seed
-# replays a failure.
+# The same stream, cut at random points with empty pieces between some cuts, gives the same events. The seed is
+# printed when the run fails.
 def test_random_cuts_and_empty_pieces_give_the_same_events() -> Result[Void]
   bytes = STREAM.bytes
   for _round in 1..200
