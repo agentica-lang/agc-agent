@@ -1,7 +1,7 @@
 AGENTICA ?= agentica
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
-PACKAGES = llm core
+PACKAGES = sse llm core
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
 LEAVES = llm sse protocol
 SERVER_AND_CLIENTS = core|cli|tui_client|web_client
@@ -22,8 +22,12 @@ coupling:
 fmt-check:
 	for pkg in $(PACKAGES); do (cd $$pkg && $(AGENTICA) fmt --check .) || exit 1; done
 
+# A package whose run passes no test fails, so tests that are no longer found never pass in silence.
 unit:
-	for pkg in $(PACKAGES); do (cd $$pkg && $(AGENTICA) test tests) || exit 1; done
+	for pkg in $(PACKAGES); do \
+	  out=$$(cd $$pkg && $(AGENTICA) test tests); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
+	  echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "unit: no test passed in $$pkg" >&2; exit 1; }; \
+	done
 
 # The core's entry point runs, with llm read from the workspace.
 smoke:
