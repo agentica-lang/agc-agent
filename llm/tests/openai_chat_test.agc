@@ -20,7 +20,7 @@ def test_streams_text_and_sends_the_request() -> Result[Void]
     temperature: some(0.0),
     seed: some(1),
     extra: {"top_k": JSON.from(1), "seed": JSON.from(2)},
-    headers: {"X-Trace": "t1"},
+    headers: {"X-Trace": "t1", "authorization": "Bearer caller"},
   )
 
   call = try LLM.stream(provider(fake), request)
@@ -36,7 +36,7 @@ def test_streams_text_and_sends_the_request() -> Result[Void]
   try Test.eq(response.id, "chatcmpl-DePvU1zpJk9KrvulQ4vibjpWXDk02mbb")
   try Test.eq(response.usage, LLM.Usage(input: 22, output: 11))
   try Test.eq([seen.method, seen.path], ["POST", "/v1/chat/completions"])
-  try Test.eq(HTTP.header_values(seen.headers, "authorization"), ["Bearer #{KEY}"])
+  try Test.eq(HTTP.header_values(seen.headers, "authorization"), ["Bearer caller"])
   try Test.eq(HTTP.header_values(seen.headers, "x-trace"), ["t1"])
   expected = <<~JSON
     {"model": "qwen2.5-0.5b-instruct", "max_tokens": 32, "stream": true, "stream_options": {"include_usage": true},
@@ -183,6 +183,34 @@ def test_arguments_that_do_not_parse_are_kept_and_marked() -> Result[Void]
   end
 end
 
+def test_a_custom_tool_is_refused_before_sending() -> Result[Void]
+  fake = try Fake.start([try Fake.sse("text.sse")])
+  patch = LLM.Tool(
+    name: "apply_patch",
+    description: "Edit files.",
+    input_schema: JSON.object({}),
+    kind: LLM.ToolKind.Custom,
+  )
+
+  result = LLM.stream(provider(fake), LLM.Request(model: MODEL, messages: [user("Fix it.")], tools: [patch]))
+  try Fake.stop(fake)
+  try Test.assert(fake.seen.empty?, "the request was sent")
+  case result
+    ok(_) -> error("expected llm.unsupported")
+    error(e) -> Test.eq(e.kind, "llm.unsupported")
+  end
+end
+
+# Events nobody reads fill their channel; the call then fails instead of waiting for ever.
+def test_events_not_read_in_time_are_llm_slow_reader() -> Result[Void]
+  fake = try Fake.start([try Fake.sse("reasoning.sse", piece_bytes: 4096)])
+  slow = LLM.openai_chat(fake.url, KEY, LLM.OpenAIChatOptions(timeout_ms: 300))
+  call = try LLM.stream(slow, LLM.Request(model: MODEL, messages: [user("What is 2 + 3?")]))
+  result = Task.await(call.done)
+  try Fake.stop(fake)
+  Test.eq(kind(result), "llm.slow_reader")
+end
+
 def test_a_401_is_llm_auth_and_not_tried_again() -> Result[Void]
   fake = try Fake.start([try Fake.json(401, "unauthorized.json"), try Fake.sse("text.sse")])
   result = LLM.stream(provider(fake), LLM.Request(model: MODEL, messages: [user("Say hello.")]))
@@ -223,6 +251,7 @@ def test_lists_the_models_with_their_context() -> Result[Void]
   seen = try Fake.next_request(fake)
   try Fake.stop(fake)
   try Test.eq([seen.method, seen.path], ["GET", "/v1/models"])
+  try Test.eq(HTTP.header_values(seen.headers, "authorization"), ["Bearer #{KEY}"])
   Test.eq(models, ok([LLM.Model(id: MODEL, context: some(4096))]))
 end
 

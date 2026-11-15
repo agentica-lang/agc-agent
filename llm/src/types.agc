@@ -70,7 +70,8 @@ struct Request
   seed: Optional[Int] = none
   ## Fields of the provider's own request body, put in last (they replace the fields above).
   extra: Map[String, JSON.Value] = {}
-  ## HTTP headers sent with the request, after the provider's own.
+  ## HTTP headers sent with the request. One replaces the provider's header of the same name (`Authorization`, say);
+  ## names are compared without case, and of two that differ only in case the last one is sent.
   headers: Map[String, String] = {}
 end
 
