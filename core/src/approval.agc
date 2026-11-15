@@ -6,7 +6,8 @@
 ## sandbox: see the security model of `Tools`.
 ##
 ## A change to a path under `.git/` (`write_file`, `edit_file`) always asks, because `.git/config` and the hooks run
-## programs (`core.fsmonitor`, aliases) the next time git runs. Only a deny rule can change that.
+## programs (`core.fsmonitor`, aliases) the next time git runs; the name is compared without case and trailing dots.
+## Only a deny rule can change that. `edit_file` reads the file, so a deny rule of `read_file` denies it too.
 
 import Regex from "std/regex"
 
@@ -60,7 +61,8 @@ def plain?(command: String) -> Bool = Regex.match?(command, PLAIN)
 ## `asks` is whether the tool asks when no rule matches. A deny rule wins over an allow rule.
 def decide(rules: Rules, tool: String, target: String, asks: Bool) -> Verdict
   matchable = tool != "bash" or plain?(target)
-  denied = matchable and rules.deny.any? { |rule| matches?(rule, tool, target) }
+  hidden = tool == "edit_file" and read_denied?(rules, target)
+  denied = hidden or (matchable and rules.deny.any? { |rule| matches?(rule, tool, target) })
   allowed = matchable and rules.allow.any? { |rule| matches?(rule, tool, target) }
   if denied
     Verdict.Deny
@@ -102,9 +104,12 @@ private
 
 WORD = /\A[A-Za-z0-9_]\z/
 PLAIN = /\A[A-Za-z0-9_.\/:=,+@%\- \t]*\z/
+GIT = /\A\.git\.*\z/
 WRITES = ["write_file", "edit_file"]
 
-def git_internals?(tool: String, target: String) -> Bool = WRITES.include?(tool) and target.split("/").include?(".git")
+def git_internals?(tool: String, target: String) -> Bool
+  WRITES.include?(tool) and target.split("/").any? { |name| Regex.match?(name.downcase, GIT) }
+end
 
 def matches?(rule: Rule, tool: String, target: String) -> Bool
   return false if rule.tool != tool

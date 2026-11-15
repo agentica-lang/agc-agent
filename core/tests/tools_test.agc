@@ -68,9 +68,13 @@ end
 
 def test_read_file_reads_inside_and_refuses_every_way_out() -> Result[Void]
   s = try setup()
-  try Test.eq(call(s, "read_file", {"path": "a.txt"}), Tools.Output(text: "one\ntwo\nthree\nfour", is_error: false))
+  try Test.eq(call(s, "read_file", {"path": "a.txt"}), Tools.Output(text: "one\ntwo\nthree\nfour\n", is_error: false))
   try Test.eq(raw(s, "read_file", "{\"path\": \"a.txt\", \"offset\": 1, \"limit\": 2}").text, "two\nthree")
   try Test.eq(call(s, "read_file", {"path": "inside_link"}).is_error, false)
+  try File.write_text("#{s.root}/crlf.txt", "a\r\nb\r\n")
+  try Test.eq(call(s, "read_file", {"path": "crlf.txt"}).text, "a\r\nb\r\n")
+  nulls = raw(s, "read_file", "{\"path\": \"a.txt\", \"offset\": null, \"limit\": null}")
+  try Test.eq(nulls.text, "one\ntwo\nthree\nfour\n")
   try refused(call(s, "read_file", {"path": "../outside/secret.txt"}))
   try refused(call(s, "read_file", {"path": "sub/../../outside/secret.txt"}))
   try refused(call(s, "read_file", {"path": "#{s.outside}/secret.txt"}))
@@ -248,6 +252,9 @@ def test_a_bash_rule_matches_only_a_plain_command_and_whole_words() -> Result[Vo
   try Test.eq(decide(rules, prompt), Approval.Verdict.Ask)
   try Test.eq(Approval.decide(rules, "write_file", "src/a.agc", true), Approval.Verdict.Allow)
   try Test.eq(Approval.decide(rules, "edit_file", "src/a.agc", true), Approval.Verdict.Ask)
+  # A rule allows every argument of the program: this is what the security model says, so the test keeps it true.
+  cat = try Approval.parse_rules(["bash(cat src/*)"], [])
+  try Test.eq(decide(cat, "cat src/../../outside/secret"), Approval.Verdict.Allow)
   try Test.error?(Approval.parse_rule("bash"))
   try Test.error?(Approval.parse_rule("bash()"))
   Test.error?(Approval.parse_rule("(x)"))
@@ -258,6 +265,9 @@ def test_a_change_under_git_always_asks() -> Result[Void]
   try Test.eq(Approval.decide(rules, "write_file", "a.txt", true), Approval.Verdict.Allow)
   try Test.eq(Approval.decide(rules, "write_file", ".git/config", true), Approval.Verdict.Ask)
   try Test.eq(Approval.decide(rules, "edit_file", "sub/.git/config", true), Approval.Verdict.Ask)
+  try Test.eq(Approval.decide(rules, "write_file", ".GIT/config", true), Approval.Verdict.Ask)
+  try Test.eq(Approval.decide(rules, "write_file", ".git./config", true), Approval.Verdict.Ask)
+  try Test.eq(Approval.decide(rules, "edit_file", "sub/.Git../hooks/x", true), Approval.Verdict.Ask)
   try Test.eq(Approval.decide(rules, "write_file", ".git/hooks/pre-commit", true), Approval.Verdict.Deny)
   Test.eq(Approval.decide(rules, "write_file", ".github/ci.yml", true), Approval.Verdict.Allow)
 end
@@ -315,7 +325,7 @@ def test_a_call_with_a_bad_target_is_denied_and_fails() -> Result[Void]
   try Test.eq(Tools.verdict(s.ctx, "grep", null_path), Approval.Verdict.Deny)
   try refused(Tools.run(s.ctx, "grep", null_path))
   try Test.eq(Tools.verdict(s.ctx, "grep", JSON.from({"pattern": "needle"})), Approval.Verdict.Deny)
-  try refused(raw(s, "read_file", "{\"path\": \"a.txt\", \"offset\": null}"))
+  try refused(raw(s, "read_file", "{\"path\": null}"))
   done(s)
 end
 
@@ -333,6 +343,14 @@ def test_a_deny_rule_of_read_file_hides_the_file_from_glob_and_grep() -> Result[
   done(s)
 end
 
+def test_a_deny_rule_of_read_file_also_denies_edit_file() -> Result[Void]
+  s = try setup_with(["edit_file(*)"], ["read_file(.env)"])
+  try File.write_text("#{s.root}/.env", "API_KEY=hunter2\n")
+  try Test.eq(Tools.verdict(s.ctx, "edit_file", edit(".env")), Approval.Verdict.Deny)
+  try Test.eq(Tools.verdict(s.ctx, "edit_file", edit("a.txt")), Approval.Verdict.Allow)
+  done(s)
+end
+
 def test_read_file_reads_a_range_of_a_file_over_1_mib() -> Result[Void]
   s = try setup()
   line = "y" * 100000
@@ -345,6 +363,35 @@ def test_read_file_reads_a_range_of_a_file_over_1_mib() -> Result[Void]
   try File.append_text(big, "last\n")
   try Test.eq(raw(s, "read_file", "{\"path\": \"big.txt\", \"limit\": 1}").text, "first")
   try Test.eq(raw(s, "read_file", "{\"path\": \"big.txt\", \"offset\": 13, \"limit\": 5}").text, "last")
+  done(s)
+end
+
+# Whatever the size of the file and the limit, the text stays under the output cap, quickly.
+def test_read_file_never_builds_more_than_the_output_cap() -> Result[Void]
+  s = try setup()
+  big = "#{s.root}/big3.txt"
+  for _i in 1..30
+    try File.append_text(big, "#{"y" * 100000}\n")
+  end
+
+  small = "#{s.root}/small.txt"
+  for _i in 1..900
+    try File.append_text(small, "#{"z" * 999}\n")
+  end
+
+  started = Time.monotonic_ms()
+  for name in ["big3.txt", "small.txt"]
+    out = raw(s, "read_file", "{\"path\": \"#{name}\", \"limit\": 1000000000}")
+    try Test.eq(out.is_error, false)
+    try Test.assert(out.text.length <= 30000, "#{name} gave #{out.text.length} characters")
+    try Test.assert(out.text.include?("[output cut at"), "#{name} has no cut note")
+    try Test.assert(out.text.include?("continue with offset"), "#{name} does not say where to continue")
+  end
+
+  try File.write_text("#{s.root}/tiny.txt", "x\n" * 10000)
+  tiny = raw(s, "read_file", "{\"path\": \"tiny.txt\", \"limit\": 1000000000}")
+  try Test.eq(tiny.text.split("\n").size, 5000)
+  try Test.assert(Time.monotonic_ms() - started < 10000, "read_file is slow on a big limit")
   done(s)
 end
 

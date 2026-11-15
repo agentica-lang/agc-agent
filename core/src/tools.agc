@@ -3,11 +3,12 @@
 ## Security model. The tools keep a call inside the session folder and the approval rules decide what asks, but neither
 ## is a sandbox:
 ## - An allow pattern is a convenience. Allowing a program allows every option it takes and every config file it reads:
-##   `bash(git diff*)` allows `git diff --output=../x`, which writes outside the folder, and `bash(git *)` allows
-##   `git -c alias.x=!cmd x`, which runs `cmd`. Allow only what is harmless with any option.
+##   `bash(git diff*)` allows `git diff --output=../x`, which writes outside the folder, `bash(git *)` allows
+##   `git -c alias.x=!cmd x`, which runs `cmd`, and `bash(cat src/*)` allows `cat src/../../outside/secret`. Allow only
+##   what is harmless with every option and argument.
 ## - A bash rule matches only a plain command, so a deny rule of `bash` is best effort: `rm x; true` asks and is not
 ##   denied. A command that is not plain always asks, never runs on a rule.
-## - A deny rule of `read_file` also hides the file from `glob` and `grep`.
+## - A deny rule of `read_file` also denies `edit_file` and hides the file from `glob` and `grep`.
 ## - Bash runs as the user of the server and can read what the server reads (see `Shell`). A path is checked before it
 ##   is used, and bash is the only way to run something in parallel, so the check can race with a swapped link.
 ## - On a case-insensitive filesystem a rule on `.env` may not match `.ENV`.
@@ -37,7 +38,8 @@ def all() -> List[Spec.Tool]
     Spec.Tool(
       name: "read_file",
       description: (
-        "Read a text file of the session folder, of any size. Lines from `offset` (0 is the first), at most `limit`."
+        "Read a text file of the session folder. Lines from `offset` (0 is the first), at most `limit` " +
+        "(5000) and 27000 characters; the answer says where to continue. Over 1 MiB, line ends are not shown."
       ),
       input_schema: JSON.schema(Files.ReadFileArgs),
       asks: false,

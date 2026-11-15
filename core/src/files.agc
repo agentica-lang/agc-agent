@@ -4,6 +4,10 @@ import Sandbox from "sandbox"
 import Spec from "spec"
 
 DEFAULT_LINES = 2000
+MAX_LINES = 5000
+MAX_LINE_CHARS = 2000
+READ_BUDGET = 27000
+MAX_TEXT_BYTES = 1048576
 
 struct ReadFileArgs
   path: String
@@ -33,10 +37,12 @@ def read_file(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   info = try File.stat(path)
   return error("not a file: #{args.path}") if info.kind != "file"
 
-  file = try File.open(path)
-  lines = read_lines(file, offset, limit)
-  _ = File.close(file)
-  lines
+  wanted = [limit, MAX_LINES].min.unwrap!
+  if info.size_bytes <= MAX_TEXT_BYTES
+    ok(render(try from_text(path, offset, wanted)))
+  else
+    ok(render(try from_stream(path, offset, wanted)))
+  end
 end
 
 def write_file(ctx: Spec.Context, input: JSON.Value) -> Result[String]
@@ -86,26 +92,81 @@ end
 
 private
 
-# A file is read line by line, so `offset` and `limit` reach into a file of any size.
-def read_lines(file: File.Handle, offset: Int, limit: Int) -> Result[String]
-  lines: List[String] = []
-  number = 0
-  while lines.size < limit
+struct Page
+  lines: List[String]
+  chars: Int
+  next: Int
+  cut: Bool
+end
+
+# A file of up to 1 MiB is shown as it is, `\r` and the last newline included, so an `edit_file` can match what was
+# read. A bigger file is read line by line, which loses the line ends.
+def from_text(path: String, offset: Int, limit: Int) -> Result[Page]
+  lines = (try File.read_text(path)).split("\n")
+  page = Page(lines: [], chars: 0, next: offset, cut: false)
+  while page.next < lines.size and page.lines.size < limit and page.chars < READ_BUDGET
+    page = add(page, lines[page.next])
+  end
+
+  ok(page.with(cut: page.chars >= READ_BUDGET and page.next < lines.size and page.lines.size < limit))
+end
+
+def from_stream(path: String, offset: Int, limit: Int) -> Result[Page]
+  file = try File.open(path)
+  page = stream(file, offset, limit)
+  _ = File.close(file)
+  page
+end
+
+def stream(file: File.Handle, offset: Int, limit: Int) -> Result[Page]
+  page = Page(lines: [], chars: 0, next: 0, cut: false)
+  while page.next < offset
     case File.read_line(file)
-      ok(line) ->
-        if number >= offset
-          lines = lines.push(line)
-        end
-
-        number += 1
-      error(e) ->
-        return ok(lines.join("\n")) if e.kind == "io.eof"
-
-        return error(e.message)
+      ok(_) -> page = page.with(next: page.next + 1)
+      error(e) -> return end_of_file(e, page)
     end
   end
 
-  ok(lines.join("\n"))
+  collected = page.with(lines: [], chars: 0)
+  while collected.lines.size < limit and collected.chars < READ_BUDGET
+    case File.read_line(file)
+      ok(line) -> collected = add(collected, line)
+      error(e) -> return end_of_file(e, collected)
+    end
+  end
+
+  ok(collected.with(cut: collected.chars >= READ_BUDGET))
+end
+
+def end_of_file(e: Error, page: Page) -> Result[Page]
+  if e.kind == "io.eof"
+    ok(page)
+  else
+    error(e.message)
+  end
+end
+
+def add(page: Page, line: String) -> Page
+  shown = clip(line)
+  page.with(lines: page.lines.push(shown), chars: page.chars + shown.length + 1, next: page.next + 1)
+end
+
+def clip(line: String) -> String
+  if line.length > MAX_LINE_CHARS
+    "#{line.slice(0, MAX_LINE_CHARS)}[line cut: #{line.length} characters]"
+  else
+    line
+  end
+end
+
+def render(page: Page) -> String = "#{page.lines.join("\n")}#{cut_note(page)}"
+
+def cut_note(page: Page) -> String
+  if page.cut
+    "\n[output cut at #{READ_BUDGET} characters: continue with offset #{page.next}]"
+  else
+    ""
+  end
 end
 
 def read(ctx: Spec.Context, requested: String) -> Result[String]

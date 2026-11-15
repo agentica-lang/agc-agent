@@ -24,15 +24,16 @@ struct Tool
   target: Fn[Context, JSON.Value, Result[String]]
 end
 
-## The input of a call as the record `codec` reads. It is strict: a key the record has not and a `null` are errors, so
-## a `null` path is no "default path" and a misspelled key is not dropped.
+## The input of a call as the record `codec` reads. It is strict: a key the record has not is an error, and so is a
+## `null` for a required field or for `path`, so a `null` path is no "default path". A `null` for another optional
+## field is the same as leaving it out.
 def args[T](input: JSON.Value, codec: Codec[T]) -> Result[T]
   case JSON.node(input)
     JSON.Node.Object(fields) ->
       known = codec.members.map { |member| member.name }
       for key in fields.keys
         return error("invalid input: unknown field #{key}") if not known.include?(key)
-        return error("invalid input: #{key} is null") if JSON.null?(fields[key])
+        return error("invalid input: #{key} is null") if JSON.null?(fields[key]) and not nullable?(codec.members, key)
       end
 
       decoded(input, codec)
@@ -48,6 +49,10 @@ def output(result: Result[String]) -> Output
 end
 
 private
+
+def nullable?(members: List[StructMember], key: String) -> Bool
+  key != "path" and members.any? { |member| member.name == key and member.type.start_with?("Optional") }
+end
 
 def decoded[T](input: JSON.Value, codec: Codec[T]) -> Result[T]
   case codec.decode(input)
