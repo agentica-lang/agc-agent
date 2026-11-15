@@ -1,10 +1,14 @@
 AGENTICA ?= agentica
+# The tests of the clients start the client with the same binary.
+export AGENTICA
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
-PACKAGES = sse llm protocol core
+PACKAGES = sse llm protocol core cli
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
 LEAVES = llm sse protocol
 SERVER_AND_CLIENTS = core|cli|tui_client|web_client
+# A client reaches the server only through the protocol: it never depends on these.
+NOT_FOR_CLIENTS = core|llm|tui_client|web_client
 
 # $(call none,DESCRIPTION,RG ARGS): fails when rg finds a match or cannot search (rg: 0 found, 1 none, 2 error).
 none = rg -n $(2); case $$? in 1) ;; 0) echo "coupling: $(1)" >&2; exit 1 ;; *) exit 2 ;; esac
@@ -28,6 +32,8 @@ check: coupling
 coupling:
 	@$(call none,$(LEAVES) depend on the server or a client,$(foreach p,$(LEAVES),-g '$(p)/**') \
 	  -e 'subdir *= *"($(SERVER_AND_CLIENTS))"' -e '"pkg/($(SERVER_AND_CLIENTS))/' .)
+	@$(call none,cli depends on the server or on the llm,-g 'cli/**' \
+	  -e 'subdir *= *"($(NOT_FOR_CLIENTS))"' -e '"pkg/($(NOT_FOR_CLIENTS))/' .)
 	@$(call none,a package imports another package's src/ (use its public module),-g '*.agc' 'pkg/[a-z0-9_-]+/src/' .)
 
 fmt-check:
@@ -36,9 +42,10 @@ fmt-check:
 unit:
 	for pkg in $(PACKAGES); do $(call tests,$$pkg,tests); done
 
-# The core's entry point runs, with llm read from the workspace.
+# The entry points run, with their packages read from the workspace.
 smoke:
 	out=$$($(AGENTICA) core/main.agc --version) && echo "$$out" | grep -qx 'agc-agent core [0-9.]* (llm [0-9.]*)'
+	out=$$($(AGENTICA) cli/main.agc --version) && echo "$$out" | grep -qx 'agc-agent cli [0-9.]*'
 
 test: check unit smoke
 

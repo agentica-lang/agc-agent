@@ -1,0 +1,112 @@
+## Runs the client as a child process on pipes, against a fake server, and reads what it prints.
+
+import HTTP from "std/http"
+import Fake from "fake_server"
+
+READ_MS = 10_000
+EXIT_MS = 15_000
+ENTRIES = ["main.agc", "cli/main.agc"]
+FAKE_MAINS = ["tests/support/fake_main.agc", "cli/tests/support/fake_main.agc"]
+
+## A fake server and the state folder that points at it.
+struct Rig
+  fake: Fake.Fake
+  dir: String
+end
+
+## What a client printed and how it ended.
+struct Done
+  lines: List[String]
+  code: Int
+  errors: String
+end
+
+## A fake server with `routes` and a state folder whose `server.json` names it with `token`.
+def rig(routes: List[Fake.Route], token: String = Fake.TOKEN) -> Result[Rig]
+  fake = try Fake.start(routes)
+  dir = try make_dir()
+  try File.write_text(try Path.join([dir, "server.json"]), Fake.server_file(fake, token))
+  ok(Rig(fake: fake, dir: dir))
+end
+
+## A state folder with no `server.json`.
+def empty_dir() -> Result[String] = make_dir()
+
+## Stops the fake and removes the state folder.
+def clean_up(rig: Rig) -> Result[Void]
+  try Fake.stop(rig.fake)
+  Path.remove(rig.dir)
+end
+
+## The client on `dir`, with `NO_COLOR` set to `no_color` ("" turns the colors on).
+def start(dir: String, args: List[String], no_color: String = "1") -> Result[Process]
+  entry = try existing(ENTRIES)
+  Process.spawn_captured(binary(), [entry, "--state-dir", dir] + args, Process.Options(env: {"NO_COLOR": no_color}))
+end
+
+## The command that starts the fake server program, for `--server-command`.
+def fake_command() -> Result[String]
+  main = try existing(FAKE_MAINS)
+  ok("#{binary()} #{main}")
+end
+
+def say(cli: Process, text: String) -> Result[Void] = Process.send(cli, "#{text}\n", READ_MS)
+
+## The lines the client prints until one has `marker` (that line included).
+def read_until(cli: Process, marker: String) -> Result[List[String]]
+  lines: List[String] = []
+  while true
+    line = try Process.read_line(cli, READ_MS)
+    lines = lines.push(line)
+    return ok(lines) if line.include?(marker)
+  end
+
+  ok(lines)
+end
+
+## Closes the input of the client and waits for it to end.
+def finish(cli: Process) -> Result[Done]
+  _ = Process.close_stdin(cli, READ_MS)
+  lines: List[String] = []
+  while true
+    case Process.read_line(cli, EXIT_MS)
+      ok(line) -> lines = lines.push(line)
+      error(_) -> break
+    end
+  end
+
+  code = try Process.wait(cli, EXIT_MS)
+  output = try Process.output(cli, EXIT_MS)
+  ok(Done(lines: lines, code: code, errors: output.stderr))
+end
+
+## True when the request carried the token of the fake.
+def authorized?(seen: Fake.Seen) -> Bool
+  HTTP.header_values(seen.headers, "authorization") == ["Bearer #{Fake.TOKEN}"]
+end
+
+def header(seen: Fake.Seen, name: String) -> List[String] = HTTP.header_values(seen.headers, name)
+
+private
+
+def binary() -> String
+  case System.env("AGENTICA")
+    ok(path) if path != "" -> path
+    _ -> "agentica"
+  end
+end
+
+def existing(paths: List[String]) -> Result[String]
+  found = paths.find { |path| File.stat(path).ok? }
+  case found
+    ok(path) -> ok(path)
+    error(_) -> error("none of #{paths.join(", ")} exists: run the tests from the repository root or the package")
+  end
+end
+
+def make_dir() -> Result[String]
+  base = System.env("TMPDIR").unwrap_or("/tmp")
+  dir = try Path.join([base, "agc-cli-#{System.pid()}-#{Random.int(0, 999_999_999)}"])
+  try Dir.mkdir_private(dir)
+  ok(dir)
+end

@@ -1,0 +1,12 @@
+id: 9
+event: tool_finished
+data: {"call_id":"c1","ok":true,"summary":"exit 0","duration_ms":950}
+
+id: 10
+event: text_delta
+data: {"text":"All pass.\n"}
+
+id: 11
+event: turn_finished
+data: {"turn_id":"t1","stop_reason":"end_turn"}
+

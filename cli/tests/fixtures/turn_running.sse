@@ -1,0 +1,16 @@
+id: 5
+event: turn_started
+data: {"turn_id":"t1"}
+
+id: 6
+event: thinking_delta
+data: {"text":"Checking the tests."}
+
+id: 7
+event: text_delta
+data: {"text":"Running the tests.\n"}
+
+id: 8
+event: tool_started
+data: {"call_id":"c1","name":"bash","summary":"make test"}
+

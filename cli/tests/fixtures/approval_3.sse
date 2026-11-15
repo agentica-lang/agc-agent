@@ -1,0 +1,16 @@
+id: 9
+event: approval_resolved
+data: {"approval_id":"a2","decision":"deny","source":"client"}
+
+id: 10
+event: tool_finished
+data: {"call_id":"c2","ok":false,"summary":"denied by the user","duration_ms":0}
+
+id: 11
+event: tool_started
+data: {"call_id":"c3","name":"bash","summary":"make test"}
+
+id: 12
+event: approval_requested
+data: {"approval_id":"a3","call_id":"c3","tool":"bash","preview":"make test"}
+

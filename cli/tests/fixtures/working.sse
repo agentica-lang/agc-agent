@@ -1,0 +1,8 @@
+id: 1
+event: turn_started
+data: {"turn_id":"t1"}
+
+id: 2
+event: text_delta
+data: {"text":"Working on it...\n"}
+
