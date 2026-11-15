@@ -47,7 +47,10 @@ def feed(parser: Parser, piece: Bytes) -> Result[Fed]
   events: List[Event] = []
   size = piece.size
   i = 0
-  if state.after_cr and size > 0 and piece[0] == LF
+  return ok(Fed(parser: state, events: [])) if size == 0
+
+  # A CRLF may be cut between two pieces: the LF that starts this piece ends no line.
+  if state.after_cr and piece[0] == LF
     i = 1
   end
 

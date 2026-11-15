@@ -2,11 +2,14 @@
 
 import {Event} from "reader"
 
+NUL = String.from_code(0)
+
 ## The text of one event, ending with its blank line. Each line of `data` becomes one `data:` line. Error
-## (`argument`): a line end in `name` or `id`, which would start another field.
+## (`argument`): a line end in `name` or `id`, which would start another field, or a NUL in `id`, which a parser
+## ignores.
 def encode(event: Event) -> Result[String]
-  if line_end?(event.name) or line_end?(event.id)
-    return error("sse: line end in the event name or id: #{event.name.inspect} #{event.id.inspect}", kind: "argument")
+  if line_end?(event.name) or line_end?(event.id) or event.id.include?(NUL)
+    return error("sse: bad event name or id: #{event.name.inspect} #{event.id.inspect}", kind: "argument")
   end
 
   fields: List[String] = []
@@ -18,7 +21,7 @@ def encode(event: Event) -> Result[String]
     fields = fields.push("id: #{event.id}")
   end
 
-  data = event.data.replace("\r\n", "\n").replace("\r", "\n").split("\n") |> map(->(line) { "data: #{line}" })
+  data = event.data.replace("\r\n", "\n").replace("\r", "\n").split("\n").map { |line| "data: #{line}" }
 
   ok((fields + data).map { |line| "#{line}\n" }.join("") + "\n")
 end

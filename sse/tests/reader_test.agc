@@ -1,7 +1,8 @@
 import SSE from "../sse"
 
 # Every line end (CRLF, LF, CR), a BOM, comments, an unknown field, multi-line data, a name, an id that carries over,
-# a field with no colon, a value without its space, and characters of 2 and 4 bytes.
+# an id with a NUL (ignored), `retry:` (ignored), a field with no colon, a value without its space, and characters of 2
+# and 4 bytes.
 STREAM = (
   String.from_code(65_279) +
   "data: first\r\n: a comment\r\n\r\n" +
@@ -34,6 +35,22 @@ def test_parses_a_stream_cut_in_two_anywhere() -> Result[Void]
   ok()
 end
 
+def test_empty_pieces_keep_a_cr_and_lf_together() -> Result[Void]
+  try Test.eq(parse(["data: x\r".bytes, "".bytes, "\n".bytes]), ok([]))
+  Test.eq(parse(["data: x\r".bytes, "".bytes, "\n".bytes, "".bytes, "\r\n".bytes]), ok([SSE.Event(data: "x")]))
+end
+
+# The same stream, cut at random points with empty pieces between some cuts, gives the same events. The run's seed
+# replays a failure.
+def test_random_cuts_and_empty_pieces_give_the_same_events() -> Result[Void]
+  bytes = STREAM.bytes
+  for _round in 1..200
+    try Test.eq(parse(random_pieces(bytes)), ok(EVENTS))
+  end
+
+  ok()
+end
+
 def test_an_event_over_the_limit_fails() -> Result[Void]
   fed = SSE.feed(SSE.parser(max_event_bytes: 8), "data: 12345\ndata: 6789".bytes)
   Test.assert(kind?(fed, "sse.too_large"), "expected sse.too_large")
@@ -58,7 +75,8 @@ end
 
 def test_the_writer_refuses_a_line_end_in_a_field() -> Result[Void]
   try Test.error?(SSE.encode(SSE.Event(name: "a\nb", data: "x")))
-  Test.error?(SSE.encode(SSE.Event(data: "x", id: "1\r")))
+  try Test.error?(SSE.encode(SSE.Event(data: "x", id: "1\r")))
+  Test.error?(SSE.encode(SSE.Event(data: "x", id: "1" + String.from_code(0))))
 end
 
 private
@@ -73,6 +91,22 @@ def parse(pieces: List[Bytes]) -> Result[List[SSE.Event]]
   end
 
   ok(events)
+end
+
+def random_pieces(bytes: Bytes) -> List[Bytes]
+  pieces: List[Bytes] = []
+  start = 0
+  while start < bytes.size
+    if Random.int(0, 3) == 0
+      pieces = pieces.push("".bytes)
+    end
+
+    length = Random.int(1, 8)
+    pieces = pieces.push(bytes.drop(start).take(length))
+    start = start + length
+  end
+
+  pieces
 end
 
 def kind?(fed: Result[SSE.Fed], kind: String) -> Bool
