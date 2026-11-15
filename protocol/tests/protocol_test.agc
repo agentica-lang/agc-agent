@@ -135,11 +135,18 @@ end
 def test_sessions_round_trip_idle_and_mid_turn() -> Result[Void]
   idle = try decode_fixture("session", &Protocol.decode_session, &Protocol.encode_session)
   try Test.eq(idle.turn_id, none)
+  try Test.eq(idle.turn_from_event_id, none)
   try Test.eq(idle.pending_approvals.size, 0)
   try Test.eq(Protocol.decode_session(Protocol.encode_session(idle)), ok(idle))
 
   running = try decode_fixture("session_mid_turn", &Protocol.decode_session, &Protocol.encode_session)
   try Test.eq(running.turn_id, some("t2"))
+  try Test.eq(running.turn_from_event_id, some(50))
+  try Test.assert(
+    running.turn_from_event_id.unwrap_or(0) <= running.last_event_id,
+    "turn starts before the last event",
+  )
+
   try Test.eq(running.pending_approvals[0].tool, "bash")
   try Test.eq(Protocol.decode_session(Protocol.encode_session(running)), ok(running))
 
@@ -198,7 +205,12 @@ def test_negative_numbers_are_refused() -> Result[Void]
   try Test.eq(error_kind(Protocol.decode_event("tool_finished", finished)), "protocol.invalid")
   session = session_json(-1, "[]")
 
-  Test.eq(error_kind(Protocol.decode_session(session)), "protocol.invalid")
+  try Test.eq(error_kind(Protocol.decode_session(session)), "protocol.invalid")
+  from = "{\"id\": \"s\", \"cwd\": \"/\", \"model\": \"m\", \"last_event_id\": 1, \"turn_from_event_id\": -1"
+  Test.eq(
+    error_kind(Protocol.decode_session("#{from}, \"pending_approvals\": [], \"history\": []}")),
+    "protocol.invalid",
+  )
 end
 
 def test_event_ids() -> Result[Void]

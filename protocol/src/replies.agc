@@ -45,15 +45,18 @@ end
 ## The answer of `GET /v1/sessions/ID`. Subscribe with `Last-Event-ID` set to `last_event_id` to miss and repeat no
 ## event; 0 is before the first event, and it is never negative.
 ##
-## `history` holds the finished messages. A client that attaches during a turn also gets `turn_id` (none when no turn
-## runs) and the approvals still waiting for an answer, so it can answer them. The partial text of the running turn is
-## not here: the server sends it through the normal event replay.
+## `history` holds the finished messages. While a turn runs, `turn_id` is its id and `turn_from_event_id` is the event
+## id just before its `turn_started` (none when no turn runs). A client that attaches mid-turn subscribes with
+## `Last-Event-ID` set to `turn_from_event_id` instead: the normal replay then gives it the whole running turn, its
+## deltas, tool events and approval requests. `pending_approvals` lists the approvals still waiting, for a client that
+## only needs to answer them.
 struct Session
   id: String
   cwd: String
   model: String
   last_event_id: Int
   turn_id: Optional[String]
+  turn_from_event_id: Optional[Int]
   pending_approvals: List[Events.ApprovalRequested]
   history: List[Message]
 end
@@ -95,6 +98,7 @@ def encode_session(reply: Session) -> String
       model: reply.model,
       last_event_id: reply.last_event_id,
       turn_id: reply.turn_id,
+      turn_from_event_id: reply.turn_from_event_id,
       pending_approvals: reply.pending_approvals,
       history: history,
     ),
@@ -104,6 +108,7 @@ end
 def decode_session(text: String) -> Result[Session]
   wire = try Wire.decode(text, SessionWire.codec)
   try Wire.non_negative("last_event_id", wire.last_event_id)
+  try Wire.non_negative("turn_from_event_id", wire.turn_from_event_id.unwrap_or(0))
   history: List[Message] = []
   for item in wire.history
     history = history.push(Message(role: try parse_role(item.role), text: item.text))
@@ -116,6 +121,7 @@ def decode_session(text: String) -> Result[Session]
       model: wire.model,
       last_event_id: wire.last_event_id,
       turn_id: wire.turn_id,
+      turn_from_event_id: wire.turn_from_event_id,
       pending_approvals: wire.pending_approvals,
       history: history,
     ),
@@ -135,6 +141,7 @@ struct SessionWire
   model: String
   last_event_id: Int
   turn_id: Optional[String]
+  turn_from_event_id: Optional[Int]
   pending_approvals: List[Events.ApprovalRequested]
   history: List[MessageWire]
 end

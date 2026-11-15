@@ -13,6 +13,7 @@
     "model": "qwen2.5-0.5b",
     "last_event_id": 42,
     "turn_id": null,
+    "turn_from_event_id": null,
     "pending_approvals": [],
     "history": [
       {"role": "user", "text": "Write hello.txt."},
@@ -25,6 +26,7 @@
     "model": "qwen2.5-0.5b",
     "last_event_id": 57,
     "turn_id": "t2",
+    "turn_from_event_id": 50,
     "pending_approvals": [
       {"approval_id": "a1", "call_id": "call_2", "tool": "bash", "preview": "rm -r b"}
     ],
