@@ -12,5 +12,5 @@ data: {"call_id":"c3","name":"bash","summary":"make test"}
 
 id: 12
 event: approval_requested
-data: {"approval_id":"a3","call_id":"c3","tool":"bash","preview":"make test"}
+data: {"approval_id":"a3","call_id":"c3","tool":"bash","preview":"make test","detail":""}
 

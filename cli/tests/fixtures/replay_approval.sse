@@ -8,7 +8,7 @@ data: {"call_id":"c1","name":"bash","summary":"make test"}
 
 id: 7
 event: approval_requested
-data: {"approval_id":"a1","call_id":"c1","tool":"bash","preview":"make test"}
+data: {"approval_id":"a1","call_id":"c1","tool":"bash","preview":"make test","detail":""}
 
 id: 8
 event: approval_resolved

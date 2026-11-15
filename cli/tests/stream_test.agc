@@ -95,10 +95,15 @@ def counted_again(rig: Driver.Rig) -> Result[Void]
   try Driver.read_until(cli, "more")
   try Fake.push(rig.fake, "resync.sse")
   try Driver.read_until(cli, "[resync")
+  # The third subscription is the one that takes the push.
+  first = try Fake.request(rig.fake, "GET", Protocol.events_path("s1"))
+  second = try Fake.request(rig.fake, "GET", Protocol.events_path("s1"))
+  third = try Fake.request(rig.fake, "GET", Protocol.events_path("s1"))
   try Fake.push(rig.fake, "turn_rest.sse")
   try Driver.read_until(cli, "[turn finished]")
   done = try Driver.finish(cli)
-  try Test.eq(try last_ids(rig), [["4"], ["4"], ["4"]])
+  ids = [first, second, third].map { |request| Driver.header(request, LAST_EVENT_ID) }
+  try Test.eq(ids, [["4"], ["4"], ["4"]])
   Test.eq(done.code, 0)
 end
 

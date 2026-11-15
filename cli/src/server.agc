@@ -6,8 +6,9 @@
 ## The state folder must be private to the user (0700, owned by them); so must `server.json`, `server.lock` and
 ## `server.log` (0600). Anything else is refused with the command that fixes it.
 
-import Client from "client"
+import Protocol from "pkg/protocol/protocol"
 import Args from "args"
+import Client from "client"
 
 STATE_DIR_ENV = "AGC_AGENT_STATE_DIR"
 SERVER_COMMAND_ENV = "AGC_AGENT_SERVER_COMMAND"
@@ -46,12 +47,6 @@ def connect(options: Args.Options, dir: String) -> Result[Client.Server]
 end
 
 private
-
-struct ServerFile
-  port: Int
-  token: String
-  pid: Int
-end
 
 enum Probe
   Alive(Client.Server)
@@ -98,9 +93,9 @@ def probe(dir: String) -> Probe
   end
 end
 
-def read_info(path: String) -> Result[ServerFile] = JSON.decode(try File.read_text(path), ServerFile)
+def read_info(path: String) -> Result[Protocol.ServerInfo] = Protocol.decode_server_info(try File.read_text(path))
 
-def reach(info: ServerFile) -> Probe
+def reach(info: Protocol.ServerInfo) -> Probe
   return Probe.Absent("the pid #{info.pid} of server.json is not a process of yours") if foreign_pid?(info.pid)
 
   server = Client.Server(url: "http://127.0.0.1:#{info.port}", token: info.token)
@@ -189,7 +184,8 @@ end
 def make_dir(dir: String) -> Result[Void]
   if not File.stat(dir).ok?
     try Dir.mkdir(parent_of(dir))
-    try Dir.mkdir_private(dir)
+    # Another client may make it first: it is checked below.
+    _ = Dir.mkdir_private(dir)
   end
 
   check_owned(dir, "700")
@@ -205,7 +201,8 @@ end
 
 def private_file(path: String) -> Result[Void]
   if not File.stat(path).ok?
-    try File.open(path, "create_private") do |_file| ok() end
+    # Another client may create it first: it is checked below.
+    _ = File.open(path, "create_private") do |_file| ok() end
   end
 
   check_owned(path, "600")
@@ -223,15 +220,39 @@ def take_lock(lock: File.Handle) -> Result[Void]
   error("another client is starting the server and did not finish in #{LOCK_WAIT_MS / 1000} s", kind: "cli.lock")
 end
 
-# TODO (issue #17): there is no default command until the core has its entry point. It must never be found in the
-# current folder: a repository you cd into would run its code.
+# The server command: the one given, else AGC_AGENT_SERVER_COMMAND, else the core's entry point next to this client.
 def command_words(options: Args.Options) -> Result[List[String]]
   return ok(options.server_command.unwrap!) if options.server_command.some?
 
-  text = System.env(SERVER_COMMAND_ENV).unwrap_or("")
-  words = text.split(" ").select { |word| word != "" }
+  words = System.env(SERVER_COMMAND_ENV).unwrap_or("").split(" ").select { |word| word != "" }
   return ok(words) if not words.empty?
 
+  default_command()
+end
+
+# `core/main.agc serve` of the repository this client runs from, found by the path of the main file on the command line
+# of this process (Linux). Never the current folder: a repository you cd into must not run its code.
+def default_command() -> Result[List[String]]
+  words = (try File.read_text("/proc/self/cmdline")).split(String.from_code(0))
+  found = words.find { |word| word.end_with?("main.agc") }
+  case found
+    ok(main) -> core_command(words[0], main)
+    error(_) -> no_command()
+  end
+end
+
+def core_command(program: String, main: String) -> Result[List[String]]
+  resolved = try Path.resolve(main)
+  return no_command() if not resolved.end_with?("/cli/main.agc")
+
+  root = parent_of(parent_of(resolved))
+  core = "#{root}/core/main.agc"
+  return no_command() if not File.stat(core).ok?
+
+  ok([program, core, "serve"])
+end
+
+def no_command() -> Result[List[String]]
   error("no server command: pass --server-command, put it after --, or set #{SERVER_COMMAND_ENV}", kind: KIND_SERVER)
 end
 

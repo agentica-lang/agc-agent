@@ -70,7 +70,9 @@ def start(routes: List[Route]) -> Result[Fake]
 
   stray: Channel[Seen] = Channel.new(16)
   bus: Channel[Bytes] = Channel.new(64)
-  script = Script(queues: queues, seen: seen, stray: stray, bus: bus)
+  newest: Channel[Int] = Channel.new(1)
+  try newest.send(0, 0)
+  script = Script(queues: queues, seen: seen, stray: stray, bus: bus, newest: newest)
   server = try HTTP.serve("127.0.0.1", 0, ->(request, body) { answer(script, request, body) })
   ok(Fake(server: server, port: HTTP.local_port(server), seen: seen, stray: stray, bus: bus))
 end
@@ -83,7 +85,7 @@ end
 
 ## The `server.json` text of the fake, with `token`.
 def server_file(fake: Fake, token: String) -> String
-  "{\"port\": #{fake.port}, \"token\": \"#{token}\", \"pid\": #{System.pid()}}"
+  Protocol.encode_server_info(Protocol.ServerInfo(port: fake.port, token: token, pid: System.pid()))
 end
 
 ## The next request the fake got on a route.
@@ -126,6 +128,8 @@ struct Script
   seen: Map[String, Channel[Seen]]
   stray: Channel[Seen]
   bus: Channel[Bytes]
+  ## Holds the number of the newest event request: only its stream takes pushes from the bus.
+  newest: Channel[Int]
 end
 
 struct Held
@@ -133,6 +137,8 @@ struct Held
   first: Bytes
   hold: Bool
   bus: Channel[Bytes]
+  newest: Channel[Int]
+  number: Int
 end
 
 def key_of(method: String, path: String) -> String = "#{method} #{path}"
@@ -154,6 +160,7 @@ def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Res
   text = try String.from_bytes(bytes)
   seen = Seen(method: request.method, path: request.path, headers: request.headers, body: text)
   key = key_of(request.method, request.path)
+  number = claim(script, request)
   case script.seen.get(key)
     some(channel) -> try channel.send(seen, WAIT_MS)
     none -> try script.stray.send(seen, WAIT_MS)
@@ -163,7 +170,7 @@ def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Res
   return json(200, "{\"version\": \"#{VERSION}\"}") if key == HEALTH and not script.queues.has_key?(key)
 
   case script.queues.get(key)
-    some(replies) -> reply_with(script, replies.recv(0).unwrap_or(Reply(status: 500)), request)
+    some(replies) -> reply_with(script, replies.recv(0).unwrap_or(Reply(status: 500)), request, number)
     none -> refuse(404, Protocol.KIND_SESSION_NOT_FOUND, "no route #{key}")
   end
 end
@@ -172,7 +179,7 @@ def authorized?(request: HTTP.Request) -> Bool
   HTTP.header_values(request.headers, "authorization") == ["Bearer #{TOKEN}"]
 end
 
-def reply_with(script: Script, reply: Reply, request: HTTP.Request) -> Result[HTTP.Answer]
+def reply_with(script: Script, reply: Reply, request: HTTP.Request, number: Int) -> Result[HTTP.Answer]
   if reply.delay_ms > 0
     Task.sleep(reply.delay_ms)
   end
@@ -183,7 +190,16 @@ def reply_with(script: Script, reply: Reply, request: HTTP.Request) -> Result[HT
       first = try Fixtures.stream(reply.fixture)
     end
 
-    return stream(Held(out: Channel.new(8), first: first, hold: reply.hold, bus: script.bus))
+    held = Held(
+      out: Channel.new(8),
+      first: first,
+      hold: reply.hold,
+      bus: script.bus,
+      newest: script.newest,
+      number: number,
+    )
+
+    return stream(held)
   end
 
   for name in reply.push
@@ -208,6 +224,25 @@ def refuse(status: Int, kind: String, message: String) -> Result[HTTP.Answer]
   json(status, Protocol.encode_failure(Protocol.Failure(kind: kind, message: message)))
 end
 
+# An event request makes its stream the newest, before the test can see the request, so a push never goes to a stream
+# the client has already left.
+def claim(script: Script, request: HTTP.Request) -> Int
+  return 0 if not request.path.end_with?("/events")
+
+  number = script.newest.recv(WAIT_MS).unwrap_or(0) + 1
+  _ = script.newest.send(number, WAIT_MS)
+  number
+end
+
+def newest?(held: Held) -> Bool
+  case held.newest.recv(WAIT_MS)
+    ok(number) ->
+      _ = held.newest.send(number, WAIT_MS)
+      number == held.number
+    error(_) -> false
+  end
+end
+
 def stream(held: Held) -> Result[HTTP.Answer]
   Task.spawn(&produce, held)
   headers = [HTTP.Header(name: "Content-Type", value: "text/event-stream")]
@@ -217,15 +252,21 @@ end
 def produce(held: Held) -> Void
   if relay(held, held.first)
     while held.hold and not held.out.closed?
-      case held.bus.recv(POLL_MS)
-        ok(piece) ->
-          # A stream the client left may still take a piece: the next stream gets it back.
-          if not relay(held, piece)
-            _ = held.bus.send(piece, 0)
-            break
-          end
+      if newest?(held)
+        case held.bus.recv(POLL_MS)
+          ok(piece) ->
+            # A newer stream may have claimed the bus while this one waited for the piece: it gets it back.
+            if not newest?(held)
+              _ = held.bus.send(piece, WAIT_MS)
+              break
+            end
 
-        error(_) -> next
+            break if not relay(held, piece)
+
+          error(_) -> next
+        end
+      else
+        Task.sleep(POLL_MS)
       end
     end
   end

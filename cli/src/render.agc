@@ -51,7 +51,8 @@ def event(event: Protocol.Event, style: Style) -> Optional[Out]
 end
 
 def prompt(request: Protocol.ApprovalRequested) -> Out
-  line("[approval #{request.approval_id}] #{request.tool}: #{request.preview}\n#{ANSWER_HINT}")
+  head = "[approval #{request.approval_id}] #{request.tool}: #{request.preview}"
+  line("#{head}\n#{indented(request.detail)}#{ANSWER_HINT}")
 end
 
 ## The decision a line of the terminal answers, if it is one.
@@ -83,6 +84,14 @@ def put(flow: Flow, out: Out) -> Written
 end
 
 private
+
+# What the call would write, one indented line at a time, so the user sees what they approve.
+def indented(detail: String) -> String
+  return "" if detail == ""
+
+  lines = detail.split("\n").map { |text| "  #{text}\n" }
+  lines.join("")
+end
 
 def streamed(text: String, flow: Flow, shown: String) -> Out
   Out(text: shown, flow: flow, closed: text.end_with?("\n"))

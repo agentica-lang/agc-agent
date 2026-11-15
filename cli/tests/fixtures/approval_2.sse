@@ -12,5 +12,5 @@ data: {"call_id":"c2","name":"write_file","summary":"notes.txt"}
 
 id: 8
 event: approval_requested
-data: {"approval_id":"a2","call_id":"c2","tool":"write_file","preview":"notes.txt, 12 bytes"}
+data: {"approval_id":"a2","call_id":"c2","tool":"write_file","preview":"notes.txt, 12 bytes","detail":"line one\nline two"}
 

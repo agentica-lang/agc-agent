@@ -81,6 +81,8 @@ def approvals(rig: Driver.Rig) -> Result[Void]
     "[tool ok] exit 0 (31 ms)",
     "[tool] write_file notes.txt",
     "[approval a2] write_file: notes.txt, 12 bytes",
+    "  line one",
+    "  line two",
     PROMPT,
     "[approval a2] deny (client)",
     "[tool failed] denied by the user (0 ms)",

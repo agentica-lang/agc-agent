@@ -118,13 +118,26 @@ def open_server_file(rig: Driver.Rig) -> Result[Void]
   Test.assert(done.errors.include?("chmod 600"), "the fix is named: #{done.errors}")
 end
 
-def test_without_a_server_command_the_client_starts_nothing() -> Result[Void] = Driver.within_dir(&no_command)
+def test_the_default_server_is_the_cores_entry_point_never_the_one_of_the_current_folder() -> Result[Void]
+  Driver.within_dir(&default_server)
+end
 
-def no_command(dir: String) -> Result[Void]
-  cli = try Driver.start(dir, [])
+def default_server(dir: String) -> Result[Void]
+  evil = "#{dir}/evil"
+  try Dir.mkdir("#{evil}/core")
+  try File.write_text("#{evil}/core/main.agc", "def main() -> Void\n  puts(\"pwned\")\nend\n")
+  state = "#{dir}/state"
+  cli = try Driver.start(state, ["--cwd", dir], "1", evil)
   done = try Driver.finish(cli)
-  try Test.eq(done.code, 1)
-  Test.assert(done.errors.include?("no server command"), "the reason: #{done.errors}")
+  info = try Protocol.decode_server_info(try File.read_text("#{state}/server.json"))
+  alive = Client.health(Client.Server(url: "http://127.0.0.1:#{info.port}", token: info.token))
+  logged = try File.read_text("#{state}/server.log")
+  try System.signal(info.pid, System.Signal.Term, "agentica")
+  try Test.eq(done.code, 0)
+  try Test.assert(done.lines[0].start_with?("[session "), "a session was made: #{done.lines}")
+  try Test.ok?(alive)
+  try Test.assert(not logged.include?("pwned"), "the folder's core did not run: #{logged}")
+  Test.assert(gone?(info.port), "the server is stopped")
 end
 
 private

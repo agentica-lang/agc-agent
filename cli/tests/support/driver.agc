@@ -62,13 +62,13 @@ def within_dir(body: Fn[String, Result[Void]]) -> Result[Void]
   cleaned
 end
 
-## The client on `dir`, with `NO_COLOR` set to `no_color` ("" turns the colors on).
-def start(dir: String, args: List[String], no_color: String = "1") -> Result[Process]
-  entry = try existing(ENTRIES)
+## The client on `dir`, with `NO_COLOR` set to `no_color` ("" turns the colors on), run from the folder `chdir`.
+def start(dir: String, args: List[String], no_color: String = "1", chdir: String = ".") -> Result[Process]
+  entry = try Path.resolve(try existing(ENTRIES))
   Process.spawn_captured(
     binary(),
     [entry, "--state-dir", dir] + args,
-    Process.Options(env: {"NO_COLOR": no_color, "AGC_AGENT_SERVER_COMMAND": ""}),
+    Process.Options(env: {"NO_COLOR": no_color, "AGC_AGENT_SERVER_COMMAND": ""}, chdir: chdir),
   )
 end
 

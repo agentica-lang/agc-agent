@@ -10,7 +10,8 @@
       "approval_id": "a1",
       "call_id": "c1",
       "tool": "bash",
-      "preview": "make test"
+      "preview": "make test",
+      "detail": ""
     }
   ],
   "history": [
