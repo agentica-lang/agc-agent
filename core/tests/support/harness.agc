@@ -59,8 +59,14 @@ def using(setup: Setup, body: Fn[Harness, Result[Void]]) -> Result[Void]
   tmp = System.env("TMPDIR").unwrap_or("/tmp")
   base = "#{tmp}/agc-core-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(base)
-  fake = Fake.start(try fixtures(setup.replies))
-  started = start(setup, try Path.real(base), try fake)
+  result = with_fake(setup, base, body)
+  _ = Path.remove(base)
+  result
+end
+
+def with_fake(setup: Setup, base: String, body: Fn[Harness, Result[Void]]) -> Result[Void]
+  fake = try Fake.start(try fixtures(setup.replies))
+  started = start(setup, try Path.real(base), fake)
   result = case started
     ok(h) -> body.call(h)
     error(e) -> error(e)
@@ -71,8 +77,7 @@ def using(setup: Setup, body: Fn[Harness, Result[Void]]) -> Result[Void]
     error(_) -> nil
   end
 
-  _ = Fake.stop(try fake)
-  _ = Path.remove(base)
+  _ = Fake.stop(fake)
   result
 end
 

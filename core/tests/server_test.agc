@@ -73,14 +73,36 @@ end
 
 # The timeout runs only while no client is attached: from when the last one leaves.
 def test_an_approval_waits_for_an_attached_client_and_times_out_after_it_leaves() -> Result[Void]
-  H.using(H.Setup(replies: ["write_file.sse", "text.sse"], approval_timeout_ms: 300)) do |h|
+  H.using(H.Setup(replies: ["write_file.sse", "text.sse"], approval_timeout_ms: 800)) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Write hello.txt.")
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
-    Task.sleep(1200)
+    Task.sleep(1500)
     try Test.eq((try H.session(h, id)).pending_approvals.size, 1)
     H.close(a)
+    Task.sleep(300)
+    try Test.eq((try H.session(h, id)).pending_approvals.size, 1)
+    _ = try H.idle(h, id)
+    replay = try H.until(try H.subscribe(h, id, some(0)), Protocol.EventKind.TurnFinished)
+    H.close(replay)
+    Test.eq(H.resolved_by(replay), ["deny timeout"])
+  end
+end
+
+# A client that attaches before the timeout stops it; it starts again when that client leaves.
+def test_a_new_client_stops_the_approval_timeout() -> Result[Void]
+  H.using(H.Setup(replies: ["write_file.sse", "text.sse"], approval_timeout_ms: 2500)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    H.close(a)
+    Task.sleep(1300)
+    b = try H.subscribe(h, id)
+    Task.sleep(4000)
+    try Test.eq((try H.session(h, id)).pending_approvals.size, 1)
+    H.close(b)
     _ = try H.idle(h, id)
     replay = try H.until(try H.subscribe(h, id, some(0)), Protocol.EventKind.TurnFinished)
     H.close(replay)
@@ -202,24 +224,31 @@ def test_three_identical_rounds_stop_the_turn() -> Result[Void]
   end
 end
 
-# AGENTS.md goes into the system prompt only when it is a regular file of the folder, not a link out of it.
+# AGENTS.md goes into the system prompt only when it is a regular file of the folder (not a link out of it, not a
+# FIFO), cut at 64 KB.
 def test_agents_md_is_read_only_inside_the_folder() -> Result[Void]
-  H.using(H.Setup(replies: ["text.sse", "text.sse"])) do |h|
+  H.using(H.Setup(replies: ["text.sse", "text.sse", "text.sse"])) do |h|
     try File.write_text("#{h.base}/secret.txt", "TOP SECRET")
     try link("#{h.base}/secret.txt", "#{h.work}/AGENTS.md")
-    inside = "#{h.base}/other"
-    try Dir.mkdir(inside)
-    try File.write_text("#{inside}/AGENTS.md", "Use tabs.")
-    for cwd in [h.work, inside]
+    fifo = "#{h.base}/fifo"
+    try Dir.mkdir(fifo)
+    _ = try run("mkfifo", ["#{fifo}/AGENTS.md"])
+    big = "#{h.base}/big"
+    try Dir.mkdir(big)
+    try File.write_text("#{big}/AGENTS.md", "Use tabs.\n#{(1..70_000).map { |_i| "x" }.join("")}END")
+    for cwd in [h.work, fifo, big]
       id = try H.new_session_in(h, cwd)
       _ = try H.send(h, id, "Hello.")
       _ = try H.idle(h, id)
     end
 
-    first = try H.request_messages(h, 1)
-    second = try H.request_messages(h, 1)
-    try Test.assert(not system_text(first).include?("TOP SECRET"), "the secret reached the model")
-    Test.assert(system_text(second).include?("Use tabs."), "AGENTS.md was not read")
+    linked = system_text(try H.request_messages(h, 1))
+    piped = system_text(try H.request_messages(h, 1))
+    cut = system_text(try H.request_messages(h, 1))
+    try Test.assert(not linked.include?("TOP SECRET"), "the secret reached the model")
+    try Test.assert(not piped.include?("AGENTS.md of the session folder"), "the FIFO was read")
+    try Test.assert(cut.include?("Use tabs.") and not cut.include?("END"), "AGENTS.md was not cut")
+    Test.assert(cut.bytesize < 70_000, "AGENTS.md was not cut")
   end
 end
 

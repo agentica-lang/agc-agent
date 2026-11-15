@@ -18,6 +18,7 @@ SERVER_JSON = "server.json"
 LOCK_FILE = "core.lock"
 MAX_BODY_BYTES = 1_048_576
 MAX_INSTRUCTIONS_BYTES = 65_536
+MAX_READ_BYTES = 1_048_576
 CALL_MS = 5000
 SYSTEM_PROMPT = <<~TEXT
   You are a coding agent. You work in the session folder with the tools you have: read before you change a file, keep
@@ -72,6 +73,7 @@ end
 
 def stop(server: Server) -> Void
   HTTP.close_server(server.http)
+  _ = HTTP.wait(server.http)
   _ = Actor.stop(server.registry, CALL_MS)
   _ = Path.remove("#{server.state_dir}/#{SERVER_JSON}")
   _ = File.close(server.lock)
@@ -115,7 +117,8 @@ def serve(options: Options, registry: Actor.Ref[Registry, Msg], lock: File.Handl
   end
 end
 
-def state_folder(path: String) -> Result[Void]
+def state_folder(given: String) -> Result[Void]
+  path = try Path.resolve(given)
   if not File.stat(path).ok?
     try Dir.mkdir(Sandbox.parent(path))
     try Dir.mkdir_private(path)
@@ -207,9 +210,17 @@ def project_instructions(root: String) -> Result[String]
   path = try Sandbox.resolve(root, "AGENTS.md")
   info = try File.stat(path)
   return error("not a regular file") if info.kind != "file"
-  return error("larger than #{MAX_INSTRUCTIONS_BYTES} bytes") if info.size_bytes > MAX_INSTRUCTIONS_BYTES
+  return error("larger than #{MAX_READ_BYTES} bytes") if info.size_bytes > MAX_READ_BYTES
 
-  File.read_text(path)
+  text = try File.read_text(path)
+  return ok(text) if text.bytesize <= MAX_INSTRUCTIONS_BYTES
+
+  kept = text.slice(0, MAX_INSTRUCTIONS_BYTES)
+  if kept.bytesize > MAX_INSTRUCTIONS_BYTES
+    kept = text.slice(0, MAX_INSTRUCTIONS_BYTES / 4)
+  end
+
+  ok("#{kept}\n[AGENTS.md cut: it has #{info.size_bytes} bytes]")
 end
 
 def route(token: String, registry: Address[Msg], request: HTTP.Request, body: HTTP.RequestBody) -> Result[HTTP.Answer]
