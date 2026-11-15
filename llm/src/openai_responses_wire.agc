@@ -212,15 +212,44 @@ end
 
 def input_items(request: Types.Request) -> List[JSON.Value]
   custom_ids = custom_call_ids(request.messages)
+  stored = stored?(request.extra)
   out: List[JSON.Value] = []
   for message in request.messages
     case message.role
       Types.Role.User -> out = out + user_items(message.content, custom_ids)
-      Types.Role.Assistant -> out = out + message.content.flat_map { |b| assistant_items(b) }
+      Types.Role.Assistant -> out = out + assistant_turn(message.content, stored)
     end
   end
 
   out
+end
+
+# The API keeps the items of a response (`store`) unless the request says `store: false`.
+def stored?(extra: Map[String, JSON.Value]) -> Bool
+  case extra.get("store")
+    some(value) -> JSON.bool(value).unwrap_or(true)
+    none -> true
+  end
+end
+
+# A reasoning item goes back when the API can find it: by its `encrypted_content`, or by its id when the API keeps
+# the items. Otherwise it is dropped, and so are the item ids of the turn's other items, as the API refuses an item
+# whose reasoning item is missing; calls keep their `call_id`.
+def assistant_turn(blocks: List[Types.Block], stored: Bool) -> List[JSON.Value]
+  items = blocks.flat_map { |b| assistant_items(b) }
+  return items if (stored or items.all? { |i| text_at(i, "type") != "reasoning" or sealed?(i) })
+
+  # A message without an id is an input message, which has no `status`.
+  items.select { |i| text_at(i, "type") != "reasoning" or sealed?(i) }.map { |i| without(without(i, "id"), "status") }
+end
+
+def sealed?(item: JSON.Value) -> Bool = not text_at(item, "encrypted_content").empty?
+
+def without(json: JSON.Value, key: String) -> JSON.Value
+  case JSON.node(json)
+    JSON.Node.Object(fields) -> JSON.object(fields.delete(key))
+    _ -> json
+  end
 end
 
 # A result answers a custom call with another item type, so the calls of the history are looked up by id.
@@ -271,30 +300,39 @@ def output_item(result: Types.ToolOutput, custom_ids: Set[String]) -> JSON.Value
   JSON.object({"type": JSON.from(kind), "call_id": JSON.from(result.tool_use_id), "output": JSON.from(content)})
 end
 
-# Reasoning goes back as the item that came, and only with its `encrypted_content`: without it (`store: false` and
-# no `include: ["reasoning.encrypted_content"]`, or a server that has none) the API could not find the item by id.
+# Reasoning goes back as the item that came, less an empty `encrypted_content`.
 def assistant_items(block: Types.Block) -> List[JSON.Value]
   case block
     Types.Block.Text(part) -> [assistant_message(part)]
-    Types.Block.Thinking(part) ->
-      option_list(part.replay).select { |item| not text_at(item, "encrypted_content").empty? }
+    Types.Block.Thinking(part) -> option_list(part.replay).map { |item| if_sealed(item) }
     Types.Block.ToolUse(call) -> [call_item(call)]
     Types.Block.ToolResult(_) -> []
   end
 end
 
+def if_sealed(item: JSON.Value) -> JSON.Value
+  return item if sealed?(item)
+
+  without(item, "encrypted_content")
+end
+
+# A message with refusal parts goes back with its parts as they came, unless its text was changed since.
 def assistant_message(part: Types.TextPart) -> JSON.Value
   text = JSON.object({"type": JSON.from("output_text"), "text": JSON.from(part.text), "annotations": JSON.array([])})
+  content = [text]
   for replay in option_list(part.replay)
-    if text_at(replay, "part") == "refusal"
-      text = JSON.object({"type": JSON.from("refusal"), "refusal": JSON.from(part.text)})
+    for kept in option_list(json_at(replay, "content"))
+      parts: List[JSON.Value] = JSON.list(kept).unwrap_or([])
+      if joined_text(parts) == part.text
+        content = parts
+      end
     end
   end
 
   fields: Map[String, JSON.Value] = {
     "type": JSON.from("message"),
     "role": JSON.from("assistant"),
-    "content": JSON.array([text]),
+    "content": JSON.array(content),
   }
 
   for replay in option_list(part.replay)
@@ -487,6 +525,10 @@ def item_text(part: Part, streamed: String) -> String
   contents = content_parts(part)
   return streamed if contents.empty?
 
+  joined_text(contents)
+end
+
+def joined_text(contents: List[JSON.Value]) -> String
   contents.map { |c| text_at(c, "text") + text_at(c, "refusal") }.join("")
 end
 
@@ -515,27 +557,54 @@ def item_field(part: Part, key: String, streamed: String) -> String
   streamed
 end
 
-# An input message with an `id` is an output message, which needs its `status` too.
+# An input message with an `id` is an output message, which needs its `status` too. A message with a refusal keeps
+# its parts.
 def message_replay(part: Part) -> Optional[JSON.Value]
-  return none if part.item_id.empty?
+  fields: Map[String, JSON.Value] = {}
+  if not part.item_id.empty?
+    status = "completed"
+    for item in option_list(part.item)
+      if not text_at(item, "status").empty?
+        status = text_at(item, "status")
+      end
+    end
 
-  status = "completed"
-  fields: Map[String, JSON.Value] = {"id": JSON.from(part.item_id)}
+    fields = fields.put("id", JSON.from(part.item_id)).put("status", JSON.from(status))
+  end
+
   for item in option_list(part.item)
     for phase in option_list(json_at(item, "phase"))
       fields = fields.put("phase", phase)
     end
-
-    if not text_at(item, "status").empty?
-      status = text_at(item, "status")
-    end
   end
 
   if refused?(part)
-    fields = fields.put("part", JSON.from("refusal"))
+    fields = fields.put("content", JSON.array(replay_content(part)))
   end
 
-  some(JSON.object(fields.put("status", JSON.from(status))))
+  return none if fields.empty?
+
+  some(JSON.object(fields))
+end
+
+def replay_content(part: Part) -> List[JSON.Value]
+  contents = content_parts(part)
+  return [JSON.object({"type": JSON.from("refusal"), "refusal": JSON.from(part.pieces.join(""))})] if contents.empty?
+
+  contents.map { |c| content_part(c) }
+end
+
+def content_part(content: JSON.Value) -> JSON.Value
+  if text_at(content, "type") == "refusal"
+    return JSON.object({"type": JSON.from("refusal"), "refusal": JSON.from(text_at(content, "refusal"))})
+  end
+
+  annotations = json_at(content, "annotations").unwrap_or(JSON.array([]))
+  JSON.object({
+    "type": JSON.from("output_text"),
+    "text": JSON.from(text_at(content, "text")),
+    "annotations": annotations,
+  })
 end
 
 def id_replay(part: Part) -> Optional[JSON.Value]

@@ -27,6 +27,8 @@ Changed or written by hand, from the documented event shapes:
   input comes in two pieces.
 - `refusal.sse`: a message whose content is one `refusal` part, streamed by
   `response.refusal.delta`.
+- `mixed_refusal.sse`: a message with no item id whose content is an
+  `output_text` part, then a `refusal` part.
 
 The 429 and 401 tests use the bodies in `../openai_chat/` (the same error
 shape). Files here are compared byte for byte (`.gitattributes`: `-text`).

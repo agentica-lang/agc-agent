@@ -137,9 +137,8 @@ def test_reasoning_items_and_message_phase_round_trip() -> Result[Void]
   Test.eq(JSON.get(try JSON.parse(second.body), "input"), JSON.parse(expected))
 end
 
-# A reasoning item with no `encrypted_content` (llama-server's, or `store: false` without the include) is not
-# sent back.
-def test_a_reasoning_item_without_encrypted_content_is_not_sent_back() -> Result[Void]
+# With the items kept (no `store: false`), a reasoning item goes back by its id, less its empty `encrypted_content`.
+def test_a_stored_reasoning_item_goes_back_by_its_id() -> Result[Void]
   fake = try Fake.start([
     try Fake.sse("openai_responses/reasoning.sse", piece_bytes: 64),
     try Fake.sse("openai_responses/text.sse"),
@@ -148,12 +147,79 @@ def test_a_reasoning_item_without_encrypted_content_is_not_sent_back() -> Result
   ask = Ev.user("What is 2 + 3?")
   request = LLM.Request(model: "qwen3-0.6b", messages: [ask])
   response = try LLM.response(try LLM.stream(provider(fake), request))
-  _ = try LLM.response(try LLM.stream(provider(fake), request.with(messages: [ask, response.message])))
-  _ = try Fake.next_request(fake)
-  second = try Fake.next_request(fake)
+  input = try second_input(fake, request.with(messages: [ask, response.message]))
+  types = ["message", "reasoning", "message"].map { |t| ok(JSON.from(t)) }
+  try Test.eq(input.map { |i| JSON.get(i, "type") }, types)
+
+  try Test.eq(JSON.get(input[1], "id"), ok(JSON.from("rs_n2Ggmx010IPAjBElQCLbfV90vvvkl5B1")))
+  Test.error?(JSON.get(input[1], "encrypted_content"))
+end
+
+# With `store: false`, a reasoning item without `encrypted_content` is dropped, and the other items of its turn lose
+# their ids (and a message its status); the call keeps its `call_id`.
+def test_an_unstored_reasoning_item_is_dropped_with_the_ids_of_its_turn() -> Result[Void]
+  fake = try Fake.start([try Fake.sse("openai_responses/text.sse")])
+  reasoning = try JSON.parse(
+    "{\"type\": \"reasoning\", \"id\": \"rs_1\", \"summary\": [], \"encrypted_content\": null}",
+  )
+
+  turn = LLM.Message(
+    role: LLM.Role.Assistant,
+    content: [
+      LLM.Block.Thinking(LLM.ThinkingPart(text: "", replay: some(reasoning))),
+      LLM.Block.Text(
+        LLM.TextPart(
+          text: "Reading it.",
+          replay: some(try JSON.parse("{\"id\": \"msg_1\", \"status\": \"completed\"}")),
+        ),
+      ),
+      LLM.Block.ToolUse(
+        LLM.ToolCall(
+          id: "call_1",
+          name: "read_file",
+          arguments: "{}",
+          input: JSON.object({}),
+          replay: some(try JSON.parse("{\"id\": \"fc_1\"}")),
+        ),
+      ),
+    ],
+  )
+
+  result = LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: "call_1", content: "hi"))
+  ask = Ev.user("Read it.")
+  messages = [ask, turn, LLM.Message(role: LLM.Role.User, content: [result])]
+  request = LLM.Request(model: MODEL, messages: messages, extra: {"store": JSON.from(false)})
+  _ = try LLM.response(try LLM.stream(provider(fake), request))
+  body = try JSON.parse((try Fake.next_request(fake)).body)
   try Fake.stop(fake)
-  input: List[JSON.Value] = JSON.list(try JSON.get(try JSON.parse(second.body), "input")).unwrap_or([])
-  Test.eq(input.map { |i| JSON.get(i, "type") }, [ok(JSON.from("message")), ok(JSON.from("message"))])
+  expected = <<~JSON
+    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Read it."}]},
+     {"type": "message", "role": "assistant",
+      "content": [{"type": "output_text", "text": "Reading it.", "annotations": []}]},
+     {"type": "function_call", "call_id": "call_1", "name": "read_file", "arguments": "{}"},
+     {"type": "function_call_output", "call_id": "call_1", "output": "hi"}]
+  JSON
+  Test.eq(JSON.get(body, "input"), JSON.parse(expected))
+end
+
+# A message with no id that mixes text and a refusal goes back with both parts, in order.
+def test_a_mixed_refusal_without_an_id_keeps_its_parts() -> Result[Void]
+  fake = try Fake.start([
+    try Fake.sse("openai_responses/mixed_refusal.sse"),
+    try Fake.sse("openai_responses/text.sse"),
+  ])
+
+  ask = Ev.user("Help me.")
+  request = LLM.Request(model: MODEL, messages: [ask])
+  response = try LLM.response(try LLM.stream(provider(fake), request))
+  try Test.eq(response.stop_reason, LLM.StopReason.Refusal)
+  input = try second_input(fake, request.with(messages: [ask, response.message]))
+  expected = <<~JSON
+    {"type": "message", "role": "assistant",
+     "content": [{"type": "output_text", "text": "Sure. ", "annotations": []},
+                 {"type": "refusal", "refusal": "But not that."}]}
+  JSON
+  Test.eq(ok(input.last), JSON.parse(expected))
 end
 
 # A refusal streams as text, stops with Refusal and goes back as a refusal part.
@@ -164,18 +230,14 @@ def test_a_refusal_stops_with_refusal_and_round_trips() -> Result[Void]
   call = try LLM.stream(provider(fake), request)
   events = Ev.collect(call)
   response = try LLM.response(call)
-  _ = try LLM.response(try LLM.stream(provider(fake), request.with(messages: [ask, response.message])))
-  _ = try Fake.next_request(fake)
-  second = try Fake.next_request(fake)
-  try Fake.stop(fake)
+  input = try second_input(fake, request.with(messages: [ask, response.message]))
   try Test.eq(Ev.texts(events), "I can't help with that.")
   try Test.eq(response.stop_reason, LLM.StopReason.Refusal)
   expected = <<~JSON
     {"type": "message", "role": "assistant", "id": "msg_hand_2", "status": "completed",
      "content": [{"type": "refusal", "refusal": "I can't help with that."}]}
   JSON
-  input: List[JSON.Value] = JSON.list(try JSON.get(try JSON.parse(second.body), "input")).unwrap_or([])
-  Test.eq(input.map { |i| ok(i) }.last, JSON.parse(expected))
+  Test.eq(ok(input.last), JSON.parse(expected))
 end
 
 # `effort` and a `reasoning` object of `extra` merge; `seed` is not sent.
@@ -333,6 +395,16 @@ def test_cancel_stops_the_stream() -> Result[Void]
 end
 
 private
+
+# Sends `request` as the second call and returns its `input`; the fake stops.
+def second_input(fake: Fake.Fake, request: LLM.Request) -> Result[List[JSON.Value]]
+  _ = try LLM.response(try LLM.stream(provider(fake), request))
+  _ = try Fake.next_request(fake)
+  second = try Fake.next_request(fake)
+  try Fake.stop(fake)
+  input: List[JSON.Value] = JSON.list(try JSON.get(try JSON.parse(second.body), "input")).unwrap_or([])
+  ok(input)
+end
 
 def provider(fake: Fake.Fake) -> LLM.Provider
   LLM.openai_responses(fake.url, KEY, LLM.Options(timeout_ms: 5000, retry_base_ms: 1))
