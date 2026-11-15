@@ -1,0 +1,5 @@
+# A workspace: each member is a package with its own agentica.toml. A member that depends on another names this
+# repository with the member's subdir; inside the repository it is read in place, never fetched.
+[workspace]
+repository = "https://github.com/agentica-lang/agc-agent"
+members = ["llm", "core"]
