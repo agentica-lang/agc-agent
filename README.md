@@ -57,4 +57,5 @@ The flags of `finn serve` (`--api`, `--model`, `--base-url`) override their envi
 `FINN_MODEL`, `FINN_BASE_URL`); `finn serve --help` lists them all.
 
 Development: `make test` and `make smoke-llama` (the second fetches llama.cpp and a 0.5B model, about 500 MB, into
-`.tools/`).
+`.tools/`). The tests against a real model (`make smoke-llama` and the targets that call a paid API) run only on your
+machine, never in CI.

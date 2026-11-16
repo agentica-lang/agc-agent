@@ -7,9 +7,30 @@ READ_FILE_SCHEMA = (
 )
 
 # Small models are not reliable: these check shapes, not words, at temperature 0 with a seed (anthropic sends
-# neither). Each test runs every
-# provider against one server.
-def test_a_real_server_streams_text() -> Result[Void]
+# neither). Each test runs one provider against its own server, so a slow runner has the 30 s of a test for one
+# provider and not for three.
+def test_a_real_server_streams_text_on_openai_chat() -> Result[Void] = text_on("openai_chat")
+
+def test_a_real_server_streams_text_on_openai_responses() -> Result[Void] = text_on("openai_responses")
+
+def test_a_real_server_streams_text_on_anthropic() -> Result[Void] = text_on("anthropic")
+
+def test_a_real_server_calls_a_tool_with_json_arguments_on_openai_chat() -> Result[Void] = tool_on("openai_chat")
+
+def test_a_real_server_calls_a_tool_with_json_arguments_on_openai_responses() -> Result[Void]
+  tool_on("openai_responses")
+end
+
+def test_a_real_server_calls_a_tool_with_json_arguments_on_anthropic() -> Result[Void] = tool_on("anthropic")
+
+private
+
+struct Answer
+  response: LLM.Response
+  deltas: Int
+end
+
+def text_on(name: String) -> Result[Void]
   request = LLM.Request(
     model: "qwen",
     system: "Answer in one short sentence.",
@@ -21,17 +42,13 @@ def test_a_real_server_streams_text() -> Result[Void]
     cache: true,
   )
 
-  server = try Llama.start("text")
-  results = providers(server).map { |provider| call(provider, request) }
+  server = try Llama.start("text-#{name}")
+  answer = call(provider_named(server, name), request)
   Llama.stop(server)
-  for result in results
-    try check_text(try result)
-  end
-
-  ok()
+  check_text(try answer)
 end
 
-def test_a_real_server_calls_a_tool_with_json_arguments() -> Result[Void]
+def tool_on(name: String) -> Result[Void]
   tool = LLM.Tool(
     name: "read_file",
     description: "Read a file of the project.",
@@ -48,25 +65,19 @@ def test_a_real_server_calls_a_tool_with_json_arguments() -> Result[Void]
     seed: some(1),
   )
 
-  server = try Llama.start("tool_call")
-  results = providers(server).map { |provider| tool_round(provider, forced(provider, request)) }
+  server = try Llama.start("tool-#{name}")
+  provider = provider_named(server, name)
+  round = tool_round(provider, forced(provider, request))
   Llama.stop(server)
-  for result in results
-    try result
+  round
+end
+
+def provider_named(server: Llama.Server, name: String) -> LLM.Provider
+  case name
+    "openai_chat" -> LLM.openai_chat(server.url, "")
+    "openai_responses" -> LLM.openai_responses(server.url, "")
+    _ -> LLM.anthropic(server.url, "")
   end
-
-  ok()
-end
-
-private
-
-struct Answer
-  response: LLM.Response
-  deltas: Int
-end
-
-def providers(server: Llama.Server) -> List[LLM.Provider]
-  [LLM.openai_chat(server.url, ""), LLM.openai_responses(server.url, ""), LLM.anthropic(server.url, "")]
 end
 
 def check_text(answer: Answer) -> Result[Void]

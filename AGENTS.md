@@ -29,13 +29,13 @@ cli/                 the line-mode client: depends only on client and protocol; 
 tui_client/          the TUI client on agentica-tui (pinned commit): client, protocol and tui; main.agc is the
                      entry point; tests/test_pty.py runs it under a pty against core and a fake model
 <pkg>/tests/         *_test.agc tests of that package; fixtures/ the recorded data they read
-llm/smoke/           tests against a real llama-server (make smoke-llama)
+llm/smoke/           tests against a real llama-server (make smoke-llama): local only, never in CI
 llm/live/, core/live/ tests against a paid API (live-fireworks, smoke-anthropic, live-anthropic-core): never in CI
 scripts/             fetch the pinned llama.cpp release and model into .tools/ (sha256)
 Makefile             check, fmt-check, unit, smoke, test over every package; smoke-llama, live-fireworks,
                      smoke-anthropic, live-anthropic-core
 .github/workflows/   ci.yml: the pinned Agentica release, the cached packages and compile caches (`_build/`), then
-                     fmt-check and test; the llama job
+                     fmt-check and test (no real-model job)
 ```
 
 A package is added by the phase that needs it, never as an empty folder.
@@ -66,7 +66,8 @@ A package is added by the phase that needs it, never as an empty folder.
 - `make smoke-llama`: fetches llama.cpp and Qwen2.5-0.5B (pinned in
   `scripts/`, one tag and its sha256 to bump), then runs `llm/smoke` against a
   llama-server it starts on port 0 and stops; `LLAMA_URL` uses a running one.
-  CI runs it in the `llama` job.
+  Tests against a real model (llama, and `core/live`) run only on a developer's
+  machine, never in CI.
 - `make smoke-monty`: the `monty` tests on the real worker (the pinned wheel
   from PyPI into `.tools/cache`, or `MONTY_BIN`). Record the fixtures again
   with `MONTY_RECORD=path/to/monty` set for `make unit`.
