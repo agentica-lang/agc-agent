@@ -3,9 +3,9 @@
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
-import Config from "../src/config"
-import Server from "../src/server"
-import Tools from "../src/tools"
+import Config from "../src/config/config"
+import Server from "../src/http/server"
+import Tools from "../src/tools/tools"
 import Fake from "../tests/support/fake_llm"
 import H from "../tests/support/harness"
 

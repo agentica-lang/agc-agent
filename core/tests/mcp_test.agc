@@ -1,8 +1,8 @@
 import Mcp from "pkg/mcp/mcp"
 import Protocol from "pkg/protocol/protocol"
-import Approval from "../src/approval"
-import McpTools from "../src/mcp_tools"
-import Tools from "../src/tools"
+import Approval from "../src/approval/approval"
+import McpTools from "../src/ext/mcp"
+import Tools from "../src/tools/tools"
 import Fake from "support/fake_llm"
 import H from "support/harness"
 

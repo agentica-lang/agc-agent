@@ -1,6 +1,6 @@
 import HTTP from "std/http"
 import Protocol from "pkg/protocol/protocol"
-import Server from "../src/server"
+import Server from "../src/http/server"
 import H from "support/harness"
 
 # The model writes a file, then runs bash on it, then answers. Two clients see the same events, and the first answer to

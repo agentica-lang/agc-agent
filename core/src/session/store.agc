@@ -7,7 +7,7 @@
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
-import Compaction from "compaction"
+import Compaction from "../agent/compaction"
 
 EXTENSION = ".jsonl"
 ## Beside a session file: the model of its last `settings` record, so a list of the sessions need not read the file.

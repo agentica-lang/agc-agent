@@ -11,7 +11,7 @@
 
 import Regex from "std/regex"
 import Shell from "pkg/shell/shell"
-import Sandbox from "sandbox"
+import Sandbox from "../tools/sandbox"
 
 enum Verdict
   Allow

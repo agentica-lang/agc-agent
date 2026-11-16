@@ -1,8 +1,8 @@
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
-import Agent from "../src/agent"
-import Catalog from "../src/catalog"
+import Agent from "../src/agent/agent"
+import Catalog from "../src/agent/catalog"
 import Fake from "support/fake_llm"
 import H from "support/harness"
 

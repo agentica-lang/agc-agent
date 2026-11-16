@@ -1,7 +1,7 @@
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
-import Compaction from "../src/compaction"
-import Store from "../src/store"
+import Compaction from "../src/agent/compaction"
+import Store from "../src/session/store"
 
 # Every kind of block reads back as it was written, so the history a restart gives the model is the same.
 def test_a_message_reads_back_with_every_kind_of_block() -> Result[Void]

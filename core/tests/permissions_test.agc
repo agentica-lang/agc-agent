@@ -1,7 +1,7 @@
 import Protocol from "pkg/protocol/protocol"
-import Approval from "../src/approval"
-import Config from "../src/config"
-import Permissions from "../src/permissions"
+import Approval from "../src/approval/approval"
+import Config from "../src/config/config"
+import Permissions from "../src/approval/permissions"
 import H from "support/harness"
 
 # `allow_prefix` allows the next `git add`, `allow_tool` every bash call after it; the request says the prefix, and

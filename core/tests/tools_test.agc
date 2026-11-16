@@ -1,5 +1,5 @@
-import Approval from "../src/approval"
-import Tools from "../src/tools"
+import Approval from "../src/approval/approval"
+import Tools from "../src/tools/tools"
 
 struct Setup
   base: String

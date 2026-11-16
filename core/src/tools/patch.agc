@@ -2,7 +2,7 @@
 ## updates files of the session folder; it is checked whole before any file changes. The path rule and the approval
 ## rules are those of `edit_file`, for each path the patch touches.
 
-import Approval from "approval"
+import Approval from "../approval/approval"
 import Sandbox from "sandbox"
 import Spec from "spec"
 

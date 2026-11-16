@@ -16,7 +16,7 @@
 
 import Shell from "pkg/shell/shell"
 import Approval from "approval"
-import Sandbox from "sandbox"
+import Sandbox from "../tools/sandbox"
 
 CONFIG_ENV = "FINN_CONFIG"
 PROJECT_FILE = ".finn/config.json"

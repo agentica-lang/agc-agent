@@ -1,5 +1,5 @@
 import Protocol from "pkg/protocol/protocol"
-import Store from "../src/store"
+import Store from "../src/session/store"
 import H from "support/harness"
 
 ROLES = "\"user\" \"assistant\" \"tool\" \"assistant\" \"user\""

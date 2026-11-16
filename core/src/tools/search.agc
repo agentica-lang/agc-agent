@@ -2,7 +2,7 @@
 ## nothing outside the session folder is reached through one.
 
 import Regex from "std/regex"
-import Approval from "approval"
+import Approval from "../approval/approval"
 import Sandbox from "sandbox"
 import Spec from "spec"
 

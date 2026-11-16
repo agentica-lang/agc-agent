@@ -6,7 +6,7 @@
 
 import LLM from "pkg/llm/llm"
 import Regex from "std/regex"
-import Spec from "spec"
+import Spec from "../tools/spec"
 
 TOOL = "activate_skill"
 ROOTS = [".finn/skills", ".agents/skills", ".claude/skills"]

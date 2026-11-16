@@ -1,7 +1,7 @@
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
-import Compaction from "../src/compaction"
-import Store from "../src/store"
+import Compaction from "../src/agent/compaction"
+import Store from "../src/session/store"
 import H from "support/harness"
 
 # The window comes from llama-server's `/props` (120 tokens). The tool round of the second turn reaches 100 tokens,

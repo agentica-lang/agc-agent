@@ -13,7 +13,7 @@
 ##   is used, and bash is the only way to run something in parallel, so the check can race with a swapped link.
 ## - On a case-insensitive filesystem a rule on `.env` may not match `.ENV`.
 
-import Approval from "approval"
+import Approval from "../approval/approval"
 import Files from "files"
 import Patch from "patch"
 import Sandbox from "sandbox"
