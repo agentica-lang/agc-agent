@@ -27,7 +27,7 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: check coupling fmt-check unit smoke test smoke-llama smoke-monty live-fireworks
+.PHONY: check coupling fmt-check unit smoke test smoke-llama smoke-monty live-fireworks smoke-anthropic
 
 check: coupling
 	for pkg in $(PACKAGES); do (cd $$pkg && $(AGENTICA) check .) || exit 1; done
@@ -76,4 +76,17 @@ smoke-monty:
 live-fireworks:
 	@if [ -n "$$CI" ]; then echo "live-fireworks: refused in CI" >&2; exit 1; fi; \
 	if [ -z "$$FIREWORKS_API_KEY" ]; then echo "live-fireworks: FIREWORKS_API_KEY is unset, skipped"; exit 0; fi; \
-	export FIREWORKS_MODEL='$(FIREWORKS_MODEL)'; $(call tests,llm,live)
+	export FIREWORKS_MODEL='$(FIREWORKS_MODEL)'; $(call tests,llm,live/fireworks_test.agc)
+
+# Four real calls to Anthropic's cheap model (a text turn, a tool round, a cache read), which cost money: local only,
+# with the owner's yes, never in CI. Without ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN it takes the token of
+# `ant auth login`, never printed; it skips when ant is missing or not logged in.
+smoke-anthropic:
+	@if [ -n "$$CI" ]; then echo "smoke-anthropic: refused in CI" >&2; exit 1; fi; \
+	if [ -z "$$ANTHROPIC_API_KEY$$ANTHROPIC_AUTH_TOKEN" ]; then \
+	  if ! command -v ant >/dev/null; then echo "smoke-anthropic: no key, no token and no ant, skipped"; exit 0; fi; \
+	  ANTHROPIC_AUTH_TOKEN=$$(ant auth print-credentials --access-token 2>/dev/null) || ANTHROPIC_AUTH_TOKEN=; \
+	  if [ -z "$$ANTHROPIC_AUTH_TOKEN" ]; then echo "smoke-anthropic: ant is not logged in, skipped"; exit 0; fi; \
+	  export ANTHROPIC_AUTH_TOKEN; \
+	fi; \
+	$(call tests,llm,live/anthropic_test.agc)

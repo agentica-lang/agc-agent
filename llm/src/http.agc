@@ -1,5 +1,5 @@
-## The HTTP side that the OpenAI-format providers share: bearer auth, the streamed `POST`, its retry, the task that
-## reads the SSE stream and folds it with the provider's wire functions, and `GET /models`.
+## The HTTP side that every provider shares: the streamed `POST`, its retry, the task that reads the SSE stream and
+## folds it with the provider's wire functions, and `GET /models`.
 
 import HTTP from "std/http"
 import SSE from "pkg/sse/sse"
@@ -34,12 +34,22 @@ end
 ## events.
 struct Wire[S]
   path: String
+  ## The provider's own headers (its auth, a version) for an API key.
+  headers: Fn[String, List[HTTP.Header]]
   body: Fn[Types.Request, Result[String]]
   begin: Fn[S]
   take: Fn[S, String, Result[Types.Fold[S]]]
   ## The stream said it ended.
   ended: Fn[S, Bool]
   finish: Fn[S, Result[Types.Response]]
+  models_path: String = "/models"
+end
+
+## `Authorization: Bearer KEY`, or nothing for an empty key.
+def bearer(api_key: String) -> List[HTTP.Header]
+  return [] if api_key.empty?
+
+  [HTTP.Header(name: "Authorization", value: "Bearer #{api_key}")]
 end
 
 ## A provider on `wire` at the API of `config`.
@@ -47,7 +57,7 @@ def provider[S](name: String, config: Config, wire: Wire[S]) -> Api.Provider
   Api.Provider(
     name: name,
     stream: ->(request) { start_stream(config, wire, request) },
-    models: -> { list_models(config) },
+    models: -> { list_models(config, wire) },
   )
 end
 
@@ -67,6 +77,7 @@ end
 struct WireModel
   id: String
   context_length: Optional[Int]
+  max_input_tokens: Optional[Int]
   meta: Optional[ModelMeta]
 end
 
@@ -76,7 +87,7 @@ end
 
 def start_stream[S](config: Config, wire: Wire[S], request: Types.Request) -> Result[Api.Stream]
   body = (try wire.body.call(request)).bytes
-  http = try Errors.with_retry(retry(config), -> { open(config, wire.path, body, request.headers) })
+  http = try Errors.with_retry(retry(config), -> { open(config, wire, body, request.headers) })
   events: Channel[Types.Event] = Channel.new(EVENTS_CAPACITY)
   job = Job(config: config, wire: wire, http: http, events: events)
   reader = Task.spawn do read(job) end
@@ -97,14 +108,14 @@ def end_http(http: HTTP.Stream) -> Void
 end
 
 # A 2xx answer comes back with its body unread; any other is read whole and becomes its error.
-def open(config: Config, path: String, body: Bytes, extra: Map[String, String]) -> Result[HTTP.Stream]
+def open[S](config: Config, wire: Wire[S], body: Bytes, extra: Map[String, String]) -> Result[HTTP.Stream]
   own = [
     HTTP.Header(name: "Content-Type", value: "application/json"),
     HTTP.Header(name: "Accept", value: "text/event-stream"),
   ]
 
-  headers = merge_headers(own + auth(config), extra)
-  url = "#{config.base_url}#{path}"
+  headers = merge_headers(own + wire.headers.call(config.api_key), extra)
+  url = "#{config.base_url}#{wire.path}"
   http = try network(HTTP.open("POST", url, body, headers, client_options(config)))
   return ok(http) if http.status >= 200 and http.status < 300
 
@@ -156,14 +167,15 @@ def send[S](job: Job[S], event: Types.Event) -> Result[Void]
   end
 end
 
-def list_models(config: Config) -> Result[List[Types.Model]]
-  response = try Errors.with_retry(retry(config), -> { get_models(config) })
+def list_models[S](config: Config, wire: Wire[S]) -> Result[List[Types.Model]]
+  response = try Errors.with_retry(retry(config), -> { get_models(config, wire) })
   models(try protocol_text(response.body))
 end
 
-def get_models(config: Config) -> Result[HTTP.Response]
+def get_models[S](config: Config, wire: Wire[S]) -> Result[HTTP.Response]
   client = try network(HTTP.client(client_options(config)))
-  result = network(HTTP.request(client, "GET", "#{config.base_url}/models", "".bytes, auth(config)))
+  url = "#{config.base_url}#{wire.models_path}"
+  result = network(HTTP.request(client, "GET", url, "".bytes, wire.headers.call(config.api_key)))
   HTTP.close_client(client)
   response = try result
   return ok(response) if response.status >= 200 and response.status < 300
@@ -193,12 +205,6 @@ def merge_headers(own: List[HTTP.Header], extra: Map[String, String]) -> List[HT
   end
 
   by_name.values
-end
-
-def auth(config: Config) -> List[HTTP.Header]
-  return [] if config.api_key.empty?
-
-  [HTTP.Header(name: "Authorization", value: "Bearer #{config.api_key}")]
 end
 
 def client_options(config: Config) -> HTTP.ClientOptions
@@ -251,7 +257,8 @@ def protocol_text(body: Bytes) -> Result[String]
   end
 end
 
-# The models of `GET /models`, with the context of llama.cpp (`meta.n_ctx`) or `context_length` when given.
+# The models of `GET /models`, with the context of llama.cpp (`meta.n_ctx`), `context_length` or Anthropic's
+# `max_input_tokens` when given.
 def models(body: String) -> Result[List[Types.Model]]
   list = try decoded(JSON.decode(body, ModelList))
   ok(list.data.map { |m| Types.Model(id: m.id, context: context_of(m)) })
@@ -265,8 +272,9 @@ def decoded[T](result: Result[T]) -> Result[T]
 end
 
 def context_of(model: WireModel) -> Optional[Int]
-  case model.context_length
-    some(n) -> some(n)
-    none -> model.meta.map { |meta| meta.n_ctx }.unwrap_or(none)
+  for n in [model.context_length, model.max_input_tokens]
+    return n if n.some?
   end
+
+  model.meta.map { |meta| meta.n_ctx }.unwrap_or(none)
 end
