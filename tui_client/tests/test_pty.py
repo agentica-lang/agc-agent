@@ -527,6 +527,28 @@ class PtyTest(unittest.TestCase):
         term.type("again\r")
         term.wait_for(ANSWER)
 
+    def test_bang_lines_run_commands_and_only_one_bang_reaches_the_model(self) -> None:
+        term = self.start([Reply("text.sse")])
+        term.type("!echo hi\r")
+        term.wait_for("$ echo hi")
+        term.wait_until(lambda rows: "hi" in [row.strip() for row in rows] and "ready" in text_of(rows), "echo's output")
+        term.type("!!echo secret\r")
+        term.wait_for("not sent to the model")
+        term.type("!sleep 30\r")
+        term.wait_for("$ sleep 30")
+        term.wait_for("Working")
+        term.type("\x1b")
+        term.wait_for("stopping the command")
+        term.wait_until(lambda rows: text_of(rows).count("not sent to the model") == 2, "the stopped command")
+        term.wait_for("ready")
+        term.type("hello\r")
+        term.wait_for(ANSWER)
+        content = self.fake.requests.get(timeout=5)["messages"][-1]["content"]
+        self.assertIn("hi", content)
+        self.assertNotIn("secret", content)
+        self.assertNotIn("sleep", content)
+        self.assertTrue(content.endswith("\n\nhello"), content)
+
     def test_ctrl_t_shows_and_hides_the_thinking(self) -> None:
         term = self.start([Reply("thinking.sse")])
         term.type("hi\r")
