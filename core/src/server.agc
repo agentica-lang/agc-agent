@@ -16,6 +16,7 @@ import Protocol from "pkg/protocol/protocol"
 import CodeMode from "code_mode"
 import Sandbox from "sandbox"
 import Session from "session"
+import Skills from "skills"
 import Store from "store"
 import Tools from "tools"
 
@@ -86,6 +87,10 @@ struct Options
   before_load: Optional[Fn[String, Void]] = none
   ## Code mode: the model may also call the tools from a Python script (`run_script`).
   code_mode: Optional[CodeMode.Settings] = none
+  ## The home folder, whose skills every session has; empty for none.
+  home: String = ""
+  ## The folders whose sessions load the skills of their own folder: a project's skills are its instructions.
+  trusted: List[String] = []
 end
 
 struct Server
@@ -407,7 +412,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     cwd: context.root,
     model: request.model.unwrap_or(default_model(options, api)),
     created_ms: Time.now_ms,
-    system: some(system_prompt(context.root)),
+    system: some(with_catalog(system_prompt(context.root), skills_of(options, context.root).skills)),
     api: some(api),
   )
 
@@ -515,14 +520,21 @@ def entry(
   return error("unknown API #{name}", kind: KIND_UNKNOWN_API) if not options.apis.has_key?(name)
 
   api = options.apis[name]
+  found = skills_of(options, context.root)
+  for warning in found.warnings
+    IO.warn("skills: #{warning}")
+  end
 
+  system = header.system.unwrap_or(system_prompt(context.root))
+  skills = Skills.restrict(found.skills, system)
   setup = Session.Setup(
     id: header.id,
     cwd: context.root,
     model: header.model,
     provider: api.provider,
-    system: header.system.unwrap_or(system_prompt(context.root)),
-    ctx: context,
+    system: system,
+    ctx: context.with(read_roots: skills.map { |skill| skill.dir }),
+    skills: skills,
     keep_events: options.keep_events,
     approval_timeout_ms: options.approval_timeout_ms,
     file: file,
@@ -605,6 +617,18 @@ def listed_session(file: String) -> Result[Store.Header]
 end
 
 # `AGENTS.md` goes to the model only when it is a regular file inside the folder: a link out of it could be any file.
+def skills_of(options: Options, root: String) -> Skills.Found
+  trusted = options.trusted.any? { |dir| Sandbox.inside?(Path.real(dir).unwrap_or(dir), root) }
+  Skills.discover(root, options.home, trusted)
+end
+
+def with_catalog(system: String, skills: List[Skills.Skill]) -> String
+  catalog = Skills.catalog(skills)
+  return system if catalog == ""
+
+  "#{system}\n#{catalog}"
+end
+
 def system_prompt(root: String) -> String
   case project_instructions(root)
     ok(text) -> "#{SYSTEM_PROMPT}\n# AGENTS.md of the session folder\n\n#{text}"

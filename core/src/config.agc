@@ -4,9 +4,10 @@
 ## `openai_responses`), `FINN_BASE_URL` (a local llama-server by default), `FINN_API_KEY` and
 ## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction. `FINN_CODE_MODE=1` adds code mode,
 ## whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is not checked), else the pinned one
-## fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be private to the user). The
-## names of before Finn still work: `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder
-## is there.
+## fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be private to the user). Skills:
+## those of the home folder always, those of a session folder only under a folder of `FINN_TRUSTED_DIRS` (separated by
+## `:`). The names of before Finn still work: `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no
+## `finn` folder is there.
 ##
 ## The `anthropic` API is at `ANTHROPIC_BASE_URL` (else Anthropic's), with `ANTHROPIC_API_KEY`, else
 ## `ANTHROPIC_AUTH_TOKEN`, else the token that `ant auth print-credentials --access-token` prints: at start when
@@ -69,6 +70,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       props_url: props_url(base_url),
       api_key: api_key,
       code_mode: try code_mode(read),
+      home: set(read, "HOME").unwrap_or(""),
+      trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
     ),
   )
 end

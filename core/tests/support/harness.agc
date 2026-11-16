@@ -66,6 +66,10 @@ struct Setup
   deny: List[String] = []
   ## The token that Anthropic fetches again after a 401; none when empty.
   fresh_token: String = ""
+  ## Skills: the home folder is `home` under the test's folder, and the folders of `trust` (under the test's folder;
+  ## the test's folder itself when none) are trusted.
+  skills: Bool = false
+  trust: Optional[List[String]] = none
 end
 
 def fake_env(name: String) -> Result[String]
@@ -86,9 +90,12 @@ def using(setup: Setup, body: Fn[Harness, Result[Void]]) -> Result[Void]
   result
 end
 
+# A fixture's `@BASE@` is the test's folder.
 def with_fake(setup: Setup, base: String, body: Fn[Harness, Result[Void]]) -> Result[Void]
-  fake = try Fake.start(try fixtures(setup.replies, fixture_dir(setup.api)))
-  started = start(setup, try Path.real(base), fake)
+  real = try Path.real(base)
+  replies = (try fixtures(setup.replies, fixture_dir(setup.api))).map { |reply| placed(reply, real) }
+  fake = try Fake.start(replies)
+  started = start(setup, real, fake)
   result = case started
     ok(h) -> body.call(h)
     error(e) -> error(e)
@@ -115,6 +122,13 @@ def apis(setup: Setup, fake: Fake.Fake) -> Map[String, Server.ModelApi]
   all.put("anthropic", all["anthropic"].with(refresh: some(refresh)))
 end
 
+def placed(reply: Fake.Reply, base: String) -> Fake.Reply
+  case String.from_bytes(reply.body)
+    ok(text) if text.include?("@BASE@") -> reply.with(body: text.replace("@BASE@", base).bytes)
+    _ -> reply
+  end
+end
+
 def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   work = "#{base}/work"
   try Dir.mkdir(work)
@@ -134,6 +148,8 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     before_load: setup.before_load,
     tools: setup.tools,
     code_mode: code_mode(setup.monty),
+    home: skills_home(setup, base),
+    trusted: skills_trusted(setup, base),
   )
 
   server = try Server.start(options)
@@ -193,6 +209,18 @@ def code_mode(fixture: String) -> Optional[CodeMode.Settings]
   agentica = System.env("AGENTICA").unwrap_or("agentica")
   words = [agentica, "tests/support/fake_monty.agc", "tests/fixtures/monty/#{fixture}"]
   some(CodeMode.Settings(worker: -> { ok(words) }, limits: Monty.Limits()))
+end
+
+def skills_home(setup: Setup, base: String) -> String
+  return "" if not setup.skills
+
+  "#{base}/home"
+end
+
+def skills_trusted(setup: Setup, base: String) -> List[String]
+  return [] if not setup.skills
+
+  setup.trust.unwrap_or(["."]).map { |dir| "#{base}/#{dir}" }
 end
 
 def window(tokens: Int) -> Optional[Int]

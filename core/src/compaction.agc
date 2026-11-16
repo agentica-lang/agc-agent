@@ -112,6 +112,12 @@ end
 
 ## The history with the span as one assistant message. When a round of the running turn follows, a user message goes
 ## between them, so the roles still take turns: the task of the turn when it was folded, else `GO_ON`.
+## The messages the compaction keeps: those of `apply` but its summary.
+def staying(history: List[LLM.Message], compaction: Compaction) -> List[LLM.Message]
+  applied = apply(history, compaction)
+  applied.take(compaction.from) + applied.drop(compaction.from + 1)
+end
+
 def apply(history: List[LLM.Message], compaction: Compaction) -> List[LLM.Message]
   summary = LLM.Message(
     role: LLM.Role.Assistant,
