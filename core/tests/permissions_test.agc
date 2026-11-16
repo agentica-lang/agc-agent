@@ -70,15 +70,16 @@ def test_a_project_file_denies_anywhere_and_allows_only_when_trusted() -> Result
   end
 end
 
-# A session allow never passes a deny rule: each simple command is checked, and one whose words are not plain (quoted,
-# expanded) is not allowed through a prefix or the whole tool while a deny rule of bash exists. With a deny rule of
-# read_file, a command that only reads needs a prefix too.
-def test_session_allows_keep_the_deny_rules_of_each_command() -> Result[Void]
-  rules = try Approval.parse_rules([], ["bash(rm *)", "bash(git push*)", "read_file(.env)"])
-  prefixes = Permissions.Allows(prefixes: [["rm"], ["git", "push"], ["git", "status"], ["echo"]])
+# A session allow keeps the bash deny rules: each simple command and every tail of its words is checked (a wrapper in
+# front hides nothing), and one whose words are not plain (quoted, expanded) is not allowed through a prefix or the
+# whole tool. With a bash deny rule a command that only reads needs a prefix too; git's --output writes.
+def test_session_allows_keep_the_bash_deny_rules() -> Result[Void]
+  rules = try Approval.parse_rules([], ["bash(rm -rf *)", "bash(git push*)"])
+  prefixes = Permissions.Allows(prefixes: [["rm"], ["git", "push"], ["git", "status"], ["git", "log"], ["echo"]])
   whole = Permissions.Allows(tools: ["bash"])
   denied = [
     "rm -rf 'x'", "git push '--force' origin", "ls; git push --force", "FOO=1 git push", "echo \"$(git push)\"",
+    "env rm -rf x", "timeout 5 rm -rf x", "echo x | xargs rm -rf", "sudo -u root git push",
   ]
 
   for command in denied
@@ -86,9 +87,19 @@ def test_session_allows_keep_the_deny_rules_of_each_command() -> Result[Void]
     try Test.eq([command, Permissions.allows?(whole, rules, "bash", command, "/tmp").to_s], [command, "false"])
   end
 
-  try Test.eq(Permissions.allows?(prefixes, rules, "bash", "git status; cat .env", "/tmp"), false)
   try Test.eq(Permissions.allows?(prefixes, rules, "bash", "git status --short && echo done", "/tmp"), true)
-  Test.eq(Permissions.allows?(whole, rules, "bash", "cat .env | wc -l", "/tmp"), true)
+  try Test.eq(Permissions.allows?(prefixes, rules, "bash", "git log --output=x", "/tmp"), false)
+  Test.eq(Permissions.allows?(whole, rules, "bash", "ls -la", "/tmp"), true)
+end
+
+# While a read_file deny rule exists any command may read the file: only the same call is allowed again for bash.
+def test_a_read_deny_rule_leaves_bash_only_the_exact_allow() -> Result[Void]
+  rules = try Approval.parse_rules([], ["read_file(.env)"])
+  try Test.eq(Permissions.allows?(Permissions.Allows(prefixes: [["cat"]]), rules, "bash", "cat .env", "/tmp"), false)
+  whole = Permissions.Allows(tools: ["bash"])
+  try Test.eq(Permissions.allows?(whole, rules, "bash", "cat .env | wc -l", "/tmp"), false)
+  exact = Permissions.answered(Permissions.Allows(), "allow_session", "bash", "cat .env")
+  Test.eq(Permissions.allows?(exact, rules, "bash", "cat .env", "/tmp"), true)
 end
 
 # An edit of two files, one under .git/, is protected: neither accept edits nor allow_tool runs it.
@@ -105,6 +116,7 @@ def test_the_prefix_of_a_command() -> Result[Void]
   try Test.eq(Permissions.prefix("bash", "git log -n 3"), some(["git", "log"]))
   try Test.eq(Permissions.prefix("bash", "git -c a=b log"), none)
   try Test.eq(Permissions.prefix("bash", "ls -la"), some(["ls"]))
+  try Test.eq([Permissions.prefix("bash", "env A=1 make"), Permissions.prefix("bash", "python3 x.py")], [none, none])
   Test.eq(Permissions.prefix("bash", "ls | wc"), none)
 end
 

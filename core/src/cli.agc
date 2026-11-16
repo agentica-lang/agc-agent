@@ -37,7 +37,8 @@ USAGE = <<~TEXT
   rules under a folder of FINN_TRUSTED_DIRS). A bash command that only reads inside the folder runs without asking. An
   answer may allow the same call (allow_session), the bash commands with the same first words (allow_prefix) or the
   whole tool (allow_tool) for the session, until the server restarts; PATCH {"accept_edits": true} runs the edits of
-  files without asking. None of them reaches into .git/ or passes a deny rule.
+  files without asking. None of them reaches into .git/. The deny rules are checked first, as far as the parser sees a
+  command (best effort, not a sandbox); while a read_file deny rule exists, only the same bash call is allowed again.
 TEXT
 
 enum Command

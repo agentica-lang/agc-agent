@@ -7,12 +7,13 @@
 ##
 ## A session allows more by its answers: the same call (`allow_session`), the same command prefix for `bash`
 ## (`allow_prefix`: `git log`, `npm test`), or the whole tool (`allow_tool`); and in the accept-edits mode the edits of
-## files run without asking. None of them reaches into `.git/`, and a deny rule is checked before them: for `bash`, on
-## each simple command, its words joined by spaces; a command whose words cannot be checked that way (a quote, a `$`,
-## a glob) is not allowed through them while a deny rule of `bash` exists. They last as long as the server runs: a
-## restart forgets them.
+## files run without asking. None of them reaches into `.git/`, and the deny rules are checked before them, as far as
+## the parser sees a command: for `bash`, a rule is matched against each simple command and every tail of its words (so
+## `sudo`, `env`, `timeout 5` or `xargs` in front do not hide it), and a command whose words cannot be checked (a quote,
+## a `$`, a glob) is not allowed through them while a deny rule of `bash` exists. While a deny rule of `read_file`
+## exists, only the same call is allowed again for `bash`: any command may read the file. They last as long as the
+## server runs: a restart forgets them. Known limit: an option that writes is not seen, but for git's `--output`.
 
-import Regex from "std/regex"
 import Shell from "pkg/shell/shell"
 import Approval from "approval"
 import Sandbox from "sandbox"
@@ -21,12 +22,16 @@ CONFIG_ENV = "FINN_CONFIG"
 PROJECT_FILE = ".finn/config.json"
 ## The tools whose calls the accept-edits mode runs.
 EDITS = ["write_file", "edit_file", "apply_patch"]
+## Programs that run the command in their arguments, and interpreters: an answer allows only the same call.
+RUNNERS = [
+  "env", "xargs", "sh", "bash", "zsh", "python", "python3", "node", "ruby", "perl", "sudo", "nice", "nohup", "timeout",
+  "command", "time",
+]
 ## Programs whose second word picks what they do: their prefix is two words.
 TWO_WORDS = [
   "git", "npm", "pnpm", "yarn", "bun", "npx", "cargo", "go", "make", "docker", "kubectl", "pip", "poetry", "uv", "mix",
   "gh", "dotnet", "bundle", "rails",
 ]
-ASSIGNMENT = /\A[A-Za-z_][A-Za-z0-9_]*=/
 
 struct Allows
   ## `tool\ntarget` of each call allowed again.
@@ -73,8 +78,8 @@ def with_project(rules: Approval.Rules, root: String, trusted: Bool) -> Result[A
 end
 
 ## The words a prefix answer would allow for a `bash` command: its first word, or two for `TWO_WORDS`; none for another
-## tool, a command that is not one simple command, or one of `TWO_WORDS` whose second word is missing or an option
-## (`git -c a=b log`), which an answer allows only as the same call.
+## tool, a command that is not one simple command, one of `RUNNERS`, or one of `TWO_WORDS` whose second word is
+## missing or an option (`git -c a=b log`), which an answer allows only as the same call.
 def prefix(tool: String, target: String) -> Optional[List[String]]
   return none if tool != "bash"
 
@@ -82,7 +87,7 @@ def prefix(tool: String, target: String) -> Optional[List[String]]
   return none if script.pipelines.size != 1 or script.pipelines[0].commands.size != 1
 
   words = Shell.argv(script.pipelines[0].commands[0])
-  return none if words.empty?
+  return none if words.empty? or RUNNERS.include?(words[0])
   return some(words.take(1)) if not TWO_WORDS.include?(words[0])
   return none if words.size < 2 or words[1].start_with?("-")
 
@@ -95,14 +100,15 @@ def allows?(allows: Allows, rules: Approval.Rules, tool: String, target: String,
   return false if Approval.protected?(tool, target)
   return false if tool == "bash" and bash_denied?(rules, target)
   return true if allows.exact.include?(key(tool, target))
+  return false if (tool == "bash" and rules.deny.any? { |rule| rule.tool == "read_file" })
   return true if allows.tools.include?(tool)
   return true if allows.accept_edits and EDITS.include?(tool)
 
   tool == "bash" and not allows.prefixes.empty? and prefixed?(allows.prefixes, target, root, Approval.guarded?(rules))
 end
 
-## Whether a deny rule of `bash` matches a simple command of `target` (its words joined by spaces, after the variable
-## assignments in front), or cannot be checked: the command does not parse, or a word is not plain.
+## Whether a deny rule of `bash` matches a simple command of `target`: a tail of its words joined by spaces, also with
+## one more argument (as `xargs` adds); or cannot be checked: the command does not parse, or a word is not plain.
 def bash_denied?(rules: Approval.Rules, target: String) -> Bool
   return false if (not rules.deny.any? { |rule| rule.tool == "bash" })
 
@@ -194,16 +200,16 @@ def command_allowed?(prefixes: List[List[String]], command: Shell.Command, root:
   end
 
   words = Shell.argv(command)
-  not writes and prefixes.any? { |p| words.take(p.size) == p }
+  output = words.take(1) == ["git"] and words.any? { |w| w.start_with?("--output") }
+  not writes and not output and prefixes.any? { |p| words.take(p.size) == p }
 end
 
 def command_denied?(rules: Approval.Rules, command: Shell.Command) -> Bool
   words = Shell.argv(command)
-  while not words.empty? and Regex.match?(words[0], ASSIGNMENT)
-    words = words.drop(1)
-  end
-
   return true if (words.any? { |word| word.empty? or word.include?(" ") or not Approval.plain?(word) })
 
-  Approval.denied?(rules, "bash", words.join(" "))
+  (0...words.size).to_a.any? do |from|
+    text = words.drop(from).join(" ")
+    Approval.denied?(rules, "bash", text) or Approval.denied?(rules, "bash", "#{text} x")
+  end
 end
