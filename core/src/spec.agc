@@ -8,6 +8,8 @@ struct Context
   root: String
   env: Fn[String, Result[String]]
   rules: Approval.Rules
+  ## Folders outside `root` that `read_file` reads too: those of the session's skills.
+  read_roots: List[String] = []
 end
 
 struct Output

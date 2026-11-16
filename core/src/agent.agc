@@ -4,6 +4,7 @@
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Compaction from "compaction"
+import Skills from "skills"
 import Tools from "tools"
 
 MAX_ROUNDS = 50
@@ -44,6 +45,7 @@ struct Turn
   ## The context of the session's last call.
   last_context: Int = 0
   max_rounds: Int = MAX_ROUNDS
+  skills: List[Skills.Skill] = []
 end
 
 struct Outcome
@@ -76,7 +78,7 @@ def run(given: Turn) -> Outcome
     end
 
     calls = tool_calls(response.message)
-    results = calls.map { |call| run_call(turn, call) }
+    results = calls.map { |call| run_call(turn, call, messages) }
     messages = messages + [response.message, LLM.Message(role: LLM.Role.User, content: results)]
     turn.link.commit.call(messages)
     context = response.usage.input + response.usage.cache_read + response.usage.cache_write
@@ -92,6 +94,11 @@ def run(given: Turn) -> Outcome
 end
 
 def text_block(text: String) -> LLM.Block = LLM.Block.Text(LLM.TextPart(text: text))
+
+## The texts of the messages, tool results included: where the loaded skills are.
+def texts(messages: List[LLM.Message]) -> List[String]
+  messages.flat_map { |message| message.content.map { |block| text_of(block) } }
+end
 
 ## The text of the model's blocks, for the history a client draws.
 def assistant_text(message: LLM.Message) -> String = message.content.map { |b| text_of(b) }.join("")
@@ -160,7 +167,7 @@ def compacted(turn: Turn, context: Int, folded: Folded) -> Folded
 end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
-  tools = Tools.all().map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }
+  tools = offered(turn).map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }
   request = LLM.Request(model: turn.model, system: turn.system, messages: messages, tools: tools, extra: turn.extra)
   stream = try LLM.stream(turn.provider, request)
   while true
@@ -189,14 +196,29 @@ def usage(u: LLM.Usage) -> Protocol.Usage
   )
 end
 
-def run_call(turn: Turn, call: LLM.ToolCall) -> LLM.Block
-  summary = Tools.target(turn.ctx, call.name, call.input).unwrap_or(call.name)
+def offered(turn: Turn) -> List[Tools.Tool]
+  for tool in option_list(Skills.tool(turn.skills))
+    return Tools.all().push(tool)
+  end
+
+  Tools.all()
+end
+
+def target(turn: Turn, call: LLM.ToolCall) -> Result[String]
+  return Skills.target(turn.ctx, call.input) if call.name == Skills.TOOL
+
+  Tools.target(turn.ctx, call.name, call.input)
+end
+
+# `seen` is the history so far, where the skills already loaded are.
+def run_call(turn: Turn, call: LLM.ToolCall, seen: List[LLM.Message]) -> LLM.Block
+  summary = target(turn, call).unwrap_or(call.name)
   turn.link.emit.call(
     Protocol.Event.ToolStarted(Protocol.ToolStarted(call_id: call.id, name: call.name, summary: summary)),
   )
 
   started = Time.monotonic_ms
-  output = checked_run(turn, call)
+  output = checked_run(turn, call, seen)
   finished = Protocol.ToolFinished(
     call_id: call.id,
     ok: not output.is_error,
@@ -208,13 +230,17 @@ def run_call(turn: Turn, call: LLM.ToolCall) -> LLM.Block
   LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: output.text, is_error: output.is_error))
 end
 
-def checked_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
+def checked_run(turn: Turn, call: LLM.ToolCall, seen: List[LLM.Message]) -> Tools.Output
   for problem in option_list(call.input_error)
     return Tools.Output(text: problem, is_error: true)
   end
 
+  if call.name == Skills.TOOL and not turn.skills.empty?
+    return Tools.output(Skills.activate(turn.skills, call.input, Skills.loaded(texts(seen))))
+  end
+
   case Tools.target(turn.ctx, call.name, call.input)
-    ok(target) -> approved_run(turn, call, target)
+    ok(found) -> approved_run(turn, call, found)
     error(e) -> Tools.Output(text: e.message, is_error: true)
   end
 end

@@ -3,7 +3,8 @@
 ## `~/.local/share/finn`), and the model API: `FINN_API` (`openai`, chat completions, by default, or
 ## `openai_responses`), `FINN_BASE_URL` (a local llama-server by default), `FINN_API_KEY` and
 ## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction. The names of before Finn still work:
-## `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder is there.
+## `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder is there. Skills: those of the
+## home folder always, those of a session folder only under a folder of `FINN_TRUSTED_DIRS` (separated by `:`).
 
 import LLM from "pkg/llm/llm"
 import Server from "server"
@@ -37,6 +38,8 @@ def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(base_url),
       api_key: api_key,
+      home: set(read, "HOME").unwrap_or(""),
+      trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
     ),
   )
 end

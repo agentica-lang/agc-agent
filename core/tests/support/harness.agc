@@ -55,6 +55,8 @@ struct Setup
   before_load: Optional[Fn[String, Void]] = none
   ## The model API of the server, as `FINN_API` names it; the fixtures come from the folder of its format.
   api: String = "openai"
+  ## Skills: the home folder is `home` under the test's folder, and the test's folder is trusted.
+  skills: Bool = false
 end
 
 def fake_env(name: String) -> Result[String]
@@ -109,6 +111,8 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     compact_model: setup.compact_model,
     props_url: props_url(setup, fake),
     before_load: setup.before_load,
+    home: skills_home(setup, base),
+    trusted: skills_trusted(setup, base),
   )
 
   server = try Server.start(options)
@@ -159,6 +163,18 @@ def props_url(setup: Setup, fake: Fake.Fake) -> String
   return "" if not setup.props
 
   "#{fake.url.slice(0, fake.url.length - 3)}/props"
+end
+
+def skills_home(setup: Setup, base: String) -> String
+  return "" if not setup.skills
+
+  "#{base}/home"
+end
+
+def skills_trusted(setup: Setup, base: String) -> List[String]
+  return [] if not setup.skills
+
+  [base]
 end
 
 def window(tokens: Int) -> Optional[Int]

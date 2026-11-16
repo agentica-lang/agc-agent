@@ -8,6 +8,7 @@
 
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
+import Skills from "skills"
 
 PERCENT = 80
 ## The user message after a summary that folded rounds of the running turn, when the turn's task was not folded.
@@ -106,15 +107,18 @@ def summarize(
 end
 
 ## The history with the span as one assistant message. When a round of the running turn follows, a user message goes
-## between them, so the roles still take turns: the task of the turn when it was folded, else `GO_ON`.
+## between them, so the roles still take turns: the task of the turn when it was folded, else `GO_ON`. The skills
+## loaded in the span stay whole after the summary.
 def apply(history: List[LLM.Message], compaction: Compaction) -> List[LLM.Message]
-  summary = LLM.Message(
-    role: LLM.Role.Assistant,
-    content: [LLM.Block.Text(LLM.TextPart(text: summary_text(compaction.summary)))],
-  )
-
   kept = history.drop(compaction.to)
   folded = history.take(compaction.to).drop(compaction.from)
+  text = summary_text(compaction.summary)
+  skills = kept_skills(folded, history.take(compaction.from) + kept)
+  if not skills.empty?
+    text = "#{text}\n\nThe skills loaded in this session:\n\n#{skills.join("\n\n")}"
+  end
+
+  summary = LLM.Message(role: LLM.Role.Assistant, content: [LLM.Block.Text(LLM.TextPart(text: text))])
   start = history.take(compaction.from).push(summary)
   return start + kept if kept.empty? or kept[0].role != LLM.Role.Assistant
 
@@ -195,6 +199,34 @@ def cut(text: String) -> String
   return text if text.length <= MAX_TEXT
 
   "#{text.slice(0, MAX_TEXT)} [cut: #{text.length} characters]"
+end
+
+# The skill blocks of `folded`, once each, but those `others` still hold.
+def kept_skills(folded: List[LLM.Message], others: List[LLM.Message]) -> List[String]
+  present = Skills.loaded(all_texts(others))
+  blocks: List[String] = []
+  names: List[String] = []
+  for block in (all_texts(folded).flat_map { |text| Skills.blocks(text) })
+    name = Skills.loaded([block])[0]
+    next if present.include?(name) or names.include?(name)
+
+    blocks = blocks.push(block)
+    names = names.push(name)
+  end
+
+  blocks
+end
+
+def all_texts(messages: List[LLM.Message]) -> List[String]
+  messages.flat_map do |message|
+    message.content.map do |block|
+      case block
+        LLM.Block.Text(part) -> part.text
+        LLM.Block.ToolResult(output) -> output.content
+        _ -> ""
+      end
+    end
+  end
 end
 
 def text?(block: LLM.Block) -> Bool

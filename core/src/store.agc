@@ -8,6 +8,7 @@
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Compaction from "compaction"
+import Skills from "skills"
 
 EXTENSION = ".jsonl"
 MAX_LINE_BYTES = 16_777_216
@@ -230,7 +231,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
     "user" ->
       text = try field(json, "text")
       message = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
-      shown = Protocol.Message(role: Protocol.Role.User, text: text)
+      shown = Protocol.Message(role: Protocol.Role.User, text: Skills.typed(text))
       users = saved.users + 1
       ok(
         saved.with(

@@ -35,3 +35,4 @@
 - **Breaking:** the command is `finn` (`bin/finn`), the product Finn Agent: variables are `FINN_*` and folders `finn`; the `AGC_AGENT_*` names and an existing `agc-agent` folder still work.
 - The approval of an `edit_file` call marks each old line `-` and each new line `+`.
 - `finn -p TASK` runs one task (`-p -` reads it from stdin): the answer on stdout, the rest on stderr; it exits 0 when the turn ends normally, 130 when cancelled, 1 otherwise, and denies approvals; `--yolo` allows the tool calls of the run, in one-shot and in chat.
+- Agent Skills: `SKILL.md` folders under `.finn/skills`, `.agents/skills` and `.claude/skills` of the home folder, and of the session folder when it is under `FINN_TRUSTED_DIRS`; a catalog in the system prompt, the `activate_skill` tool, `/name` in a message, and compaction keeps loaded skills.

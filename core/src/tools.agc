@@ -23,6 +23,7 @@ import Spec from "spec"
 export Spec.Context
 export Spec.Output
 export Spec.Tool
+export Spec.output
 export Approval.Verdict
 export Approval.Rules
 

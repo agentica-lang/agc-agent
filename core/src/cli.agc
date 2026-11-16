@@ -17,7 +17,9 @@ USAGE = <<~TEXT
   another model and API (finn --model, --api), kept in its file. Past 80 % of the model's window
   (FINN_CONTEXT_WINDOW, else llama-server's /props, else GET /models), the history after the first task becomes a
   summary by FINN_COMPACT_MODEL (else the session's model), whose tokens are not in `usage`; the last round of the
-  running turn is kept whole.
+  running turn is kept whole. Skills (SKILL.md folders under .finn/skills, .agents/skills and .claude/skills) come from
+  the home folder, and from the session folder only when it is under a folder of FINN_TRUSTED_DIRS (separated by :);
+  the model loads one with activate_skill, the user with /name in a message.
 TEXT
 
 enum Command

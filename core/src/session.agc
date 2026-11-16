@@ -18,6 +18,7 @@ import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
 import Agent from "agent"
 import Compaction from "compaction"
+import Skills from "skills"
 import Store from "store"
 import Tools from "tools"
 
@@ -43,6 +44,7 @@ struct Setup
   props_url: String = ""
   api_key: String = ""
   extra: Map[String, JSON.Value] = {}
+  skills: List[Skills.Skill] = []
 end
 
 enum Msg
@@ -394,12 +396,14 @@ def trim(log: List[Store.Logged], state: State) -> List[Store.Logged]
   log.drop(drop)
 end
 
-def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> State
+# The user's `/name` of a skill puts its content before the message, unless the session has it already.
+def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> State
   if state.turn.some?
     Actor.reply(reply, error("a turn is running", kind: Protocol.KIND_SESSION_BUSY))
     return state
   end
 
+  text = Skills.expand(typed, state.setup.skills, Skills.loaded(Agent.texts(state.history)))
   case save(state, -> { Store.append_user(state.setup.file, text) })
     ok(_) -> nil
     error(e) ->
@@ -441,6 +445,7 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
       extra: setup.extra,
     ),
     last_context: state.context,
+    skills: setup.skills,
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
@@ -449,7 +454,7 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     turn: some(running),
     turns: state.turns + 1,
     history: state.history.push(LLM.Message(role: LLM.Role.User, content: [Agent.text_block(text)])),
-    display: state.display.push(Protocol.Message(role: Protocol.Role.User, text: text)),
+    display: state.display.push(Protocol.Message(role: Protocol.Role.User, text: typed)),
     broken: none,
   )
 
