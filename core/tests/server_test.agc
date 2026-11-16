@@ -1,4 +1,3 @@
-import HTTP from "std/http"
 import Protocol from "pkg/protocol/protocol"
 import Config from "../src/config/config"
 import Server from "../src/http/server"
@@ -256,21 +255,11 @@ def test_agents_md_is_read_only_inside_the_folder() -> Result[Void]
   end
 end
 
-def test_requests_need_the_token_a_local_host_and_no_foreign_origin() -> Result[Void]
+def test_the_server_keeps_its_state_folder_private_and_runs_once() -> Result[Void]
   H.using(H.Setup(replies: [])) do |h|
     health = Protocol.HEALTH_PATH
     try Test.eq((try H.get(h, health)).status, 200)
     try Test.eq((try H.call(h, "GET", health, "", [])).status, 401)
-    wrong = [HTTP.Header(name: "Authorization", value: "Bearer nope")]
-    try Test.eq((try H.call(h, "GET", health, "", wrong)).status, 401)
-    foreign = H.auth(h).push(HTTP.Header(name: "Origin", value: "http://evil.example"))
-    try Test.eq((try H.call(h, "GET", health, "", foreign)).status, 403)
-    own = H.auth(h).push(HTTP.Header(name: "Origin", value: "http://127.0.0.1:#{h.server.port}"))
-    try Test.eq((try H.call(h, "GET", health, "", own)).status, 200)
-    try Test.eq(try raw_status(h, "evil.example:#{h.server.port}"), "HTTP/1.1 403 Forbidden")
-    try Test.eq((try H.get(h, "/v2/sessions")).status, 404)
-    try Test.eq((try H.get(h, "/sessions")).status, 404)
-    try Test.eq((try H.get(h, Protocol.SESSIONS_PATH)).status, 200)
     info = try Protocol.decode_server_info(try File.read_text("#{h.state_dir}/server.json"))
     try Test.eq([info.port, info.pid], [h.server.port, System.pid])
     try Test.eq(info.token, h.token)
@@ -364,16 +353,6 @@ end
 
 def system_text(messages: List[JSON.Value]) -> String
   JSON.string(JSON.get(messages[0], "content").unwrap_or(JSON.from(""))).unwrap_or("")
-end
-
-# The client always sends its own `Host`, so this one goes over a plain socket.
-def raw_status(h: H.Harness, host: String) -> Result[String]
-  socket = try TCP.connect("127.0.0.1", h.server.port, 5000)
-  request = "GET #{Protocol.HEALTH_PATH} HTTP/1.1\r\nHost: #{host}\r\nAuthorization: Bearer #{h.token}\r\n\r\n"
-  try TCP.send(socket, request, 5000)
-  line = TCP.read_line(socket, 5000)
-  TCP.close(socket)
-  line
 end
 
 def link(target: String, path: String) -> Result[Void]

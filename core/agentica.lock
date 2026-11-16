@@ -1,6 +1,13 @@
 version = 1
 
 [[package]]
+name = "bond"
+git = "https://github.com/agentica-lang/bond"
+tag = "0.13.1"
+commit = "3fb454ba7860ae58e6fbe63600cd7ea0e19a95aa"
+hash = "sha256:8ad6b33959a187a4171b971b9fb19f4fab493003cd4b024651dcf45c627704f8"
+
+[[package]]
 name = "llm"
 git = "https://github.com/agentica-lang/agc-agent"
 subdir = "llm"

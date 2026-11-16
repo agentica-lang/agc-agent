@@ -36,8 +36,9 @@ tests = out=$$(cd $(1) && $(AGENTICA) test $(2)); status=$$?; echo "$$out"; [ $$
 
 .PHONY: install check coupling fmt-check unit smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
-# The packages from outside this repository (agentica-tui) go into the package's deps/ (gitignored).
+# The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
 install:
+	cd core && $(AGENTICA) install
 	cd tui_client && $(AGENTICA) install
 
 check: coupling install
