@@ -71,6 +71,22 @@ struct ProviderList
   providers: List[ProviderInfo]
 end
 
+## A provider a login can set up. `from` is where its key comes from: `env` (its variable, which wins), `stored` (a
+## login) or empty; `coming` is a login with no flow yet, which cannot be picked.
+struct LoginStatus
+  name: String
+  label: String
+  key_env: String
+  from: String
+  coming: Bool
+end
+
+## The answer of `GET /v1/auth`. `first`: no key file and no key in the environment, so a client offers a login.
+struct LoginList
+  providers: List[LoginStatus]
+  first: Bool
+end
+
 ## A finished message, as the text to draw.
 struct Message
   role: Role
@@ -194,6 +210,14 @@ def decode_provider_list(text: String) -> Result[ProviderList] = Wire.decode(tex
 
 def encode_shell_accepted(reply: ShellAccepted) -> String = JSON.encode(reply)
 
+def encode_login_status(reply: LoginStatus) -> String = JSON.encode(reply)
+
+def decode_login_status(text: String) -> Result[LoginStatus] = Wire.decode(text, LoginStatus.codec)
+
+def encode_login_list(reply: LoginList) -> String = JSON.encode(reply)
+
+def decode_login_list(text: String) -> Result[LoginList] = Wire.decode(text, LoginList.codec)
+
 def decode_shell_accepted(text: String) -> Result[ShellAccepted] = Wire.decode(text, ShellAccepted.codec)
 
 ## It trusts its input: it does not check what `decode_session` checks about `turn_id`, `turn_from_event_id` and
@@ -268,6 +292,8 @@ def shape() -> List[String]
     Wire.record("Branched", Branched.members),
     Wire.record("ServerStatus", ServerStatus.members),
     Wire.record("ShellAccepted", ShellAccepted.members),
+    Wire.record("LoginStatus", LoginStatus.members),
+    Wire.record("LoginList", LoginList.members),
     Wire.record("MessageWire", MessageWire.members),
     Wire.record("SessionWire", SessionWire.members),
   ]

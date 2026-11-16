@@ -9,6 +9,7 @@ import HTTP from "std/http"
 import Bond from "pkg/bond/bond"
 import Protocol from "pkg/protocol/protocol"
 import Config from "../config/config"
+import Logins from "../config/logins"
 import Sessions from "../session/session"
 
 VERSION = "0.0.1"
@@ -111,6 +112,7 @@ end
 def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.App
   all = Protocol.SESSIONS_PATH
   one = "#{all}/:id"
+  provider = Protocol.auth_path(":provider")
   (
     Bond.app()
     |> Bond.before(->(conn) { ok(guard(token, control, conn)) })
@@ -120,6 +122,11 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.post(all, ->(conn) { reply(conn, 201, create(sessions, conn)) })
     |> Bond.get(all, ->(conn) { reply(conn, 200, list(sessions)) })
     |> Bond.get(Protocol.PROVIDERS_PATH, ->(conn) { reply(conn, 200, providers(sessions)) })
+    |> Bond.get(Protocol.AUTH_PATH, ->(conn) { reply(conn, 200, logins(sessions)) })
+    |> Bond.delete(Protocol.AUTH_PATH, ->(conn) { reply(conn, 200, logout(sessions, none)) })
+    |> Bond.put(Protocol.AUTH_PATH, ->(conn) { reply(conn, 200, skip(sessions)) })
+    |> Bond.post(provider, ->(conn) { reply(conn, 200, login(sessions, conn)) })
+    |> Bond.delete(provider, ->(conn) { reply(conn, 200, logout(sessions, some(try Bond.param(conn, "provider")))) })
     |> Bond.get(one, ->(conn) { reply(conn, 200, snapshot(sessions, conn)) })
     |> Bond.patch(one, ->(conn) { reply(conn, 200, update(sessions, conn)) })
     |> Bond.delete(one, ->(conn) { reply(conn, 200, delete(sessions, conn)) })
@@ -348,6 +355,49 @@ def providers(sessions: Sessions.Sessions) -> Result[String]
   ok(Protocol.encode_provider_list(Sessions.providers(sessions)))
 end
 
+def logins(sessions: Sessions.Sessions) -> Result[String]
+  listing = try Logins.list(try holder(sessions))
+  ok(
+    Protocol.encode_login_list(
+      Protocol.LoginList(providers: listing.providers.map(&login_status), first: listing.first),
+    ),
+  )
+end
+
+# The key stays in this task and the holder: what goes back is where it is now.
+def login(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  request = try Protocol.decode_login(try String.from_bytes(conn.body))
+  ok(
+    Protocol.encode_login_status(
+      login_status(try Logins.login(try holder(sessions), try Bond.param(conn, "provider"), request.key)),
+    ),
+  )
+end
+
+def logout(sessions: Sessions.Sessions, name: Optional[String]) -> Result[String]
+  try Logins.logout(try holder(sessions), name)
+  ok("{}")
+end
+
+def skip(sessions: Sessions.Sessions) -> Result[String]
+  try Logins.skip(try holder(sessions))
+  ok("{}")
+end
+
+def holder(sessions: Sessions.Sessions) -> Result[Logins.Holder]
+  sessions.options.logins.to_result("this server has no login")
+end
+
+def login_status(found: Logins.Status) -> Protocol.LoginStatus
+  Protocol.LoginStatus(
+    name: found.name,
+    label: found.label,
+    key_env: found.key_env,
+    from: found.from,
+    coming: found.coming,
+  )
+end
+
 def approve(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   approve = try Protocol.decode_approve(try String.from_bytes(conn.body))
   try Sessions.answer(sessions, try Bond.param(conn, "id"), try Bond.param(conn, "approval"), approve.decision)
@@ -440,7 +490,7 @@ def failure(conn: Bond.Conn, e: Error) -> Bond.Conn
 end
 
 def status_of(kind: String) -> Int
-  return 400 if [Protocol.KIND_INVALID, Protocol.KIND_UNKNOWN].include?(kind)
+  return 400 if [Protocol.KIND_INVALID, Protocol.KIND_UNKNOWN, Protocol.KIND_LOGIN_REJECTED].include?(kind)
   return 403 if kind == Protocol.KIND_SHELL_DENIED
   return 404 if [Protocol.KIND_SESSION_NOT_FOUND, Protocol.KIND_APPROVAL_NOT_FOUND].include?(kind)
   return 409 if [Protocol.KIND_SESSION_BUSY, Protocol.KIND_APPROVAL_RESOLVED].include?(kind)

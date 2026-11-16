@@ -113,6 +113,14 @@ struct Model
   moving: Bool = false
   ## The prompt holds the message a move went back before, selected: typing replaces it.
   prefilled: Bool = false
+  ## The provider whose key the prompt asks for, and the key typed so far: drawn as dots, kept nowhere else, and
+  ## cleared once it is sent or the ask is closed.
+  key_for: Optional[String] = none
+  secret: String = ""
+  ## A login offered at the first start: closing it stores an empty key file, so it is offered once. With
+  ## `login_only` (`finn login`), the app ends after the login.
+  first_login: Bool = false
+  login_only: Bool = false
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
   new_model: Optional[String] = none
   yolo: Yolo.Yolo
@@ -162,6 +170,8 @@ enum Msg
   Leveled(Result[Void])
   ## The reply to a branch, a fork or a copy: the session to go on in.
   Moved(Result[Protocol.Branched])
+  ## The reply to a login, with no key in it.
+  LoggedIn(String, Result[Protocol.LoginStatus])
   ## The files of the session's folder, for the `opened` count when they were asked.
   Files(Int, List[String])
   ## The reply to a `!` command: the command, and whether it runs.
@@ -170,10 +180,24 @@ end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
 def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
+  started(screen, server, options, &opened)
+end
+
+## `finn login` on `screen`: the login of the provider of `options` (the picker when none), then the end.
+def login(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
+  started(screen, server, options, ->(model: Model) { login_only(model, options.provider) })
+end
+
+def started(
+  screen: TUI.Raw.Screen,
+  server: Client.Server,
+  options: Args.Options,
+  first: Fn[Model, Result[Model]],
+) -> Result[Int]
   signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
   palette = Theme.colors256?(System.env("TERM").unwrap_or(""), System.env("COLORTERM").unwrap_or(""))
   output = TUI.OutputMode.Colors256
-  start = try opened(seed(server, options, signals, TUI.Raw.width(screen), TUI.Raw.height(screen)))
+  start = try first.call(seed(server, options, signals, TUI.Raw.width(screen), TUI.Raw.height(screen)))
   if not palette
     output = TUI.OutputMode.Normal
     start = start.with(theme: Theme.basic())
@@ -232,14 +256,35 @@ def seed(
   )
 end
 
-## The session of the options opened, with the signals listened to.
+## The session of the options opened, with the signals listened to; at the first start, the login picker.
 def opened(model: Model) -> Result[Model]
   app = try open(model, model.options)
   if model.options.yolo
     app = noted(app, YOLO_WARNING)
   end
 
-  ok(effect(app, listen(app.signals)))
+  ok(effect(welcomed(app), listen(app.signals)))
+end
+
+## `finn login`: the login picker on its own, until a login ends or it is closed.
+def login_only(model: Model, provider: Optional[String]) -> Result[Model]
+  app = effect(model.with(login_only: true), listen(model.signals))
+  list = try Client.list_logins(app.server)
+  for name in option_list(provider)
+    return ok(named_login(app, list.providers, name))
+  end
+
+  ok(app.with(picker: some(Picker.logins(list))))
+end
+
+## The first start offers a login when the server has no key file and no key in the environment.
+def welcomed(app: Model) -> Model
+  case Client.list_logins(app.server)
+    ok(list) if list.first ->
+      shown = noted(app, "no provider is set up: pick one to give its key, or Esc to go on with the local server")
+      shown.with(picker: some(Picker.logins(list)), first_login: true)
+    _ -> app
+  end
 end
 
 def update(model: Model, msg: Msg) -> TUI.Step[Model, Msg]
@@ -302,6 +347,7 @@ def handled(app: Model, msg: Msg) -> Model
     Msg.Spin -> app.with(spin: (app.spin + 1) % SPINNER.size)
     Msg.Leveled(result) -> level_reply(app, result)
     Msg.Moved(result) -> moved(app, result)
+    Msg.LoggedIn(name, result) -> logged_in(app, name, result)
     Msg.Rechecked(generation, result) if generation == app.generation -> rechecked(app, result)
     Msg.Rechecked(_, _) -> app
     Msg.Files(opened, files) if opened == app.opened -> app.with(files: some(files), reading_files: false)
@@ -468,6 +514,10 @@ def subscribe(app: Model, from: Int) -> Model
 end
 
 def on_key(app: Model, event: TUI.Event) -> Model
+  for name in option_list(app.key_for)
+    return on_secret_key(app, name, event) if not ctrl_c?(event)
+  end
+
   for picker in option_list(app.picker)
     return on_picker_key(app, picker, event) if not ctrl_c?(event)
   end
@@ -717,7 +767,9 @@ end
 def on_picker_key(app: Model, picker: Picker.Picker, event: TUI.Event) -> Model
   case Picker.key(picker, event)
     Picker.Step.Stay(next_picker) -> app.with(picker: some(next_picker))
+    Picker.Step.Close if picker.kind == Picker.Kind.Logins -> login_closed(app.with(picker: none))
     Picker.Step.Close -> app.with(picker: none)
+    Picker.Step.Pick(key) if picker.kind == Picker.Kind.Logins -> login_picked(app.with(picker: none), picker, key)
     Picker.Step.Pick(key) -> picked(app.with(picker: none), picker.kind, key)
   end
 end
@@ -739,9 +791,15 @@ def send(app: Model) -> Model
 
   text = expanded(app, typed_text)
   base = app.with(history: remembered(app.history, text), recall: none, cursor: 0, mention_closed: none)
+  if typed_text.start_with?("/login")
+    # A key typed on a `/login` line by mistake is not kept: the line is not remembered.
+    base = base.with(history: app.history)
+  end
+
   case Client.parse_command(typed_text)
     some(ok(command)) if not app.moving or local?(command) ->
       return on_command(base.with(prompt: "", scroll: 0), command)
+    some(error(e)) if typed_text.start_with?("/login") -> return noted(base.with(prompt: ""), e.message)
     some(error(e)) -> return noted(app, e.message)
     _ -> nil
   end
@@ -784,6 +842,7 @@ end
 def local?(command: Client.Command) -> Bool
   case command
     Client.Command.Quit, Client.Command.Help, Client.Command.Cost -> true
+    Client.Command.Login(_), Client.Command.Logout(_) -> true
     _ -> false
   end
 end
@@ -858,7 +917,86 @@ def on_command(app: Model, command: Client.Command) -> Model
     Client.Command.Model(model) -> model_command(app, model)
     Client.Command.Thinking(level) -> thinking_command(app, level)
     Client.Command.Compact -> compact_command(app)
+    Client.Command.Login(name) -> login_command(app, name)
+    Client.Command.Logout(name) -> tried(app, logout_command(app, name))
   end
+end
+
+def login_command(app: Model, name: Optional[String]) -> Model
+  for given in option_list(name)
+    return tried(app, named_from_server(app, given))
+  end
+
+  tried(app, login_picking(app))
+end
+
+def named_from_server(app: Model, name: String) -> Result[Model]
+  ok(named_login(app, (try Client.list_logins(app.server)).providers, name))
+end
+
+def login_picking(app: Model) -> Result[Model]
+  ok(app.with(picker: some(Picker.logins(try Client.list_logins(app.server)))))
+end
+
+def login_picked(app: Model, picker: Picker.Picker, name: String) -> Model = named_login(app, picker.logins, name)
+
+# A name that is no login is not shown again: it may be a key typed in the wrong place.
+def named_login(app: Model, logins: List[Protocol.LoginStatus], name: String) -> Model
+  found = logins.select { |l| l.name == name }
+  return login_closed(noted(app, "no login has that name: /login lists them")) if found.empty?
+  return login_closed(noted(app, "#{found[0].label}: coming, there is no login for it yet")) if found[0].coming
+
+  asking(app, name)
+end
+
+def asking(app: Model, name: String) -> Model
+  noted(app.with(key_for: some(name), secret: ""), "the key of #{name}: typed hidden, Enter checks it, Esc cancels")
+end
+
+# The key goes only into the command that sends it; the model keeps no copy.
+def on_secret_key(app: Model, name: String, event: TUI.Event) -> Model
+  case event
+    TUI.Event.Char(char, _) -> app.with(secret: app.secret + char)
+    TUI.Event.Paste(text) -> app.with(secret: app.secret + Prompt.pasted(text).strip)
+    TUI.Event.Key(TUI.Key.Backspace, _) ->
+      app.with(secret: app.secret.slice(0, [app.secret.length - 1, 0].max.unwrap!))
+    TUI.Event.Key(TUI.Key.Escape, _) -> login_closed(noted(app.with(key_for: none, secret: ""), "no key given"))
+    TUI.Event.Key(TUI.Key.Enter, _) if not app.secret.strip.empty? ->
+      server = app.server
+      key = app.secret.strip
+      checking = noted(app.with(key_for: none, secret: ""), "checking the key of #{name}")
+      effect(checking, TUI.Cmd.Run(-> { Msg.LoggedIn(name, Client.login(server, name, key)) }))
+    _ -> app
+  end
+end
+
+def logged_in(app: Model, name: String, result: Result[Protocol.LoginStatus]) -> Model
+  done = case result
+    ok(status) if status.from == "env" ->
+      noted(app, "#{name}: the key is stored, but #{status.key_env} is set and wins over it")
+    ok(status) -> noted(app, "#{name} is set up (#{status.key_env} would also work): /model lists its models")
+    error(e) -> noted(app, "error: #{e.message}")
+  end
+
+  return done.with(first_login: false) if not app.login_only
+  return done.with(exit: some(0)) if result.ok?
+
+  done.with(exit: some(1))
+end
+
+# A first-start login closed with no key stores an empty key file, so it is offered once; `finn login` ends.
+def login_closed(app: Model) -> Model
+  return app.with(exit: some(1)) if app.login_only
+  return app if not app.first_login
+
+  _ = Client.skip_login(app.server)
+  noted(app.with(first_login: false), "/login sets up a provider later")
+end
+
+def logout_command(app: Model, name: Optional[String]) -> Result[Model]
+  try Client.logout(app.server, name)
+  removed = name.map { |n| "the key of #{n} is removed" }.unwrap_or("every stored key is removed")
+  ok(noted(app, removed))
 end
 
 def note_entry(text: String) -> Transcript.Entry = Transcript.Entry(kind: Transcript.Kind.Notice, text: text)
@@ -1207,8 +1345,14 @@ def reconnect(app: Model, reason: String) -> Model
 end
 
 def framed(app: Model) -> Screen.Frame
+  prompt = Prompt.view(app.prompt, cursor(app), app.width, app.height)
+  for name in option_list(app.key_for)
+    hidden = "key of #{name}: #{"•" * app.secret.length}"
+    prompt = Prompt.view(hidden, hidden.length, app.width, app.height)
+  end
+
   parts = Screen.Parts(
-    prompt: Prompt.view(app.prompt, cursor(app), app.width, app.height),
+    prompt: prompt,
     picker: ->(room: Int) { picker_rows(app, room) },
     panel: ->(room: Int) { approval_rows(app, room) },
     label: label(app),

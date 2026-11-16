@@ -20,8 +20,10 @@
 import LLM from "pkg/llm/llm"
 import Monty from "pkg/monty/monty"
 import Approval from "../approval/approval"
+import Auth from "auth"
 import Catalog from "../agent/catalog"
 import CodeMode from "../tools/code_mode"
+import Logins from "logins"
 import Permissions from "../approval/permissions"
 import Providers from "providers"
 import Tools from "../tools/tools"
@@ -51,6 +53,9 @@ struct Options
   key_envs: Map[String, String] = {}
   ## What the server warns about when it starts.
   warnings: List[String] = []
+  ## What a login needs; none turns logins off. The holder of the providers once the server runs (`now`).
+  login: Optional[Logins.Setup] = none
+  logins: Optional[Logins.Holder] = none
   env: Fn[String, Result[String]]
   ## The rules of the approval extension; none turns it off, and every tool call runs without asking.
   approvals: Optional[Approval.Rules] = none
@@ -93,6 +98,15 @@ struct Options
   trusted: List[String] = []
 end
 
+## What the providers of a server are built from: its environment and its own model API.
+struct Server
+  read: Fn[String, Result[String]]
+  base_url: String
+  api_key: String
+  api: String
+  ant: Fn[Result[String]]
+end
+
 ## Where the `anthropic` API is and how a request proves who sends it: an API key, else an OAuth token.
 struct AnthropicAccess
   url: String = ""
@@ -113,22 +127,38 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   api = set(read, "FINN_API").unwrap_or(APIS[0])
   return error("FINN_API must be one of #{APIS.join(", ")}, not #{api.inspect}") if not APIS.include?(api)
 
-  access = try anthropic_access(read, api == "anthropic", ant)
   model = DEFAULT_MODEL
   if api == "anthropic"
     model = LLM.ANTHROPIC_MODEL
   end
 
-  providers = builtin(apis(base_url, api_key, LLM.Options(), access), api)
   customs = Providers.presets()
   for path in option_list(Permissions.config_path(read))
     customs = customs + try Providers.from_file(path)
   end
 
-  offered = Providers.offered(customs, read, LLM.Options())
-  for name in offered.keys
-    providers = providers.put(name, offered[name])
-  end
+  auth_path = Auth.path(read)
+  owner = Auth.owner(read)
+  stored = auth_path.map { |path| Auth.load(path, owner) }.unwrap_or(Auth.Stored())
+  server = Server(read: read, base_url: base_url, api_key: api_key, api: api, ant: ant)
+  claude_key = stored.keys.get(Providers.ANTHROPIC).unwrap_or("")
+  # `ant` runs here only: a login or a logout later builds the providers without it.
+  at_start = try anthropic_access(read, api == "anthropic", ant, claude_key)
+  rebuild = ->(keys: Map[String, String]) {
+    all_providers(server, customs, keys, access_for(server, keys, claude_key, at_start))
+  }
+
+  providers = try rebuild.call(stored.keys)
+  anthropic_url = set(read, "ANTHROPIC_BASE_URL").unwrap_or(LLM.ANTHROPIC_URL)
+  login = Logins.Setup(
+    path: auth_path,
+    owner: owner,
+    stored: stored,
+    entries: login_entries(customs, anthropic_url),
+    read: read,
+    rebuild: rebuild,
+    chosen: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
+  )
 
   provider = set(read, "FINN_PROVIDER").unwrap_or(default_provider(api))
   if not providers.has_key?(provider)
@@ -148,7 +178,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       providers: providers,
       provider: provider,
       key_envs: Providers.key_envs(customs),
-      warnings: Providers.shared_keys(customs),
+      warnings: Providers.shared_keys(customs) + [stored.refused].select { |w| not w.empty? },
+      login: some(login),
       model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,
       approvals: some(try Permissions.user_rules(read)),
@@ -164,6 +195,67 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
     ),
   )
+end
+
+## `options` with the providers the server offers now (a login or a logout changes them).
+def now(options: Options) -> Options
+  for holder in option_list(options.logins)
+    case Logins.providers(holder)
+      ok(providers) -> return options.with(providers: providers)
+      error(_) -> nil
+    end
+  end
+
+  options
+end
+
+## Every provider of a server whose env is `server`, with the keys a login stored: the built-in ones, then those of
+## `customs` that have a key; a variable wins over a stored key.
+def all_providers(
+  server: Server,
+  customs: List[Providers.Custom],
+  keys: Map[String, String],
+  access: AnthropicAccess,
+) -> Result[Map[String, Providers.Provider]]
+  providers = builtin(apis(server.base_url, server.api_key, LLM.Options(), access), server.api)
+  offered = Providers.offered(customs, server.read, LLM.Options(), keys)
+  for name in offered.keys
+    providers = providers.put(name, offered[name])
+  end
+
+  ok(providers)
+end
+
+## The access of `anthropic` with the stored `keys`: the one of the start while its stored key is the same, else one
+## that fetches the token of `ant` only after a 401, so building the providers calls nothing.
+def access_for(
+  server: Server,
+  keys: Map[String, String],
+  at_start_key: String,
+  at_start: AnthropicAccess,
+) -> AnthropicAccess
+  key = keys.get(Providers.ANTHROPIC).unwrap_or("")
+  return at_start if key == at_start_key
+
+  anthropic_access(server.read, false, server.ant, key).unwrap_or(at_start)
+end
+
+## The providers a key logs in to: `anthropic`, then those of `customs` with a key variable (a later one of a name
+## replaces an earlier one).
+def login_entries(customs: List[Providers.Custom], anthropic_url: String) -> List[Providers.Custom]
+  claude = Providers.Custom(
+    name: Providers.ANTHROPIC,
+    api: "anthropic",
+    base_url: anthropic_url,
+    key_env: "ANTHROPIC_API_KEY",
+  )
+
+  out = [claude]
+  for custom in (customs.select { |c| not c.key_env.empty? })
+    out = out.select { |e| e.name != custom.name }.push(custom)
+  end
+
+  out
 end
 
 ## Code mode when `FINN_CODE_MODE` is `1`: the worker is found when the first script runs.
@@ -266,10 +358,12 @@ def ant_token_with(program: String) -> Result[String]
   ok(text)
 end
 
+## `stored` is the key a login stored; the variables win over it, and it over `ant`.
 def anthropic_access(
   read: Fn[String, Result[String]],
   default: Bool,
   ant: Fn[Result[String]],
+  stored: String = "",
 ) -> Result[AnthropicAccess]
   url = read.call("ANTHROPIC_BASE_URL").unwrap_or("")
   if url == ""
@@ -281,6 +375,7 @@ def anthropic_access(
 
   token = read.call("ANTHROPIC_AUTH_TOKEN").unwrap_or("")
   return ok(AnthropicAccess(url: url, auth_token: token, inherit: false)) if token != ""
+  return ok(AnthropicAccess(url: url, api_key: stored, inherit: false)) if stored != ""
   # A session that picks Anthropic on a server of another API fetches the token at its first call (a 401).
   return ok(AnthropicAccess(url: url, inherit: false, ant: some(ant))) if not default
 

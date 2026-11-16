@@ -21,6 +21,7 @@ def dispatch(command: Args.Command) -> Void
     Args.Command.Version -> puts("Finn Agent tui #{Args.VERSION}")
     Args.Command.Help(text) -> puts(text)
     Args.Command.Run(options) -> finish(run(options))
+    Args.Command.Login(options) -> finish(login(options))
   end
 end
 
@@ -28,6 +29,12 @@ def run(options: Args.Options) -> Result[Int]
   launch = Args.launch(options)
   server = try Client.connect(launch, try Client.state_dir(launch))
   TUI.Raw.open(->(screen) { App.run(screen, server, options) })
+end
+
+def login(options: Args.Options) -> Result[Int]
+  launch = Args.launch(options)
+  server = try Client.connect(launch, try Client.state_dir(launch))
+  TUI.Raw.open(->(screen) { App.login(screen, server, options) })
 end
 
 def finish(result: Result[Int]) -> Void
