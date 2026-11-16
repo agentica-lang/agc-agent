@@ -1,3 +1,4 @@
+import Mcp from "pkg/mcp/mcp"
 import Protocol from "pkg/protocol/protocol"
 import Approval from "../src/approval"
 import McpTools from "../src/mcp_tools"
@@ -49,22 +50,71 @@ def test_mcp_tools_follow_the_rules_and_survive_a_crash() -> Result[Void]
   end
 end
 
+# A server name or env name that could break out of its place is refused.
+def test_the_config_refuses_odd_names() -> Result[Void]
+  within_dir do |dir|
+    for name in ["../x", "a__b"]
+      try write_config(dir, {name: JSON.object({"command": JSON.from("true")})})
+      try Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok? == false, "#{name} taken")
+    end
+
+    env = JSON.object({"A=B": JSON.from("x")})
+    try write_config(dir, {"ok": JSON.object({"command": JSON.from("true"), "env": env})})
+    Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok? == false, "A=B taken")
+  end
+end
+
+# The server gets the env of its config and none of the agent's keys; a tool listed twice or with a bad name is left
+# out with a warning.
+def test_a_server_gets_a_short_environment_and_unique_tools() -> Result[Void]
+  within_dir do |dir|
+    env = JSON.object({"FAKE_MCP_GREETING": JSON.from("hi"), "FAKE_MCP_MODE": JSON.from("odd")})
+    try write_config(dir, {"odd": try fake_server(env)})
+    servers = (try McpTools.servers(->(n) { config_env(dir, n) }, dir)).map do |server|
+      secret = {"SECRET_API_KEY": "leaked"}
+      Mcp.Server(name: server.name, command: server.command, args: server.args, env: secret, log: server.log)
+    end
+
+    started = McpTools.start(servers)
+    ctx = try Tools.context(".", &H.fake_env, try Approval.parse_rules([], []), started.tools)
+    probe = ->(name: String) { Tools.run(ctx, "mcp__odd__probe", JSON.object({"text": JSON.from(name)})).text }
+    key = probe.call("SECRET_API_KEY")
+    greeting = probe.call("FAKE_MCP_GREETING")
+    path = probe.call("PATH")
+    McpTools.stop(started)
+    try Test.eq(started.tools.map { |t| t.name }, ["mcp__odd__echo", "mcp__odd__probe"])
+    try Test.eq(started.warnings.size, 2)
+    try Test.eq([key, greeting], ["", "hi"])
+    Test.assert(not path.empty?, "no PATH")
+  end
+end
+
 private
 
-def within_mcp(body: Fn[McpTools.Started, Result[Void]]) -> Result[Void]
+def within_dir(body: Fn[String, Result[Void]]) -> Result[Void]
   tmp = System.env("TMPDIR").unwrap_or("/tmp")
   dir = "#{tmp}/core-mcp-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)
-  result = with_config(dir, body)
+  result = body.call(dir)
   _ = Path.remove(dir)
   result
 end
 
-def with_config(dir: String, body: Fn[McpTools.Started, Result[Void]]) -> Result[Void]
+def write_config(dir: String, servers: Map[String, JSON.Value]) -> Result[Void]
+  File.write_text("#{dir}/mcp.json", JSON.encode(JSON.object({"mcpServers": JSON.object(servers)})))
+end
+
+def fake_server(env: JSON.Value) -> Result[JSON.Value]
   main = try Path.resolve(try existing(FAKES))
-  server = JSON.object({"command": JSON.from(binary()), "args": JSON.from([main])})
-  config = JSON.object({"mcpServers": JSON.object({"fake": server})})
-  try File.write_text("#{dir}/mcp.json", JSON.encode(config))
+  ok(JSON.object({"command": JSON.from(binary()), "args": JSON.from([main]), "env": env}))
+end
+
+def within_mcp(body: Fn[McpTools.Started, Result[Void]]) -> Result[Void]
+  within_dir do |dir| with_config(dir, body) end
+end
+
+def with_config(dir: String, body: Fn[McpTools.Started, Result[Void]]) -> Result[Void]
+  try write_config(dir, {"fake": try fake_server(JSON.object({}))})
   read = ->(name) { config_env(dir, name) }
   started = McpTools.start(try McpTools.servers(read, dir))
   try Test.eq(started.warnings, [])
@@ -76,7 +126,7 @@ end
 def config_env(dir: String, name: String) -> Result[String]
   return ok("#{dir}/mcp.json") if name == "FINN_MCP_CONFIG"
 
-  error("not set")
+  System.env(name)
 end
 
 def binary() -> String

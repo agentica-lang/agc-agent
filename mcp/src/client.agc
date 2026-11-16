@@ -1,6 +1,6 @@
 ## A client of one MCP server on stdio: an actor that owns the server process and sends it one request at a time.
 ##
-## The process starts on the first use. When it exits, answers nothing in time or writes a line that is too long, the
+## The process starts on the first use, in its own process group, so a stop ends the programs it started too. When it exits, answers nothing in time or writes a line that is too long, the
 ## request fails with `mcp.unavailable` and the process is stopped; the next use starts it again.
 
 import Actor from "std/actor"
@@ -8,6 +8,8 @@ import Rpc from "rpc"
 
 CLIENT_NAME = "finn"
 CALL_MARGIN_MS = 5000
+## The most pages of `tools/list` read; a cursor seen before ends the list too.
+MAX_PAGES = 100
 
 ## How to start a server.
 struct Server
@@ -121,16 +123,18 @@ def list_tools(state: State) -> Done[List[Rpc.Tool]]
   deadline = Time.monotonic_ms() + state.options.timeout_ms
   tools: List[Rpc.Tool] = []
   cursor = ""
+  seen: Set[String] = Set.new([])
   current = state
-  while true
+  for _page in 1..MAX_PAGES
     done = request(current, "tools/list", Rpc.list_params(cursor), deadline)
     current = done.state
     case done.result
       ok(result) ->
         page = Rpc.page(result)
         tools = tools + page.tools
+        seen = seen.add(cursor)
         cursor = page.cursor
-        return Done(state: current, result: ok(tools)) if cursor.empty?
+        return Done(state: current, result: ok(tools)) if cursor.empty? or seen.include?(cursor)
       error(e) -> return Done(state: current, result: error(e))
     end
   end
@@ -166,7 +170,7 @@ def started(state: State) -> Result[State]
   return ok(state) if state.process.some?
 
   server = state.server
-  spawned = Process.spawn(server.command, server.args, Process.Options(env: server.env, err: server.log))
+  spawned = Process.spawn(server.command, server.args, Process.Options(env: server.env, err: server.log, pgroup: true))
   process = try unavailable(server, spawned)
   ready = state.with(process: some(process))
   deadline = Time.monotonic_ms() + state.options.start_ms
