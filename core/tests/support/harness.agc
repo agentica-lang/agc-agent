@@ -7,6 +7,7 @@ import Monty from "pkg/monty/monty"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
 import Approval from "../../src/approval"
+import Catalog from "../../src/catalog"
 import CodeMode from "../../src/code_mode"
 import Config from "../../src/config"
 import Server from "../../src/server"
@@ -64,6 +65,8 @@ struct Setup
   monty: String = ""
   ## Deny rules of the config, as `bash(rm *)`.
   deny: List[String] = []
+  model: String = "qwen2.5-0.5b-instruct"
+  catalog: Optional[Catalog.Catalog] = none
 end
 
 def fake_env(name: String) -> Result[String]
@@ -109,7 +112,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     data_dir: "#{base}/data",
     apis: Config.apis(fake.url, "test-key", LLM.Options(timeout_ms: 5000, retry_base_ms: 1)),
     api: setup.api,
-    model: "qwen2.5-0.5b-instruct",
+    model: setup.model,
     env: &fake_env,
     rules: try Approval.parse_rules([], setup.deny),
     keep_events: setup.keep_events,
@@ -120,6 +123,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     before_load: setup.before_load,
     tools: setup.tools,
     code_mode: code_mode(setup.monty),
+    catalog: setup.catalog,
   )
 
   server = try Server.start(options)

@@ -3,6 +3,7 @@
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Catalog from "catalog"
 import CodeMode from "code_mode"
 import Compaction from "compaction"
 import Tools from "tools"
@@ -49,6 +50,11 @@ struct Turn
   max_rounds: Int = MAX_ROUNDS
   ## Adds `run_script`, which calls the tools from a Python script.
   code_mode: Optional[CodeMode.Settings] = none
+  ## Where the prices and the window of the model come from: the catalog and the provider of the model there.
+  catalog: Optional[Catalog.Catalog] = none
+  catalog_provider: String = ""
+  ## Read from the catalog when the turn starts.
+  listed: Optional[Catalog.Model] = none
 end
 
 struct Outcome
@@ -57,7 +63,8 @@ struct Outcome
 end
 
 def run(given: Turn) -> Outcome
-  turn = given.with(compaction: given.compaction.with(window: known_window(given)))
+  listed = given.with(listed: listed_model(given))
+  turn = listed.with(compaction: listed.compaction.with(window: known_window(listed)))
   messages = turn.history.push(LLM.Message(role: LLM.Role.User, content: [text_block(turn.text)]))
   turn.link.commit.call(messages)
   folded = compacted(turn, turn.last_context, Folded(messages: messages, on: true))
@@ -121,6 +128,13 @@ end
 def known_window(turn: Turn) -> Int
   return turn.compaction.window if turn.compaction.window != 0
 
+  for model in option_list(turn.listed)
+    for tokens in option_list(model.window)
+      turn.link.window.call(tokens)
+      return tokens
+    end
+  end
+
   case Compaction.window(turn.provider, turn.model, turn.compaction)
     ok(tokens) ->
       turn.link.window.call(tokens)
@@ -180,18 +194,32 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   end
 
   response = try LLM.response(stream)
-  turn.link.emit.call(Protocol.Event.Usage(usage(response.usage)))
+  turn.link.emit.call(Protocol.Event.Usage(usage(response.usage, turn.listed)))
   ok(response)
 end
 
-def usage(u: LLM.Usage) -> Protocol.Usage
+def usage(u: LLM.Usage, listed: Optional[Catalog.Model]) -> Protocol.Usage
+  cost: Optional[Float] = none
+  for model in option_list(listed)
+    cost = Catalog.cost(model, u)
+  end
+
   Protocol.Usage(
     input: u.input,
     output: u.output,
     cache_read: u.cache_read,
     cache_write: u.cache_write,
     context: u.input + u.cache_read + u.cache_write,
+    cost: cost,
   )
+end
+
+def listed_model(turn: Turn) -> Optional[Catalog.Model]
+  for catalog in option_list(turn.catalog)
+    return Catalog.find(catalog, turn.catalog_provider, turn.model)
+  end
+
+  none
 end
 
 def offered(turn: Turn) -> List[Tools.Tool]

@@ -17,6 +17,7 @@ import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
 import Agent from "agent"
+import Catalog from "catalog"
 import CodeMode from "code_mode"
 import Compaction from "compaction"
 import Store from "store"
@@ -45,6 +46,8 @@ struct Setup
   api_key: String = ""
   extra: Map[String, JSON.Value] = {}
   code_mode: Optional[CodeMode.Settings] = none
+  catalog: Optional[Catalog.Catalog] = none
+  catalog_provider: String = ""
 end
 
 enum Msg
@@ -102,6 +105,9 @@ struct State
   output: Int = 0
   ## The context of the last call.
   context: Int = 0
+  ## What the calls cost in USD, from the catalog's prices: the session's and the running turn's.
+  cost: Optional[Float] = none
+  turn_cost: Float = 0.0
   ## The model's window: 0 until it is known, -1 when the provider does not say.
   window: Int = 0
   ## The ids up to this one are saved or reserved in the file.
@@ -239,6 +245,7 @@ def session(state: State) -> Protocol.Session
     turn_from_event_id: state.turn.map { |t| t.from_event_id },
     pending_approvals: state.pending.map { |w| w.request },
     history: state.display,
+    cost: state.cost,
   )
 end
 
@@ -290,16 +297,25 @@ def lost_after(state: State, id: Int) -> List[String]
   end
 end
 
-# A `usage` of one call goes out with the session's output so far, which counts it once it is saved. A call that a stop
-# cut is not counted: its `usage` comes after the turn ended, if at all.
+# A `usage` of one call goes out with the session's output and cost so far, which count it once it is saved. A
+# call that
+# a stop cut is not counted: its `usage` comes after the turn ended, if at all.
 def emit_counted(state: State, event: Protocol.Event) -> State
   case event
     Protocol.Event.Usage(usage) ->
       output = state.output + usage.output
-      emitted = emit(state, Protocol.Event.Usage(usage.with(output: output)))
+      cost = state.cost
+      turn_cost = state.turn_cost
+      for call in option_list(usage.cost)
+        cost = some(cost.unwrap_or(0.0) + call)
+        turn_cost = turn_cost + call
+      end
+
+      counted = usage.with(output: output, turn_cost: usage.cost.map { |_| turn_cost }, session_cost: cost)
+      emitted = emit(state, Protocol.Event.Usage(counted))
       return emitted if emitted.counter == state.counter
 
-      emitted.with(output: output, context: usage.context)
+      emitted.with(output: output, context: usage.context, cost: cost, turn_cost: turn_cost)
     _ -> emit(state, event)
   end
 end
@@ -444,6 +460,8 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     ),
     last_context: state.context,
     code_mode: setup.code_mode,
+    catalog: setup.catalog,
+    catalog_provider: setup.catalog_provider,
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
@@ -451,6 +469,7 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
   started = state.with(
     turn: some(running),
     turns: state.turns + 1,
+    turn_cost: 0.0,
     history: state.history.push(LLM.Message(role: LLM.Role.User, content: [Agent.text_block(text)])),
     display: state.display.push(Protocol.Message(role: Protocol.Role.User, text: text)),
     broken: none,
@@ -651,6 +670,7 @@ def restore(setup: Setup, saved: Store.Saved) -> State
     resolved: resolved_ids(events),
     output: last_usage(events).output,
     context: last_usage(events).context,
+    cost: last_usage(events).session_cost,
     window: setup.window,
   )
 

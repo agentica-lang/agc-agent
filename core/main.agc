@@ -1,4 +1,5 @@
 import HTTP from "std/http"
+import Catalog from "src/catalog"
 import Cli from "src/cli"
 import Config from "src/config"
 import McpTools from "src/mcp_tools"
@@ -31,7 +32,11 @@ def start() -> Result[Server.Server]
     IO.warn(warning)
   end
 
-  Server.start(options.with(tools: mcp.tools))
+  catalog = Catalog.start(
+    Catalog.Options(url: options.models_url, cache: "#{options.state_dir}/#{Catalog.CACHE_FILE}"),
+  )
+
+  Server.start(options.with(tools: mcp.tools, catalog: some(catalog)))
 end
 
 def fail(message: String, usage: String) -> Void

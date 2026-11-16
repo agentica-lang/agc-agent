@@ -2,13 +2,15 @@
 ## `~/.local/state/finn`), `FINN_DATA_DIR` for the sessions (else `$XDG_DATA_HOME/finn`, else
 ## `~/.local/share/finn`), and the model API: `FINN_API` (`openai`, chat completions, by default, or
 ## `openai_responses`), `FINN_BASE_URL` (a local llama-server by default), `FINN_API_KEY` and
-## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction. `FINN_CODE_MODE=1` adds code mode,
+## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction; `FINN_MODELS_URL` (the models.dev
+## catalog of prices and windows, `off` for none) and `FINN_MODELS_PROVIDER` (the provider of the model there). `FINN_CODE_MODE=1` adds code mode,
 ## whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is not checked), else the pinned one
 ## fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be private to the user). The names of before Finn still work:
 ## `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder is there.
 
 import LLM from "pkg/llm/llm"
 import Monty from "pkg/monty/monty"
+import Catalog from "catalog"
 import CodeMode from "code_mode"
 import Server from "server"
 import Tools from "tools"
@@ -42,6 +44,8 @@ def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
       props_url: props_url(base_url),
       api_key: api_key,
       code_mode: try code_mode(read),
+      models_url: set(read, "FINN_MODELS_URL").unwrap_or(Catalog.URL),
+      models_provider: set(read, "FINN_MODELS_PROVIDER").unwrap_or(""),
     ),
   )
 end

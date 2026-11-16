@@ -2,8 +2,8 @@
 ## default, `off` for none) on first use, kept in `STATE_DIR/models.json` for a day, and read from there while offline;
 ## no catalog at all only means no cost and no window from it.
 ##
-## A model is looked up by its id, first under the provider of the API (`anthropic`, `openai`), else under the first
-## provider that has it.
+## A model is looked up by its provider id in models.dev and its own id: a model served elsewhere (a local
+## llama-server) has no prices.
 
 import HTTP from "std/http"
 import Actor from "std/actor"
@@ -62,8 +62,8 @@ def stop(catalog: Catalog) -> Void
   _ = Actor.stop(catalog.actor, 5000)
 end
 
-## The model `id` of the API of `provider` (an `LLM.Provider` name); none when the catalog has no such model or none
-## could be read.
+## The model `id` of `provider` (a models.dev id: `anthropic`, `openai`, `fireworks-ai`); none when the catalog has no
+## such model or none could be read.
 def find(catalog: Catalog, provider: String, id: String) -> Optional[Model]
   answer: Result[Optional[Model]] = Actor.call(catalog.actor.address, CALL_MS) do |reply|
     Msg.Find(Query(provider: provider, id: id, reply: reply))
@@ -147,21 +147,10 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
 end
 
 def lookup(models: List[Model], provider: String, id: String) -> Optional[Model]
-  own = provider_id(provider)
-  case (models.find { |m| m.provider == own and m.id == id })
+  case (models.find { |m| m.provider == provider and m.id == id })
     ok(found) -> some(found)
-    error(_) ->
-      case (models.find { |m| m.id == id })
-        ok(found) -> some(found)
-        error(_) -> none
-      end
+    error(_) -> none
   end
-end
-
-def provider_id(provider: String) -> String
-  return "anthropic" if provider == "anthropic"
-
-  "openai"
 end
 
 def loaded(state: State) -> State
@@ -215,7 +204,14 @@ def read_big(path: String) -> Result[String]
   String.from_bytes(bytes)
 end
 
-def write_cache(path: String, cached: Cached) -> Result[Void] = File.replace(path, JSON.encode(cached).bytes)
+# `File.replace` swaps the whole file at once, but only a file that is there.
+def write_cache(path: String, cached: Cached) -> Result[Void]
+  if not File.stat(path).ok?
+    try File.write_text(path, "")
+  end
+
+  File.replace(path, JSON.encode(cached).bytes)
+end
 
 def fields(json: JSON.Value) -> Map[String, JSON.Value]
   case JSON.node(json)

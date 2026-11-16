@@ -13,6 +13,7 @@ import Actor from "std/actor"
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Catalog from "catalog"
 import CodeMode from "code_mode"
 import Sandbox from "sandbox"
 import Session from "session"
@@ -75,6 +76,11 @@ struct Options
   before_load: Optional[Fn[String, Void]] = none
   ## Code mode: the model may also call the tools from a Python script (`run_script`).
   code_mode: Optional[CodeMode.Settings] = none
+  ## The models.dev catalog (`main.agc` starts it from `models_url`), for the cost of the calls and the window.
+  catalog: Optional[Catalog.Catalog] = none
+  models_url: String = Catalog.URL
+  ## The provider of the model in the catalog; empty is `anthropic` for that API and `openai` for the others.
+  models_provider: String = ""
 end
 
 struct Server
@@ -459,6 +465,8 @@ def entry(
     api_key: options.api_key,
     extra: api.extra,
     code_mode: options.code_mode,
+    catalog: options.catalog,
+    catalog_provider: catalog_provider(options.models_provider, api.provider),
   )
 
   ok(
@@ -696,4 +704,11 @@ def option_list[T](value: Optional[T]) -> List[T]
     some(v) -> [v]
     none -> []
   end
+end
+
+def catalog_provider(given: String, provider: LLM.Provider) -> String
+  return given if not given.empty?
+  return "anthropic" if provider.name == "anthropic"
+
+  "openai"
 end
