@@ -25,6 +25,7 @@ struct Logged
 end
 
 ## What a file holds. `open_end` is true when its last line has no end (a crash cut it): `reopen` before an append.
+## `users` counts the turns that began, and `open_user` is true when the last one has no `turn_started`.
 struct Saved
   header: Header
   events: List[Logged]
@@ -32,6 +33,8 @@ struct Saved
   shown: List[Protocol.Message]
   skipped: Int
   open_end: Bool
+  users: Int = 0
+  open_user: Bool = false
 end
 
 def file_of(dir: String, id: String) -> String = "#{dir}/#{id}#{EXTENSION}"
@@ -176,12 +179,22 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
   case kind
     "event" ->
       event = try Protocol.decode_event(try field(json, "name"), JSON.encode(try JSON.get(json, "data")))
-      ok(saved.with(events: saved.events.push(Logged(id: try JSON.int(try JSON.get(json, "id")), event: event))))
+      logged = Logged(id: try JSON.int(try JSON.get(json, "id")), event: event)
+      started = Protocol.event_kind(event) == Protocol.EventKind.TurnStarted
+      ok(saved.with(events: saved.events.push(logged), open_user: saved.open_user and not started))
     "user" ->
       text = try field(json, "text")
       message = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
       shown = Protocol.Message(role: Protocol.Role.User, text: text)
-      ok(saved.with(history: saved.history.push(message), shown: saved.shown.push(shown)))
+      users = saved.users + 1
+      ok(
+        saved.with(
+          history: saved.history.push(message),
+          shown: saved.shown.push(shown),
+          users: users,
+          open_user: true,
+        ),
+      )
     "messages" ->
       messages: List[LLM.Message] = []
       for item in try JSON.list(try JSON.get(json, "messages"))
