@@ -75,6 +75,8 @@ struct App
   picker: Optional[Picker.Picker] = none
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
   new_model: Optional[String] = none
+  ## Where the last draw put each part of the screen.
+  hits: Optional[Hits] = none
   ## A draw failed and the transcript says so; later failures are not noted again.
   draw_failed: Bool = false
   ## The thinking of the model is drawn.
@@ -90,6 +92,16 @@ end
 
 # Where each part of the screen is now: the transcript rows from `top` in `area` rows, the panel below them, the
 # status line, then the prompt.
+# What the last draw put where, for the clicks: the entry of each transcript row, the panel rows from `panel_top`, and
+# the first prompt row.
+struct Hits
+  entries: List[Int]
+  panel: List[Layout.Row]
+  panel_top: Int
+  prompt_top: Int
+  width: Int
+end
+
 struct Frame
   width: Int
   height: Int
@@ -247,8 +259,9 @@ def on_key(app: App, event: TUI.Event) -> App
     TUI.Event.Key(TUI.Key.Home, _) -> app.with(cursor: 0)
     TUI.Event.Key(TUI.Key.End, _) -> app.with(cursor: app.prompt.length)
     TUI.Event.Mouse(TUI.Mouse.Left, x, y, mods) if not mods.motion -> clicked(app, x, y)
-    TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals))
-    TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused -> app.with(approvals: Approvals.toggled(app.approvals))
+    TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals, Time.monotonic_ms))
+    TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
+      app.with(approvals: Approvals.toggled(app.approvals, Time.monotonic_ms))
     TUI.Event.Key(TUI.Key.Escape, _) -> stop(app)
     TUI.Event.Key(TUI.Key.PageUp, _) -> scrolled(app, page(app))
     TUI.Event.Key(TUI.Key.PageDown, _) -> scrolled(app, -page(app))
@@ -268,29 +281,27 @@ end
 
 # A click on the transcript opens or closes a thinking block or a tool call; on a key of the approval panel it is
 # that key (with the same rules); in the prompt it moves the cursor.
+# The click is matched against what the last draw showed, which is what the user saw.
 def clicked(app: App, x: Int, y: Int) -> App
-  frame = framed(app)
-  if y < frame.area
-    at = frame.top + y
-    return app if at >= frame.lines.size
-
-    return app.with(entries: Transcript.toggle(app.entries, frame.lines[at].entry, app.thinking))
+  case app.hits
+    some(hits) -> clicked_on(app, hits, x, y)
+    none -> app
   end
+end
 
-  panel_y = y - frame.area
-  if panel_y < frame.panel.size
-    return app if app.picker.some?
+def clicked_on(app: App, hits: Hits, x: Int, y: Int) -> App
+  return app.with(entries: Transcript.toggle(app.entries, hits.entries[y], app.thinking)) if y < hits.entries.size
 
-    case Approvals.button(frame.panel[panel_y].text, x)
+  if y >= hits.panel_top and y < hits.panel_top + hits.panel.size
+    case Layout.hit(hits.panel[y - hits.panel_top], x)
       some(event) -> return on_key(app, event)
       none -> return app
     end
   end
 
-  prompt_y = panel_y - frame.panel.size - 1
-  return app if prompt_y < 0
+  return app if y < hits.prompt_top
 
-  app.with(cursor: Prompt.index_at(app.prompt, cursor(app), frame.width, x, prompt_y))
+  app.with(cursor: Prompt.index_at(app.prompt, cursor(app), hits.width, x, y - hits.prompt_top))
 end
 
 def ctrl_c?(event: TUI.Event) -> Bool
@@ -553,7 +564,7 @@ end
 # A draw that fails leaves the old screen; the client goes on, and the transcript says so once.
 def drawn(app: App) -> App
   case draw(app)
-    ok(_) -> app
+    ok(hits) -> app.with(hits: some(hits))
     error(_) if app.draw_failed -> app
     error(e) -> noted(app.with(draw_failed: true), "error: the screen was not drawn: #{e.message}")
   end
@@ -564,10 +575,7 @@ def framed(app: App) -> Frame
   height = TUI.height(app.screen)
   prompt = Prompt.view(app.prompt, cursor(app), width)
   room = height - prompt.rows.size - 2
-  asked = case app.picker
-    some(picker) -> Picker.rows(picker, width, room, Time.now_ms / 1000)
-    none -> Approvals.rows(app.approvals, width, room)
-  end
+  asked = panel_rows(app, width, room)
 
   area = [height - prompt.rows.size - asked.size - 1, 0].max.unwrap!
   lines = Transcript.lines(app.entries, width, app.thinking)
@@ -576,10 +584,22 @@ def framed(app: App) -> Frame
 end
 
 # The rows of the panel over the prompt now: the session picker, else the approval asked.
-def panel(app: App) -> List[Layout.Row] = framed(app).panel
+# The rows of the panel over the prompt, without the transcript: a key needs only these.
+def panel(app: App) -> List[Layout.Row]
+  width = TUI.width(app.screen)
+  room = TUI.height(app.screen) - Prompt.view(app.prompt, cursor(app), width).rows.size - 2
+  panel_rows(app, width, room)
+end
+
+def panel_rows(app: App, width: Int, room: Int) -> List[Layout.Row]
+  case app.picker
+    some(picker) -> Picker.rows(picker, width, room, Time.now_ms / 1000)
+    none -> Approvals.rows(app.approvals, width, room)
+  end
+end
 
 # Every write is clipped to the screen, which may be smaller than the panel and the prompt.
-def draw(app: App) -> Result[Void]
+def draw(app: App) -> Result[Hits]
   screen = app.screen
   frame = framed(app)
   try TUI.clear(screen)
@@ -594,6 +614,7 @@ def draw(app: App) -> Result[Void]
     y = y + 1
   end
 
+  shown = frame.lines.drop(frame.top).take(frame.area).map { |line| line.entry }
   y = frame.area
   for row in frame.panel
     _ = try put(screen, 0, y, row.text, row.style)
@@ -602,6 +623,7 @@ def draw(app: App) -> Result[Void]
 
   _ = try put(screen, 0, y, status(app, frame.width), TUI.Style(attrs: [TUI.Attr.Reverse]))
   y = y + 1
+  prompt_top = y
   cursor_y = y + frame.prompt.cursor_y
   for row in frame.prompt.rows
     _ = try put(screen, 0, y, row, TUI.Style())
@@ -612,7 +634,8 @@ def draw(app: App) -> Result[Void]
     try TUI.set_cursor(screen, [frame.prompt.cursor_x, frame.width - 1].min.unwrap!, cursor_y)
   end
 
-  TUI.present(screen)
+  try TUI.present(screen)
+  ok(Hits(entries: shown, panel: frame.panel, panel_top: frame.area, prompt_top: prompt_top, width: frame.width))
 end
 
 def put(screen: TUI.Screen, x: Int, y: Int, text: String, style: TUI.Style) -> Result[Int]

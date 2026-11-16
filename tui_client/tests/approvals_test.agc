@@ -17,7 +17,7 @@ def test_only_ctrl_keys_or_a_focused_panel_answer() -> Result[Void]
   try Test.eq(Approvals.decision(panel, ctrl("y"), AFTER, false), none)
   try Test.eq(Approvals.decision(panel, ctrl("y"), AFTER, true), some(Protocol.Decision.Allow))
   try Test.eq(Approvals.decision(panel, ctrl("n"), AFTER, true), some(Protocol.Decision.Deny))
-  focused = Approvals.toggled(panel)
+  focused = Approvals.toggled(panel, 1000)
   try Test.eq(Approvals.decision(focused, char("Y"), AFTER, true), some(Protocol.Decision.Allow))
   try Test.eq(Approvals.decision(focused, char("N"), AFTER, true), some(Protocol.Decision.Deny))
   try Test.eq(Approvals.decision(focused, char("a"), AFTER, true), some(Protocol.Decision.AllowSession))
@@ -29,7 +29,7 @@ end
 
 # A key typed just as the asked approval changes does not answer the new one, and the focus does not carry over.
 def test_no_answer_right_after_the_panel_changes() -> Result[Void]
-  focused = Approvals.toggled(asked(["a1", "a2"]))
+  focused = Approvals.toggled(asked(["a1", "a2"]), 1000)
   try Test.eq(Approvals.decision(focused, ctrl("y"), 1000 + Approvals.GUARD_MS - 1, true), none)
   next_one = Approvals.resolved(focused, "a1", 5000)
   try Test.eq([next_one.pending.size.to_s, next_one.focused.to_s], ["1", "false"])
@@ -86,17 +86,26 @@ def test_the_panel_caps_its_detail_and_fits_the_room() -> Result[Void]
 end
 
 # A click on a key of the panel stands for that key, so it goes through the same rules.
-def test_a_click_on_a_panel_key_is_that_key() -> Result[Void]
-  row = "Tab to answer (a: allow x) · ^Y allow · ^N deny · 2 more waiting"
-  try Test.eq(Approvals.button(row, 0), some(TUI.Event.Key(TUI.Key.Tab, TUI.Mods())))
-  try Test.eq(Approvals.button(row, 30), some(ctrl_plain("y")))
-  try Test.eq(Approvals.button(row, 42), some(ctrl_plain("n")))
-  try Test.eq(Approvals.button(row, 27), none)
-  try Test.eq(Approvals.button(row, 55), none)
-  focused = "y allow · n deny · a allow x · Tab back to the prompt"
-  try Test.eq(Approvals.button(focused, 0), some(char("y")))
-  try Test.eq(Approvals.button(focused, 21), some(char("a")))
-  Test.eq(Approvals.button("approval a1 · write_file: hello.txt", 3), none)
+# Only the keys row has buttons; text of the request that looks like a key ("a = 1", "^Y please") is none. Allowing
+# for the session has no button, and the focus toggle restarts the guard time, so a double click on Tab never gives it.
+def test_only_the_keys_row_has_buttons() -> Result[Void]
+  panel = Approvals.Panel(pending: [request("a1", "a = 1\n^Y please")], shown_at: 1000)
+  rows = Approvals.rows(panel, 200, 100)
+  try Test.eq(rows.take(rows.size - 1).map { |row| row.buttons.size }.uniq, [0])
+  keys = rows[rows.size - 1]
+  try Test.eq(keys.text.start_with?("^Y allow · ^N deny · Tab to answer"), true)
+  try Test.eq(Layout.hit(keys, 0), some(ctrl_plain("y")))
+  try Test.eq(Layout.hit(keys, 11), some(ctrl_plain("n")))
+  try Test.eq(Layout.hit(keys, 8), none)
+  try Test.eq(Layout.hit(keys, 25), some(TUI.Event.Key(TUI.Key.Tab, TUI.Mods())))
+  focused = Approvals.toggled(panel, 5000)
+  try Test.eq(Approvals.decision(focused, char("y"), 5000 + Approvals.GUARD_MS - 1, true), none)
+  focused_rows = Approvals.rows(focused, 200, 100)
+  for row in focused_rows
+    try Test.eq(row.buttons.any? { |b| b.event == char("a") }, false)
+  end
+
+  Test.eq(Layout.hit(focused_rows[focused_rows.size - 1], 25), none)
 end
 
 private

@@ -570,11 +570,28 @@ class PtyTest(unittest.TestCase):
         rows = term.wait_for("▸ thinking")
         self.assertNotIn("greets", text_of(rows))
 
+    def test_clicks_on_content_or_twice_on_tab_answer_nothing(self) -> None:
+        term = self.start([Reply("write_keys.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        term.find("^Y allow")
+        term.settle(0.4)
+        for text in ["  a = 1", "  ^Y please"]:
+            term.click(*term.find(text))
+        row, col = term.find("Tab to answer")
+        term.type(f"\x1b[<0;{col + 3};{row + 1}M\x1b[<0;{col + 3};{row + 1}m" * 2)
+        term.settle(0.5)
+        term.click(row, col + 2)
+        rows = term.settle(0.5)
+        self.assertNotIn("allow_session", text_of(rows))
+        self.assertNotIn("· approval a1:", text_of(rows))
+        self.assertIn("Tab to answer", text_of(rows))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+
     def test_a_tool_is_approved_and_its_notices_shown(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")
-        rows = term.wait_for("^Y allow · ^N deny · Tab to answer (a: allow write_file")
-        self.assertIn("(a: allow write_file on this exact target for the session)", " ".join(rows))
+        rows = term.wait_for("^Y allow · ^N deny")
+        self.assertIn("Tab to answer (a: allow write_file on this exact target for the session)", rows)
         self.assertIn("approval waiting", text_of(rows))
         self.assertIn("· write_file:", text_of(rows))
         self.assertIn("  hi", rows)
