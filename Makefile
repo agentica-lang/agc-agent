@@ -45,10 +45,17 @@ fmt-check:
 unit:
 	for pkg in $(PACKAGES); do $(call tests,$$pkg,tests); done
 
-# The entry points run, with their packages read from the workspace.
+# The entry points run, with their packages read from the workspace; bin/agc also from another folder, through a
+# relative symlink to the bin folder and one to the script (in .tools/, gitignored).
 smoke:
 	out=$$($(AGENTICA) core/main.agc --version) && echo "$$out" | grep -qx 'agc-agent core [0-9.]* (llm [0-9.]*)'
 	out=$$($(AGENTICA) cli/main.agc --version) && echo "$$out" | grep -qx 'agc-agent cli [0-9.]*'
+	mkdir -p .tools/smoke && ln -sfn ../../bin .tools/smoke/bin && ln -sf '$(CURDIR)/bin/agc' .tools/smoke/agc
+	cd / && agc='$(CURDIR)/.tools/smoke/bin/agc' && out=$$("$$agc" --version) && \
+	  echo "$$out" | grep -qx 'agc-agent core [0-9.]* (llm [0-9.]*)' && echo "$$out" | grep -qx 'agc-agent cli [0-9.]*' && \
+	  "$$agc" --help | grep -q '^usage: agc' && "$$agc" serve --help | grep -q '^usage: agc serve' && \
+	  "$$agc" chat --help | grep -q '^Usage: agc' && ! "$$agc" serve --bogus 2>/dev/null && \
+	  '$(CURDIR)/.tools/smoke/agc' --version | grep -qx 'agc-agent cli [0-9.]*'
 
 test: check unit smoke
 

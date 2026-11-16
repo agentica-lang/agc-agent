@@ -28,13 +28,19 @@ The repo is an Agentica workspace (`agentica.toml`): one folder per package.
 
 ## Try it
 
-Needs Agentica 0.32.0 or later.
+Needs Agentica 0.32.0 or later (`agentica` on PATH, or `AGENTICA` set to it). One command, `bin/agc`, from any
+folder (link it into your PATH if you like):
 
 ```sh
-agentica core/main.agc --version
-agentica cli/main.agc --help
-agentica core/main.agc serve   # a llama-server at AGC_AGENT_BASE_URL (default http://127.0.0.1:8080/v1)
-AGC_AGENT_API=openai_responses agentica core/main.agc serve   # the same on /v1/responses
-make test
-make smoke-llama   # fetches llama.cpp and a 0.5B model (about 500 MB) into .tools/
+bin/agc --help
+bin/agc                               # chat in this folder; starts the server when none runs
+bin/agc serve                         # the server in the foreground, on a llama-server at http://127.0.0.1:8080/v1
+bin/agc serve --api openai_responses  # the same on /v1/responses
+bin/agc --version
 ```
+
+The flags of `agc serve` (`--api`, `--model`, `--base-url`) override their environment variables (`AGC_AGENT_API`,
+`AGC_AGENT_MODEL`, `AGC_AGENT_BASE_URL`); `agc serve --help` lists them all.
+
+Development: `make test` and `make smoke-llama` (the second fetches llama.cpp and a 0.5B model, about 500 MB, into
+`.tools/`).
