@@ -1,0 +1,12 @@
+data: {"choices": [{"finish_reason": null, "index": 0, "delta": {"role": "assistant", "content": null}}], "created": 1, "id": "chatcmpl-tui", "model": "test-model", "object": "chat.completion.chunk"}
+
+data: {"choices": [{"finish_reason": null, "index": 0, "delta": {"content": "## Plan\n\n- read the **file**\n"}}], "created": 1, "id": "chatcmpl-tui", "model": "test-model", "object": "chat.completion.chunk"}
+
+data: {"choices": [{"finish_reason": null, "index": 0, "delta": {"content": "- write the fix\n\n```\nmake test\n```\nDone, **all** good."}}], "created": 1, "id": "chatcmpl-tui", "model": "test-model", "object": "chat.completion.chunk"}
+
+data: {"choices": [{"finish_reason": "stop", "index": 0, "delta": {}}], "created": 1, "id": "chatcmpl-tui", "model": "test-model", "object": "chat.completion.chunk"}
+
+data: {"choices": [], "created": 1, "id": "chatcmpl-tui", "model": "test-model", "object": "chat.completion.chunk", "usage": {"completion_tokens": 9, "prompt_tokens": 20, "total_tokens": 29}}
+
+data: [DONE]
+

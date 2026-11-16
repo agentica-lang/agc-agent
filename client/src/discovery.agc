@@ -7,25 +7,33 @@
 ## `server.log` (0600). Anything else is refused with the command that fixes it.
 
 import Protocol from "pkg/protocol/protocol"
-import Args from "args"
-import Client from "client"
+import Client from "http"
 
 STATE_DIR_ENV = "FINN_STATE_DIR"
 SERVER_COMMAND_ENV = "FINN_SERVER_COMMAND"
 SERVER_FILE = "server.json"
 LOCK_FILE = "server.lock"
 LOG_FILE = "server.log"
-KIND_STATE = "cli.state"
-KIND_SERVER = "cli.server"
+KIND_STATE = "client.state"
+KIND_SERVER = "client.server"
 LOCK_WAIT_MS = 20_000
 START_WAIT_MS = 10_000
 POLL_MS = 100
 NOT_FOUND = 127
 GROUP_AND_OTHERS = 63
 
+## How a client finds or starts its server. `none` takes the default: the state folder of the environment, and the
+## server command of `FINN_SERVER_COMMAND`, else `core/main.agc serve` of the repository the client runs from, which
+## `main` names (`cli/main.agc`, the client's own entry point from the repository root).
+struct Launch
+  main: String
+  state_dir: Optional[String] = none
+  server_command: Optional[List[String]] = none
+end
+
 ## The folder of `server.json`: `--state-dir`, else `FINN_STATE_DIR`, else the user's state folder, with its
 ## symlinks resolved. A symlink that is not yours is refused.
-def state_dir(options: Args.Options) -> Result[String]
+def state_dir(options: Launch) -> Result[String]
   dir = case options.state_dir
     some(text) -> text
     none -> try environment_dir()
@@ -39,7 +47,7 @@ def state_dir(options: Args.Options) -> Result[String]
 end
 
 ## The running server of the folder, started first when none runs.
-def connect(options: Args.Options, dir: String) -> Result[Client.Server]
+def connect(options: Launch, dir: String) -> Result[Client.Server]
   if File.stat(dir).ok?
     try check_owned(dir, "700")
   end
@@ -186,7 +194,7 @@ def check_link(path: String) -> Result[Void]
   ok()
 end
 
-def start(options: Args.Options, dir: String, why_not: String) -> Result[Client.Server]
+def start(options: Launch, dir: String, why_not: String) -> Result[Client.Server]
   try make_dir(dir)
   lock_path = file_in(dir, LOCK_FILE)
   try private_file(lock_path)
@@ -201,7 +209,7 @@ def start(options: Args.Options, dir: String, why_not: String) -> Result[Client.
   end
 end
 
-def started(options: Args.Options, dir: String) -> Result[Client.Server]
+def started(options: Launch, dir: String) -> Result[Client.Server]
   try spawn_server(options, dir)
   wait_alive(dir)
 end
@@ -250,33 +258,33 @@ def take_lock(lock: File.Handle) -> Result[Void]
     waited = waited + POLL_MS
   end
 
-  error("another client is starting the server and did not finish in #{LOCK_WAIT_MS / 1000} s", kind: "cli.lock")
+  error("another client is starting the server and did not finish in #{LOCK_WAIT_MS / 1000} s", kind: "client.lock")
 end
 
 # The server command: the one given, else FINN_SERVER_COMMAND, else the core's entry point next to this client.
-def command_words(options: Args.Options) -> Result[List[String]]
+def command_words(options: Launch) -> Result[List[String]]
   return ok(options.server_command.unwrap!) if options.server_command.some?
 
   words = setting(SERVER_COMMAND_ENV).split(" ").select { |word| word != "" }
   return ok(words) if not words.empty?
 
-  default_command()
+  default_command(options.main)
 end
 
 # `core/main.agc serve` of the repository this client runs from, found by the path of the main file on the command line
 # of this process (Linux). Never the current folder: a repository you cd into must not run its code.
-def default_command() -> Result[List[String]]
+def default_command(main_file: String) -> Result[List[String]]
   words = (try File.read_text("/proc/self/cmdline")).split(String.from_code(0))
   found = words.find { |word| word.end_with?("main.agc") }
   case found
-    ok(main) -> core_command(words[0], main)
+    ok(main) -> core_command(words[0], main, main_file)
     error(_) -> no_command()
   end
 end
 
-def core_command(program: String, main: String) -> Result[List[String]]
+def core_command(program: String, main: String, main_file: String) -> Result[List[String]]
   resolved = try Path.resolve(main)
-  return no_command() if not resolved.end_with?("/cli/main.agc")
+  return no_command() if not resolved.end_with?("/#{main_file}")
 
   root = parent_of(parent_of(resolved))
   core = "#{root}/core/main.agc"
@@ -286,11 +294,11 @@ def core_command(program: String, main: String) -> Result[List[String]]
 end
 
 def no_command() -> Result[List[String]]
-  error("no server command: pass --server-command, put it after --, or set #{SERVER_COMMAND_ENV}", kind: KIND_SERVER)
+  error("no server command: give one after --, or set #{SERVER_COMMAND_ENV}", kind: KIND_SERVER)
 end
 
 # The server must outlive this client, so a shell starts it in the background, in a session of its own.
-def spawn_server(options: Args.Options, dir: String) -> Result[Void]
+def spawn_server(options: Launch, dir: String) -> Result[Void]
   command = try command_words(options)
   script = "log=$1; shift; command -v \"$1\" >/dev/null || exit #{NOT_FOUND}; \"$@\" </dev/null >>\"$log\" 2>&1 &"
   launcher = try Process.spawn(
