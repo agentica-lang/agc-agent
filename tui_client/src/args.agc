@@ -38,7 +38,7 @@ def parse(args: List[String]) -> Result[Command]
       Opt(
         name: "yolo",
         kind: Kind.Flag,
-        help: "allow every tool call asked during this run (those pending when it attaches are still asked)",
+        help: "allow the tool calls of the turns sent from this client (other turns are still asked)",
       ),
       Opt(name: "version", kind: Kind.Flag, help: "print the version"),
     ],

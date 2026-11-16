@@ -13,6 +13,7 @@ import Layout from "panel"
 import Prompt from "prompt"
 import Transcript from "transcript"
 import Width from "width"
+import Yolo from "yolo"
 
 INBOX_CAPACITY = 1024
 WAIT_MS = 3_600_000
@@ -21,7 +22,7 @@ RECONNECT_MS = 300
 MAX_RECONNECTS = 3
 MAX_RESYNCS = 2
 SCROLL_STEP = 3
-YOLO_WARNING = "--yolo: every tool call asked during this run is allowed without asking"
+YOLO_WARNING = "--yolo: the tool calls of turns sent from here run without asking"
 HINTS = "Enter send · ^J newline · ^T thinking · Esc stop · PgUp/PgDn · ^C quit"
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
@@ -39,6 +40,7 @@ def run(screen: TUI.Screen, server: Client.Server, options: Args.Options) -> Res
     options: options,
     thinking: options.thinking,
     approvals: Approvals.Panel(),
+    yolo: Yolo.Yolo(on: options.yolo),
   )
 
   app = try open(start, options)
@@ -78,12 +80,7 @@ struct App
   picker: Optional[Picker.Picker] = none
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
   new_model: Optional[String] = none
-  ## The approvals that were pending when the client attached: `--yolo` leaves them to be asked.
-  inherited: List[String] = []
-  ## The requests `--yolo` allowed whose answer is on its way: one that fails goes to the panel.
-  yolo_sent: List[Protocol.ApprovalRequested] = []
-  ## The last event id when the client attached: a replayed approval request is not one of this run.
-  replay_until: Int = 0
+  yolo: Yolo.Yolo
   ## Where the last draw put each part of the screen.
   hits: Optional[Hits] = none
   ## A draw failed and the transcript says so; later failures are not noted again.
@@ -178,8 +175,7 @@ def attach(app: App, session: Protocol.Session, skip_replay: Bool) -> App
     stopping: false,
     shown_id: from,
     approvals: Approvals.replaced(app.approvals, session.pending_approvals, Time.monotonic_ms),
-    inherited: app.inherited + session.pending_approvals.map { |p| p.approval_id },
-    replay_until: session.last_event_id,
+    yolo: Yolo.running(app.yolo, session.turn_id),
   )
 
   subscribe(fresh, from)
@@ -279,6 +275,7 @@ def on_key(app: App, event: TUI.Event) -> App
     TUI.Event.Mouse(TUI.Mouse.WheelUp, _, _, _) -> scrolled(app, SCROLL_STEP)
     TUI.Event.Mouse(TUI.Mouse.WheelDown, _, _, _) -> scrolled(app, -SCROLL_STEP)
     TUI.Event.Char(char, _) -> typed(app, char)
+    TUI.Event.Paste(text) -> typed(app, Prompt.pasted(text))
     _ -> app
   end
 end
@@ -312,7 +309,8 @@ def clicked_on(app: App, hits: Hits, x: Int, y: Int) -> App
 
   return app if y < hits.prompt_top
 
-  app.with(cursor: Prompt.index_at(app.prompt, cursor(app), hits.width, x, y - hits.prompt_top))
+  at = Prompt.index_at(app.prompt, cursor(app), hits.width, TUI.height(app.screen), x, y - hits.prompt_top)
+  app.with(cursor: at)
 end
 
 def ctrl_c?(event: TUI.Event) -> Bool
@@ -354,9 +352,10 @@ def send(app: App) -> App
   return noted(app, "a turn is running: Esc stops it") if app.turn
 
   case Client.send_message(app.server, app.id, text)
-    ok(_) ->
+    ok(accepted) ->
       entries = Transcript.add(app.entries, Transcript.Kind.User, text)
-      app.with(entries: entries, prompt: "", turn: true, stopping: false, scroll: 0)
+      yolo = Yolo.started(app.yolo, accepted.turn_id)
+      app.with(entries: entries, prompt: "", turn: true, stopping: false, scroll: 0, yolo: yolo)
     error(e) if e.kind == Protocol.KIND_SESSION_BUSY -> noted(app.with(turn: true), "a turn is already running")
     error(e) -> noted(app, "error: #{e.message}")
   end
@@ -403,6 +402,7 @@ def fresh(app: App) -> App
     options: app.options,
     thinking: app.thinking,
     approvals: Approvals.Panel(),
+    yolo: Yolo.Yolo(on: app.options.yolo),
     stream: app.stream,
     generation: app.generation,
   )
@@ -495,32 +495,26 @@ def sent(app: App, approval_id: String, decision: Protocol.Decision) -> Void
   )
 end
 
-# With `--yolo` a request of this run is allowed without the panel; one pending when the client attached, or one a
-# replay shows again, is not.
-def yolo?(app: App, id: Int, request: Protocol.ApprovalRequested) -> Bool
-  app.options.yolo and id > app.replay_until and not app.inherited.include?(request.approval_id)
-end
-
 def allowed(app: App, request: Protocol.ApprovalRequested) -> App
   sent(app, request.approval_id, Protocol.Decision.Allow)
-  noted(app.with(yolo_sent: app.yolo_sent.push(request)), "--yolo allows #{request.tool}: #{request.preview}")
+  noted(app.with(yolo: Yolo.allowing(app.yolo, request)), "--yolo allows #{request.tool}: #{request.preview}")
 end
 
-# An answer of `--yolo` that was not sent leaves its approval to the panel; one another client gave first is done.
+# An allow of `--yolo` that was not sent leaves its approval to the panel.
 def unyolo(app: App, approval_id: String, result: Result[Void]) -> App
-  mine = app.yolo_sent.select { |r| r.approval_id == approval_id }
-  return app if mine.empty?
-
-  rest = app.with(yolo_sent: app.yolo_sent.select { |r| r.approval_id != approval_id })
-  case result
-    ok(_) -> rest
-    error(e) if e.kind == Protocol.KIND_APPROVAL_RESOLVED or e.kind == Protocol.KIND_APPROVAL_NOT_FOUND -> rest
-    error(_) -> rest.with(approvals: Approvals.requested(rest.approvals, mine[0], Time.monotonic_ms))
+  back = Yolo.unsent(app.yolo, approval_id, result)
+  rest = app.with(yolo: Yolo.resolved(app.yolo, approval_id))
+  case back
+    some(request) -> rest.with(approvals: Approvals.requested(rest.approvals, request, Time.monotonic_ms))
+    none -> rest
   end
 end
 
 def resolved(app: App, approval_id: String) -> App
-  app.with(approvals: Approvals.resolved(app.approvals, approval_id, Time.monotonic_ms))
+  app.with(
+    approvals: Approvals.resolved(app.approvals, approval_id, Time.monotonic_ms),
+    yolo: Yolo.resolved(app.yolo, approval_id),
+  )
 end
 
 def noted(app: App, text: String) -> App = app.with(entries: Transcript.note(app.entries, text))
@@ -545,10 +539,12 @@ def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
       shown.with(entries: Transcript.add(shown.entries, Transcript.Kind.Assistant, delta.text))
     Protocol.Event.ThinkingDelta(delta) ->
       shown.with(entries: Transcript.add(shown.entries, Transcript.Kind.Thinking, delta.text))
-    Protocol.Event.TurnStarted(_) -> shown.with(turn: true)
+    Protocol.Event.TurnStarted(started) ->
+      shown.with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)))
     Protocol.Event.TurnFinished(done) ->
-      finished(shown.with(turn: false, stopping: false, new_model: none), done.stop_reason)
-    Protocol.Event.ApprovalRequested(request) if yolo?(shown, seen, request) -> allowed(shown, request)
+      ended = shown.with(turn: false, stopping: false, new_model: none, yolo: Yolo.running(shown.yolo, none))
+      finished(ended, done.stop_reason)
+    Protocol.Event.ApprovalRequested(request) if Yolo.allows?(shown.yolo) -> allowed(shown, request)
     Protocol.Event.ApprovalRequested(request) ->
       shown.with(approvals: Approvals.requested(shown.approvals, request, Time.monotonic_ms))
     Protocol.Event.ApprovalResolved(done) ->
@@ -611,7 +607,7 @@ end
 def framed(app: App) -> Frame
   width = TUI.width(app.screen)
   height = TUI.height(app.screen)
-  prompt = Prompt.view(app.prompt, cursor(app), width)
+  prompt = Prompt.view(app.prompt, cursor(app), width, height)
   room = height - prompt.rows.size - 2
   asked = panel_rows(app, width, room)
 
@@ -625,7 +621,8 @@ end
 # The rows of the panel over the prompt, without the transcript: a key needs only these.
 def panel(app: App) -> List[Layout.Row]
   width = TUI.width(app.screen)
-  room = TUI.height(app.screen) - Prompt.view(app.prompt, cursor(app), width).rows.size - 2
+  height = TUI.height(app.screen)
+  room = height - Prompt.view(app.prompt, cursor(app), width, height).rows.size - 2
   panel_rows(app, width, room)
 end
 

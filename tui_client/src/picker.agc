@@ -4,6 +4,7 @@
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Layout from "panel"
+import Prompt from "prompt"
 import Width from "width"
 
 KEYS = ["↑↓ move", "Enter resume", "Esc close", "type to filter"]
@@ -32,7 +33,8 @@ def key(picker: Picker, event: TUI.Event) -> Step
     TUI.Event.Key(TUI.Key.Enter, _) -> picked(picker)
     TUI.Event.Key(TUI.Key.Backspace, _) ->
       Step.Stay(picker.with(filter: picker.filter.slice(0, [picker.filter.length - 1, 0].max.unwrap!), selected: 0))
-    TUI.Event.Char(c, _) -> Step.Stay(picker.with(filter: picker.filter + c, selected: 0))
+    TUI.Event.Char(c, _) -> Step.Stay(filtered(picker, c))
+    TUI.Event.Paste(text) -> Step.Stay(filtered(picker, Prompt.pasted(text).replace("\n", " ").replace("\t", " ")))
     _ -> Step.Stay(picker)
   end
 end
@@ -69,6 +71,8 @@ def ago(now_s: Int, then_s: Int) -> String
 end
 
 private
+
+def filtered(picker: Picker, more: String) -> Picker = picker.with(filter: picker.filter + more, selected: 0)
 
 def moved(picker: Picker, by: Int) -> Picker
   last = [shown(picker).size - 1, 0].max.unwrap!

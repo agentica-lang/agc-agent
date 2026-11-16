@@ -18,6 +18,7 @@ def test_keys_move_filter_and_pick() -> Result[Void]
   try Test.eq(Picker.key(filtered, key(TUI.Key.Enter)), Picker.Step.Pick("s2"))
   back = stay(Picker.key(filtered, key(TUI.Key.Backspace)))
   try Test.eq(back.filter, "D")
+  try Test.eq(stay(Picker.key(back, TUI.Event.Paste("o\tw\nri"))).filter, "Do w ri")
   none_left = stay(Picker.key(filtered, char("x")))
   Test.eq(Picker.key(none_left, key(TUI.Key.Enter)), Picker.Step.Stay(none_left))
 end
