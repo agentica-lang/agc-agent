@@ -1,4 +1,6 @@
 AGENTICA ?= agentica
+# A path is made absolute: the recipes run it from the package folders.
+override AGENTICA := $(if $(findstring /,$(AGENTICA)),$(abspath $(AGENTICA)),$(AGENTICA))
 # The tests of the clients start the client with the same binary.
 export AGENTICA
 
@@ -84,4 +86,5 @@ smoke-anthropic:
 	  if [ -z "$$ANTHROPIC_AUTH_TOKEN" ]; then echo "smoke-anthropic: ant is not logged in, skipped"; exit 0; fi; \
 	  export ANTHROPIC_AUTH_TOKEN; \
 	fi; \
-	$(call tests,llm,live/anthropic_test.agc)
+	mkdir -p llm/_build; export ANTHROPIC_LIVE_REPORT='$(CURDIR)/llm/_build/anthropic-live.txt'; \
+	rm -f "$$ANTHROPIC_LIVE_REPORT"; $(call tests,llm,live/anthropic_test.agc); cat "$$ANTHROPIC_LIVE_REPORT"
