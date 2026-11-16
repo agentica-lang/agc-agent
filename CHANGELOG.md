@@ -33,3 +33,4 @@
 - A session names its model API (`agc --api openai_responses`, `api` of `POST /v1/sessions`) and keeps it in its file; an older session uses the server's.
 - Sessions made before the API choice keep no API in their file: one made with `AGC_AGENT_API=openai_responses` follows the server's current default. `GET /v1/sessions` shows the API of each session.
 - The approval of an `edit_file` call marks each old line `-` and each new line `+`.
+- The `tui_client` package: a full-screen client on agentica-tui with a scrolling transcript of the streamed answer, a multiline prompt (Enter sends, Ctrl+J adds a line) and Esc to stop the turn.
