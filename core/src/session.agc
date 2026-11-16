@@ -47,6 +47,8 @@ struct Setup
   code_mode: Optional[CodeMode.Settings] = none
   ## Ask the provider for its prompt cache.
   cache: Bool = false
+  ## A provider with a fresh token, after a 401.
+  refresh: Optional[Fn[Result[LLM.Provider]]] = none
   ## The thinking level of the calls; none leaves it to the model.
   effort: Optional[String] = none
 end
@@ -486,6 +488,7 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     link: link,
     extra: setup.extra,
     cache: setup.cache,
+    refresh: setup.refresh,
     compaction: Compaction.Settings(
       window: state.window,
       model: compact_model(setup),

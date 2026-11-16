@@ -10,6 +10,8 @@ import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 
 PERCENT = 80
+## The provider name of Anthropic Messages.
+ANTHROPIC = "anthropic"
 ## The user message after a summary that folded rounds of the running turn, when the turn's task was not folded.
 GO_ON = "Go on with the task."
 MAX_TEXT = 2000
@@ -29,6 +31,9 @@ struct Compaction
   from: Int
   to: Int
   summary: String
+  ## The kept messages lose their thinking blocks (Anthropic, which binds them to the history the fold replaced).
+  ## The encrypted reasoning of the Responses format stays.
+  strip_thinking: Bool = false
 end
 
 struct Settings
@@ -102,19 +107,22 @@ def summarize(
   summary = response.message.content.map { |b| text_of(b) }.join("").strip
   return error("the summary is empty") if summary.empty?
 
-  ok(span.with(summary: summary))
+  ok(span.with(summary: summary, strip_thinking: provider.name == ANTHROPIC))
 end
 
 ## The history with the span as one assistant message. When a round of the running turn follows, a user message goes
-## between them, so the roles still take turns: the task of the turn when it was folded, else `GO_ON`. The kept
-## messages lose their thinking blocks, which were bound to the history the fold replaced.
+## between them, so the roles still take turns: the task of the turn when it was folded, else `GO_ON`.
 def apply(history: List[LLM.Message], compaction: Compaction) -> List[LLM.Message]
   summary = LLM.Message(
     role: LLM.Role.Assistant,
     content: [LLM.Block.Text(LLM.TextPart(text: summary_text(compaction.summary)))],
   )
 
-  kept = history.drop(compaction.to).map { |message| without_thinking(message) }
+  kept = history.drop(compaction.to)
+  if compaction.strip_thinking
+    kept = without_thinking(kept)
+  end
+
   folded = history.take(compaction.to).drop(compaction.from)
   start = history.take(compaction.from).push(summary)
   return start + kept if kept.empty? or kept[0].role != LLM.Role.Assistant
@@ -128,13 +136,18 @@ def apply(history: List[LLM.Message], compaction: Compaction) -> List[LLM.Messag
   start.push(bridge) + kept
 end
 
-# A thinking block is bound to the history before it (Anthropic checks it): after a fold that history is gone, so the
-# kept messages go on without theirs; their text and tool calls stay.
-def without_thinking(message: LLM.Message) -> LLM.Message
-  kept = message.content.select { |block| not thinking?(block) }
-  return message if kept.empty?
+## The messages without their thinking blocks; their text and tool calls stay, and a message of thinking alone goes.
+## Anthropic binds a thinking block to the history before it, so a block whose history changed is not sent again.
+def without_thinking(messages: List[LLM.Message]) -> List[LLM.Message]
+  out: List[LLM.Message] = []
+  for message in messages
+    kept = message.content.select { |block| not thinking?(block) }
+    if not kept.empty?
+      out = out.push(message.with(content: kept))
+    end
+  end
 
-  message.with(content: kept)
+  out
 end
 
 def thinking?(block: LLM.Block) -> Bool

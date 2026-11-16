@@ -15,12 +15,12 @@ USAGE = <<~TEXT
   model API is FINN_BASE_URL (a local llama-server by default) in the format FINN_API names: openai (chat
   completions, the default) or openai_responses; with FINN_API_KEY and FINN_MODEL. FINN_API=anthropic is the
   Anthropic Messages API (ANTHROPIC_BASE_URL, else Anthropic's) with ANTHROPIC_API_KEY, else ANTHROPIC_AUTH_TOKEN,
-  else the token of `ant auth login`, never logged; its default model is claude-opus-5-5, and it caches the prompt. A
-  new session may name
-  another model and API (finn --model, --api), kept in its file. Past 80 % of the model's window
-  (FINN_CONTEXT_WINDOW, else llama-server's /props, else GET /models), the history after the first task becomes a
-  summary by FINN_COMPACT_MODEL (else the session's model), whose tokens are not in `usage`; the last round of the
-  running turn is kept whole. FINN_CODE_MODE=1 adds run_script: the model calls the tools from a Python script in
+  else the token of `ant auth login` (fetched again after a 401), never logged; its default model is
+  claude-opus-5-5, and it caches the prompt. A new session may name another model and API (finn --model, --api),
+  kept in its file. Past 80 % of the model's window (FINN_CONTEXT_WINDOW, else llama-server's /props, else GET
+  /models), the history after the first task becomes a summary by FINN_COMPACT_MODEL (a model of FINN_API; else the
+  session's model), whose tokens are not in `usage`; the last round of the running turn is kept whole. On Anthropic
+  the history folds only between turns: past the limit inside a turn, the rest of the turn sends no thinking blocks. FINN_CODE_MODE=1 adds run_script: the model calls the tools from a Python script in
   pydantic's Monty sandbox, each call approved as a direct one; the worker is FINN_MONTY (a Monty 1.6.0 binary you
   trust: its hash is not checked), else the pinned Monty 1.6.0 fetched from PyPI (sha256 checked) on first use into
   $XDG_CACHE_HOME/finn, else ~/.cache/finn (a folder open to others is refused). FINN_MCP_CONFIG names a JSON

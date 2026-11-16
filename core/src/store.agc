@@ -116,6 +116,7 @@ def append_compaction(path: String, compaction: Compaction.Compaction, answer: L
       "to": JSON.from(compaction.to),
       "summary": JSON.from(compaction.summary),
       "answer": JSON.from(answer),
+      "strip_thinking": JSON.from(compaction.strip_thinking),
     },
   )
 end
@@ -294,6 +295,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
         from: try JSON.int(try JSON.get(json, "from")),
         to: try JSON.int(try JSON.get(json, "to")),
         summary: try field(json, "summary"),
+        strip_thinking: JSON.bool(JSON.get(json, "strip_thinking").unwrap_or(JSON.from(false))).unwrap_or(false),
       )
 
       return error("a compaction outside the history") if compaction.to > saved.history.size

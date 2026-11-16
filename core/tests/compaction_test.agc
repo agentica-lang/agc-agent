@@ -1,6 +1,7 @@
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Compaction from "../src/compaction"
+import Store from "../src/store"
 import H from "support/harness"
 
 # The window comes from llama-server's `/props` (120 tokens). The tool round of the second turn reaches 100 tokens,
@@ -266,9 +267,10 @@ def test_a_span_into_a_later_turn_keeps_its_task_after_the_summary() -> Result[V
   Test.eq(Compaction.span([user("only"), said("call"), result("1")]), none)
 end
 
-# The kept round loses its thinking blocks, which were bound to the history the fold replaced; its text and tool
-# call stay, and the thinking of the first task, before the fold, stays too (#81).
-def test_a_fold_drops_the_thinking_of_the_kept_messages() -> Result[Void]
+# On Anthropic the kept round loses its thinking blocks, which were bound to the history the fold replaced: its text
+# and tool call stay, a message of thinking alone goes, and the thinking of the first task, before the fold, stays
+# (#81). Another API keeps them (the encrypted reasoning of Responses). The session file keeps which.
+def test_a_fold_on_anthropic_drops_the_thinking_of_the_kept_messages() -> Result[Void]
   thought = LLM.Block.Thinking(LLM.ThinkingPart(text: "t", replay: some(JSON.from("signed"))))
   call = LLM.Block.ToolUse(LLM.ToolCall(id: "c", name: "read_file", arguments: "{}", input: JSON.object({})))
   thinking = ->(text: String) {
@@ -286,10 +288,23 @@ def test_a_fold_drops_the_thinking_of_the_kept_messages() -> Result[Void]
   ]
 
   span = try Compaction.span(history).to_result("no span")
-  folded = Compaction.apply(history, span.with(summary: "S"))
+  stripped = span.with(summary: "S", strip_thinking: true)
+  folded = Compaction.apply(history, stripped)
   try Test.eq(folded[1], said(Compaction.summary_text("S")))
   try Test.eq(folded[3].content, [said("two").content[0], call])
-  Test.eq(folded.take(1), history.take(1))
+  only = LLM.Message(role: LLM.Role.Assistant, content: [thought])
+  try Test.eq(Compaction.without_thinking([only, result("2")]), [result("2")])
+  try Test.eq(folded.take(1), history.take(1))
+  kept = Compaction.apply(history, span.with(summary: "S"))
+  try Test.eq(kept.drop(kept.size - 2), history.drop(history.size - 2))
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/finn-fold-#{Random.int(0, 999_999_999)}"
+  try Dir.mkdir(dir)
+  file = try Store.create(dir, Store.Header(id: "s", cwd: "/", model: "m", created_ms: 0))
+  try Store.append_messages(file, history)
+  try Store.append_compaction(file, stripped, [])
+  saved = Store.load(file)
+  _ = Path.remove(dir)
+  Test.eq((try saved).history, folded)
 end
 
 # A summary that fails, comes back empty or is cut at the token limit is an `error` event; the turn goes on with its

@@ -64,6 +64,8 @@ struct Setup
   monty: String = ""
   ## Deny rules of the config, as `bash(rm *)`.
   deny: List[String] = []
+  ## The token that Anthropic fetches again after a 401; none when empty.
+  fresh_token: String = ""
 end
 
 def fake_env(name: String) -> Result[String]
@@ -101,13 +103,25 @@ def with_fake(setup: Setup, base: String, body: Fn[Harness, Result[Void]]) -> Re
   result
 end
 
+# With `fresh_token`, Anthropic gets that token after a 401.
+def apis(setup: Setup, fake: Fake.Fake) -> Map[String, Server.ModelApi]
+  options = LLM.Options(timeout_ms: 5000, retry_base_ms: 1)
+  all = Config.apis(fake.url, "test-key", options)
+  return all if setup.fresh_token.empty?
+
+  token = setup.fresh_token
+  url = fake.url
+  refresh = -> { ok(LLM.anthropic(url, "", options, token)) }
+  all.put("anthropic", all["anthropic"].with(refresh: some(refresh)))
+end
+
 def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   work = "#{base}/work"
   try Dir.mkdir(work)
   options = Server.Options(
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
-    apis: Config.apis(fake.url, "test-key", LLM.Options(timeout_ms: 5000, retry_base_ms: 1)),
+    apis: apis(setup, fake),
     api: setup.api,
     model: "qwen2.5-0.5b-instruct",
     env: &fake_env,

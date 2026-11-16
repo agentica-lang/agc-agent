@@ -46,6 +46,8 @@ struct Turn
   extra: Map[String, JSON.Value] = {}
   ## Ask the provider for its prompt cache: the system prompt and the tools, and the conversation so far.
   cache: Bool = false
+  ## A provider with a fresh token, after a 401 (the token of `ant`).
+  refresh: Optional[Fn[Result[LLM.Provider]]] = none
   ## `window` 0 asks the provider for it.
   compaction: Compaction.Settings
   ## The context of the session's last call.
@@ -70,8 +72,19 @@ def run(given: Turn) -> Outcome
   messages = folded.messages
   last_round = ""
   same = 0
+  stripped = false
   for _round in 1..turn.max_rounds
-    called = call_model(turn, messages)
+    asked = messages
+    if stripped
+      asked = Compaction.without_thinking(messages)
+    end
+
+    called = call_model(turn, asked)
+    for fresh in option_list(renewed(turn, called))
+      turn = fresh
+      called = call_model(turn, asked)
+    end
+
     response = called.unwrap_or(EMPTY)
     case called
       ok(_) -> nil
@@ -91,8 +104,13 @@ def run(given: Turn) -> Outcome
     messages = messages + [response.message, LLM.Message(role: LLM.Role.User, content: results)]
     turn.link.commit.call(messages)
     context = response.usage.input + response.usage.cache_read + response.usage.cache_write
-    folded = compacted(turn, context, folded.with(messages: messages))
-    messages = folded.messages
+    if turn.provider.name == Compaction.ANTHROPIC
+      stripped = stripped or past_limit(turn, context)
+    else
+      folded = compacted(turn, context, folded.with(messages: messages))
+      messages = folded.messages
+    end
+
     this_round = JSON.encode(JSON.from([calls.map { |c| "#{c.name} #{c.arguments}" }, results.map { |r| text_of(r) }]))
     same = same_count(this_round, last_round, same)
     last_round = this_round
@@ -168,6 +186,34 @@ def compacted(turn: Turn, context: Int, folded: Folded) -> Folded
   end
 
   folded
+end
+
+# Anthropic folds only between turns: a fold inside a tool round would change the history its thinking blocks are bound
+# to. Past the limit inside a round, the rest of the turn sends no thinking blocks, once said in the log.
+def past_limit(turn: Turn, context: Int) -> Bool
+  return false if not Compaction.due?(turn.compaction, context)
+
+  IO.warn(
+    "turn #{turn.id}: the context is past the limit inside a tool round; the turn goes on without thinking blocks",
+  )
+
+  true
+end
+
+# A 401 when the token may have expired: the token is fetched again, once a call, and the turn goes on with it.
+def renewed(turn: Turn, called: Result[LLM.Response]) -> Optional[Turn]
+  case called
+    error(e) if e.code == some(401) ->
+      for refresh in option_list(turn.refresh)
+        case refresh.call()
+          ok(provider) -> return some(turn.with(provider: provider))
+          error(failed) -> IO.warn("turn #{turn.id}: the token was not fetched again: #{failed.message}")
+        end
+      end
+
+      none
+    _ -> none
+  end
 end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]

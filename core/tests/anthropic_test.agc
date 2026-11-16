@@ -3,7 +3,10 @@
 # usage counts the cache.
 
 import Protocol from "pkg/protocol/protocol"
+import Fake from "support/fake_llm"
 import H from "support/harness"
+
+MODEL = "qwen2.5-0.5b-instruct"
 
 def test_a_session_on_anthropic_caches_and_keeps_its_thinking() -> Result[Void]
   H.using(H.Setup(api: "anthropic", replies: ["thinking_tool_use.sse", "text.sse", "text.sse"])) do |h|
@@ -33,6 +36,106 @@ def test_a_session_on_anthropic_caches_and_keeps_its_thinking() -> Result[Void]
     cached = Protocol.Usage(input: 12, output: 45, cache_read: 2000, cache_write: 300, context: 2312)
     Test.eq(usage.take(1), [Protocol.Event.Usage(cached)])
   end
+end
+
+# Inside a tool round past the limit Anthropic does not fold: the rest of the turn sends no thinking blocks, and the
+# session keeps them. The next turn folds at its start.
+def test_anthropic_folds_only_between_turns() -> Result[Void]
+  replies = ["thinking_tool_use.sse", "text_large.sse", "text.sse", "text.sse"]
+  H.using(H.Setup(api: "anthropic", context_window: 100, replies: replies)) do |h|
+    try File.write_text("#{h.work}/README.md", "# Readme\n")
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Read the README.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "Again.")
+    a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
+    H.close(a)
+    _ = try H.next_request(h)
+    second = try messages_of(h)
+    try Test.eq(second.map { |m| types(m) }, [["text"], ["text", "tool_use"], ["tool_result"]])
+    summary = try messages_of(h)
+    try Test.eq(summary.size, 1)
+    after = try messages_of(h)
+    try Test.assert(JSON.encode(JSON.from(after)).include?("Summary of the session so far"), "not folded")
+    Test.eq(after.flat_map { |m| types(m) }.select { |t| t.include?("thinking") }, [])
+  end
+end
+
+# After a 401 the token is fetched again once, and the call is made again with it.
+def test_a_401_fetches_the_token_again() -> Result[Void]
+  setup = H.Setup(api: "anthropic", fresh_token: "fresh", replies: ["401:unauthorized.json", "text.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hi.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.stop_reason(a), "end_turn")
+    try Test.eq(header(try H.next_request(h), "x-api-key"), "test-key")
+    Test.eq(header(try H.next_request(h), "authorization"), "Bearer fresh")
+  end
+end
+
+# A session without a model takes its API's: on an Anthropic server an OpenAI session gets `default`; on an OpenAI
+# server an Anthropic session gets Claude Opus 5.5 and a Responses one the server's model.
+def test_a_session_takes_the_model_of_its_api() -> Result[Void]
+  try H.using(H.Setup(api: "anthropic", replies: [])) do |h|
+    id = try H.new_session_in(h, h.work, some("openai"))
+    Test.eq((try H.session(h, id)).model, "default")
+  end
+
+  H.using(H.Setup(replies: [])) do |h|
+    claude = try H.new_session_in(h, h.work, some("anthropic"))
+    responses = try H.new_session_in(h, h.work, some("openai_responses"))
+    Test.eq([(try H.session(h, claude)).model, (try H.session(h, responses)).model], ["claude-opus-5-5", MODEL])
+  end
+end
+
+# Anthropic is never local: its window comes from `GET /models`, never `/props` (which would get `FINN_API_KEY`).
+def test_anthropic_never_asks_props() -> Result[Void]
+  setup = H.Setup(api: "anthropic", context_window: 0, props: true, replies: ["models.json", "text.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hi.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    Test.eq([(try H.next_request(h)).path, (try H.next_request(h)).path], ["/v1/models", "/v1/messages"])
+  end
+end
+
+# `FINN_COMPACT_MODEL` names a model of the server's API: a session on another API folds with its own model.
+def test_the_compact_model_is_for_the_server_api_only() -> Result[Void]
+  replies = ["anthropic/text_large.sse", "anthropic/text.sse", "anthropic/text.sse"]
+  setup = H.Setup(compact_model: "cheap", context_window: 100, replies: replies)
+  H.using(setup) do |h|
+    id = try H.new_session_in(h, h.work, some("anthropic"))
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hi.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "Again.")
+    a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
+    H.close(a)
+    _ = try H.next_request(h)
+    summary = try JSON.parse((try H.next_request(h)).body)
+    Test.eq(text(summary, "model"), "claude-opus-5-5")
+  end
+end
+
+def messages_of(h: H.Harness) -> Result[List[JSON.Value]]
+  JSON.list(try JSON.get(try JSON.parse((try H.next_request(h)).body), "messages"))
+end
+
+def types(message: JSON.Value) -> List[String]
+  case JSON.list(JSON.get(message, "content").unwrap_or(JSON.null()))
+    ok(blocks) -> blocks.map { |b| text(b, "type") }
+    error(_) -> ["text"]
+  end
+end
+
+def header(seen: Fake.Seen, name: String) -> String
+  seen.headers.select { |h| h.name.downcase == name }.map { |h| h.value }.join(",")
 end
 
 def text(json: JSON.Value, key: String) -> String
