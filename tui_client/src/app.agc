@@ -565,8 +565,8 @@ end
 def drawn(app: App) -> App
   case draw(app)
     ok(hits) -> app.with(hits: some(hits))
-    error(_) if app.draw_failed -> app
-    error(e) -> noted(app.with(draw_failed: true), "error: the screen was not drawn: #{e.message}")
+    error(_) if app.draw_failed -> app.with(hits: none)
+    error(e) -> noted(app.with(draw_failed: true, hits: none), "error: the screen was not drawn: #{e.message}")
   end
 end
 

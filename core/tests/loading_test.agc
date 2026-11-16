@@ -4,64 +4,68 @@ import H from "support/harness"
 EVENTS = 1000
 CHUNK = 500
 WAIT_MS = 30_000
-POLL_MS = 50
 
-# A session file loads in a task, which the test holds at a gate, so no timing decides the outcome: while the load
-# waits, the list and a new session answer. Two requests for it make one load and get one session, whose cut turn ends
-# once. A session deleted while it loads stays deleted, its file too.
+# Session files load in tasks, which the test holds at a gate, so no timing decides the outcome. While "big" waits,
+# the list and a new session answer, and "gone" starts its own load: loads do not wait for each other. Two requests for
+# "big" make one load and get one session, whose cut turn ends once. A session deleted while it loads stays deleted,
+# its file too, once its load has ended.
 def test_a_big_session_loads_without_blocking_the_others() -> Result[Void]
   entered: Channel[String] = Channel.new(4)
   gate: Channel[Bool] = Channel.new(4)
+  ended: Channel[String] = Channel.new(4)
   hold = ->(id: String) {
     _ = entered.send(id, WAIT_MS)
     _ = gate.recv(WAIT_MS)
   }
 
-  setup = H.Setup(replies: [], before_load: some(hold))
+  setup = H.Setup(
+    replies: [],
+    before_load: some(hold),
+    after_load: some(->(id: String) { _ = ended.send(id, WAIT_MS) }),
+  )
+
   H.using(setup) do |h|
     try write_session(H.session_file(h, "big"), "big", h.work, "\n")
     try write_session(H.session_file(h, "gone"), "gone", h.work, "")
     H.restarted(h, setup, "") do |r|
-      try loads_once(r, entered, gate)
-      deleted_while_loading(r, entered, gate)
+      try held(r, entered, gate)
+      try ended_once(r, ended)
+      Test.eq(entered.recv(0).ok?, false)
     end
   end
 end
 
 private
 
-def loads_once(r: H.Harness, entered: Channel[String], gate: Channel[Bool]) -> Result[Void]
-  path = Protocol.session_path("big")
-  first = Task.spawn do status(H.get(r, path)) end
-  second = Task.spawn do status(H.get(r, path)) end
+def held(r: H.Harness, entered: Channel[String], gate: Channel[Bool]) -> Result[Void]
+  big = Protocol.session_path("big")
+  first = Task.spawn do status(H.get(r, big)) end
+  second = Task.spawn do status(H.get(r, big)) end
   try Test.eq(entered.recv(WAIT_MS), ok("big"))
   listed = try H.get(r, Protocol.SESSIONS_PATH)
   created = try H.new_session(r)
   try Test.eq([listed.status.to_s, created.empty?.to_s], ["200", "false"])
-  try Test.eq(waiting?(first) and waiting?(second), true)
-  try gate.send(true, 0)
-  try Test.eq([Task.await(first), Task.await(second)], [200, 200])
-  try Test.eq(entered.recv(0).ok?, false)
-  ended = try File.foreach(H.session_file(r, "big")).select { |line| line.include?("turn_finished") }.to_a
-  Test.eq(ended.size, 1)
-end
-
-# The load goes on after the delete; what it read never comes back.
-def deleted_while_loading(r: H.Harness, entered: Channel[String], gate: Channel[Bool]) -> Result[Void]
-  path = Protocol.session_path("gone")
-  loading = Task.spawn do status(H.get(r, path)) end
+  gone = Protocol.session_path("gone")
+  loading = Task.spawn do status(H.get(r, gone)) end
   try Test.eq(entered.recv(WAIT_MS), ok("gone"))
-  deleted = try H.call(r, "DELETE", path, "", H.auth(r))
+  try Test.eq(waiting?(first) and waiting?(second), true)
+  deleted = try H.call(r, "DELETE", gone, "", H.auth(r))
   try Test.eq(deleted.status, 200)
   try Test.eq(Task.await(loading), 404)
   try gate.send(true, 0)
-  for _i in 1..20
-    try Test.eq(File.stat(H.session_file(r, "gone")).ok?, false)
-    try Test.eq(status(H.get(r, path)), 404)
-    Task.sleep(POLL_MS)
-  end
+  try gate.send(true, 0)
+  Test.eq([Task.await(first), Task.await(second)], [200, 200])
+end
 
-  ok()
+# After both loads ended and the registry took what they read (a list goes after it), "gone" is still deleted.
+def ended_once(r: H.Harness, ended: Channel[String]) -> Result[Void]
+  done = [try ended.recv(WAIT_MS), try ended.recv(WAIT_MS)]
+  try Test.eq(done.sort, ["big", "gone"])
+  _ = try H.get(r, Protocol.SESSIONS_PATH)
+  try Test.eq(File.stat(H.session_file(r, "gone")).ok?, false)
+  try Test.eq(status(H.get(r, Protocol.session_path("gone"))), 404)
+  turns = try File.foreach(H.session_file(r, "big")).select { |line| line.include?("turn_finished") }.to_a
+  Test.eq(turns.size, 1)
 end
 
 def waiting?(request: Task[Int]) -> Bool
