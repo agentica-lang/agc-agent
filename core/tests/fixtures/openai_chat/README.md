@@ -12,3 +12,5 @@ The fake LLM of the server tests streams these, in the order a test gives.
   `long_text_then_write.sse` streams 12 text pieces before a `write_file` call.
 - `length_tool.sse` stops with `finish_reason: "length"` in the middle of a
   `write_file` call.
+- `text_cached.sse` is `text.sse` with other usage: 150 prompt tokens, 120 of
+  them cached, and 7 completion tokens.

@@ -90,7 +90,9 @@ struct ApprovalResolved
   source: ApprovalSource
 end
 
-## Token counts of one model call; `context` is the size of the context after it. None is negative.
+## Token counts after a model call. `input`, `cache_read` and `cache_write` are that call's, `output` is the sum over
+## every call of the session, and `context` is the size of the prompt of that call (`input + cache_read +
+## cache_write`). None is negative.
 struct Usage
   input: Int
   output: Int

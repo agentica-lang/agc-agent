@@ -123,7 +123,7 @@ end
 
 def counts(usage: Protocol.Usage) -> String
   (
-    "[usage] input #{usage.input}, output #{usage.output}, cache read #{usage.cache_read}, " +
+    "[usage] input #{usage.input}, output (session) #{usage.output}, cache read #{usage.cache_read}, " +
     "cache write #{usage.cache_write}, context #{usage.context}"
   )
 end

@@ -219,6 +219,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     cwd: context.root,
     model: request.model.unwrap_or(options.model),
     created_ms: Time.now_ms,
+    system: some(system_prompt(context.root)),
   )
 
   file = try Store.create(sessions_dir(options), header)
@@ -237,7 +238,7 @@ def entry(
     cwd: context.root,
     model: header.model,
     provider: options.provider,
-    system: system_prompt(context.root),
+    system: header.system.unwrap_or(system_prompt(context.root)),
     ctx: context,
     keep_events: options.keep_events,
     approval_timeout_ms: options.approval_timeout_ms,

@@ -80,6 +80,8 @@ struct State
   ## Why the last write to the file failed; none once one works. The next write starts on a new line, since the failed
   ## one may have left part of its line.
   broken: Optional[String] = none
+  ## The output tokens of every call of the session.
+  output: Int = 0
   ## The turn that a failed write stopped, for a client that attaches from inside it.
   lost: Optional[Lost] = none
 end
@@ -151,7 +153,7 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Stop(reply) ->
       Actor.reply(reply, state.turn.some?)
       Actor.continue(stop_turn(state))
-    Msg.Emit(turn_id, event) -> Actor.continue(if_current(state, turn_id, ->(s) { emit(s, event) }))
+    Msg.Emit(turn_id, event) -> Actor.continue(if_current(state, turn_id, ->(s) { emit_counted(s, event) }))
     Msg.Ask(turn_id, call, reply) -> Actor.continue(if_current(state, turn_id, ->(s) { ask(s, call, reply) }))
     Msg.Expire(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { expire(s) }))
     Msg.Commit(turn_id, history) -> Actor.continue(if_current(state, turn_id, ->(s) { commit(s, history) }))
@@ -242,6 +244,20 @@ def lost_after(state: State, id: Int) -> List[String]
   case state.lost
     some(lost) if lost.to == id -> lost.frames
     _ -> []
+  end
+end
+
+# A `usage` of one call goes out with the session's output so far, which counts it once it is saved. A call that a stop
+# cut is not counted: its `usage` comes after the turn ended, if at all.
+def emit_counted(state: State, event: Protocol.Event) -> State
+  case event
+    Protocol.Event.Usage(usage) ->
+      output = state.output + usage.output
+      emitted = emit(state, Protocol.Event.Usage(usage.with(output: output)))
+      return emitted if emitted.counter == state.counter
+
+      emitted.with(output: output)
+    _ -> emit(state, event)
   end
 end
 
@@ -527,6 +543,7 @@ def restore(setup: Setup, saved: Store.Saved) -> State
     turns: [saved.users, count(events, Protocol.EventKind.TurnStarted)].max.unwrap!,
     approvals: count(events, Protocol.EventKind.ApprovalRequested),
     resolved: resolved_ids(events),
+    output: last_output(events),
   )
 
   # A user message after the last `turn_started` belongs to no turn of the events.
@@ -550,6 +567,18 @@ end
 
 def count(events: List[Store.Logged], kind: Protocol.EventKind) -> Int
   events.select { |logged| Protocol.event_kind(logged.event) == kind }.size
+end
+
+def last_output(events: List[Store.Logged]) -> Int
+  output = 0
+  for logged in events
+    case logged.event
+      Protocol.Event.Usage(usage) -> output = usage.output
+      _ -> nil
+    end
+  end
+
+  output
 end
 
 def resolved_ids(events: List[Store.Logged]) -> List[String]

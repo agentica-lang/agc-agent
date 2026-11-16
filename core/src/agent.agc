@@ -114,7 +114,7 @@ def usage(u: LLM.Usage) -> Protocol.Usage
     output: u.output,
     cache_read: u.cache_read,
     cache_write: u.cache_write,
-    context: u.input + u.cache_read + u.cache_write + u.output,
+    context: u.input + u.cache_read + u.cache_write,
   )
 end
 

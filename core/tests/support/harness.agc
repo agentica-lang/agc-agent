@@ -278,6 +278,9 @@ def stop_reason(sub: Sub) -> String
   ""
 end
 
+## The next request the fake got.
+def next_request(h: Harness) -> Result[Fake.Seen] = Fake.next_request(h.fake)
+
 ## The messages of the `n`-th request the fake got (from 1).
 def request_messages(h: Harness, n: Int) -> Result[List[JSON.Value]]
   seen = Fake.Seen(method: "", path: "", headers: [], body: "")

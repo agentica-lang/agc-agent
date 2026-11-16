@@ -17,6 +17,8 @@ struct Header
   cwd: String
   model: String
   created_ms: Int
+  ## The system prompt of every call of the session, so a cache of its prefix stays valid after a restart.
+  system: Optional[String] = none
 end
 
 struct Logged
@@ -49,6 +51,7 @@ def create(dir: String, header: Header) -> Result[String]
     "cwd": JSON.from(header.cwd),
     "model": JSON.from(header.model),
     "created_ms": JSON.from(header.created_ms),
+    "system": JSON.from(header.system),
   }
 
   written = File.write(handle, try line(fields))
@@ -170,6 +173,7 @@ def decode_header(json: JSON.Value) -> Result[Header]
       cwd: try field(json, "cwd"),
       model: try field(json, "model"),
       created_ms: try JSON.int(try JSON.get(json, "created_ms")),
+      system: optional_string(json, "system"),
     ),
   )
 end
@@ -293,6 +297,13 @@ def tool_kind_of(name: String) -> Result[LLM.ToolKind]
     "function" -> ok(LLM.ToolKind.Function)
     "custom" -> ok(LLM.ToolKind.Custom)
     _ -> error("unknown tool kind #{name}")
+  end
+end
+
+def optional_string(json: JSON.Value, key: String) -> Optional[String]
+  case JSON.string(JSON.get(json, key).unwrap_or(JSON.null()))
+    ok(text) -> some(text)
+    error(_) -> none
   end
 end
 
