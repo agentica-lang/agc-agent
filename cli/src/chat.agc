@@ -263,20 +263,19 @@ def on_line(chat: Chat, raw: String) -> Result[Step]
 
   return stop(chat) if text == "/stop" and chat.turn
 
-  return ok(Step(chat: note(chat, "[a turn is running: Ctrl+C or /stop stops it]"))) if chat.turn
   return ok(Step(chat: chat)) if text == ""
 
   send(chat, text)
 end
 
-# A one-shot run that cannot send its task fails, also on a session where another turn runs.
+# A line sent while a turn runs is queued: the turn reads it before its next model call. A one-shot run that cannot
+# send its task fails.
 def send(chat: Chat, text: String) -> Result[Step]
   case Client.send_message(chat.server, chat.id, text)
     ok(_) -> ok(Step(chat: chat.with(turn: true)))
     error(e) if e.kind == Protocol.KIND_SESSION_BUSY and chat.once ->
-      ok(Step(chat: note(chat, "[error] a turn is already running in this session"), exit: some(EXIT_FAILED)))
-    error(e) if e.kind == Protocol.KIND_SESSION_BUSY ->
-      ok(Step(chat: note(chat, "[a turn is already running]").with(turn: true)))
+      ok(Step(chat: note(chat, "[error] #{e.message}"), exit: some(EXIT_FAILED)))
+    error(e) if e.kind == Protocol.KIND_SESSION_BUSY -> ok(Step(chat: note(chat, "[not sent] #{e.message}")))
     error(e) if chat.once -> ok(Step(chat: note(chat, "[error] #{e.message}"), exit: some(EXIT_FAILED)))
     error(e) -> ok(Step(chat: note(chat, "[error] #{e.message}")))
   end

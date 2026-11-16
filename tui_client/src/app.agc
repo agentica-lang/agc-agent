@@ -221,13 +221,13 @@ def scrolled(app: App, rows: Int) -> App = app.with(scroll: [app.scroll + rows, 
 def send(app: App) -> App
   text = app.prompt.strip
   return app if text == ""
-  return noted(app, "a turn is running: Esc stops it") if app.turn
 
+  # A message sent while a turn runs is queued; its `message_queued` event shows it.
   case Client.send_message(app.server, app.id, text)
+    ok(_) if app.turn -> app.with(prompt: "", scroll: 0)
     ok(_) ->
       entries = Transcript.add(app.entries, Transcript.Kind.User, text)
       app.with(entries: entries, prompt: "", turn: true, stopping: false, scroll: 0)
-    error(e) if e.kind == Protocol.KIND_SESSION_BUSY -> noted(app.with(turn: true), "a turn is already running")
     error(e) -> noted(app, "error: #{e.message}")
   end
 end
@@ -295,6 +295,7 @@ def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
       shown.with(entries: Transcript.tool(shown.entries, tool.call_id, Transcript.Kind.Tool, text))
     Protocol.Event.ToolFinished(tool) -> shown.with(entries: tool_finished(shown.entries, tool))
     Protocol.Event.Error(failure) -> noted(shown, "error: #{failure.kind}: #{failure.message}")
+    Protocol.Event.MessageQueued(queued) -> noted(shown, "queued: #{queued.text}")
     _ -> shown
   end
 end

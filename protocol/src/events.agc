@@ -23,6 +23,7 @@ enum EventKind
   TurnFinished
   Error
   Resync
+  MessageQueued
 end
 
 ## Who resolved an approval.
@@ -107,6 +108,12 @@ struct Usage
   context: Int
 end
 
+## A message sent while the turn `turn_id` runs: the turn reads it before its next model call.
+struct MessageQueued
+  turn_id: String
+  text: String
+end
+
 struct TurnFinished
   turn_id: String
   stop_reason: StopReason
@@ -126,6 +133,7 @@ enum Event
   TurnFinished(TurnFinished)
   Error(Errors.Failure)
   Resync
+  MessageQueued(MessageQueued)
 end
 
 ## Every kind of event, in a fixed order.
@@ -144,6 +152,7 @@ def event_kind(event: Event) -> EventKind
     Event.TurnFinished(_) -> EventKind.TurnFinished
     Event.Error(_) -> EventKind.Error
     Event.Resync -> EventKind.Resync
+    Event.MessageQueued(_) -> EventKind.MessageQueued
   end
 end
 
@@ -160,6 +169,7 @@ def kind_name(kind: EventKind) -> String
     EventKind.TurnFinished -> "turn_finished"
     EventKind.Error -> "error"
     EventKind.Resync -> "resync"
+    EventKind.MessageQueued -> "message_queued"
   end
 end
 
@@ -235,6 +245,7 @@ def encode_event(event: Event) -> String
       JSON.encode(wire)
     Event.Error(data) -> Errors.encode_failure(data)
     Event.Resync -> "{}"
+    Event.MessageQueued(data) -> JSON.encode(data)
   end
 end
 
@@ -253,6 +264,7 @@ def decode_event(name: String, data: String) -> Result[Event]
     EventKind.TurnFinished -> decode_turn_finished(data)
     EventKind.Error -> ok(Event.Error(try Errors.decode_failure(data)))
     EventKind.Resync -> decode_resync(data)
+    EventKind.MessageQueued -> ok(Event.MessageQueued(try Wire.decode(data, MessageQueued.codec)))
   end
 end
 
@@ -298,7 +310,8 @@ def following_kind(kind: EventKind) -> Optional[EventKind]
     EventKind.Usage -> some(EventKind.TurnFinished)
     EventKind.TurnFinished -> some(EventKind.Error)
     EventKind.Error -> some(EventKind.Resync)
-    EventKind.Resync -> none
+    EventKind.Resync -> some(EventKind.MessageQueued)
+    EventKind.MessageQueued -> none
   end
 end
 

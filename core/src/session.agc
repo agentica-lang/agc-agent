@@ -23,6 +23,7 @@ import Store from "store"
 import Tools from "tools"
 
 CALL_MS = 5000
+MAX_QUEUED = 20
 ## Room in a subscriber's channel past its replay; a client that falls this far behind is dropped.
 LIVE_ROOM = 1024
 RESERVE = 1000
@@ -61,6 +62,7 @@ enum Msg
   Compacted(String, Compaction.Compaction)
   Window(Int)
   Finished(String, Protocol.StopReason)
+  Take(String, Channel[List[String]])
 end
 
 struct Waiting
@@ -102,6 +104,8 @@ struct State
   output: Int = 0
   ## The context of the last call.
   context: Int = 0
+  ## Messages sent while the turn runs, which it has not read yet.
+  queued: List[String] = []
   ## The model's window: 0 until it is known, -1 when the provider does not say.
   window: Int = 0
   ## The ids up to this one are saved or reserved in the file.
@@ -197,6 +201,7 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Emit(turn_id, event) -> Actor.continue(if_current(state, turn_id, ->(s) { emit_counted(s, event) }))
     Msg.Ask(turn_id, call, reply) -> Actor.continue(if_current(state, turn_id, ->(s) { ask(s, call, reply) }))
     Msg.Expire(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { expire(s) }))
+    Msg.Take(turn_id, reply) -> Actor.continue(take(state, turn_id, reply))
     Msg.Commit(turn_id, history) -> Actor.continue(if_current(state, turn_id, ->(s) { commit(s, history) }))
     Msg.Compacted(turn_id, compaction) -> Actor.continue(if_current(state, turn_id, ->(s) { compact(s, compaction) }))
     Msg.Window(window) -> Actor.continue(state.with(window: window))
@@ -376,7 +381,7 @@ def broke(state: State, e: Error) -> State
 
       end_frame = frame("", Protocol.Event.TurnFinished(cancelled))
       lost = Lost(to: out.counter, frames: [error_frame, end_frame])
-      out.with(turn: none, pending: [], subscribers: broadcast(out, end_frame), lost: some(lost))
+      out.with(turn: none, pending: [], queued: [], subscribers: broadcast(out, end_frame), lost: some(lost))
     none -> out
   end
 end
@@ -396,10 +401,17 @@ def trim(log: List[Store.Logged], state: State) -> List[Store.Logged]
   log.drop(drop)
 end
 
+# A message sent while a turn runs waits in the queue, which the turn reads before its next model call.
 def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> State
-  if state.turn.some?
-    Actor.reply(reply, error("a turn is running", kind: Protocol.KIND_SESSION_BUSY))
-    return state
+  for running in option_list(state.turn)
+    if state.queued.size >= MAX_QUEUED
+      Actor.reply(reply, error("a turn is running and #{MAX_QUEUED} messages wait", kind: Protocol.KIND_SESSION_BUSY))
+      return state
+    end
+
+    Actor.reply(reply, ok(running.id))
+    queued = state.with(queued: state.queued.push(text))
+    return emit(queued, Protocol.Event.MessageQueued(Protocol.MessageQueued(turn_id: running.id, text: text)))
   end
 
   case save(state, -> { Store.append_user(state.setup.file, text) })
@@ -421,6 +433,7 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     emit: ->(event) { tell(address, Msg.Emit(turn_id, event)) },
     approve: ->(call) { wait_approval(address, turn_id, call, setup.approval_timeout_ms) },
     commit: ->(history) { tell(address, Msg.Commit(turn_id, history)) },
+    take: -> { taken(address, turn_id) },
     compacted: ->(compaction) { tell(address, Msg.Compacted(turn_id, compaction)) },
     window: ->(window) { tell(address, Msg.Window(window)) },
   )
@@ -477,6 +490,56 @@ end
 
 # The session denies an approval once no client has been attached for `timeout_ms`; the turn asks it to check now and
 # then.
+def taken(address: Address[Msg], turn_id: String) -> List[String]
+  none_taken: List[String] = []
+  taken: Result[List[String]] = Actor.call(address, CALL_MS) do |reply| Msg.Take(turn_id, reply) end
+  taken.unwrap_or(none_taken)
+end
+
+# The queued messages go into the history, after the answer of the turn so far, which is shown first.
+def take(state: State, turn_id: String, reply: Channel[List[String]]) -> State
+  current = state.turn.map { |t| t.id == turn_id }.unwrap_or(false)
+  if not current or state.queued.empty?
+    Actor.reply(reply, [])
+    return state
+  end
+
+  shown = state
+  for turn in option_list(state.turn)
+    text = turn.texts.join("\n\n")
+    if not text.empty?
+      case save(state, -> { Store.append_answer(state.setup.file, text) })
+        ok(_) ->
+          answer = Protocol.Message(role: Protocol.Role.Assistant, text: text)
+          shown = state.with(display: state.display.push(answer), turn: some(turn.with(texts: [])))
+        error(e) ->
+          Actor.reply(reply, [])
+          return broke(state, e)
+      end
+    end
+  end
+
+  read: List[String] = []
+  for text in state.queued
+    case save(shown, -> { Store.append_queued(state.setup.file, text) })
+      ok(_) ->
+        message = LLM.Message(role: LLM.Role.User, content: [Agent.text_block(text)])
+        read = read.push(text)
+        shown = shown.with(
+          history: shown.history.push(message),
+          display: shown.display.push(Protocol.Message(role: Protocol.Role.User, text: text)),
+          queued: shown.queued.drop(1),
+        )
+      error(e) ->
+        Actor.reply(reply, read)
+        return broke(shown, e)
+    end
+  end
+
+  Actor.reply(reply, read)
+  shown.with(broken: none)
+end
+
 def wait_approval(address: Address[Msg], turn_id: String, call: Agent.Ask, timeout_ms: Int) -> Protocol.Decision
   reply: Channel[Protocol.Decision] = Channel.new(1)
   return Protocol.Decision.Deny if not Actor.cast(address, Msg.Ask(turn_id, call, reply), CALL_MS).ok?
@@ -586,9 +649,29 @@ end
 
 def finish(state: State, reason: Protocol.StopReason) -> State
   case state.turn
-    some(turn) -> ended(state, turn.id, turn.texts, reason).with(turn: none)
+    some(turn) if reason == Protocol.StopReason.Cancelled ->
+      ended(dropped(state), turn.id, turn.texts, reason).with(turn: none)
+    some(turn) -> next_turn(ended(state, turn.id, turn.texts, reason).with(turn: none))
     none -> state
   end
+end
+
+# Messages queued for a stopped turn are not sent; an `error` event says so.
+def dropped(state: State) -> State
+  return state if state.queued.empty?
+
+  message = "#{state.queued.size} queued message(s) were not sent: the turn stopped first"
+  failure = Protocol.Failure(kind: Protocol.KIND_QUEUE_DROPPED, message: message)
+  emit(state.with(queued: []), Protocol.Event.Error(failure))
+end
+
+# Messages that came after the turn's last read start the next turn, together.
+def next_turn(state: State) -> State
+  return state if state.queued.empty?
+  return dropped(state) if state.broken.some?
+
+  ignored: Channel[Result[String]] = Channel.new(1)
+  start_turn(state.with(queued: []), state.queued.join("\n\n"), ignored)
 end
 
 # Shows the answer of the turn, its `texts` together, then ends the turn.

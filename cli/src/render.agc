@@ -47,6 +47,7 @@ def event(event: Protocol.Event, style: Style) -> Optional[Out]
     Protocol.Event.TurnStarted(_) -> none
     Protocol.Event.ApprovalRequested(_) -> none
     Protocol.Event.Resync -> none
+    Protocol.Event.MessageQueued(queued) -> some(line("[queued] #{queued.text}"))
   end
 end
 

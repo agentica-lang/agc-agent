@@ -26,6 +26,7 @@ export Kinds.KIND_UNAUTHORIZED
 export Kinds.KIND_FORBIDDEN
 export Kinds.KIND_SESSION_NOT_FOUND
 export Kinds.KIND_SESSION_BUSY
+export Kinds.KIND_QUEUE_DROPPED
 export Kinds.KIND_SESSION_STORAGE
 export Kinds.KIND_SESSION_UNAVAILABLE
 export Kinds.KIND_APPROVAL_NOT_FOUND
@@ -96,6 +97,7 @@ export Events.ApprovalRequested
 export Events.ApprovalResolved
 export Events.Usage
 export Events.TurnFinished
+export Events.MessageQueued
 export Events.event_kinds
 export Events.event_kind
 export Events.kind_name

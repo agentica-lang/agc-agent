@@ -21,6 +21,9 @@ struct Link
   emit: Fn[Protocol.Event, Void]
   approve: Fn[Ask, Protocol.Decision]
   commit: Fn[List[LLM.Message], Void]
+  ## The messages sent while the turn runs, which the session put in the history: the turn adds them before its next
+  ## model call.
+  take: Fn[List[String]]
   compacted: Fn[Compaction.Compaction, Void]
   window: Fn[Int, Void]
 end
@@ -67,6 +70,7 @@ def run(given: Turn) -> Outcome
   last_round = ""
   same = 0
   for _round in 1..turn.max_rounds
+    messages = messages + queued(turn)
     called = call_model(turn, messages)
     response = called.unwrap_or(EMPTY)
     case called
@@ -79,7 +83,11 @@ def run(given: Turn) -> Outcome
     if response.stop_reason != LLM.StopReason.ToolUse
       messages = messages.push(without_calls(response.message))
       turn.link.commit.call(messages)
-      return Outcome(history: messages, reason: stop_reason(response.stop_reason))
+      more = queued(turn)
+      return Outcome(history: messages, reason: stop_reason(response.stop_reason)) if more.empty?
+
+      messages = messages + more
+      next
     end
 
     calls = tool_calls(response.message)
@@ -99,6 +107,10 @@ def run(given: Turn) -> Outcome
 end
 
 def text_block(text: String) -> LLM.Block = LLM.Block.Text(LLM.TextPart(text: text))
+
+def queued(turn: Turn) -> List[LLM.Message]
+  turn.link.take.call().map { |text| LLM.Message(role: LLM.Role.User, content: [text_block(text)]) }
+end
 
 ## The text of the model's blocks, for the history a client draws.
 def assistant_text(message: LLM.Message) -> String = message.content.map { |b| text_of(b) }.join("")

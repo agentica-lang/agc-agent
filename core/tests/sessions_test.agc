@@ -58,6 +58,49 @@ def test_a_restarted_server_resumes_a_session_with_its_event_ids() -> Result[Voi
   end
 end
 
+# A message sent while a turn runs is queued and read before the next model call, after the answer so far; it stays in
+# the history after a restart. One queued when the turn is stopped is dropped with an error event.
+def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Result[Void]
+  setup = H.Setup(replies: ["write_file.sse", "text.sse", "write_file.sse", "text.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    queued = try H.send(h, id, "Also say hi.")
+    try Test.eq([queued.status.to_s, (try Protocol.decode_message_accepted(queued.text)).turn_id], ["202", "turn-1"])
+    a = try H.until(a, Protocol.EventKind.MessageQueued)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    second = try H.request_messages(h, 2)
+    try Test.eq(JSON.get(second.last, "role"), ok(JSON.from("user")))
+    try Test.eq(JSON.get(second.last, "content"), ok(JSON.from("Also say hi.")))
+    before = try H.session(h, id)
+    texts = before.history.map { |m| "#{Protocol.role_name(m.role)}: #{m.text}" }
+    try Test.eq(texts.take(3), ["user: Write hello.txt.", "assistant: I will write it.", "user: Also say hi."])
+    try Test.eq(before.history.size, 4)
+    _ = try H.send(h, id, "Write it again.")
+    a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
+    _ = try H.send(h, id, "Never read.")
+    try Test.eq((try H.post(h, Protocol.stop_path(id), "")).status, 200)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    dropped = a.seen.select do |s|
+      case s.event
+        Protocol.Event.Error(failure) -> failure.kind == Protocol.KIND_QUEUE_DROPPED
+        _ -> false
+      end
+    end
+
+    try Test.eq(dropped.size, 1)
+    after_stop = try H.session(h, id)
+    try Test.eq(after_stop.history.map { |m| m.text }.include?("Never read."), false)
+    H.restarted(h, setup, "") do |r|
+      Test.eq((try H.session(r, id)).history, after_stop.history)
+    end
+  end
+end
+
 # A turn that waited for its second approval when the server stopped ends after the restart: the waiting approval is
 # denied, the answer the model gave so far is shown, and the turn is cancelled, with the next ids. Late answers to
 # either approval are told they came late, and the next turn and approval get the next numbers.
