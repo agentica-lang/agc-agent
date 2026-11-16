@@ -359,6 +359,48 @@ def test_a_resync_with_no_turn_sends_the_follow_ups() -> Result[Void]
   Test.eq([moved.prompt, moved.follow_ups.size.to_s, moved.outbox.size.to_s], ["Two.\nlater", "0", "0"])
 end
 
+# A resync into a session whose snapshot names a running command waits for it; its end, a cut one with no duration,
+# clears it.
+def test_a_command_running_on_attach_waits_for_its_end() -> Result[Void]
+  session = Protocol.Session(
+    id: "s1",
+    cwd: ".",
+    model: "m",
+    last_event_id: 9,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+    shell_id: some("sh1"),
+  )
+
+  handler = ->(_request: HTTP.Request, _body: HTTP.RequestBody) {
+    ok(HTTP.Answer.Whole(HTTP.Response(status: 200, headers: [], body: Protocol.encode_session(session).bytes)))
+  }
+
+  http = try HTTP.serve("127.0.0.1", 0, handler)
+  server = Client.Server(url: "http://127.0.0.1:#{HTTP.local_port(http)}", token: "t")
+  model = model_of(40, 8).with(server: server, id: "s1", generation: 1)
+  resynced = App.update(model, App.Msg.Stream(1, [Client.Item.Event(some(3), Protocol.Event.Resync)])).model
+  Task.await(resynced.stream.unwrap!)
+  HTTP.close_server(http)
+  _ = HTTP.wait(http)
+  try Test.eq([resynced.shell, App.subscriptions(resynced).size == 2], [true, true])
+  cut = Protocol.ShellFinished(
+    shell_id: "sh1",
+    command: "make",
+    context: false,
+    ok: false,
+    output: "the server stopped while it ran",
+    duration_ms: 0,
+  )
+
+  item = Client.Item.Event(some(10), Protocol.Event.ShellFinished(cut))
+  ended = App.update(resynced, App.Msg.Stream(resynced.generation, [item])).model
+  shown = rows(ended)
+  Test.eq([ended.shell, shown.include?("$ make"), shown.any? { |row| row.include?("Took") }], [false, true, false])
+end
+
 # Up on an empty prompt goes back through the prompts sent, Down comes forward to an empty prompt; a large paste is
 # one token that the send puts back.
 def test_up_recalls_prompts_and_a_large_paste_is_one_token() -> Result[Void]
