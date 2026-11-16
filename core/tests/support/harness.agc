@@ -5,6 +5,7 @@ import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
+import Config from "../../src/config"
 import Server from "../../src/server"
 import Tools from "../../src/tools"
 import Fake from "fake_llm"
@@ -40,7 +41,8 @@ struct Sub
   seen: List[Seen]
 end
 
-## The model answers with the fixtures `replies` in order (names under `openai_chat/`; a `.json` one is a 200 JSON answer, `STATUS:name.json` one of that status).
+## The model answers with the fixtures `replies` in order (names under the folder of `api`; a `.json` one is a 200 JSON
+## answer, `STATUS:name.json` one of that status).
 struct Setup
   replies: List[String]
   keep_events: Int = 1000
@@ -51,6 +53,8 @@ struct Setup
   ## The server asks the fake's `/props` for the window first.
   props: Bool = false
   before_load: Optional[Fn[String, Void]] = none
+  ## The model API of the server, as `AGC_AGENT_API` names it; the fixtures come from the folder of its format.
+  api: String = "openai"
 end
 
 def fake_env(name: String) -> Result[String]
@@ -72,7 +76,7 @@ def using(setup: Setup, body: Fn[Harness, Result[Void]]) -> Result[Void]
 end
 
 def with_fake(setup: Setup, base: String, body: Fn[Harness, Result[Void]]) -> Result[Void]
-  fake = try Fake.start(try fixtures(setup.replies))
+  fake = try Fake.start(try fixtures(setup.replies, fixture_dir(setup.api)))
   started = start(setup, try Path.real(base), fake)
   result = case started
     ok(h) -> body.call(h)
@@ -94,7 +98,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   options = Server.Options(
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
-    provider: LLM.openai_chat(fake.url, "test-key", LLM.Options(timeout_ms: 5000, retry_base_ms: 1)),
+    provider: try Config.provider(setup.api, fake.url, "test-key", LLM.Options(timeout_ms: 5000, retry_base_ms: 1)),
     model: "qwen2.5-0.5b-instruct",
     env: &fake_env,
     rules: no_rules(),
@@ -104,6 +108,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     compact_model: setup.compact_model,
     props_url: props_url(setup, fake),
     before_load: setup.before_load,
+    extra: Config.request_extra(setup.api),
   )
 
   server = try Server.start(options)
@@ -164,20 +169,26 @@ end
 
 def no_rules() -> Tools.Rules = Tools.Rules(allow: [], deny: [])
 
-def fixtures(names: List[String]) -> Result[List[Fake.Reply]]
+def fixtures(names: List[String], dir: String = "openai_chat") -> Result[List[Fake.Reply]]
   replies: List[Fake.Reply] = []
   for name in names
     parts = name.split(":")
     if parts.size == 2
-      replies = replies.push(try Fake.json(try parts[0].to_i, "openai_chat/#{parts[1]}"))
+      replies = replies.push(try Fake.json(try parts[0].to_i, "#{dir}/#{parts[1]}"))
     elsif name.end_with?(".json")
-      replies = replies.push(try Fake.json(200, "openai_chat/#{name}"))
+      replies = replies.push(try Fake.json(200, "#{dir}/#{name}"))
     else
-      replies = replies.push(try Fake.sse("openai_chat/#{name}"))
+      replies = replies.push(try Fake.sse("#{dir}/#{name}"))
     end
   end
 
   ok(replies)
+end
+
+def fixture_dir(api: String) -> String
+  return "openai_chat" if api == "openai"
+
+  api
 end
 
 def auth(h: Harness) -> List[HTTP.Header] = [HTTP.Header(name: "Authorization", value: "Bearer #{h.token}")]
