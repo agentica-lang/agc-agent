@@ -4,10 +4,12 @@
 import Protocol from "pkg/protocol/protocol"
 import Commands from "commands"
 
-## A message of the tree and how far in it is drawn.
+## A message of the tree and how far in it is drawn. `guide` starts one of several next messages: `├ `, or `└ ` for
+## the last of them; "" for the only next message, which stays at the depth of the one before.
 struct TreeRow
   node: Protocol.TreeNode
   depth: Int
+  guide: String = ""
 end
 
 ## Depth-first, in the order the messages were sent; a message with more than one next message puts each a step in.
@@ -40,8 +42,15 @@ def tree_listing(tree: Protocol.SessionTree) -> List[String]
       mark = "*"
     end
 
-    "#{n}. #{"  " * row.depth}#{mark} #{clipped(row.node.text)}  -> #{clipped(row.node.answer)}"
+    "#{n}. #{tree_indent(row)}#{mark} #{clipped(row.node.text)}  -> #{clipped(row.node.answer)}"
   end
+end
+
+## The space before a row: its depth, with its guide in the last step.
+def tree_indent(row: TreeRow) -> String
+  return "  " * row.depth if row.guide.empty?
+
+  "#{"  " * (row.depth - 1)}#{row.guide}"
 end
 
 ## The entry `N` (before message N) or `N+` (after its answer) names, by the numbers of `tree_listing`.
@@ -66,12 +75,17 @@ CLIP_CHARS = 60
 
 # The children to push on the stack, the first on top; a step in when there is more than one.
 def in_order(nodes: List[Protocol.TreeNode], depth: Int) -> List[TreeRow]
-  step = 0
-  if nodes.size > 1
-    step = 1
-  end
+  return nodes.map { |node| TreeRow(node: node, depth: depth) } if nodes.size <= 1
 
-  nodes.reverse.map { |node| TreeRow(node: node, depth: depth + step) }
+  last = nodes.size - 1
+  rows = (0..last).to_a.map { |i| TreeRow(node: nodes[i], depth: depth + 1, guide: guide(i == last)) }
+  rows.reverse
+end
+
+def guide(last: Bool) -> String
+  return "└ " if last
+
+  "├ "
 end
 
 def clipped(text: String) -> String

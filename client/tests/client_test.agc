@@ -62,7 +62,8 @@ def test_resume_picks_by_number_or_id() -> Result[Void]
   Test.error?(Client.pick(list, "3"))
 end
 
-# A branch puts its messages a step in; the numbers name a message (before it) or, with `+`, its answer (after it).
+# A branch puts its messages a step in with a guide; a single next message stays under the one before. The numbers name
+# a message (before it) or, with `+`, its answer (after it).
 def test_the_tree_is_listed_depth_first_and_picked_by_number() -> Result[Void]
   nodes = [
     Protocol.TreeNode(id: 1, text: "One.", answer: "A1", last: 7, active: true),
@@ -72,7 +73,7 @@ def test_the_tree_is_listed_depth_first_and_picked_by_number() -> Result[Void]
   ]
 
   tree = Protocol.SessionTree(nodes: nodes)
-  listed = ["1. * One.  -> A1", "2.     Two.  -> A2", "3.     Two more.  -> ", "4.   * Three.  -> A3"]
+  listed = ["1. * One.  -> A1", "2. ├   Two.  -> A2", "3.     Two more.  -> ", "4. └ * Three.  -> A3"]
 
   try Test.eq(Client.tree_listing(tree), listed)
   try Test.eq([Client.tree_entry(tree, "4"), Client.tree_entry(tree, "2+")], [ok(21), ok(14)])
