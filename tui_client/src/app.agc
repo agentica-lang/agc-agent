@@ -13,7 +13,7 @@ import Layout from "panel"
 import Prompt from "prompt"
 import Transcript from "transcript"
 import Width from "width"
-import Yolo from "yolo"
+import Yolo from "pkg/client/yolo"
 
 INBOX_CAPACITY = 1024
 WAIT_MS = 3_600_000
@@ -175,7 +175,7 @@ def attach(app: App, session: Protocol.Session, skip_replay: Bool) -> App
     stopping: false,
     shown_id: from,
     approvals: Approvals.replaced(app.approvals, session.pending_approvals, Time.monotonic_ms),
-    yolo: Yolo.attached(app.yolo, session),
+    yolo: Yolo.attached(app.yolo, session.turn_id, not skip_replay),
   )
 
   subscribe(fresh, from)
@@ -351,10 +351,11 @@ def send(app: App) -> App
 
   # A message sent while a turn runs is queued; its `message_queued` event shows it.
   case Client.send_message(app.server, app.id, text)
-    ok(accepted) if app.turn -> app.with(prompt: "", scroll: 0, yolo: Yolo.queued(app.yolo, accepted.turn_id, text))
+    ok(accepted) if accepted.message_id.some? ->
+      app.with(prompt: "", scroll: 0, yolo: Yolo.accepted(app.yolo, accepted))
     ok(accepted) ->
       entries = Transcript.add(app.entries, Transcript.Kind.User, text)
-      yolo = Yolo.started(app.yolo, accepted.turn_id)
+      yolo = Yolo.accepted(app.yolo, accepted)
       app.with(entries: entries, prompt: "", turn: true, stopping: false, scroll: 0, yolo: yolo)
     error(e) -> noted(app, "error: #{e.message}")
   end

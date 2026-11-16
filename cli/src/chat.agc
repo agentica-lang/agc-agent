@@ -2,6 +2,7 @@
 ## what it does with each. The state is one immutable `Chat`; each input gives the next one.
 
 import Client from "pkg/client/client"
+import Yolo from "pkg/client/yolo"
 import Protocol from "pkg/protocol/protocol"
 import Args from "args"
 import Inbox from "inbox"
@@ -22,11 +23,11 @@ EXIT_FAILED = 1
 ## the turn.
 def run(server: Client.Server, options: Args.Options, style: Render.Style) -> Result[Int]
   if options.yolo
-    IO.warn("--yolo: every tool call is approved")
+    IO.warn("--yolo: the tool calls of the turns this client starts are approved")
   end
 
   inbox: Channel[Inbox.Input] = Channel.new(INBOX_CAPACITY)
-  chat = Chat(server: server, id: "", style: style, inbox: inbox, options: options, yolo: options.yolo)
+  chat = Chat(server: server, id: "", style: style, inbox: inbox, options: options, yolo: Yolo.Yolo(on: options.yolo))
   for prompt in option_list(options.prompt)
     task = prompt
     if prompt == "-"
@@ -78,12 +79,10 @@ struct Chat
   reconnects: Int = 0
   ## `resync` events in a row, with no other event between.
   resyncs: Int = 0
-  ## Every approval of this run is allowed without asking.
-  yolo: Bool = false
+  ## What `--yolo` allows without asking.
+  yolo: Yolo.Yolo
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
   new_model: Optional[String] = none
-  ## The approvals that were pending when the client attached: `--yolo` leaves them to be asked.
-  inherited: List[String] = []
   ## One task from the command line: the exit code is the status of its turn.
   once: Bool = false
   status: Int = 0
@@ -167,7 +166,7 @@ def attach(chat: Chat, session: Protocol.Session, skip_replay: Bool) -> Chat
     turn: running,
     stopping: false,
     pending: session.pending_approvals,
-    inherited: shown.inherited + session.pending_approvals.map { |p| p.approval_id },
+    yolo: Yolo.attached(shown.yolo, session.turn_id, not skip_replay),
     asked: false,
     replay_until: session.last_event_id,
   )
@@ -244,7 +243,8 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
 
   changed = case event
     Protocol.Event.TurnStarted(started) ->
-      shown.with(turn: true, stopping: false, known: started.history_size.unwrap_or(shown.known))
+      known = started.history_size.unwrap_or(shown.known)
+      shown.with(turn: true, stopping: false, known: known, yolo: Yolo.running(shown.yolo, some(started.turn_id)))
     Protocol.Event.Error(_) if not repeated and shown.new_model.some? ->
       note(shown.with(new_model: none), "[warning] #{Client.model_warning(shown.new_model.unwrap!)}")
     Protocol.Event.TurnFinished(finished) ->
@@ -254,9 +254,11 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
         stopping: false,
         known: finished.history_size.unwrap_or(shown.known),
         status: exit_status(finished.stop_reason),
+        yolo: Yolo.running(shown.yolo, none),
       )
     Protocol.Event.ApprovalRequested(request) -> shown.with(pending: added(shown.pending, request))
     Protocol.Event.ApprovalResolved(resolved) -> forgotten(shown, resolved.approval_id)
+    Protocol.Event.MessageQueued(queued) -> shown.with(yolo: Yolo.steered(shown.yolo, queued))
     _ -> shown
   end
 
@@ -282,7 +284,7 @@ end
 # send its task fails.
 def send(chat: Chat, text: String) -> Result[Step]
   case Client.send_message(chat.server, chat.id, text)
-    ok(_) -> ok(Step(chat: chat.with(turn: true)))
+    ok(accepted) -> ok(Step(chat: chat.with(turn: true, yolo: Yolo.accepted(chat.yolo, accepted))))
     error(e) if e.kind == Protocol.KIND_SESSION_BUSY and chat.once ->
       ok(Step(chat: note(chat, "[error] #{e.message}"), exit: some(EXIT_FAILED)))
     error(e) if e.kind == Protocol.KIND_SESSION_BUSY -> ok(Step(chat: note(chat, "[not sent] #{e.message}")))
@@ -371,7 +373,7 @@ def fresh(chat: Chat) -> Chat
     style: chat.style,
     inbox: chat.inbox,
     options: chat.options,
-    yolo: chat.yolo,
+    yolo: Yolo.Yolo(on: chat.yolo.on),
     stream: chat.stream,
     generation: chat.generation,
   )
@@ -504,14 +506,13 @@ def forgotten(chat: Chat, approval_id: String) -> Chat
   chat.with(pending: rest)
 end
 
-# Asks the first pending approval once the replay is over. With `--yolo` the approvals of this run are allowed; the
-# ones pending before it are asked. With the input at its end nobody can answer: every pending approval left is
-# denied, however many come.
+# Asks the first pending approval once the replay is over; `--yolo` allows those of an own turn (see `Yolo`). With the
+# input at its end nobody can answer: every pending approval left is denied, however many come.
 def prompted(chat: Chat) -> Chat
   state = chat
   while not state.pending.empty? and state.last_event_id >= state.replay_until
     head = state.pending[0]
-    if state.yolo and not state.inherited.include?(head.approval_id)
+    if Yolo.allows?(state.yolo)
       state = decided(state, Protocol.Decision.Allow)
     elsif state.eof
       state = decided(state, Protocol.Decision.Deny)

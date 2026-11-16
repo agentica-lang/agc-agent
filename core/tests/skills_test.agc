@@ -60,6 +60,38 @@ def test_the_model_and_the_user_load_skills_once() -> Result[Void]
   end
 end
 
+# A message queued into a turn loads the skills it names before the turn reads it, before a tool round or a final
+# answer, and the session keeps them loaded.
+def test_a_queued_message_loads_its_skills() -> Result[Void]
+  replies = ["write_file.sse", "write_file.sse", "text.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, skills: true)) do |h|
+    try write("#{h.base}/home/.agents/skills/release/SKILL.md", RELEASE)
+    try write("#{h.base}/home/.claude/skills/lint/SKILL.md", LINT_HOME)
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.send(h, id, "/release also")
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
+    _ = try H.send(h, id, "/lint too")
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "/release /lint again")
+    a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
+    H.close(a)
+    _ = try H.next_request(h)
+    release = try last_content(h)
+    try Test.assert(release.start_with?("<skill_content name=\"release\">"), release)
+    try Test.assert(release.end_with?("</skill_content>\n\n/release also"), release)
+    lint = try last_content(h)
+    try Test.assert(lint.start_with?("<skill_content name=\"lint\">\nUser lint."), lint)
+    try Test.eq(last_content(h), ok("/release /lint again"))
+    shown = (try H.session(h, id)).history.map { |m| m.text }.select { |t| t.start_with?("/") }
+    Test.eq(shown, ["/release also", "/lint too", "/release /lint again"])
+  end
+end
+
 # A folder is trusted only when it is one of the trusted folders or under one: not by a common prefix of names, and a
 # trusted folder may be a link.
 def test_project_skills_need_a_trusted_folder() -> Result[Void]

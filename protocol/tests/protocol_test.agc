@@ -127,6 +127,14 @@ def test_replies_round_trip() -> Result[Void]
   )
 
   try Test.eq(Protocol.decode_message_accepted(Protocol.encode_message_accepted(accepted)), ok(accepted))
+  try Test.eq(accepted.message_id, none)
+  queued = try decode_fixture(
+    "message_queued_accepted",
+    &Protocol.decode_message_accepted,
+    &Protocol.encode_message_accepted,
+  )
+
+  try Test.eq(queued, Protocol.MessageAccepted(turn_id: "t1", message_id: some("t1.1")))
 
   list = try decode_fixture("session_list", &Protocol.decode_session_list, &Protocol.encode_session_list)
   try Test.eq(list.sessions.size, 1)
@@ -264,6 +272,8 @@ def test_session_settings_round_trip_and_refuse_unknown_levels() -> Result[Void]
   try Test.eq(Protocol.decode_update_session(Protocol.encode_update_session(both)), ok(both))
   try Test.eq(Protocol.decode_update_session("{\"effort\": \"low\"}"), ok(Protocol.UpdateSession(effort: some("low"))))
   try Test.eq(Protocol.decode_update_session("{}"), ok(Protocol.UpdateSession()))
+  edits = Protocol.UpdateSession(accept_edits: some(true))
+  try Test.eq(Protocol.decode_update_session(Protocol.encode_update_session(edits)), ok(edits))
   try Test.eq(error_kind(Protocol.decode_update_session("{\"effort\": \"max\"}")), "protocol.unknown")
   try Test.eq(error_kind(Protocol.decode_update_session("{\"model\": \"\"}")), "protocol.invalid")
   try Test.eq(error_kind(Protocol.decode_update_session("{\"modle\": \"m\"}")), "protocol.invalid")

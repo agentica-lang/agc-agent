@@ -7,8 +7,9 @@
 ## `FINN_CODE_MODE=1` adds code mode, whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is
 ## not checked), else the pinned one fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be private to the user). Skills:
 ## those of the home folder always, those of a session folder only under a folder of `FINN_TRUSTED_DIRS` (separated by
-## `:`). The names of before Finn still work: `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no
-## `finn` folder is there.
+## `:`). Approval rules: the user's config file (`FINN_CONFIG`, else `$XDG_CONFIG_HOME/finn/config.json`, else
+## `~/.config/finn/config.json`) and the project file `.finn/config.json` (`Permissions`). The names of before Finn
+## still work: `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder is there.
 ##
 ## The `anthropic` API is at `ANTHROPIC_BASE_URL` (else Anthropic's), with `ANTHROPIC_API_KEY`, else
 ## `ANTHROPIC_AUTH_TOKEN`, else the token that `ant auth print-credentials --access-token` prints: at start when
@@ -19,8 +20,8 @@ import LLM from "pkg/llm/llm"
 import Monty from "pkg/monty/monty"
 import Catalog from "catalog"
 import CodeMode from "code_mode"
+import Permissions from "permissions"
 import Server from "server"
-import Tools from "tools"
 
 STATE_DIR_ENV = "FINN_STATE_DIR"
 DATA_DIR_ENV = "FINN_DATA_DIR"
@@ -66,7 +67,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       api: api,
       model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,
-      rules: Tools.Rules(allow: [], deny: []),
+      rules: try Permissions.user_rules(read),
       context_window: try context_window(read),
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(base_url),

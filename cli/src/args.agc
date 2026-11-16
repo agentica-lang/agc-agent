@@ -52,7 +52,11 @@ def parse(args: List[String]) -> Result[Command]
         short: "p",
         help: "run this one task (- reads it from stdin) and exit: 0 end_turn, 130 cancelled, 1 otherwise",
       ),
-      Opt(name: "yolo", kind: Kind.Flag, help: "allow every tool call without asking (also in one-shot)"),
+      Opt(
+        name: "yolo",
+        kind: Kind.Flag,
+        help: "allow the tool calls of the turns this client starts without asking (also in one-shot)",
+      ),
       Opt(name: "delete", help: "id of a session to delete (with its file), then exit"),
       Opt(name: "version", kind: Kind.Flag, help: "print the version"),
     ],

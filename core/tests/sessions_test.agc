@@ -70,12 +70,13 @@ def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Re
     _ = try H.send(h, id, "Write hello.txt.")
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
     queued = try H.send(h, id, "Also say hi.")
-    try Test.eq(
-      [queued.status.to_s, number((try Protocol.decode_message_accepted(queued.text)).turn_id)],
-      ["202", "turn-1"],
-    )
-
+    accepted = try Protocol.decode_message_accepted(queued.text)
+    try Test.eq([queued.status.to_s, number(accepted.turn_id)], ["202", "turn-1"])
+    message_id = "#{accepted.turn_id}.1"
+    try Test.eq(accepted.message_id, some(message_id))
     a = try H.until(a, Protocol.EventKind.MessageQueued)
+    event = Protocol.MessageQueued(turn_id: accepted.turn_id, text: "Also say hi.", message_id: message_id)
+    try Test.eq(a.seen.last.event, Protocol.Event.MessageQueued(event))
     _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     second = try H.request_messages(h, 2)
@@ -117,6 +118,8 @@ def test_the_queue_is_read_after_a_final_answer_and_has_a_limit() -> Result[Void
     _ = try H.send(h, id, "More.")
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     try Test.eq(H.kinds(a.seen).select { |k| k == "turn_started" }.size, 1)
+    after = try H.session(h, id)
+    try Test.eq([after.turn_id.some?.to_s, after.history.size.to_s], ["false", "4"])
     _ = try H.next_request(h)
     second = try H.request_messages(h, 1)
     try Test.eq(JSON.get(second.last, "content"), ok(JSON.from("More.")))
@@ -181,6 +184,33 @@ def test_a_late_read_leaves_the_queue_whole() -> Result[Void]
   end
 end
 
+# A final answer cut by the token limit or refused ends the turn: the message sent meanwhile starts the next one.
+def test_a_cut_or_refused_answer_ends_the_turn() -> Result[Void]
+  replies = ["text_length.sse@1500", "text_refused.sse@1500", "text.sse"]
+  H.using(H.Setup(replies: replies)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hi.")
+    a = try H.until(a, Protocol.EventKind.TurnStarted)
+    _ = try H.send(h, id, "More.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    a = try H.until(a, Protocol.EventKind.TurnStarted)
+    _ = try H.send(h, id, "Again.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    ends = a.seen.map { |s| s.event }.flat_map do |event|
+      case event
+        Protocol.Event.TurnStarted(started) -> [number(started.turn_id)]
+        Protocol.Event.TurnFinished(finished) -> [Protocol.stop_reason_name(finished.stop_reason)]
+        _ -> []
+      end
+    end
+
+    Test.eq(ends, ["turn-1", "max_tokens", "turn-2", "refusal", "turn-3", "end_turn"])
+  end
+end
+
 # A queue whose session file cannot be written is dropped with an `error` event.
 def test_a_broken_file_drops_the_queue() -> Result[Void]
   H.using(H.Setup(replies: ["write_file.sse", "text.sse"])) do |h|
@@ -194,14 +224,39 @@ def test_a_broken_file_drops_the_queue() -> Result[Void]
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
     try chmod("600", H.session_file(h, id))
-    kinds = a.seen.map { |s| s.event }.flat_map do |event|
-      case event
-        Protocol.Event.Error(failure) -> [failure.kind]
-        _ -> []
-      end
+    Test.eq(errors(a), [Protocol.KIND_SESSION_STORAGE, Protocol.KIND_QUEUE_DROPPED])
+  end
+end
+
+# A queue that cannot start the next turn (its user record, with the content of the skills it names, is over the size
+# of a record) is dropped with an `error` event, and the session goes on.
+def test_a_queue_whose_turn_cannot_be_saved_is_dropped() -> Result[Void]
+  setup = H.Setup(replies: ["write_file.sse", "text.sse", "text.sse"], take_ms: 0, skills: true)
+  H.using(setup) do |h|
+    names = (1..18).map { |i| "s#{i}" }
+    body = "x" * 1_000_000
+    for name in names
+      try write(
+        "#{h.base}/home/.agents/skills/#{name}/SKILL.md",
+        "---\nname: #{name}\ndescription: Big.\n---\n#{body}",
+      )
     end
 
-    Test.eq(kinds, [Protocol.KIND_SESSION_STORAGE, Protocol.KIND_QUEUE_DROPPED])
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.send(h, id, names.map { |n| "/#{n}" }.join(" "))
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    a = try H.until(a.with(seen: []), Protocol.EventKind.Error)
+    try Test.eq(H.kinds(a.seen), ["error"])
+    try Test.eq(errors(a), [Protocol.KIND_QUEUE_DROPPED])
+    sent = try H.send(h, id, "Hi.")
+    try Test.eq(number((try Protocol.decode_message_accepted(sent.text)).turn_id), "turn-2")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    Test.eq(H.stop_reason(a), "end_turn")
   end
 end
 
@@ -594,6 +649,22 @@ def status(answer: Result[H.Answer]) -> Int
     ok(got) -> got.status
     error(_) -> 0
   end
+end
+
+def errors(sub: H.Sub) -> List[String]
+  sub.seen.map { |s| s.event }.flat_map do |event|
+    case event
+      Protocol.Event.Error(failure) -> [failure.kind]
+      _ -> []
+    end
+  end
+end
+
+def write(path: String, text: String) -> Result[Void]
+  code = try H.run("mkdir", ["-p", path.slice(0, path.length - path.split("/").last.length - 1)])
+  return error("mkdir failed") if code != 0
+
+  File.write_text(path, text)
 end
 
 def chmod(mode: String, path: String) -> Result[Void]
