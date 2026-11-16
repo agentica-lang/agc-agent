@@ -1,102 +1,28 @@
-## How many terminal columns text takes, as wcwidth counts them: 2 for East Asian wide characters and emoji, 0 for
-## combining marks and zero-width characters, else 1. A character after a zero-width joiner joins its emoji and takes
-## no column of its own. Pure.
+## How many terminal columns text takes, as termbox2 draws it: glibc's wcwidth(3) for each code point (the table of
+## `width_table.agc`), 0 for combining marks and zero-width joiners, 2 for wide ones; a character that is not
+## printable is drawn as U+FFFD, one column. A ZWJ emoji sequence takes the columns of each emoji, as termbox2 draws
+## it. Pure.
 
-ZWJ = 0x200d
-ZERO = [
-  0x0300..0x036f,
-  0x0483..0x0489,
-  0x0591..0x05c7,
-  0x0610..0x061a,
-  0x064b..0x065f,
-  0x0670..0x0670,
-  0x06d6..0x06ed,
-  0x0e31..0x0e31,
-  0x0e34..0x0e3a,
-  0x0e47..0x0e4e,
-  0x200b..0x200f,
-  0x20d0..0x20ff,
-  0xfe00..0xfe0f,
-  0xfe20..0xfe2f,
-  0xe0100..0xe01ef,
-]
-WIDE = [
-  0x1100..0x115f,
-  0x231a..0x231b,
-  0x23e9..0x23ec,
-  0x23f0..0x23f0,
-  0x23f3..0x23f3,
-  0x25fd..0x25fe,
-  0x2614..0x2615,
-  0x2648..0x2653,
-  0x267f..0x267f,
-  0x2693..0x2693,
-  0x26a1..0x26a1,
-  0x26aa..0x26ab,
-  0x26bd..0x26be,
-  0x26c4..0x26c5,
-  0x26ce..0x26ce,
-  0x26d4..0x26d4,
-  0x26ea..0x26ea,
-  0x26f2..0x26f3,
-  0x26f5..0x26f5,
-  0x26fa..0x26fa,
-  0x26fd..0x26fd,
-  0x2705..0x2705,
-  0x270a..0x270b,
-  0x2728..0x2728,
-  0x274c..0x274c,
-  0x274e..0x274e,
-  0x2753..0x2755,
-  0x2757..0x2757,
-  0x2795..0x2797,
-  0x27b0..0x27b0,
-  0x27bf..0x27bf,
-  0x2b1b..0x2b1c,
-  0x2b50..0x2b50,
-  0x2b55..0x2b55,
-  0x2e80..0x303e,
-  0x3041..0x33ff,
-  0x3400..0x4dbf,
-  0x4e00..0x9fff,
-  0xa000..0xa4cf,
-  0xac00..0xd7a3,
-  0xf900..0xfaff,
-  0xfe30..0xfe4f,
-  0xff00..0xff60,
-  0xffe0..0xffe6,
-  0x1f004..0x1f004,
-  0x1f0cf..0x1f0cf,
-  0x1f18e..0x1f18e,
-  0x1f191..0x1f19a,
-  0x1f200..0x1f251,
-  0x1f300..0x1f64f,
-  0x1f680..0x1f6ff,
-  0x1f7e0..0x1f7eb,
-  0x1f900..0x1f9ff,
-  0x1fa70..0x1faff,
-  0x20000..0x3fffd,
-]
+import Table from "width_table"
+
+FIRST_TABLED = 0x300
 
 def char(c: String) -> Int
   code = c.code
-  return 1 if code < 0x0300
-  return 0 if within?(ZERO, code)
-  return 2 if within?(WIDE, code)
+  return 1 if code < FIRST_TABLED
 
-  1
+  Table.WIDTHS[run(code)]
 end
 
-def text(s: String) -> Int = widths(s.split("")).sum
+def text(s: String) -> Int = s.split("").map { |c| char(c) }.sum
 
 ## The longest start of `s` that fits in `columns`, and the rest.
 def cut(s: String, columns: Int) -> List[String]
   chars = s.split("")
-  each = widths(chars)
   used = 0
   count = 0
-  for i in 0...chars.size
-    used = used + each[i]
+  for c in chars
+    used = used + char(c)
     break if used > columns
 
     count = count + 1
@@ -107,21 +33,18 @@ end
 
 private
 
-def within?(ranges: List[Range], code: Int) -> Bool = ranges.any? { |range| range.include?(code) }
-
-# The columns of each character; one that follows a zero-width joiner takes none.
-def widths(chars: List[String]) -> List[Int]
-  out: List[Int] = []
-  joined = false
-  for c in chars
-    if joined
-      out = out.push(0)
+# The index of the last start at or below `code`.
+def run(code: Int) -> Int
+  low = 0
+  high = Table.STARTS.size - 1
+  while low < high
+    middle = (low + high + 1) / 2
+    if Table.STARTS[middle] <= code
+      low = middle
     else
-      out = out.push(char(c))
+      high = middle - 1
     end
-
-    joined = c.code == ZWJ
   end
 
-  out
+  low
 end

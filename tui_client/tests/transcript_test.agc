@@ -16,9 +16,21 @@ def test_width_counts_wide_and_zero_width_characters() -> Result[Void]
   try Test.eq(Width.cut("日本語", 5), ["日本", "語"])
   try Test.eq(["🚀", "✅", "⚙", "🇪🇸", "🦀"].map { |text| Width.text(text) }, [2, 2, 1, 2, 2])
   try Test.eq(Width.text("ש" + String.from_code(0x5b0) + "x" + String.from_code(0x20d7)), 2)
+  # As termbox2 draws a ZWJ sequence: each emoji takes its own columns.
   family = ["👨", "👩", "👧"].join(String.from_code(0x200d))
-  try Test.eq(Width.text(family), 2)
-  Test.eq(Width.cut("a#{family}b", 3), ["a#{family}", "b"])
+  try Test.eq(Width.text(family), 6)
+  try Test.eq(Width.cut("a#{family}b", 5), ["a👨" + String.from_code(0x200d) + "👩" + String.from_code(0x200d), "👧b"])
+  Test.eq(Width.text("x⚙" + String.from_code(0xfe0f)), 2)
+end
+
+# The values of glibc's wcwidth(3), which termbox2 draws with; not printable is U+FFFD, one column.
+def test_width_follows_wcwidth() -> Result[Void]
+  wide = [0x1f680, 0x2614, 0x26a1, 0x2705, 0x27bf, 0x1fa70, 0x1f468, 0x4e00, 0xac00, 0x20000]
+  zero = [0x483, 0x1ab0, 0x1dc0, 0x20d0, 0xfe20, 0x200d, 0xfe0f, 0xe0001, 0xe0100]
+  one = [0x2600, 0x2699, 0x1f1e6, 0x1f6ff, 0x1faff, 0x10ffff, 0x41]
+  try Test.eq(wide.map { |code| Width.char(String.from_code(code)) }.uniq, [2])
+  try Test.eq(zero.map { |code| Width.char(String.from_code(code)) }.uniq, [0])
+  Test.eq(one.map { |code| Width.char(String.from_code(code)) }.uniq, [1])
 end
 
 def test_streamed_text_joins_the_last_entry_of_its_kind() -> Result[Void]
@@ -64,4 +76,11 @@ end
 def test_a_list_item_wraps_under_its_text() -> Result[Void]
   rows = Markdown.rows("- alpha beta gamma", 12)
   Test.eq(rows.map { |row| Markdown.plain(row) }, ["• alpha beta", "  gamma"])
+end
+
+def test_a_long_code_line_wraps_and_keeps_its_spaces() -> Result[Void]
+  rows = Markdown.rows("```\nlet  x = 1234567890\n日本語x\n\n```", 6)
+  texts = rows.map { |row| Markdown.plain(row) }
+  try Test.eq(texts, ["let  x", " = 123", "456789", "0", "日本語", "x", ""])
+  Test.eq(Markdown.rows("```\n日本\n```", 1).map { |row| Markdown.plain(row) }, ["日", "本"])
 end
