@@ -70,6 +70,12 @@ struct Model
   opened: Int = 0
   ## The picker of `/resume`, `/tree` or `/fork`, open over the prompt.
   picker: Optional[Picker.Picker] = none
+  ## The tree the picker of `/tree` or `/fork` showed last, whose numbers `/tree N` and `/fork N` name.
+  listed: Optional[Protocol.SessionTree] = none
+  ## A branch, a fork or a copy is on its way: nothing is sent until its reply.
+  moving: Bool = false
+  ## The prompt holds the message a move went back before, selected: typing replaces it.
+  prefilled: Bool = false
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
   new_model: Optional[String] = none
   yolo: Yolo.Yolo
@@ -202,6 +208,15 @@ def update(model: Model, msg: Msg) -> TUI.Step[Model, Msg]
 
   cmds = app.effects
   if app.exit.some? or app.failure.some?
+    # The reader of the event stream and the command that waits on its channel end with the app.
+    for task in option_list(app.stream)
+      Task.cancel(task)
+    end
+
+    for feed in option_list(app.feed)
+      feed.close
+    end
+
     cmds = cmds.push(TUI.Cmd.Quit)
   end
 
@@ -406,6 +421,21 @@ def on_key(app: Model, event: TUI.Event) -> Model
 
   return app if Approvals.captures?(app.approvals, event)
 
+  on_prompt_key(unselected(app, event), event)
+end
+
+# A typed character, a paste or Backspace replaces a selected prompt; any other key keeps it as text.
+def unselected(app: Model, event: TUI.Event) -> Model
+  return app if not app.prefilled
+
+  case event
+    TUI.Event.Char(_, _), TUI.Event.Paste(_), TUI.Event.Key(TUI.Key.Backspace, _) ->
+      app.with(prompt: "", cursor: 0, prefilled: false)
+    _ -> app.with(prefilled: false)
+  end
+end
+
+def on_prompt_key(app: Model, event: TUI.Event) -> Model
   case event
     TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(exit: some(0))
     TUI.Event.Key(TUI.Key.Enter, _) -> send(app)
@@ -488,15 +518,26 @@ def send(app: Model) -> Model
   return app if text == ""
 
   case Client.parse_command(text)
-    some(ok(command)) -> return on_command(app.with(prompt: "", scroll: 0), command)
+    some(ok(command)) if not app.moving or local?(command) ->
+      return on_command(app.with(prompt: "", scroll: 0), command)
     some(error(e)) -> return noted(app, e.message)
     _ -> nil
   end
+
+  return noted(app, "the session is moving: wait for it") if app.moving
 
   queued = app.with(prompt: "", scroll: 0, outbox: app.outbox.push(text))
   return queued if not app.outbox.empty?
 
   sending(queued, text)
+end
+
+# A command that does not touch the session, which goes on while it moves.
+def local?(command: Client.Command) -> Bool
+  case command
+    Client.Command.Quit, Client.Command.Help, Client.Command.Cost -> true
+    _ -> false
+  end
 end
 
 def sending(app: Model, text: String) -> Model
@@ -620,16 +661,19 @@ def picked(app: Model, kind: Picker.Kind, key: String) -> Model
   end
 end
 
-# The picker of the tree without a choice; else the move to the message the choice names (`/tree 2`, `/fork 1+`).
+# The picker of the tree without a choice; else the move to the message the choice names in the tree the picker
+# showed last (`/tree 2`, `/fork 1+`), so a message another client adds since does not change what a number names.
 def tree_command(app: Model, kind: Picker.Kind, choice: Optional[String]) -> Result[Model]
-  tree = try Client.tree(app.server, app.id)
   for picked in option_list(choice)
-    return ok(move(app, kind, some(try Client.tree_entry(tree, picked))))
+    return ok(noted(app, "open the list first: /tree")) if app.listed.none?
+
+    return ok(move(app, kind, some(try Client.tree_entry(app.listed.unwrap!, picked))))
   end
 
+  tree = try Client.tree(app.server, app.id)
   return ok(noted(app, "no messages yet")) if tree.nodes.empty?
 
-  ok(app.with(picker: some(Picker.Picker(tree: Client.tree_rows(tree), kind: kind))))
+  ok(app.with(picker: some(Picker.Picker(tree: Client.tree_rows(tree), kind: kind)), listed: some(tree)))
 end
 
 # A branch of this session from `entry` (`Kind.Tree`), or a new session from it (`Kind.Fork`), a copy when none. A
@@ -637,14 +681,16 @@ end
 def move(app: Model, kind: Picker.Kind, entry: Optional[Int]) -> Model
   return noted(app, "a turn is running: Esc stops it first") if app.turn
   return noted(app, "a message is being sent: wait for its reply first") if not app.outbox.empty?
+  return noted(app, "the session is moving: wait for it") if app.moving
 
   server = app.server
   id = app.id
+  moving = app.with(moving: true)
   case kind
     Picker.Kind.Tree ->
       at = entry.unwrap_or(0)
-      effect(app, TUI.Cmd.Run(-> { Msg.Moved(Client.branch(server, id, at)) }))
-    _ -> effect(app, TUI.Cmd.Run(-> { Msg.Moved(Client.fork(server, id, entry)) }))
+      effect(moving, TUI.Cmd.Run(-> { Msg.Moved(Client.branch(server, id, at)) }))
+    _ -> effect(moving, TUI.Cmd.Run(-> { Msg.Moved(Client.fork(server, id, entry)) }))
   end
 end
 
@@ -652,14 +698,12 @@ end
 def moved(app: Model, result: Result[Protocol.Branched]) -> Model
   case result
     ok(done) ->
-      opened = tried(app, resume(fresh(app), done.id))
+      opened = tried(app.with(moving: false), resume(fresh(app), done.id))
       return opened if done.text.empty?
 
-      noted(
-        opened.with(prompt: done.text, cursor: done.text.length),
-        "went back before a message: it is in the prompt",
-      )
-    error(e) -> noted(app, "error: #{e.message}")
+      filled = opened.with(prompt: done.text, cursor: done.text.length, prefilled: true)
+      noted(filled, "went back before a message: it is in the prompt (typing replaces it, an arrow keeps it)")
+    error(e) -> noted(app.with(moving: false), "error: #{e.message}")
   end
 end
 

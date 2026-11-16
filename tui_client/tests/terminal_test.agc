@@ -9,11 +9,14 @@ import App from "../src/app"
 import Approvals from "../src/approvals"
 import Args from "../src/args"
 
+SSE_HEADERS = [HTTP.Header(name: "Content-Type", value: "text/event-stream")]
+
 struct Rig
   fake: TUI.Testing.Fake
   feed: Channel[Client.Item]
-  # The method, path and body of each call the app made on the server.
+  # The method and path of each call the app made on the server, and the body of each, in the same order.
   requests: Channel[String]
+  bodies: Channel[String]
 end
 
 def test_a_tiny_terminal_draws_the_panel_and_a_resize_redraws_it() -> Result[Void] = within(24, 6, &tiny)
@@ -28,10 +31,7 @@ def tiny(rig: Rig) -> Result[Void]
   try shows(rig, "Tab to answer")
   try Test.error?(rig.requests.recv(0))
   try press(rig, TUI.Event.Key(TUI.Key.Ctrl("y"), TUI.Mods()))
-  Test.eq(
-    rig.requests.recv(2000),
-    ok("POST #{Protocol.approval_path("s1", "a1")} #{approve(Protocol.Decision.Allow)}"),
-  )
+  answered(rig, Protocol.Decision.Allow)
 end
 
 def test_clicks_on_the_content_or_twice_on_the_tab_answer_nothing() -> Result[Void] = within(80, 24, &clicked)
@@ -74,10 +74,7 @@ def typed(rig: Rig) -> Result[Void]
   try Test.assert(rows.any? { |row| row.include?("y allow · n deny") }, "the panel still waits")
   try Test.error?(rig.requests.recv(0))
   try press(rig, TUI.Event.Char("A", TUI.Mods()))
-  Test.eq(
-    rig.requests.recv(2000),
-    ok("POST #{Protocol.approval_path("s1", "a1")} #{approve(Protocol.Decision.AllowSession)}"),
-  )
+  answered(rig, Protocol.Decision.AllowSession)
 end
 
 def test_escape_while_idle_sends_no_stop() -> Result[Void] = within(80, 24, &idle_escape)
@@ -90,10 +87,68 @@ def idle_escape(rig: Rig) -> Result[Void]
   Test.error?(rig.requests.recv(0))
 end
 
+# /tree opens the picker of the session's tree; Enter on a message asks for the branch, and the session is drawn again
+# from its history with exactly one new event stream, the message it went back before in the prompt.
+def test_a_move_opens_one_new_stream_and_fills_the_prompt() -> Result[Void] = within(80, 24, &moved, tree_replies())
+
+def moved(rig: Rig) -> Result[Void]
+  for char in "/tree".split("")
+    try press(rig, TUI.Event.Char(char, TUI.Mods()))
+  end
+
+  try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+  try shows(rig, "2. ├   Two.")
+  try press(rig, TUI.Event.Key(TUI.Key.Down, TUI.Mods()))
+  try press(rig, TUI.Event.Key(TUI.Key.Down, TUI.Mods()))
+  try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+  rows = try shows(rig, "went back before a message")
+  try Test.assert(rows.any? { |row| row.strip == "Two." }, "the message is in the prompt: #{rows}")
+  calls = ["GET #{Protocol.tree_path("s1")}", "POST #{Protocol.branch_path("s1")}"]
+  calls = calls + ["GET #{Protocol.session_path("s1")}", "GET #{Protocol.events_path("s1")}"]
+  for call in calls
+    try Test.eq(rig.requests.recv(2000), ok(call))
+  end
+
+  Test.error?(rig.requests.recv(500))
+end
+
 private
 
-# The body of an answer to the approval.
-def approve(decision: Protocol.Decision) -> String = Protocol.encode_approve(Protocol.Approve(decision: decision))
+def tree_replies() -> Map[String, String]
+  nodes = [
+    Protocol.TreeNode(id: 1, text: "One.", answer: "A1", last: 7, active: true),
+    Protocol.TreeNode(id: 8, parent: some(1), text: "Two.", answer: "A2", last: 14),
+    Protocol.TreeNode(id: 15, parent: some(1), text: "Three.", last: 20, active: true),
+  ]
+
+  history = [
+    Protocol.Message(role: Protocol.Role.User, text: "One."),
+    Protocol.Message(role: Protocol.Role.Assistant, text: "A1"),
+  ]
+
+  session = Protocol.Session(
+    id: "s1",
+    cwd: "/w",
+    model: "m",
+    last_event_id: 9,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: history,
+  )
+
+  {
+    "GET #{Protocol.tree_path("s1")}": Protocol.encode_session_tree(Protocol.SessionTree(nodes: nodes)),
+    "POST #{Protocol.branch_path("s1")}": Protocol.encode_branched(Protocol.Branched(id: "s1", text: "Two.")),
+    "GET #{Protocol.session_path("s1")}": Protocol.encode_session(session),
+  }
+end
+
+# The app sent the decision to the approval a1.
+def answered(rig: Rig, decision: Protocol.Decision) -> Result[Void]
+  try Test.eq(rig.requests.recv(2000), ok("POST #{Protocol.approval_path("s1", "a1")}"))
+  Test.eq(rig.bodies.recv(2000), ok(Protocol.encode_approve(Protocol.Approve(decision: decision))))
+end
 
 def options() -> Args.Options
   Args.Options(
@@ -108,13 +163,23 @@ def options() -> Args.Options
 end
 
 # Runs `body` with the app on a fake terminal of `width` by `height` and a server that records its calls, then ends
-# the app with Ctrl-C.
-def within(width: Int, height: Int, body: Fn[Rig, Result[Void]]) -> Result[Void]
+# the app with Ctrl-C. The server answers a call with its body in `replies` ("{}" when none), and an event stream
+# with one that stays open until the end.
+def within(width: Int, height: Int, body: Fn[Rig, Result[Void]], replies: Map[String, String] = {}) -> Result[Void]
   requests: Channel[String] = Channel.new(32)
+  streams: Channel[Channel[Bytes]] = Channel.new(8)
+  bodies: Channel[String] = Channel.new(32)
   handler = ->(request: HTTP.Request, sent: HTTP.RequestBody) {
-    seen = String.from_bytes(HTTP.read_all(sent, 4096).unwrap_or("".bytes)).unwrap_or("")
-    _ = requests.send("#{request.method} #{request.path} #{seen}", 0)
-    ok(HTTP.Answer.Whole(HTTP.Response(status: 200, headers: [], body: "{}".bytes)))
+    call = "#{request.method} #{request.path}"
+    _ = requests.send(call, 0)
+    _ = bodies.send(String.from_bytes(HTTP.read_all(sent, 4096).unwrap_or("".bytes)).unwrap_or(""), 0)
+    if request.path.end_with?("/events")
+      out: Channel[Bytes] = Channel.new(1)
+      _ = streams.send(out, 0)
+      return ok(HTTP.Answer.Stream(HTTP.StreamResponse(status: 200, headers: SSE_HEADERS, body: out)))
+    end
+
+    ok(HTTP.Answer.Whole(HTTP.Response(status: 200, headers: [], body: replies.get(call, "{}").bytes)))
   }
 
   http = try HTTP.serve("127.0.0.1", 0, handler)
@@ -132,10 +197,17 @@ def within(width: Int, height: Int, body: Fn[Rig, Result[Void]]) -> Result[Void]
 
   fake = TUI.Testing.fake(width, height)
   runner = Task.spawn(-> { App.drive(TUI.Testing.backend(fake), model) })
-  result = body.call(Rig(fake: fake, feed: feed, requests: requests))
+  result = body.call(Rig(fake: fake, feed: feed, requests: requests, bodies: bodies))
   _ = fake.events.send(TUI.Event.Key(TUI.Key.Ctrl("c"), TUI.Mods()), 1000)
-  feed.close
   _ = Task.await(runner)
+  feed.close
+  while true
+    case streams.recv(0)
+      ok(out) -> out.close
+      error(_) -> break
+    end
+  end
+
   HTTP.close_server(http)
   _ = HTTP.wait(http)
   result

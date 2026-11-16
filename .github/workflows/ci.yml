@@ -71,6 +71,11 @@ jobs:
 
       - run: ${{ matrix.run }}
 
+      # The cache is saved after the last step: entries that are over a week old are dropped first, so it does not only
+      # grow (a file that is still used is compiled again and is new).
+      - name: Prune the compile caches
+        run: find . -path '*/_build/*' -not -path './*/deps/*' -type f -mtime +7 -delete
+
   # The llm tests against a real llama-server with Qwen2.5-0.5B on the runner's CPU. llama.cpp and the model are cached
   # by the hash of their fetch scripts, which check the sha256 of a download and skip one they already have.
   llama:

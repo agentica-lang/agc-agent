@@ -80,7 +80,8 @@ end
 
 ## A user message of `SessionTree`. `id` is its entry: a branch from it goes back before the message. `last` is the
 ## entry that ends its turn: a branch from there goes on after the turn. `parent` is the message before it on its
-## branch, none for a first one; `active` marks the messages of the branch the session is on.
+## branch, none for a first one; `active` marks the messages of the branch the session is on. `answer` is the start of
+## the turn's answer, its first line cut to 200 characters.
 struct TreeNode
   id: Int
   parent: Optional[Int] = none

@@ -21,6 +21,8 @@ TITLE_LINES = 64
 TITLE_BYTES = 262_144
 MAX_LINE_BYTES = 16_777_216
 MAX_WRITE_BYTES = 1_048_576
+## A node of the tree has this much of its answer.
+ANSWER_CHARS = 200
 
 struct Header
   id: String
@@ -72,6 +74,32 @@ end
 struct Point
   leaf: Int
   text: String = ""
+end
+
+## A record of the file: its line number is its entry, `parent` the entry it follows (the session's line for the
+## first). `text` is what the tree shows of it; `json` and `line` are kept only for a load or a copy.
+struct Record
+  at: Int
+  kind: String
+  parent: Int
+  text: String = ""
+  json: Optional[JSON.Value] = none
+  line: String = ""
+end
+
+## The lines of a file as a tree. `start` is the line of the session, `records` every record but the branches by its
+## entry, `order` their entries in the file, `branches` the entry each branch line names, and `leaf` the entry the
+## next record follows. `lines` and `size` are how much of the file it read.
+struct Entries
+  header: Header
+  start: Int
+  records: Map[Int, Record] = {}
+  order: List[Int] = []
+  branches: Map[Int, Int] = {}
+  leaf: Int
+  skipped: Int = 0
+  lines: Int = 0
+  size: Int = 0
 end
 
 ## What a list of the sessions shows of one file: the model of its last `settings` record, and its first user message.
@@ -200,16 +228,28 @@ def append_branch(path: String, leaf: Int, until: Int) -> Result[Void]
   write(path, branch + try line({"type": JSON.from("ids"), "until": JSON.from(until)}))
 end
 
-## The user messages of every branch.
-def tree(path: String) -> Result[Protocol.SessionTree]
-  entries = try read_entries(path)
-  ok(Protocol.SessionTree(nodes: turns(entries)))
+## The tree of the file, reading only the lines after those `known` read when the file grew since: the session's
+## file only grows, and only its session writes it. A last line with no newline yet is left for a later read.
+def entries(path: String, known: Optional[Entries] = none) -> Result[Entries]
+  size = (try File.stat(path)).size_bytes
+  for old in option_list(known)
+    return ok(old) if old.size == size
+    if old.size < size
+      added = ended(try File.foreach(path, MAX_LINE_BYTES).drop(old.lines).to_a, size - old.size)
+      return ok(extended(old, added, false).with(size: old.size + bytes_of(added)))
+    end
+  end
+
+  lines = ended(try File.foreach(path, MAX_LINE_BYTES).to_a, size)
+  ok((try entries_of(path, lines, false)).with(size: bytes_of(lines)))
 end
+
+## The user messages of every branch.
+def tree(entries: Entries) -> Protocol.SessionTree = Protocol.SessionTree(nodes: turns(entries))
 
 ## Where a branch from `entry` starts: before it when it is a user message, at it when it ends a turn (`last` of the
 ## tree) or is the session's first line; the end of the current branch when none.
-def point(path: String, entry: Optional[Int]) -> Result[Point]
-  entries = try read_entries(path)
+def point(entries: Entries, entry: Optional[Int]) -> Result[Point]
   return ok(Point(leaf: entries.leaf)) if entry.none?
 
   at = entry.unwrap!
@@ -256,7 +296,7 @@ end
 def load(path: String, leaf: Optional[Int] = none) -> Result[Saved]
   lines = try File.foreach(path, MAX_LINE_BYTES).to_a
   size = (try File.stat(path)).size_bytes
-  entries = try entries_of(path, lines)
+  entries = try entries_of(path, lines, true)
   end_at = leaf.unwrap_or(entries.leaf)
   return error("no entry #{end_at}", kind: Protocol.KIND_INVALID) if not entry?(entries, end_at)
 
@@ -270,7 +310,7 @@ def load(path: String, leaf: Optional[Int] = none) -> Result[Saved]
   )
 
   for record in branch(entries, end_at)
-    case added(saved, record.json)
+    case added(saved, json_of(record))
       ok(next_saved) -> saved = next_saved
       error(_) -> saved = saved.with(skipped: saved.skipped + 1)
     end
@@ -301,59 +341,59 @@ end
 
 private
 
-# A record of the file: its line number is its entry, `parent` the entry it follows (the session's line for the first).
-struct Record
-  at: Int
-  kind: String
-  json: JSON.Value
-  line: String
-  parent: Int
-end
-
 struct Settings
   model: Optional[String] = none
   effort: Optional[String] = none
 end
 
-# The lines of a file as a tree. `start` is the line of the session, `records` every record but the branches by its
-# entry, `order` their entries in the file, and `leaf` the entry the next record follows.
-struct Entries
-  header: Header
-  start: Int
-  records: Map[Int, Record]
-  order: List[Int]
-  leaf: Int
-  skipped: Int
-end
+# Every record of the file with its JSON and its line, for a load or a copy.
+def read_entries(path: String) -> Result[Entries] = entries_of(path, try File.foreach(path, MAX_LINE_BYTES).to_a, true)
 
-def read_entries(path: String) -> Result[Entries] = entries_of(path, try File.foreach(path, MAX_LINE_BYTES).to_a)
-
-# A line that does not parse, has no `type` or is a branch to an entry that is not before it is skipped.
-def entries_of(path: String, lines: List[String]) -> Result[Entries]
-  header: Optional[Header] = none
-  start = 0
-  records: Map[Int, Record] = {}
-  order: List[Int] = []
-  branches: Map[Int, Int] = {}
-  leaf = 0
+# A line that does not parse, has no `type` or is a branch to an entry that is not before it is skipped. Without
+# `whole`, a record keeps only its `text`.
+def entries_of(path: String, lines: List[String], whole: Bool) -> Result[Entries]
   skipped = 0
   for at in 0...lines.size
-    text = lines[at]
+    next if lines[at].empty?
+
+    case JSON.parse(lines[at])
+      ok(json) ->
+        header = try decode_header(json)
+        started = Entries(header: header, start: at, leaf: at, skipped: skipped, lines: at + 1)
+        return ok(extended(started, lines.drop(at + 1), whole))
+      error(_) -> skipped = skipped + 1
+    end
+  end
+
+  error("#{path}: no session record")
+end
+
+# The entries with the lines that follow the ones they read.
+def extended(entries: Entries, lines: List[String], whole: Bool) -> Entries
+  records = entries.records
+  order = entries.order
+  branches = entries.branches
+  leaf = entries.leaf
+  skipped = entries.skipped
+  for i in 0...lines.size
+    at = entries.lines + i
+    text = lines[i]
     next if text.empty?
 
     case JSON.parse(text)
-      ok(json) if header.none? ->
-        header = some(try decode_header(json))
-        start = at
-        leaf = at
       ok(json) ->
         kind = field(json, "type").unwrap_or("")
-        target = branch_target(json, at, start, records, branches)
+        target = branch_target(json, at, entries.start, records, branches)
         if kind == "branch" and target.some?
           leaf = target.unwrap!
           branches = branches.put(at, leaf)
         elsif kind != "" and kind != "branch"
-          records = records.put(at, Record(at: at, kind: kind, json: json, line: text, parent: leaf))
+          record = Record(at: at, kind: kind, parent: leaf, text: record_text(kind, json))
+          if whole
+            record = record.with(json: some(json), line: text)
+          end
+
+          records = records.put(at, record)
           order = order.push(at)
           leaf = at
         else
@@ -364,9 +404,35 @@ def entries_of(path: String, lines: List[String]) -> Result[Entries]
     end
   end
 
-  case header
-    some(h) -> ok(Entries(header: h, start: start, records: records, order: order, leaf: leaf, skipped: skipped))
-    none -> error("#{path}: no session record")
+  entries.with(
+    records: records,
+    order: order,
+    branches: branches,
+    leaf: leaf,
+    skipped: skipped,
+    lines: entries.lines + lines.size,
+  )
+end
+
+# The lines that end in a newline, of lines that take `bytes` with their newlines.
+def ended(lines: List[String], bytes: Int) -> List[String]
+  return lines if bytes_of(lines) == bytes
+
+  lines.take(lines.size - 1)
+end
+
+def clipped(text: String) -> String = text.slice(0, [text.length, ANSWER_CHARS].min.unwrap!)
+
+def bytes_of(lines: List[String]) -> Int = lines.map { |text| text.bytesize + 1 }.sum
+
+# What the tree keeps of a record: the text of a user message (a branch puts it back in the editor), the first line
+# of an answer cut to ANSWER_CHARS, the name of an event.
+def record_text(kind: String, json: JSON.Value) -> String
+  case kind
+    "user" -> optional_string(json, "typed").unwrap_or(field(json, "text").unwrap_or(""))
+    "answer" -> clipped(field(json, "text").unwrap_or("").split("\n")[0])
+    "event" -> field(json, "name").unwrap_or("")
+    _ -> ""
   end
 end
 
@@ -386,6 +452,8 @@ def branch_target(
 end
 
 def entry?(entries: Entries, at: Int) -> Bool = at == entries.start or entries.records.has_key?(at)
+
+def json_of(record: Record) -> JSON.Value = record.json.unwrap_or(JSON.null())
 
 # The records from the session's line to `leaf`, in order.
 def branch(entries: Entries, leaf: Int) -> List[Record]
@@ -414,9 +482,13 @@ def totals(saved: Saved, entries: Entries) -> Saved
     record = entries.records[at]
     case record.kind
       "event" ->
-        name = field(record.json, "name").unwrap_or("")
+        name = field(json_of(record), "name").unwrap_or("")
         if Protocol.parse_kind(name).ok?
-          last_id = [last_id, JSON.int(JSON.get(record.json, "id").unwrap_or(JSON.null())).unwrap_or(0)].max.unwrap!
+          last_id = [
+            last_id,
+            JSON.int(JSON.get(json_of(record), "id").unwrap_or(JSON.null())).unwrap_or(0),
+          ].max.unwrap!
+
           reserved = 0
         end
 
@@ -429,12 +501,12 @@ def totals(saved: Saved, entries: Entries) -> Saved
         end
 
         if name == "usage"
-          usage = some(record.json)
+          usage = some(json_of(record))
         end
 
       "user" -> users = users + 1
-      "ids" -> reserved = JSON.int(JSON.get(record.json, "until").unwrap_or(JSON.null())).unwrap_or(reserved)
-      "settings" -> settings = settings_of(record.json).unwrap_or(settings)
+      "ids" -> reserved = JSON.int(JSON.get(json_of(record), "until").unwrap_or(JSON.null())).unwrap_or(reserved)
+      "settings" -> settings = settings_of(json_of(record)).unwrap_or(settings)
       _ -> nil
     end
   end
@@ -486,16 +558,16 @@ def node(entries: Entries, children: Map[Int, List[Int]], active: Set[Int], at: 
 
     last = following[0]
     if entries.records[last].kind == "answer"
-      answer = field(entries.records[last].json, "text").unwrap_or("")
+      answer = entries.records[last].text
     end
 
-    break if field(entries.records[last].json, "name") == ok("turn_finished")
+    break if entries.records[last].kind == "event" and entries.records[last].text == "turn_finished"
   end
 
   Protocol.TreeNode(
     id: at,
     parent: user_before(entries, record.parent),
-    text: optional_string(record.json, "typed").unwrap_or(field(record.json, "text").unwrap_or("")),
+    text: record.text,
     answer: answer,
     last: last,
     active: active.include?(at),

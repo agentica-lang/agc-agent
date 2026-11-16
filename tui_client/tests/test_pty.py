@@ -100,9 +100,15 @@ def screen_rows(output: bytes, rows: int = ROWS, cols: int = COLS) -> list[str]:
     return ["".join(line).rstrip() for line in grid]
 
 
+KEPT_ENV = ("PATH", "LANG", "TMPDIR", "AGENTICA")
+
+
 def env_for(base: Path, model: "FakeModel") -> dict[str, str]:
+    """Only what the programs need from the host, so that no FINN_*, ANTHROPIC_* or other variable of the developer
+    reaches them: a test never calls a real API or reads a real config."""
+    kept = {key: value for key, value in os.environ.items() if key in KEPT_ENV or key.startswith("LC_")}
     return dict(
-        os.environ,
+        kept,
         TERM="xterm",
         FINN_BASE_URL=model.url,
         FINN_MODEL="test-model",
