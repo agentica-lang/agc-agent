@@ -36,6 +36,9 @@ KIND_APPROVAL_RESOLVED = "approval.resolved"
 ## A shell command that a deny rule of the config refuses (`403`).
 KIND_SHELL_DENIED = "shell.denied"
 
+## A request that would start work, while the server stops (`503`): reads, answers to approvals and stops still work.
+KIND_SERVER_STOPPING = "server.stopping"
+
 ## The kinds, for `Protocol.wire_shape`.
 def shape() -> List[String]
   [
@@ -51,5 +54,6 @@ def shape() -> List[String]
     KIND_APPROVAL_NOT_FOUND,
     KIND_APPROVAL_RESOLVED,
     KIND_SHELL_DENIED,
+    KIND_SERVER_STOPPING,
   ]
 end

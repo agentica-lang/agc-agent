@@ -269,6 +269,137 @@ def test_agents_md_is_read_only_inside_the_folder() -> Result[Void]
   end
 end
 
+# A stop that does not cancel waits for the running turn; the sessions are flushed, the server file goes and the port
+# is closed.
+def test_a_stop_waits_for_the_running_turn_and_removes_the_server_file() -> Result[Void]
+  H.using(H.Setup(replies: ["text.sse@hold"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hello.")
+    a = try H.until(a, Protocol.EventKind.TurnStarted)
+    status = try Protocol.decode_server_status((try H.get(h, Protocol.SERVER_PATH)).text)
+    try Test.eq([status.sessions, status.running_turns, status.pid], [1, 1, System.pid])
+    asked = try H.post(
+      h,
+      Protocol.SERVER_STOP_PATH,
+      Protocol.encode_stop_server(Protocol.StopServer(now: some(false))),
+    )
+
+    try Test.eq(asked.status, 200)
+    try Test.eq(Server.stop_requested(h.server), false)
+    stopping = Task.spawn(-> { Server.shutdown(h.server, false) })
+    H.release(h)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    Task.await(stopping)
+    try Test.eq(H.stop_reason(a), "end_turn")
+    H.close(a)
+    try Test.assert(not File.stat("#{h.state_dir}/server.json").ok?, "server.json is removed")
+    Test.assert(not H.get(h, Protocol.HEALTH_PATH).ok?, "the port is closed")
+  end
+end
+
+def test_a_stop_with_now_cancels_the_running_turn() -> Result[Void]
+  H.using(H.Setup(replies: ["text.sse@hold"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hello.")
+    a = try H.until(a, Protocol.EventKind.TurnStarted)
+    asked = try H.post(h, Protocol.SERVER_STOP_PATH, Protocol.encode_stop_server(Protocol.StopServer(now: some(true))))
+    try Test.eq(asked.status, 200)
+    try Test.eq(Server.stop_requested(h.server), true)
+    Server.shutdown(h.server, true)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.stop_reason(a), "cancelled")
+    Test.assert(not File.stat("#{h.state_dir}/server.json").ok?, "server.json is removed")
+  end
+end
+
+# The stop keeps answering while the turn runs, refuses new work with 503, waits for the turn (longer than the time the
+# connections get at the end) and shows its `turn_finished` to the client that watches.
+def test_a_stop_drains_a_turn_longer_than_the_shutdown_time_and_refuses_new_work() -> Result[Void]
+  H.using(H.Setup(replies: ["text.sse@hold"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hello.")
+    a = try H.until(a, Protocol.EventKind.TurnStarted)
+    _ = try H.post(h, Protocol.SERVER_STOP_PATH, Protocol.encode_stop_server(Protocol.StopServer(now: some(false))))
+    stopping = Task.spawn(-> { Server.shutdown(h.server, Server.stop_requested(h.server), 300) })
+    Task.sleep(700)
+    status = try Protocol.decode_server_status((try H.get(h, Protocol.SERVER_PATH)).text)
+    try Test.eq(status.running_turns, 1)
+    refused = try H.post(
+      h,
+      Protocol.messages_path(id),
+      Protocol.encode_send_message(Protocol.SendMessage(text: "More.")),
+    )
+
+    try Test.eq(refused.status, 503)
+    try Test.eq((try Protocol.decode_failure(refused.text)).kind, Protocol.KIND_SERVER_STOPPING)
+    try Test.eq((try H.post(h, Protocol.SESSIONS_PATH, "{}")).status, 503)
+    try Test.eq((try H.get(h, Protocol.session_path(id))).status, 200)
+    H.release(h)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    Task.await(stopping)
+    H.close(a)
+    try Test.eq(H.stop_reason(a), "end_turn")
+    Test.assert(not File.stat("#{h.state_dir}/server.json").ok?, "server.json is removed")
+  end
+end
+
+# A second stop, with `now`, while the first waits for the turn, cancels it.
+def test_a_stop_that_waits_is_escalated_by_a_stop_with_now() -> Result[Void]
+  H.using(H.Setup(replies: ["text.sse@hold"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hello.")
+    a = try H.until(a, Protocol.EventKind.TurnStarted)
+    _ = try H.post(h, Protocol.SERVER_STOP_PATH, Protocol.encode_stop_server(Protocol.StopServer(now: some(false))))
+    stopping = Task.spawn(-> { Server.shutdown(h.server, Server.stop_requested(h.server)) })
+    status = try Protocol.decode_server_status((try H.get(h, Protocol.SERVER_PATH)).text)
+    try Test.eq(status.running_turns, 1)
+    again = try H.post(h, Protocol.SERVER_STOP_PATH, Protocol.encode_stop_server(Protocol.StopServer(now: some(true))))
+    try Test.eq(again.status, 200)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    Task.await(stopping)
+    H.close(a)
+    Test.eq(H.stop_reason(a), "cancelled")
+  end
+end
+
+# A turn that waits for an approval counts as ended: the stop does not wait for an answer nobody gives.
+def test_a_stop_does_not_wait_for_an_approval() -> Result[Void]
+  H.using(H.Setup(replies: ["write_file.sse", "text.sse"], drain_ms: 30_000)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    Server.shutdown(h.server, false)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    Test.eq(H.stop_reason(a), "cancelled")
+  end
+end
+
+# `stop_requested` waits again after its time, so a server never stops by itself.
+def test_stop_requested_waits_again_after_its_time() -> Result[Void]
+  H.using(H.Setup(replies: [])) do |h|
+    answers: Channel[Bool] = Channel.new(1)
+    waiting = Task.spawn(
+      -> {
+        _ = answers.send(Server.stop_requested(h.server, 20), 5000)
+        ok()
+      },
+    )
+
+    Task.sleep(150)
+    try Test.error?(answers.recv(0))
+    Server.request_stop(h.server, true)
+    try Test.eq(answers.recv(2000), ok(true))
+    Task.await(waiting)
+  end
+end
+
 def test_the_server_keeps_its_state_folder_private_and_runs_once() -> Result[Void]
   H.using(H.Setup(replies: [])) do |h|
     health = Protocol.HEALTH_PATH

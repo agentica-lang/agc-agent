@@ -27,6 +27,24 @@ def health(server: Server) -> Result[Protocol.Health]
   Protocol.decode_health(body)
 end
 
+## What the server does now: its pid and version, when it started, and its sessions and turns.
+def server_status(server: Server) -> Result[Protocol.ServerStatus]
+  body = try call_within(server, "GET", Protocol.SERVER_PATH, "", PROBE_TIMEOUT_MS)
+  Protocol.decode_server_status(body)
+end
+
+## Asks the server to stop: it answers at once and goes once its turns end (`now` cancels them).
+def stop_server(server: Server, now: Bool) -> Result[Void]
+  _ = try call(
+    server,
+    "POST",
+    Protocol.SERVER_STOP_PATH,
+    Protocol.encode_stop_server(Protocol.StopServer(now: some(now))),
+  )
+
+  ok()
+end
+
 def create_session(server: Server, request: Protocol.NewSession) -> Result[String]
   body = try call(server, "POST", Protocol.SESSIONS_PATH, Protocol.encode_new_session(request))
   created = try Protocol.decode_session_created(body)
