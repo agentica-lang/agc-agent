@@ -109,8 +109,9 @@ peer:
 test: check unit smoke pty peer
 
 # The llm tests against a real llama-server with Qwen2.5-0.5B (fetched and checked by sha256 first), or the one at
-# LLAMA_URL.
+# LLAMA_URL. Local only, never in CI.
 smoke-llama:
+	@if [ -n "$$CI" ]; then echo "smoke-llama: refused in CI" >&2; exit 1; fi
 	if [ -z "$$LLAMA_URL" ]; then scripts/fetch-llama.sh && scripts/fetch-model.sh; fi
 	mkdir -p llm/_build/llama-logs
 	export LLAMA_SERVER='$(LLAMA_SERVER)' LLAMA_MODEL='$(LLAMA_MODEL)' LLAMA_LOG_DIR='$(CURDIR)/llm/_build/llama-logs'; \
