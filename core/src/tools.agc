@@ -30,11 +30,19 @@ export Approval.Rules
 PATCH = Patch.NAME
 
 ## The context of a session in `cwd`: the real path of the folder, where bash reads its few environment variables, and
-## the approval rules. Change the rules with `ctx.with(rules: ...)`.
-def context(cwd: String, env: Fn[String, Result[String]], rules: Approval.Rules) -> Result[Spec.Context]
+## the approval rules, and the tools `more` after the base ones. Change the rules with `ctx.with(rules: ...)`.
+def context(
+  cwd: String,
+  env: Fn[String, Result[String]],
+  rules: Approval.Rules,
+  more: List[Spec.Tool] = [],
+) -> Result[Spec.Context]
   root = try Sandbox.open(cwd)
-  ok(Spec.Context(root: root, env: env, rules: rules))
+  ok(Spec.Context(root: root, env: env, rules: rules, tools: more))
 end
+
+## The tools a session offers the model: the base ones, then those of its context.
+def offered(ctx: Spec.Context) -> List[Spec.Tool] = all() + ctx.tools
 
 def all() -> List[Spec.Tool]
   [
@@ -111,7 +119,7 @@ end
 
 ## Runs the call. A failure, a refused path and a failed command are an output with `is_error`.
 def run(ctx: Spec.Context, name: String, input: JSON.Value) -> Spec.Output
-  case find(name)
+  case offered_tool(ctx, name)
     ok(tool) -> Spec.output(tool.run(ctx, input))
     error(e) -> Spec.Output(text: e.message, is_error: true)
   end
@@ -121,7 +129,7 @@ end
 def verdict(ctx: Spec.Context, name: String, input: JSON.Value) -> Approval.Verdict
   return Patch.verdict(ctx, input) if name == Patch.NAME
 
-  case find(name)
+  case offered_tool(ctx, name)
     ok(tool) -> verdict_of(ctx, tool, input)
     error(_) -> Approval.Verdict.Deny
   end
@@ -129,7 +137,7 @@ end
 
 ## What a call touches, for the approval preview and the notices: the path or the command.
 def target(ctx: Spec.Context, name: String, input: JSON.Value) -> Result[String]
-  tool = try find(name)
+  tool = try offered_tool(ctx, name)
   tool.target(ctx, input)
 end
 
@@ -158,6 +166,13 @@ end
 private
 
 DETAIL_CHARS = 4000
+
+def offered_tool(ctx: Spec.Context, name: String) -> Result[Spec.Tool]
+  case (ctx.tools.find { |tool| tool.name == name })
+    ok(tool) -> ok(tool)
+    error(_) -> find(name)
+  end
+end
 
 def cut(text: String) -> String
   return text if text.length <= DETAIL_CHARS

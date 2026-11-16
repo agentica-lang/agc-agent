@@ -6,6 +6,7 @@ import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Args from "args"
 import Inbox from "inbox"
+import Markdown from "markdown"
 import Prompt from "prompt"
 import Transcript from "transcript"
 import Width from "width"
@@ -17,7 +18,7 @@ RECONNECT_MS = 300
 MAX_RECONNECTS = 3
 MAX_RESYNCS = 2
 SCROLL_STEP = 3
-HINTS = "Enter send · Ctrl+J newline · Esc stop · PgUp/PgDn scroll · Ctrl+C quit"
+HINTS = "Enter send · ^J newline · ^T thinking · Esc stop · PgUp/PgDn · ^C quit"
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
 def run(screen: TUI.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
@@ -26,7 +27,7 @@ def run(screen: TUI.Screen, server: Client.Server, options: Args.Options) -> Res
   signals = try System.subscribe([System.Signal.Term, System.Signal.Hup])
   _ = Task.spawn(-> { watch_signals(signals, inbox) })
   _ = Task.spawn(-> { read_keys(screen, inbox) })
-  app = try open(App(screen: screen, server: server, id: "", inbox: inbox), options)
+  app = try open(App(screen: screen, server: server, id: "", inbox: inbox, thinking: options.thinking), options)
   loop(app)
 end
 
@@ -51,6 +52,8 @@ struct App
   reconnects: Int = 0
   ## `resync` events in a row, with no other event between.
   resyncs: Int = 0
+  ## The thinking of the model is drawn.
+  thinking: Bool = false
   exit: Optional[Int] = none
 end
 
@@ -160,6 +163,7 @@ def on_key(app: App, event: TUI.Event) -> App
   case event
     TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(exit: some(0))
     TUI.Event.Key(TUI.Key.Enter, _) -> send(app)
+    TUI.Event.Key(TUI.Key.Ctrl("t"), _) -> app.with(thinking: not app.thinking)
     TUI.Event.Key(TUI.Key.Ctrl("j"), _) -> app.with(prompt: Prompt.insert(app.prompt, "\n"))
     TUI.Event.Key(TUI.Key.Backspace, _) -> app.with(prompt: Prompt.backspace(app.prompt))
     TUI.Event.Key(TUI.Key.Escape, _) -> stop(app)
@@ -219,6 +223,8 @@ def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
   case event
     Protocol.Event.TextDelta(delta) ->
       shown.with(entries: Transcript.add(shown.entries, Transcript.Kind.Assistant, delta.text))
+    Protocol.Event.ThinkingDelta(delta) ->
+      shown.with(entries: Transcript.add(shown.entries, Transcript.Kind.Thinking, delta.text))
     Protocol.Event.TurnStarted(_) -> shown.with(turn: true)
     Protocol.Event.TurnFinished(done) -> finished(shown.with(turn: false, stopping: false), done.stop_reason)
     Protocol.Event.ApprovalRequested(request) ->
@@ -258,11 +264,16 @@ def draw(app: App) -> Result[Void]
   try TUI.clear(screen)
   prompt = Prompt.rows(app.prompt, width)
   area = [height - prompt.size - 1, 0].max.unwrap!
-  lines = Transcript.lines(app.entries, width)
+  lines = Transcript.lines(app.entries, width, app.thinking)
   top = [lines.size - area - [app.scroll, [lines.size - area, 0].max.unwrap!].min.unwrap!, 0].max.unwrap!
   y = 0
   for line in lines.drop(top).take(area)
-    _ = try TUI.write(screen, 0, y, line.text, style(line.kind))
+    x = 0
+    for span in line.spans
+      written = try TUI.write(screen, x, y, span.text, style(line.kind, span.look))
+      x = x + written
+    end
+
     y = y + 1
   end
 
@@ -290,11 +301,17 @@ def status(app: App, width: Int) -> String
   text + " " * [width - Width.text(text), 0].max.unwrap!
 end
 
-def style(kind: Transcript.Kind) -> TUI.Style
+def style(kind: Transcript.Kind, look: Markdown.Look) -> TUI.Style
   case kind
     Transcript.Kind.User -> TUI.Style(fg: TUI.Color.Cyan, attrs: [TUI.Attr.Bold])
     Transcript.Kind.Notice -> TUI.Style(fg: TUI.Color.Yellow)
     Transcript.Kind.Thinking -> TUI.Style(attrs: [TUI.Attr.Dim])
-    Transcript.Kind.Assistant -> TUI.Style()
+    Transcript.Kind.Assistant ->
+      case look
+        Markdown.Look.Plain -> TUI.Style()
+        Markdown.Look.Bold -> TUI.Style(attrs: [TUI.Attr.Bold])
+        Markdown.Look.Heading -> TUI.Style(fg: TUI.Color.Magenta, attrs: [TUI.Attr.Bold, TUI.Attr.Underline])
+        Markdown.Look.Code -> TUI.Style(fg: TUI.Color.Green)
+      end
   end
 end

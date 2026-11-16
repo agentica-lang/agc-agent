@@ -8,6 +8,8 @@ struct Context
   root: String
   env: Fn[String, Result[String]]
   rules: Approval.Rules
+  ## The tools after the base ones (MCP).
+  tools: List[Tool] = []
 end
 
 struct Output

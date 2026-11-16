@@ -261,6 +261,22 @@ def test_an_auth_token_is_a_bearer_with_the_oauth_beta() -> Result[Void]
   Test.eq(names.map { |n| HTTP.header_values(both.headers, n) }, [[KEY], [], [], ["2026-10-21"]])
 end
 
+# A beta of the caller is added to the OAuth one, not put in its place.
+def test_a_caller_beta_joins_the_oauth_beta() -> Result[Void]
+  fake = try Fake.start([try Fake.sse("anthropic/text.sse")])
+  provider = LLM.anthropic(fake.url, "", LLM.Options(timeout_ms: 5000), auth_token: "oat-test")
+  request = LLM.Request(
+    model: LLM.ANTHROPIC_MODEL,
+    messages: [Ev.user("Say hello.")],
+    headers: {"Anthropic-Beta": "context-1m"},
+  )
+
+  _ = try LLM.response(try LLM.stream(provider, request))
+  seen = try Fake.next_request(fake)
+  try Fake.stop(fake)
+  Test.eq(HTTP.header_values(seen.headers, "anthropic-beta"), ["oauth-2025-04-20,context-1m"])
+end
+
 private
 
 def provider(fake: Fake.Fake) -> LLM.Provider
