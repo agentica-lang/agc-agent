@@ -291,6 +291,27 @@ def test_verdicts_follow_the_defaults_and_judge_the_real_path() -> Result[Void]
   try Test.eq(Tools.verdict(s.ctx, "edit_file", edit("a.txt")), Approval.Verdict.Ask)
   try Test.eq(Tools.verdict(s.ctx, "bash", JSON.from({"command": "ls"})), Approval.Verdict.Allow)
   try Test.eq(Tools.verdict(s.ctx, "bash", JSON.from({"command": "ls > out"})), Approval.Verdict.Ask)
+  # Read-only commands resolve their paths: a symlink out of the folder asks; a deny rule of read_file turns it off.
+  for command in ["cat a.txt", "cat inside_link", "grep -n one a.txt sub/b.txt"]
+    try Test.eq(
+      [command, Tools.verdict(s.ctx, "bash", JSON.from({"command": command})).inspect],
+      [command, "Verdict.Allow"],
+    )
+  end
+
+  for command in ["cat secret_link", "cat out_dir/secret.txt", "ls out_dir", "cat #{s.outside}/secret.txt"]
+    try Test.eq(
+      [command, Tools.verdict(s.ctx, "bash", JSON.from({"command": command})).inspect],
+      [command, "Verdict.Ask"],
+    )
+  end
+
+  guarded = try setup_with([], ["read_file(secret.txt)"])
+  for command in ["cat ./secret.txt", "head -n 99 secret.txt", "grep '' secret.txt", "cat -- secret.txt"]
+    try Test.eq(Tools.verdict(guarded.ctx, "bash", JSON.from({"command": command})), Approval.Verdict.Ask)
+  end
+
+  try done(guarded)
   try Test.eq(Tools.verdict(s.ctx, "nope", JSON.from({"path": "a.txt"})), Approval.Verdict.Deny)
 
   try Test.eq(Tools.verdict(s.ctx, "write_file", write("sub/x.txt")), Approval.Verdict.Allow)

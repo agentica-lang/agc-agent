@@ -15,7 +15,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HELPER = os.path.join(ROOT, "shell", "tests", "support", "argv.agc")
 AGENTICA = os.environ.get("AGENTICA", "agentica")
-CASES = 400
+CASES = 600
 
 PLAIN = "abcxyzABC019_./:=,+@%-^]"
 PIECES_IN_QUOTES = "ab $`\\\"'!*?~{}|;&<>()#\t"
@@ -46,8 +46,24 @@ def word(rng):
     return "".join(rng.choice([unquoted, unquoted, single, double])(rng) for _ in range(rng.randint(1, 3)))
 
 
+REDIRECTIONS = ["2>/dev/null", ">/dev/null", ">out", ">>log", "2>&1", "</dev/null", "3>x", "2>>err", "> out", "< /dev/null"]
+OPERATORS = [" ; ", " && ", " || ", " | ", ";", "&&", "|"]
+
+
+def segment(rng):
+    parts = [word(rng) for _ in range(rng.randint(1, 4))]
+    for _ in range(rng.randint(0, 2)):
+        parts.insert(rng.randint(1, len(parts)), rng.choice(REDIRECTIONS))
+    return " ".join(parts)
+
+
 def command(rng):
-    return " ".join(word(rng) for _ in range(rng.randint(1, 4)))
+    """A list of simple commands joined by operators: the text and its segments."""
+    segments = [segment(rng) for _ in range(rng.randint(1, 3))]
+    text = segments[0]
+    for seg in segments[1:]:
+        text += rng.choice(OPERATORS) + seg
+    return text, segments
 
 
 def parsed(texts):
@@ -60,10 +76,20 @@ def parsed(texts):
     return json.loads(out.stdout)
 
 
-def bash_words(text, folder):
+def bash_words(text, names):
+    """The words bash passes to a function for one simple command, its redirections applied and left out, in a fresh
+    folder with the files `names`."""
+    with tempfile.TemporaryDirectory() as folder:
+        for name in names:
+            open(os.path.join(folder, name), "w").close()
+        return run_bash(text, folder)
+
+
+def run_bash(text, folder):
     env = {"PATH": "/usr/bin:/bin", "HOME": "/home-of-the-peer", "x": "EXPANDED"}
+    script = "exec 9>&1; f() { printf '%s\\0' \"$@\" >&9; }; f " + text
     out = subprocess.run(
-        ["bash", "-c", "printf '%s\\0' " + text],
+        ["bash", "-c", script],
         capture_output=True,
         cwd=folder,
         env=env,
@@ -77,22 +103,20 @@ def bash_words(text, folder):
 class BashPeerTest(unittest.TestCase):
     def test_words_match_bash_and_expansions_do_not_parse(self):
         rng = random.Random(int(os.environ.get("SHELL_PEER_SEED", "94")))
-        texts = [command(rng) for _ in range(CASES)]
-        results = parsed(texts)
+        cases = [command(rng) for _ in range(CASES)]
+        results = parsed([text for text, _ in cases])
         compared = 0
-        with tempfile.TemporaryDirectory() as empty, tempfile.TemporaryDirectory() as full:
-            for name in ["ab", "a", "b", "-x"]:
-                open(os.path.join(full, name), "w").close()
-            for text, result in zip(texts, results):
-                if result is None:
-                    continue
-                self.assertEqual(len(result), 1, text)
-                compared += 1
-                words = [w[0] for w in result[0]]
-                self.assertEqual(bash_words(text, empty), words, text)
-                if bash_words(text, full) != words:
-                    self.assertTrue(any(w[1] for w in result[0]), "a glob not marked: " + text)
-        self.assertGreater(compared, CASES // 5)
+        for (text, segments), result in zip(cases, results):
+            if result is None:
+                continue
+            self.assertEqual(len(result), len(segments), text)
+            compared += 1
+            for seg, got in zip(segments, result):
+                words = [w[0] for w in got]
+                self.assertEqual(bash_words(seg, []), words, text)
+                if bash_words(seg, ["ab", "a", "b", "-x"]) != words:
+                    self.assertTrue(any(w[1] for w in got), "a glob not marked: " + text)
+        self.assertGreater(compared, CASES // 10)
 
 
 if __name__ == "__main__":
