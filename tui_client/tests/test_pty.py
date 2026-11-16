@@ -138,10 +138,10 @@ class Terminal:
         env = dict(
             os.environ,
             TERM="xterm",
-            AGC_AGENT_BASE_URL=model.url,
-            AGC_AGENT_MODEL="test-model",
-            AGC_AGENT_DATA_DIR=str(base / "data"),
-            AGC_AGENT_CONTEXT_WINDOW="100000",
+            FINN_BASE_URL=model.url,
+            FINN_MODEL="test-model",
+            FINN_DATA_DIR=str(base / "data"),
+            FINN_CONTEXT_WINDOW="100000",
         )
         command = [AGENTICA, str(CLIENT), "--state-dir", str(base / "state"), "--cwd", str(base / "work"), *args]
         self.process = subprocess.Popen(

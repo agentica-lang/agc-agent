@@ -22,14 +22,11 @@ end
 
 def parse(args: List[String]) -> Result[Command]
   parser = OP.new(
-    "agc tui",
-    "The terminal UI client of agc-agent: it starts the server when none runs.",
+    "finn tui",
+    "The terminal UI client of Finn Agent: it starts the server when none runs.",
     [],
     [
-      Opt(
-        name: "state-dir",
-        help: "folder of server.json (default: AGC_AGENT_STATE_DIR, else the user's state folder)",
-      ),
+      Opt(name: "state-dir", help: "folder of server.json (default: FINN_STATE_DIR, else the user's state folder)"),
       Opt(name: "session", help: "id of the session to resume (default: a new one)"),
       Opt(name: "cwd", help: "folder of a new session (default: the current folder)"),
       Opt(name: "model", help: "model of a new session (default: the server's)"),

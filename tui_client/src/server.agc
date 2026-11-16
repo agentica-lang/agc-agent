@@ -6,8 +6,8 @@ import Protocol from "pkg/protocol/protocol"
 import Args from "args"
 import Client from "client"
 
-STATE_DIR_ENV = "AGC_AGENT_STATE_DIR"
-SERVER_COMMAND_ENV = "AGC_AGENT_SERVER_COMMAND"
+STATE_DIR_ENV = "FINN_STATE_DIR"
+SERVER_COMMAND_ENV = "FINN_SERVER_COMMAND"
 KIND_STATE = "tui.state"
 KIND_SERVER = "tui.server"
 LOCK_WAIT_MS = 20_000
@@ -16,7 +16,7 @@ POLL_MS = 100
 NOT_FOUND = 127
 GROUP_AND_OTHERS = 63
 
-## `--state-dir`, else `AGC_AGENT_STATE_DIR`, else the user's state folder, with its symlinks resolved.
+## `--state-dir`, else `FINN_STATE_DIR`, else the user's state folder, with its symlinks resolved.
 def state_dir(options: Args.Options) -> Result[String]
   dir = case options.state_dir
     some(text) -> text
@@ -52,14 +52,27 @@ enum Probe
 end
 
 def environment_dir() -> Result[String]
-  case System.env(STATE_DIR_ENV)
-    ok(dir) if dir != "" -> ok(dir)
-    _ ->
-      case System.env("XDG_STATE_HOME")
-        ok(base) if base != "" -> Path.join([base, "agc-agent"])
-        _ -> Path.join([try System.env("HOME"), ".local", "state", "agc-agent"])
-      end
+  dir = setting(STATE_DIR_ENV)
+  return ok(dir) if dir != ""
+
+  base = case System.env("XDG_STATE_HOME")
+    ok(xdg) if xdg != "" -> xdg
+    _ -> try Path.join([try System.env("HOME"), ".local", "state"])
   end
+
+  finn = try Path.join([base, "finn"])
+  old = try Path.join([base, "agc-agent"])
+  return ok(old) if not File.stat(finn).ok? and File.stat(old).ok?
+
+  ok(finn)
+end
+
+# A `FINN_` variable, else its name before Finn (`AGC_AGENT_`); empty when neither is set.
+def setting(name: String) -> String
+  value = System.env(name).unwrap_or("")
+  return value if value != ""
+
+  System.env("AGC_AGENT_#{name.slice(5, name.length - 5)}").unwrap_or("")
 end
 
 def parent_of(path: String) -> String
@@ -186,12 +199,12 @@ def take_lock(lock: File.Handle) -> Result[Void]
   error("another client is starting the server and did not finish in #{LOCK_WAIT_MS / 1000} s", kind: KIND_SERVER)
 end
 
-# The words after --, else AGC_AGENT_SERVER_COMMAND, else `core/main.agc serve` of the repository this client runs
+# The words after --, else FINN_SERVER_COMMAND, else `core/main.agc serve` of the repository this client runs
 # from, found by the path of the main file on the command line of this process (never the current folder).
 def command_words(options: Args.Options) -> Result[List[String]]
   return ok(options.server_command.unwrap!) if options.server_command.some?
 
-  words = System.env(SERVER_COMMAND_ENV).unwrap_or("").split(" ").select { |word| word != "" }
+  words = setting(SERVER_COMMAND_ENV).split(" ").select { |word| word != "" }
   return ok(words) if not words.empty?
 
   line = (try File.read_text("/proc/self/cmdline")).split(String.from_code(0))

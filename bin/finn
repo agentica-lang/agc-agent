@@ -1,0 +1,64 @@
+#!/bin/sh
+# The one command of Finn Agent. It runs the Agentica programs of this repo with `agentica` (or $AGENTICA), from any
+# folder, also through a symlink on PATH.
+set -e
+
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self")
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname "$self")/$link ;;
+  esac
+done
+# -P: the real folder, also when the bin folder itself is a symlink.
+root=$(cd -P "$(dirname "$self")/.." && pwd)
+agentica=${AGENTICA:-agentica}
+
+usage() {
+  cat <<'TEXT'
+usage: finn [chat] [options]      talk to the agent in this folder (starts the server when none runs)
+       finn serve [options]       run the server in the foreground
+       finn --version | --help
+
+chat options: --api NAME, --model NAME (of a new session), --session ID, --thinking, --delete ID, ...
+  (finn chat --help lists them all)
+serve options (each overrides its environment variable):
+  --api NAME       model API: openai (chat completions) or openai_responses (default: FINN_API, else openai)
+  --model NAME     default model of new sessions (default: FINN_MODEL)
+  --base-url URL   where the model API is (default: FINN_BASE_URL, else http://127.0.0.1:8080/v1)
+  (finn serve --help tells the rest: folders, keys, compaction)
+TEXT
+}
+
+value() {
+  [ $# -ge 2 ] || { echo "finn serve: $1 needs a value" >&2; exit 2; }
+}
+
+# The options of `serve` set the environment the server reads, as `--name VALUE` or `--name=VALUE`.
+serve() {
+  while [ $# -gt 0 ]; do
+    case $1 in
+      --api) value "$@"; export FINN_API="$2"; shift 2 ;;
+      --model) value "$@"; export FINN_MODEL="$2"; shift 2 ;;
+      --base-url) value "$@"; export FINN_BASE_URL="$2"; shift 2 ;;
+      --api=*) export FINN_API="${1#*=}"; shift ;;
+      --model=*) export FINN_MODEL="${1#*=}"; shift ;;
+      --base-url=*) export FINN_BASE_URL="${1#*=}"; shift ;;
+      -h|--help) exec "$agentica" "$root/core/main.agc" --help ;;
+      *) echo "finn serve: unknown option $1" >&2; usage >&2; exit 2 ;;
+    esac
+  done
+  exec "$agentica" "$root/core/main.agc" serve
+}
+
+case ${1:-} in
+  -h|--help|help) usage ;;
+  --version)
+    "$agentica" "$root/core/main.agc" --version
+    "$agentica" "$root/cli/main.agc" --version
+    ;;
+  serve) shift; serve "$@" ;;
+  chat) shift; exec "$agentica" "$root/cli/main.agc" "$@" ;;
+  *) exec "$agentica" "$root/cli/main.agc" "$@" ;;
+esac

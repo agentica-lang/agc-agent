@@ -14,7 +14,7 @@ end
 def serve() -> Void
   case start()
     ok(server) ->
-      puts("agc-agent core listening on 127.0.0.1:#{server.port}")
+      puts("Finn Agent core listening on 127.0.0.1:#{server.port}")
       IO.flush()
       _ = HTTP.wait(server.http)
     error(e) -> fail(e.message, "")

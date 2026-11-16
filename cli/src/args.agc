@@ -4,7 +4,7 @@ import {Kind, Opt, Parsed} from "std/option_parser"
 VERSION = "0.0.1"
 
 ## The options of a run. `none` takes the default: the state folder from the environment, a new session in the current
-## folder, the server command of `AGC_AGENT_SERVER_COMMAND`. The server command is the words after `--`, or the
+## folder, the server command of `FINN_SERVER_COMMAND`. The server command is the words after `--`, or the
 ## `--server-command` text split on spaces (no quotes).
 struct Options
   state_dir: Optional[String]
@@ -26,14 +26,11 @@ end
 
 def parse(args: List[String]) -> Result[Command]
   parser = OP.new(
-    "agc",
-    "The line-mode client of agc-agent: it starts the server when none runs.",
+    "finn",
+    "The line-mode client of Finn Agent: it starts the server when none runs.",
     [],
     [
-      Opt(
-        name: "state-dir",
-        help: "folder of server.json (default: AGC_AGENT_STATE_DIR, else the user's state folder)",
-      ),
+      Opt(name: "state-dir", help: "folder of server.json (default: FINN_STATE_DIR, else the user's state folder)"),
       Opt(
         name: "server-command",
         help: "program and arguments that start a server, split on spaces (or put them after --)",

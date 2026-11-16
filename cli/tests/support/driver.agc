@@ -68,7 +68,7 @@ def start(dir: String, args: List[String], no_color: String = "1", chdir: String
   Process.spawn_captured(
     binary(),
     [entry, "--state-dir", dir] + args,
-    Process.Options(env: {"NO_COLOR": no_color, "AGC_AGENT_SERVER_COMMAND": ""}, chdir: chdir),
+    Process.Options(env: {"NO_COLOR": no_color, "FINN_SERVER_COMMAND": ""}, chdir: chdir),
   )
 end
 

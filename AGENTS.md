@@ -40,11 +40,11 @@ A package is added by the phase that needs it, never as an empty folder.
 - `cli` tests run the client as a child process on pipes (the Makefile
   exports `AGENTICA` for it) against a fake protocol server in
   `cli/tests/support/`. The client finds the server in the state folder
-  (`--state-dir`, `AGC_AGENT_STATE_DIR`, else `$XDG_STATE_HOME/agc-agent`):
+  (`--state-dir`, `FINN_STATE_DIR`, else `$XDG_STATE_HOME/finn`):
   `server.json` `{port, token, pid}`, and `server.lock` for the start. A
-  server command that is started gets the folder in `AGC_AGENT_STATE_DIR`;
+  server command that is started gets the folder in `FINN_STATE_DIR`;
   without `--server-command` (or words after `--`) and
-  `AGC_AGENT_SERVER_COMMAND` it is `core/main.agc serve` next to the client's
+  `FINN_SERVER_COMMAND` it is `core/main.agc serve` next to the client's
   own main file, never one of the current folder.
 - `make fmt-check AGENTICA=...`: `agentica fmt --check` in each package.
 - `make smoke-llama`: fetches llama.cpp and Qwen2.5-0.5B (pinned in

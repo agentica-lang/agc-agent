@@ -16,7 +16,7 @@ private
 
 def dispatch(command: Args.Command) -> Void
   case command
-    Args.Command.Version -> puts("agc-agent tui #{Args.VERSION}")
+    Args.Command.Version -> puts("Finn Agent tui #{Args.VERSION}")
     Args.Command.Help(text) -> puts(text)
     Args.Command.Run(options) -> finish(run(options))
   end
@@ -31,7 +31,7 @@ def finish(result: Result[Void]) -> Void
   case result
     ok(_) -> IO.flush()
     error(e) ->
-      IO.warn("agc tui: #{e.message}")
+      IO.warn("finn tui: #{e.message}")
       System.exit(1)
   end
 end

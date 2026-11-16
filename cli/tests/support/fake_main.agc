@@ -5,7 +5,7 @@
 import Protocol from "pkg/protocol/protocol"
 import Fake from "fake_server"
 
-STATE_DIR_ENV = "AGC_AGENT_STATE_DIR"
+STATE_DIR_ENV = "FINN_STATE_DIR"
 DEADLINE_MS = 60_000
 POLL_MS = 200
 
