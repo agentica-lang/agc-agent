@@ -10,6 +10,8 @@ enum Input
   Note(String)
   ## The terminal can no longer be read: the reason.
   Closed(String)
+  ## The reply of the server to the answer of an approval.
+  Answered(String, Result[Void])
   ## The first value is the generation of the stream that sent it, so the loop drops what an old stream sent.
   Stream(Int, Client.Item)
 end
