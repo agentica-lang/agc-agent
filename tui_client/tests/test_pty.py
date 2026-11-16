@@ -571,8 +571,6 @@ class PtyTest(unittest.TestCase):
         term.type("helo")
         row, col = term.find("> helo")
         term.click(row, col + 5)
-        # A key sent right after the mouse report was dropped here; a person never types that fast.
-        term.settle(0.3)
         term.type("l")
         term.wait_for("> hello")
         term.type("\r")
@@ -590,13 +588,15 @@ class PtyTest(unittest.TestCase):
         for text in ["  a = 1", "  ^Y please"]:
             term.click(*term.find(text))
         row, col = term.find("Tab to answer")
+        # A double click in one write: two Tabs, so the panel is back where it was, and nothing answered.
         term.type(f"\x1b[<0;{col + 3};{row + 1}M\x1b[<0;{col + 3};{row + 1}m" * 2)
-        term.settle(0.5)
+        rows = term.settle(0.5)
+        self.assertIn("Tab to answer", text_of(rows))
         term.click(row, col + 2)
+        rows = term.wait_for("Tab back to the prompt")
         rows = term.settle(0.5)
         self.assertNotIn("allow_session", text_of(rows))
         self.assertNotIn("· approval a1:", text_of(rows))
-        self.assertIn("Tab to answer", text_of(rows))
         self.assertFalse((term.base / "work" / "hello.txt").exists())
 
     def test_yolo_allows_the_calls_of_its_run_but_asks_the_inherited_ones(self) -> None:
