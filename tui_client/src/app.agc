@@ -69,7 +69,7 @@ struct Model
   stop_wanted: Bool = false
   ## How many times a session was opened, so the reply to a send made before is dropped.
   opened: Int = 0
-  ## The session picker of `/resume`, open over the prompt.
+  ## The picker of `/resume`, `/tree` or `/fork`, open over the prompt.
   picker: Optional[Picker.Picker] = none
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
   new_model: Optional[String] = none
@@ -118,6 +118,8 @@ enum Msg
   Spin
   ## The reply to a change of the thinking level.
   Leveled(Result[Void])
+  ## The reply to a branch, a fork or a copy: the session to go on in.
+  Moved(Result[Protocol.Branched])
 end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
@@ -233,6 +235,7 @@ def handled(app: Model, msg: Msg) -> Model
     Msg.Stopped(result) -> stop_reply(app, result)
     Msg.Spin -> app.with(spin: (app.spin + 1) % SPINNER.size)
     Msg.Leveled(result) -> level_reply(app, result)
+    Msg.Moved(result) -> moved(app, result)
     Msg.Rechecked(generation, result) if generation == app.generation -> rechecked(app, result)
     Msg.Rechecked(_, _) -> app
   end
@@ -466,7 +469,7 @@ def on_picker_key(app: Model, picker: Picker.Picker, event: TUI.Event) -> Model
   case Picker.key(picker, event)
     Picker.Step.Stay(next_picker) -> app.with(picker: some(next_picker))
     Picker.Step.Close -> app.with(picker: none)
-    Picker.Step.Pick(id) -> switch_command(app.with(picker: none), some(id))
+    Picker.Step.Pick(key) -> picked(app.with(picker: none), picker.kind, key)
   end
 end
 
@@ -557,6 +560,9 @@ def on_command(app: Model, command: Client.Command) -> Model
     Client.Command.New -> switch_command(app, none)
     Client.Command.Resume(none) -> tried(app, picking(app))
     Client.Command.Resume(choice) -> switch_command(app, choice)
+    Client.Command.Tree(choice) -> tried(app, tree_command(app, Picker.Kind.Tree, choice))
+    Client.Command.Fork(choice) -> tried(app, tree_command(app, Picker.Kind.Fork, choice))
+    Client.Command.Clone -> move(app, Picker.Kind.Fork, none)
     Client.Command.Model(model) -> setting_command(app, "model", model, Protocol.UpdateSession(model: model))
     Client.Command.Thinking(level) -> setting_command(app, "thinking", level, Protocol.UpdateSession(effort: level))
     Client.Command.Compact -> compact_command(app)
@@ -611,6 +617,56 @@ def picking(app: Model) -> Result[Model]
   return ok(noted(app, "no sessions")) if list.sessions.empty?
 
   ok(app.with(picker: some(Picker.Picker(sessions: list.sessions))))
+end
+
+def picked(app: Model, kind: Picker.Kind, key: String) -> Model
+  case key.to_i
+    ok(entry) if kind != Picker.Kind.Sessions -> move(app, kind, some(entry))
+    _ -> switch_command(app, some(key))
+  end
+end
+
+# The picker of the tree without a choice; else the move to the message the choice names (`/tree 2`, `/fork 1+`).
+def tree_command(app: Model, kind: Picker.Kind, choice: Optional[String]) -> Result[Model]
+  tree = try Client.tree(app.server, app.id)
+  for picked in option_list(choice)
+    return ok(move(app, kind, some(try Client.tree_entry(tree, picked))))
+  end
+
+  return ok(noted(app, "no messages yet")) if tree.nodes.empty?
+
+  ok(app.with(picker: some(Picker.Picker(tree: Client.tree_rows(tree), kind: kind))))
+end
+
+# A branch of this session from `entry` (`Kind.Tree`), or a new session from it (`Kind.Fork`), a copy when none. A
+# command asks for it and `moved` opens the session it gives.
+def move(app: Model, kind: Picker.Kind, entry: Optional[Int]) -> Model
+  return noted(app, "a turn is running: Esc stops it first") if app.turn
+  return noted(app, "a message is being sent: wait for its reply first") if not app.outbox.empty?
+
+  server = app.server
+  id = app.id
+  case kind
+    Picker.Kind.Tree ->
+      at = entry.unwrap_or(0)
+      effect(app, TUI.Cmd.Run(-> { Msg.Moved(Client.branch(server, id, at)) }))
+    _ -> effect(app, TUI.Cmd.Run(-> { Msg.Moved(Client.fork(server, id, entry)) }))
+  end
+end
+
+# The session is drawn again from its start; the message it went back before waits in the prompt.
+def moved(app: Model, result: Result[Protocol.Branched]) -> Model
+  case result
+    ok(done) ->
+      opened = tried(app, resume(fresh(app), done.id))
+      return opened if done.text.empty?
+
+      noted(
+        opened.with(prompt: done.text, cursor: done.text.length),
+        "went back before a message: it is in the prompt",
+      )
+    error(e) -> noted(app, "error: #{e.message}")
+  end
 end
 
 def switched(app: Model, choice: String) -> Result[Model]

@@ -1,0 +1,14 @@
+{"type":"session","id":"s1-0123","cwd":"/work","model":"m","created_ms":7,"system":"sys","api":"openai"}
+{"type":"user","text":"Hello.","typed":"Hi"}
+{"type":"event","id":1,"name":"turn_started","data":{"turn_id":"turn-1-aa","history_size":1}}
+{"type":"ids","until":1001}
+{"type":"messages","messages":[{"role":"assistant","content":[{"type":"text","text":"Hi!"}]}]}
+{"type":"event","id":1002,"name":"usage","data":{"input":10,"output":4,"cache_read":0,"cache_write":0,"context":14,"cost":0.5,"turn_cost":0.5,"session_cost":0.5}}
+{"type":"answer","text":"Hi!"}
+{"type":"event","id":1003,"name":"turn_finished","data":{"turn_id":"turn-1-aa","stop_reason":"end_turn","history_size":2}}
+{"type":"settings","model":"m2","effort":"low"}
+{"type":"user","text":"Again."}
+{"type":"event","id":1004,"name":"turn_started","data":{"turn_id":"turn-2-bb","history_size":3}}
+{"type":"messages","messages":[{"role":"assistant","content":[{"type":"text","text":"Yes."}]}]}
+{"type":"answer","text":"Yes."}
+{"type":"event","id":1005,"name":"turn_finished","data":{"turn_id":"turn-2-bb","stop_reason":"end_turn","history_size":4}}

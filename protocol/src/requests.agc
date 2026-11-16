@@ -50,6 +50,18 @@ struct Compacted
   compacted: Bool
 end
 
+## `POST /v1/sessions/ID/branch`: the session goes on from `entry` of its tree, the `id` of a `TreeNode` (before that
+## message) or its `last` (after that turn); 0 is the start.
+struct Branch
+  entry: Int
+end
+
+## `POST /v1/sessions/ID/fork`: a new session with the history up to `entry`, as `Branch` takes it; none copies the
+## session as it is now.
+struct Fork
+  entry: Optional[Int] = none
+end
+
 ## Every decision, in a fixed order.
 def decisions() -> List[Decision] = Wire.chain(Decision.Allow, &following)
 
@@ -107,6 +119,22 @@ def encode_compacted(body: Compacted) -> String = JSON.encode(body)
 
 def decode_compacted(text: String) -> Result[Compacted] = Wire.decode(text, Compacted.codec)
 
+def encode_branch(body: Branch) -> String = JSON.encode(body)
+
+def decode_branch(text: String) -> Result[Branch]
+  body = try Wire.decode_strict(text, Branch.codec)
+  try Wire.non_negative("entry", body.entry)
+  ok(body)
+end
+
+def encode_fork(body: Fork) -> String = JSON.encode(body)
+
+def decode_fork(text: String) -> Result[Fork]
+  body = try Wire.decode_strict(text, Fork.codec)
+  try Wire.non_negative("entry", body.entry.unwrap_or(0))
+  ok(body)
+end
+
 ## The fields of the requests and the names of their values on the wire, for `Protocol.WIRE`.
 def shape() -> List[String]
   records = [
@@ -115,6 +143,8 @@ def shape() -> List[String]
     Wire.record("Approve", Approve.members),
     Wire.record("UpdateSession", UpdateSession.members),
     Wire.record("Compacted", Compacted.members),
+    Wire.record("Branch", Branch.members),
+    Wire.record("Fork", Fork.members),
     Wire.record("ApproveWire", ApproveWire.members),
   ]
 

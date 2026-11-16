@@ -35,11 +35,14 @@ def test_commands_parse_with_their_arguments() -> Result[Void]
   try Test.eq(Client.parse_command("/model qwen3:8b"), some(ok(Client.Command.Model(some("qwen3:8b")))))
   try Test.eq(Client.parse_command("/thinking high"), some(ok(Client.Command.Thinking(some("high")))))
   try Test.eq(Client.parse_command("/thinking default"), some(ok(Client.Command.Thinking(some("default")))))
+  try Test.eq(Client.parse_command("/tree 2+"), some(ok(Client.Command.Tree(some("2+")))))
+  try Test.eq(Client.parse_command("/fork"), some(ok(Client.Command.Fork(none))))
+  try Test.eq(Client.parse_command("/clone"), some(ok(Client.Command.Clone)))
   for text in ["/review-pr 12", "/etc/hosts has a bad entry", "/"]
     try Test.eq(Client.parse_command(text), none)
   end
 
-  for bad in ["/thinking max", "/new now", "/model qwen3 8b"]
+  for bad in ["/thinking max", "/new now", "/model qwen3 8b", "/clone 2"]
     parsed = Client.parse_command(bad)
     case parsed
       some(error(e)) -> try Test.eq(e.kind, Client.KIND_COMMAND)
@@ -57,6 +60,24 @@ def test_resume_picks_by_number_or_id() -> Result[Void]
   try Test.eq(Client.pick(list, "2"), ok("b2"))
   try Test.eq(Client.pick(list, "a1"), ok("a1"))
   Test.error?(Client.pick(list, "3"))
+end
+
+# A branch puts its messages a step in; the numbers name a message (before it) or, with `+`, its answer (after it).
+def test_the_tree_is_listed_depth_first_and_picked_by_number() -> Result[Void]
+  nodes = [
+    Protocol.TreeNode(id: 1, text: "One.", answer: "A1", last: 7, active: true),
+    Protocol.TreeNode(id: 8, parent: some(1), text: "Two.", answer: "A2", last: 14),
+    Protocol.TreeNode(id: 9, parent: some(8), text: "Two more.\nsecond line", last: 20),
+    Protocol.TreeNode(id: 21, parent: some(1), text: "Three.", answer: "A3", last: 27, active: true),
+  ]
+
+  tree = Protocol.SessionTree(nodes: nodes)
+  listed = ["1. * One.  -> A1", "2.     Two.  -> A2", "3.     Two more.  -> ", "4.   * Three.  -> A3"]
+
+  try Test.eq(Client.tree_listing(tree), listed)
+  try Test.eq([Client.tree_entry(tree, "4"), Client.tree_entry(tree, "2+")], [ok(21), ok(14)])
+  try Test.error?(Client.tree_entry(tree, "5"))
+  Test.error?(Client.tree_entry(tree, "x+"))
 end
 
 # What a client echoes of another's text stays on one line, with no terminal escapes.

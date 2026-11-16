@@ -625,6 +625,88 @@ def test_a_failed_write_stops_the_turn_and_reuses_no_id() -> Result[Void]
   end
 end
 
+# A branch goes back before a message: the clients read the session again, the next turn follows the branch and its
+# ids follow the old ones (a client from an older one gets `resync`), and the tree keeps both branches across a
+# restart. A fork and a copy are new sessions.
+def test_a_session_branches_forks_and_copies() -> Result[Void]
+  setup = H.Setup(replies: ["text.sse", "text.sse", "text.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "One.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "Two.")
+    a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
+    first = try tree(h, id)
+    try Test.eq(first.map { |n| n.text }, ["One.", "Two."])
+    before = try H.session(h, id)
+    refused = try H.post(h, Protocol.branch_path(id), Protocol.encode_branch(Protocol.Branch(entry: first[1].id + 1)))
+    try Test.eq(refused.status, 400)
+    moved = try H.post(h, Protocol.branch_path(id), Protocol.encode_branch(Protocol.Branch(entry: first[1].id)))
+    try Test.eq(Protocol.decode_branched(moved.text), ok(Protocol.Branched(id: id, text: "Two.")))
+    a = try H.until(a.with(seen: []), Protocol.EventKind.Resync)
+    H.close(a)
+    after = try H.session(h, id)
+    try Test.eq(after.history, before.history.take(2))
+    try Test.eq(after.last_event_id, before.last_event_id + 1)
+    old = try H.until(try H.subscribe(h, id, some(before.last_event_id)), Protocol.EventKind.Resync)
+    H.close(old)
+    try Test.eq(H.kinds(old.seen), ["resync"])
+    b = try H.subscribe(h, id, some(after.last_event_id))
+    _ = try H.send(h, id, "Three.")
+    b = try H.until(b, Protocol.EventKind.TurnFinished)
+    H.close(b)
+    try Test.eq(b.seen[0].id, Protocol.format_event_id(before.last_event_id + 2))
+    second = try tree(h, id)
+    try Test.eq(second.map { |n| "#{n.text} #{n.active}" }, ["One. true", "Two. false", "Three. true"])
+    try Test.eq(second.map { |n| n.parent }, [none, some(first[0].id), some(first[0].id)])
+    fork = try H.post(h, Protocol.fork_path(id), Protocol.encode_fork(Protocol.Fork(entry: some(first[1].id))))
+    forked = try Protocol.decode_branched(fork.text)
+    try Test.eq([fork.status.to_s, forked.text], ["201", "Two."])
+    try Test.eq((try H.session(h, forked.id)).history, before.history.take(2))
+    copy = try Protocol.decode_branched((try H.post(h, Protocol.fork_path(id), "{}")).text)
+    now = try H.session(h, id)
+    try Test.eq((try H.session(h, copy.id)).history, now.history)
+    try Test.eq((try tree(h, copy.id)).map { |n| n.text }, ["One.", "Three."])
+    H.restarted(h, setup, "") do |r|
+      listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
+      try Test.eq(listed.sessions.size, 3)
+      try Test.eq((try H.session(r, id)).history, now.history)
+      try Test.eq((try H.session(r, id)).last_event_id, now.last_event_id)
+      Test.eq(try tree(r, id), second)
+    end
+  end
+end
+
+# After a restart, a client from the branch left gets `resync`, and the next turn takes a number no turn had.
+def test_a_restart_after_a_branch_resyncs_the_branch_left() -> Result[Void]
+  setup = H.Setup(replies: ["text.sse", "text.sse", "text.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "One.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "Two.")
+    a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
+    H.close(a)
+    before = try H.session(h, id)
+    nodes = try tree(h, id)
+    _ = try H.post(h, Protocol.branch_path(id), Protocol.encode_branch(Protocol.Branch(entry: nodes[1].id)))
+    H.restarted(h, setup, "") do |r|
+      old = try H.until(try H.subscribe(r, id, some(before.last_event_id)), Protocol.EventKind.Resync)
+      H.close(old)
+      try Test.eq(H.kinds(old.seen), ["resync"])
+      after = try H.session(r, id)
+      try Test.eq(after.history, before.history.take(2))
+      try Test.eq(after.last_event_id, before.last_event_id + 1)
+      sent = try H.send(r, id, "Three.")
+      try Test.eq(number((try Protocol.decode_message_accepted(sent.text)).turn_id), "turn-3")
+      _ = try H.idle(r, id)
+      ok()
+    end
+  end
+end
+
 private
 
 WAIT_MS = 20_000
@@ -691,4 +773,8 @@ def history_size(seen: H.Seen) -> Optional[Int]
     Protocol.Event.TurnFinished(finished) -> finished.history_size
     _ -> none
   end
+end
+
+def tree(h: H.Harness, id: String) -> Result[List[Protocol.TreeNode]]
+  ok((try Protocol.decode_session_tree((try H.get(h, Protocol.tree_path(id))).text)).nodes)
 end
