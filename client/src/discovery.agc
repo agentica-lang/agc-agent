@@ -22,6 +22,7 @@ START_WAIT_MS = 10_000
 POLL_MS = 100
 NOT_FOUND = 127
 GROUP_AND_OTHERS = 63
+LOG_KEEP_BYTES = 10_485_760
 
 ## How a client finds or starts its server. `none` takes the default: the state folder of the environment, and the
 ## server command of `FINN_SERVER_COMMAND`, else `core/main.agc serve` of the repository the client runs from, which
@@ -30,6 +31,13 @@ struct Launch
   main: String
   state_dir: Optional[String] = none
   server_command: Optional[List[String]] = none
+end
+
+## What runs in the folder: a server of this client's version, one of another version (its pid), or nothing (why).
+enum Found
+  Running(Client.Server)
+  Other(Int)
+  Absent(String)
 end
 
 ## The folder of `server.json`: `--state-dir`, else `FINN_STATE_DIR`, else the user's state folder, with its
@@ -60,6 +68,39 @@ def connect(options: Launch, dir: String) -> Result[Client.Server]
     Probe.Absent(reason) -> start(options, dir, reason)
   end
 end
+
+## The server of the folder, without starting one. A server that answers badly is an error.
+def find(dir: String) -> Result[Found]
+  if File.stat(dir).ok?
+    try check_owned(dir, "700")
+  end
+
+  case probe(dir)
+    Probe.Alive(server) -> ok(Found.Running(server))
+    Probe.Other(pid) -> ok(Found.Other(pid))
+    Probe.Absent(reason) -> ok(Found.Absent(reason))
+    Probe.Unusable(reason) -> refused(dir, reason)
+  end
+end
+
+## The pid in the `server.json` of the folder.
+def server_pid(dir: String) -> Result[Int]
+  info = try read_info(file_in(dir, SERVER_FILE))
+  ok(info.pid)
+end
+
+## True once the server that had `pid` is gone: its `server.json` is removed (or names another server), or, where there
+## is a /proc, the process has exited. A server that stops refuses connections before it is gone, so the answer of its
+## health check says nothing about this.
+def exited?(dir: String, pid: Int) -> Bool
+  case server_pid(dir)
+    ok(now) if now == pid -> pid_gone?(pid)
+    _ -> true
+  end
+end
+
+## The file the server writes its output to.
+def log_file(dir: String) -> String = file_in(dir, LOG_FILE)
 
 ## Checks again that the server is of this client's version, as a client does before it reads the event stream again.
 ## A server that does not answer is left to the reconnect.
@@ -140,6 +181,8 @@ def probe(dir: String) -> Probe
   return Probe.Absent("#{path} does not exist") if not File.stat(path).ok?
 
   checked = check_owned(path, "600")
+  # A server that stops removes its file at any time: gone since the check is not unusable.
+  return Probe.Absent("#{path} does not exist") if not checked.ok? and not File.stat(path).ok?
   return Probe.Unusable(checked.message) if not checked.ok?
 
   case read_info(path)
@@ -161,6 +204,8 @@ def reach(info: Protocol.ServerInfo) -> Probe
     error(e) -> Probe.Unusable(e.message)
   end
 end
+
+def pid_gone?(pid: Int) -> Bool = File.stat("/proc/self").ok? and not File.stat("/proc/#{pid}").ok?
 
 # Where there is a /proc, a pid that is not there or belongs to someone else is not our server.
 def foreign_pid?(pid: Int) -> Bool
@@ -239,8 +284,24 @@ def start(options: Launch, dir: String, why_not: String) -> Result[Client.Server
 end
 
 def started(options: Launch, dir: String) -> Result[Client.Server]
+  try rotate_log(dir)
   try spawn_server(options, dir)
   wait_alive(dir)
+end
+
+# A log over `LOG_KEEP_BYTES` becomes `server.log.1` (the one before it goes), and a new one starts private.
+def rotate_log(dir: String) -> Result[Void]
+  path = file_in(dir, LOG_FILE)
+  big = case File.stat(path)
+    ok(info) -> info.size_bytes > LOG_KEEP_BYTES
+    error(_) -> false
+  end
+
+  return ok() if not big
+
+  _ = Path.remove("#{path}.1")
+  try Path.rename(path, "#{path}.1")
+  private_file(path)
 end
 
 def explained[T](result: Result[T], why_not: String) -> Result[T]
