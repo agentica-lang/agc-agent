@@ -38,11 +38,20 @@ def test_anthropic_text_tool_round_and_cache() -> Result[Void]
   answer = try call(provider, round)
   try Test.assert(not answer.message.content.empty?, "no answer after the tool result")
   again = try call(provider, round)
-  puts("anthropic live: cache_read #{again.usage.cache_read}, cache_write #{again.usage.cache_write}")
+  report("anthropic live: cache_read #{again.usage.cache_read}, cache_write #{again.usage.cache_write}\n")
   Test.assert(again.usage.cache_read > 0, "the second identical call read nothing from the cache: #{again.usage}")
 end
 
 private
+
+# The runner drops the output of a passed test: the line goes to the file of `ANTHROPIC_LIVE_REPORT`, which the
+# Makefile prints.
+def report(line: String) -> Void
+  case System.env("ANTHROPIC_LIVE_REPORT")
+    ok(path) if not path.empty? -> _ = File.write_text(path, line)
+    _ -> nil
+  end
+end
 
 def live_provider() -> Result[LLM.Provider]
   key = System.env("ANTHROPIC_API_KEY").unwrap_or("")
