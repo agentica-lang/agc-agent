@@ -13,7 +13,8 @@ API_VERSION = "2026-10-21"
 ## The most models one page of `GET /models` lists.
 MODELS_PAGE = 1000
 
-## The provider for an API at `base_url`. An empty `api_key` sends no `x-api-key` header.
+## The provider for an API at `base_url`. An empty `api_key` sends no `x-api-key` header. `temperature` and `seed`
+## are not sent, and `ToolChoice.Required` is refused with `llm.unsupported`.
 def anthropic(base_url: String = URL, api_key: String = "", options: Http.Options = Http.Options()) -> Api.Provider
   wire = Http.Wire(
     path: "/messages",

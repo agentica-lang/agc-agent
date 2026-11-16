@@ -67,6 +67,7 @@ struct Request
   ## conversation so far.
   cache: Bool = false
   tool_choice: ToolChoice = ToolChoice.Auto
+  ## Not sent by anthropic.
   temperature: Optional[Float] = none
   ## Sent by openai_chat only: the Responses API has no seed.
   seed: Optional[Int] = none
@@ -153,7 +154,7 @@ end
 enum ToolChoice
   ## The model decides.
   Auto
-  ## The model must call a tool.
+  ## The model must call a tool. Not on anthropic (`llm.unsupported`).
   Required
 end
 

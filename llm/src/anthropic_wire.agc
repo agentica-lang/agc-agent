@@ -48,9 +48,15 @@ def ended?(turn: Turn) -> Bool = turn.stopped
 
 ## The JSON body of a streamed call: adaptive thinking with summarized text, `effort` in `output_config`. With
 ## `cache`, a cache breakpoint ends the stable prefix (the system prompt, else the last tool), and the top-level one
-## caches the conversation so far. Error `llm.unsupported`: a `Custom` tool, which this API does not have.
+## caches the conversation so far. No `temperature` or `seed`: API version 2026-10-21 refuses sampling settings.
+## Error `llm.unsupported`: a `Custom` tool, which this API does not have, or `ToolChoice.Required`, which the current
+## models (Opus 5.5, Sonnet 5.5, Fable) refuse.
 def request_body(request: Types.Request) -> Result[String]
   try no_custom_tools(request)
+  if request.tool_choice == Types.ToolChoice.Required
+    return error("llm: anthropic takes only the auto tool choice", kind: "llm.unsupported")
+  end
+
   body: Map[String, JSON.Value] = {
     "model": JSON.from(request.model),
     "messages": JSON.array(messages(request.messages)),
@@ -71,7 +77,7 @@ def request_body(request: Types.Request) -> Result[String]
     end
 
     body = body.put("tools", JSON.array(tools))
-    body = body.put("tool_choice", JSON.object({"type": JSON.from(tool_choice(request.tool_choice))}))
+    body = body.put("tool_choice", JSON.object({"type": JSON.from("auto")}))
   end
 
   if request.cache
@@ -80,10 +86,6 @@ def request_body(request: Types.Request) -> Result[String]
 
   for effort in option_list(request.effort)
     body = body.put("output_config", JSON.object({"effort": JSON.from(effort)}))
-  end
-
-  for temperature in option_list(request.temperature)
-    body = body.put("temperature", JSON.from(temperature))
   end
 
   ok(JSON.encode(JSON.object(Body.merge_extra(body, request.extra))))
@@ -203,13 +205,6 @@ def tool_json(tool: Types.Tool) -> JSON.Value
     "description": JSON.from(tool.description),
     "input_schema": tool.input_schema,
   })
-end
-
-def tool_choice(choice: Types.ToolChoice) -> String
-  case choice
-    Types.ToolChoice.Auto -> "auto"
-    Types.ToolChoice.Required -> "any"
-  end
 end
 
 # A message left with no block (only empty text, or the thinking of another provider) is not sent.

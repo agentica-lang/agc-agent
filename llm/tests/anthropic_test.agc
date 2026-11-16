@@ -16,6 +16,7 @@ def test_streams_text_and_sends_the_request() -> Result[Void]
     max_tokens: 32,
     effort: some("high"),
     cache: true,
+    temperature: some(0.0),
   )
 
   call = try LLM.stream(provider(fake), request)
@@ -34,7 +35,8 @@ def test_streams_text_and_sends_the_request() -> Result[Void]
   try Test.eq(HTTP.header_values(seen.headers, "x-api-key"), [KEY])
   try Test.eq(HTTP.header_values(seen.headers, "anthropic-version"), ["2026-10-21"])
   try Test.eq(HTTP.header_values(seen.headers, "authorization"), [])
-  # The empty assistant message is not sent; the breakpoint is on the system prompt, which ends the prefix.
+  # No temperature; the empty assistant message is not sent; the breakpoint is on the system prompt, which ends
+  # the prefix.
   expected = <<~JSON
     {"model": "claude-opus-5-5", "max_tokens": 32, "stream": true,
      "thinking": {"type": "adaptive", "display": "summarized"}, "output_config": {"effort": "high"},
@@ -49,7 +51,8 @@ def test_streams_text_and_sends_the_request() -> Result[Void]
   Test.eq(JSON.parse(seen.body), JSON.parse(expected))
 end
 
-# Thinking goes back unchanged with its signature, redacted thinking with its data, the call with its input.
+# Thinking goes back unchanged with its signature (streamed in two pieces), redacted thinking with its data, the call
+# with its input.
 def test_thinking_and_a_tool_call_round_trip() -> Result[Void]
   replies = [try Fake.sse("anthropic/thinking_tool_use.sse", piece_bytes: 5), try Fake.sse("anthropic/text.sse")]
 
@@ -67,7 +70,8 @@ def test_thinking_and_a_tool_call_round_trip() -> Result[Void]
   try Test.eq(response.message.content.size, 4)
   try Test.eq(Ev.path_of(response.message.content[3]), "README.md")
   result = LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: "toolu_hand_1", content: "no such file", is_error: true))
-  again = request.with(messages: [ask, response.message, LLM.Message(role: LLM.Role.User, content: [result])])
+  answer = LLM.Message(role: LLM.Role.User, content: [Ev.text_block("Try AGENTS.md."), result])
+  again = request.with(messages: [ask, response.message, answer])
   _ = try LLM.response(try LLM.stream(provider(fake), again))
   first = try JSON.parse((try Fake.next_request(fake)).body)
   second = try JSON.parse((try Fake.next_request(fake)).body)
@@ -86,22 +90,22 @@ def test_thinking_and_a_tool_call_round_trip() -> Result[Void]
        {"type": "text", "text": "Reading it."},
        {"type": "tool_use", "id": "toolu_hand_1", "name": "read_file", "input": {"path": "README.md"}}]},
      {"role": "user", "content": [
-       {"type": "tool_result", "tool_use_id": "toolu_hand_1", "content": "no such file", "is_error": true}]}]
+       {"type": "tool_result", "tool_use_id": "toolu_hand_1", "content": "no such file", "is_error": true},
+       {"type": "text", "text": "Try AGENTS.md."}]}]
   JSON
   Test.eq(JSON.get(second, "messages"), JSON.parse(expected))
 end
 
-# A required tool is `any`; the thinking of another provider is not sent.
-def test_a_required_tool_call_streams_in_pieces() -> Result[Void]
+# The thinking of another provider is not sent, nor a thinking block without its signature.
+def test_a_tool_call_streams_in_pieces() -> Result[Void]
   fake = try Fake.start([try Fake.sse("anthropic/tool_call.sse", piece_bytes: 3)])
-  other = LLM.Block.Thinking(LLM.ThinkingPart(text: "x", replay: some(JSON.object({"type": JSON.from("reasoning")}))))
-  messages = [Ev.user("Hi."), assistant([other, Ev.text_block("Hello.")]), Ev.user("Read README.md.")]
-  request = LLM.Request(
-    model: LLM.ANTHROPIC_MODEL,
-    messages: messages,
-    tools: [read_file()],
-    tool_choice: LLM.ToolChoice.Required,
+  other = thinking(JSON.object({"type": JSON.from("reasoning")}))
+  unsigned = thinking(
+    JSON.object({"type": JSON.from("thinking"), "thinking": JSON.from("x"), "signature": JSON.from("")}),
   )
+
+  messages = [Ev.user("Hi."), assistant([other, unsigned, Ev.text_block("Hello.")]), Ev.user("Read README.md.")]
+  request = LLM.Request(model: LLM.ANTHROPIC_MODEL, messages: messages, tools: [read_file()])
 
   call = try LLM.stream(provider(fake), request)
   events = Ev.collect(call)
@@ -115,7 +119,6 @@ def test_a_required_tool_call_streams_in_pieces() -> Result[Void]
 
   try Test.eq(response.stop_reason, LLM.StopReason.ToolUse)
   try Test.eq(Ev.path_of(response.message.content[0]), "README.md")
-  try Test.eq(JSON.get(body, "tool_choice"), JSON.parse("{\"type\": \"any\"}"))
   sent: List[JSON.Value] = try JSON.list(try JSON.get(body, "messages"))
   Test.eq(
     ok(sent[1]),
@@ -162,17 +165,66 @@ def test_a_cut_stream_is_llm_protocol() -> Result[Void]
   Test.eq(Ev.kind(result), "llm.protocol")
 end
 
-def test_a_custom_tool_is_refused_before_sending() -> Result[Void]
+def test_a_stream_without_message_stop_is_llm_protocol() -> Result[Void]
+  fake = try Fake.start([try Fake.sse("anthropic/no_message_stop.sse")])
+  call = try LLM.stream(provider(fake), LLM.Request(model: LLM.ANTHROPIC_MODEL, messages: [Ev.user("Say hello.")]))
+  result = LLM.response(call)
+  try Fake.stop(fake)
+  Test.eq(Ev.kind(result), "llm.protocol")
+end
+
+# Without a key only the version goes with the request.
+def test_stop_reasons_map_to_the_common_ones() -> Result[Void]
+  fake = try Fake.start([
+    try Fake.sse("anthropic/stop_refusal.sse"),
+    try Fake.sse("anthropic/stop_pause_turn.sse"),
+    try Fake.sse("anthropic/stop_max_tokens.sse"),
+  ])
+
+  keyless = LLM.anthropic(fake.url, "", LLM.Options(timeout_ms: 5000))
+  request = LLM.Request(model: LLM.ANTHROPIC_MODEL, messages: [Ev.user("Go on.")])
+  reasons: List[LLM.StopReason] = []
+  for _n in 1..3
+    reasons = reasons.push((try LLM.response(try LLM.stream(keyless, request))).stop_reason)
+  end
+
+  seen = try Fake.next_request(fake)
+  try Fake.stop(fake)
+  try Test.eq(HTTP.header_values(seen.headers, "anthropic-version"), ["2026-10-21"])
+  try Test.eq(HTTP.header_values(seen.headers, "x-api-key"), [])
+  Test.eq(reasons, [LLM.StopReason.Refusal, LLM.StopReason.PauseTurn, LLM.StopReason.MaxTokens])
+end
+
+# A call with no input pieces has the input `{}`, and goes back with it.
+def test_a_call_without_arguments_has_an_empty_input() -> Result[Void]
+  fake = try Fake.start([try Fake.sse("anthropic/empty_input.sse"), try Fake.sse("anthropic/text.sse")])
+  request = LLM.Request(model: LLM.ANTHROPIC_MODEL, messages: [Ev.user("List the files.")])
+  response = try LLM.response(try LLM.stream(provider(fake), request))
+  call = LLM.ToolCall(id: "toolu_empty", name: "list_files", arguments: "", input: JSON.object({}))
+  try Test.eq(response.message.content, [LLM.Block.ToolUse(call)])
+  again = request.with(messages: [Ev.user("List the files."), response.message])
+  _ = try LLM.response(try LLM.stream(provider(fake), again))
+  _ = try Fake.next_request(fake)
+  second = try JSON.parse((try Fake.next_request(fake)).body)
+  try Fake.stop(fake)
+  sent: List[JSON.Value] = try JSON.list(try JSON.get(second, "messages"))
+  expected = <<~JSON
+    {"role": "assistant",
+     "content": [{"type": "tool_use", "id": "toolu_empty", "name": "list_files", "input": {}}]}
+  JSON
+  Test.eq(ok(sent[1]), JSON.parse(expected))
+end
+
+# A custom tool and a required tool choice: the current models take neither.
+def test_unsupported_requests_are_refused_before_sending() -> Result[Void]
   fake = try Fake.start([try Fake.sse("anthropic/text.sse")])
   patch = LLM.Tool(name: "apply_patch", description: "Edit.", input_schema: JSON.object({}), kind: LLM.ToolKind.Custom)
-  request = LLM.Request(model: LLM.ANTHROPIC_MODEL, messages: [Ev.user("Fix it.")], tools: [patch])
-  result = LLM.stream(provider(fake), request)
+  custom = LLM.Request(model: LLM.ANTHROPIC_MODEL, messages: [Ev.user("Fix it.")], tools: [patch])
+  required = custom.with(tools: [read_file()], tool_choice: LLM.ToolChoice.Required)
+  kinds = [custom, required].map { |r| refused_kind(LLM.stream(provider(fake), r)) }
   try Fake.stop(fake)
   try Test.assert(fake.seen.empty?, "the request was sent")
-  case result
-    ok(_) -> error("expected llm.unsupported")
-    error(e) -> Test.eq(e.kind, "llm.unsupported")
-  end
+  Test.eq(kinds, ["llm.unsupported", "llm.unsupported"])
 end
 
 def test_lists_the_models_with_their_context() -> Result[Void]
@@ -204,5 +256,14 @@ def read_file() -> LLM.Tool
     input_schema: JSON.parse(READ_FILE_SCHEMA).unwrap!,
   )
 end
+
+def refused_kind(result: Result[LLM.Stream]) -> String
+  case result
+    ok(_) -> "ok"
+    error(e) -> e.kind
+  end
+end
+
+def thinking(replay: JSON.Value) -> LLM.Block = LLM.Block.Thinking(LLM.ThinkingPart(text: "x", replay: some(replay)))
 
 def assistant(content: List[LLM.Block]) -> LLM.Message = LLM.Message(role: LLM.Role.Assistant, content: content)

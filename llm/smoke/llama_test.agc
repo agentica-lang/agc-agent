@@ -6,7 +6,8 @@ READ_FILE_SCHEMA = (
   "\"required\":[\"path\"]}"
 )
 
-# Small models are not reliable: these check shapes, not words, at temperature 0 with a seed. Each test runs every
+# Small models are not reliable: these check shapes, not words, at temperature 0 with a seed (anthropic sends
+# neither). Each test runs every
 # provider against one server.
 def test_a_real_server_streams_text() -> Result[Void]
   request = LLM.Request(
@@ -48,7 +49,7 @@ def test_a_real_server_calls_a_tool_with_json_arguments() -> Result[Void]
   )
 
   server = try Llama.start("tool_call")
-  results = providers(server).map { |provider| tool_round(provider, request) }
+  results = providers(server).map { |provider| tool_round(provider, forced(provider, request)) }
   Llama.stop(server)
   for result in results
     try result
@@ -86,8 +87,20 @@ def tool_round(provider: LLM.Provider, request: LLM.Request) -> Result[Void]
   try check_tool_call(answer)
   results = answer.response.message.content.select { |b| tool_use?(b) }.map { |b| result_of(b) }
   messages = request.messages + [answer.response.message, LLM.Message(role: LLM.Role.User, content: results)]
-  again = try call(provider, request.with(messages: messages, tool_choice: LLM.ToolChoice.Auto, max_tokens: 24))
+  again = try call(
+    provider,
+    request.with(messages: messages, tool_choice: LLM.ToolChoice.Auto, extra: {}, max_tokens: 24),
+  )
+
   Test.assert(not again.response.message.content.empty?, "no answer after the tool result")
+end
+
+# anthropic refuses `Required` (the current Claude models do); llama-server takes `any`, sent as an extra field.
+def forced(provider: LLM.Provider, request: LLM.Request) -> LLM.Request
+  return request if provider.name != "anthropic"
+
+  any = JSON.object({"type": JSON.from("any")})
+  request.with(tool_choice: LLM.ToolChoice.Auto, extra: {"tool_choice": any})
 end
 
 def check_tool_call(answer: Answer) -> Result[Void]
