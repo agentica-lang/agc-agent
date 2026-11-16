@@ -72,6 +72,11 @@ def option_list[T](value: Optional[T]) -> List[T]
   end
 end
 
+## Each field of `records` as `name:type`, a record after another.
+def fields(records: List[List[StructMember]]) -> List[String]
+  records.map { |members| members.map { |m| "#{m.name}:#{m.type}" }.join(",") }
+end
+
 private
 
 def invalid[T](result: Result[T]) -> Result[T]

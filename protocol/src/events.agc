@@ -267,6 +267,28 @@ def parse_event_id(text: String) -> Result[Int]
   end
 end
 
+## The fields of the events and the names of their values on the wire, for `Protocol.WIRE`.
+def shape() -> List[String]
+  records = [
+    TurnStarted.members,
+    TextDelta.members,
+    ThinkingDelta.members,
+    ToolStarted.members,
+    ToolFinished.members,
+    ApprovalRequested.members,
+    ApprovalResolved.members,
+    Usage.members,
+    TurnFinished.members,
+    ResolvedWire.members,
+    TurnStartedWire.members,
+    TurnFinishedWire.members,
+    Errors.Failure.members,
+  ]
+
+  names = event_kinds().map(&kind_name) + approval_sources().map(&source_name)
+  Wire.fields(records) + names + known_stop_reasons().map(&stop_reason_name)
+end
+
 private
 
 struct ResolvedWire

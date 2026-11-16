@@ -11,9 +11,10 @@ enum Role
   Assistant
 end
 
-## `GET /v1/health`.
+## `GET /v1/health`. `wire` is the `Protocol.wire_digest` of the server, none from a server older than it.
 struct Health
   version: String
+  wire: Optional[String] = none
 end
 
 ## The answer of `POST /v1/sessions`.
@@ -152,6 +153,24 @@ def decode_session(text: String) -> Result[Session]
       effort: wire.effort,
     ),
   )
+end
+
+## The fields of the replies and the names of their values on the wire, for `Protocol.WIRE`.
+def shape() -> List[String]
+  records = [
+    Health.members,
+    SessionCreated.members,
+    MessageAccepted.members,
+    SessionSummary.members,
+    SessionList.members,
+    Message.members,
+    Session.members,
+    ServerInfo.members,
+    MessageWire.members,
+    SessionWire.members,
+  ]
+
+  Wire.fields(records) + roles().map(&role_name)
 end
 
 private
