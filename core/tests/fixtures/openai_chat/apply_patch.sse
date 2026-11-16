@@ -1,0 +1,10 @@
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"role":"assistant","content":null}}],"id":"chatcmpl-core-13","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_patch","type":"function","function":{"name":"apply_patch","arguments":"{\"input\": \"*** Begin Patch\\n*** Add File: hello.txt\\n+hello\\n*** End Patch\"}"}}]}}],"id":"chatcmpl-core-13","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":"tool_calls","index":0,"delta":{}}],"id":"chatcmpl-core-13","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[],"id":"chatcmpl-core-13","model":"m","object":"chat.completion.chunk","usage":{"completion_tokens":10,"prompt_tokens":100,"total_tokens":110}}
+
+data: [DONE]
+
