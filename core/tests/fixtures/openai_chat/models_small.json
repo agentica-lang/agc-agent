@@ -1,0 +1,1 @@
+{"object":"list","data":[{"id":"qwen2.5-0.5b-instruct","object":"model","created":1794777274,"owned_by":"llamacpp","meta":{"vocab_type":2,"n_vocab":151936,"n_ctx":120,"n_ctx_train":32768}}]}

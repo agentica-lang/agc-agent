@@ -40,11 +40,14 @@ struct Sub
   seen: List[Seen]
 end
 
-## The model answers with the fixtures `replies` in order (names under `openai_chat/`).
+## The model answers with the fixtures `replies` in order (names under `openai_chat/`; a `.json` one is a 200 JSON answer).
 struct Setup
   replies: List[String]
   keep_events: Int = 1000
   approval_timeout_ms: Int = 90000
+  ## 0 asks the fake (`GET /models`), which takes a reply.
+  context_window: Int = 1_000_000
+  compact_model: String = ""
 end
 
 def fake_env(name: String) -> Result[String]
@@ -94,6 +97,8 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     rules: no_rules(),
     keep_events: setup.keep_events,
     approval_timeout_ms: setup.approval_timeout_ms,
+    context_window: window(setup.context_window),
+    compact_model: setup.compact_model,
   )
 
   server = try Server.start(options)
@@ -140,12 +145,22 @@ def run(program: String, args: List[String]) -> Result[Int]
   code
 end
 
+def window(tokens: Int) -> Optional[Int]
+  return none if tokens == 0
+
+  some(tokens)
+end
+
 def no_rules() -> Tools.Rules = Tools.Rules(allow: [], deny: [])
 
 def fixtures(names: List[String]) -> Result[List[Fake.Reply]]
   replies: List[Fake.Reply] = []
   for name in names
-    replies = replies.push(try Fake.sse("openai_chat/#{name}"))
+    if name.end_with?(".json")
+      replies = replies.push(try Fake.json(200, "openai_chat/#{name}"))
+    else
+      replies = replies.push(try Fake.sse("openai_chat/#{name}"))
+    end
   end
 
   ok(replies)

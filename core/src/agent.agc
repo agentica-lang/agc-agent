@@ -3,17 +3,21 @@
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Compaction from "compaction"
 import Tools from "tools"
 
 MAX_ROUNDS = 50
 SAME_ROUNDS = 3
 
 ## How a turn reaches its session. `approve` waits for the answer; `commit` gets the history after each finished
-## round, so a stopped turn keeps no unfinished tool call.
+## round, so a stopped turn keeps no unfinished tool call. `compacted` gets a compaction of the history it committed,
+## and `window` the model's window once the turn asked the provider for it (-1 when it does not say).
 struct Link
   emit: Fn[Protocol.Event, Void]
   approve: Fn[Ask, Protocol.Decision]
   commit: Fn[List[LLM.Message], Void]
+  compacted: Fn[Compaction.Compaction, Void]
+  window: Fn[Int, Void]
 end
 
 ## A call that waits for an approval. `allow_session` allows the same `tool` on the same `target` again.
@@ -33,6 +37,10 @@ struct Turn
   text: String
   ctx: Tools.Context
   link: Link
+  ## `window` 0 asks the provider for it.
+  compaction: Compaction.Settings
+  ## The context of the session's last call.
+  last_context: Int = 0
   max_rounds: Int = MAX_ROUNDS
 end
 
@@ -41,9 +49,11 @@ struct Outcome
   reason: Protocol.StopReason
 end
 
-def run(turn: Turn) -> Outcome
+def run(given: Turn) -> Outcome
+  turn = given.with(compaction: given.compaction.with(window: window(given)))
   messages = turn.history.push(LLM.Message(role: LLM.Role.User, content: [text_block(turn.text)]))
   turn.link.commit.call(messages)
+  messages = compacted(turn, turn.last_context, messages)
   last_round = ""
   same = 0
   for _round in 1..turn.max_rounds
@@ -66,6 +76,7 @@ def run(turn: Turn) -> Outcome
     results = calls.map { |call| run_call(turn, call) }
     messages = messages + [response.message, LLM.Message(role: LLM.Role.User, content: results)]
     turn.link.commit.call(messages)
+    messages = compacted(turn, response.usage.input + response.usage.cache_read + response.usage.cache_write, messages)
     this_round = JSON.encode(JSON.from([calls.map { |c| "#{c.name} #{c.arguments}" }, results.map { |r| text_of(r) }]))
     same = same_count(this_round, last_round, same)
     last_round = this_round
@@ -87,6 +98,38 @@ EMPTY = LLM.Response(
   stop_reason: LLM.StopReason.EndTurn,
   usage: LLM.Usage(),
 )
+
+def window(turn: Turn) -> Int
+  return turn.compaction.window if turn.compaction.window != 0
+
+  found = -1
+  listed: List[LLM.Model] = LLM.models(turn.provider).unwrap_or([])
+  for model in listed
+    if model.id == turn.model
+      found = model.context.unwrap_or(-1)
+    end
+  end
+
+  turn.link.window.call(found)
+  found
+end
+
+# Past the part of the window the settings give, the history from the first task to the running turn becomes a
+# summary. When the summary fails, the history stays as it is.
+def compacted(turn: Turn, context: Int, messages: List[LLM.Message]) -> List[LLM.Message]
+  return messages if not Compaction.due?(turn.compaction, context)
+
+  for span in option_list(Compaction.span(messages))
+    case Compaction.summarize(turn.provider, turn.compaction, messages, span)
+      ok(compaction) ->
+        turn.link.compacted.call(compaction)
+        return Compaction.apply(messages, compaction)
+      error(_) -> nil
+    end
+  end
+
+  messages
+end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   tools = Tools.all().map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }

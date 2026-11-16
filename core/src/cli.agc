@@ -11,7 +11,9 @@ USAGE = <<~TEXT
   plain text (tool output and file contents included), until you remove it. A file keeps every event and grows with
   the session, and the server reads them all when it starts. The model API is
   AGC_AGENT_BASE_URL (OpenAI chat format, a local llama-server by default), with AGC_AGENT_API_KEY and
-  AGC_AGENT_MODEL.
+  AGC_AGENT_MODEL. Past 80 % of the model's window (AGC_AGENT_CONTEXT_WINDOW, else what the API says), the
+  history between the first task and the running turn becomes a summary by AGC_AGENT_COMPACT_MODEL (else the
+  session's model).
 TEXT
 
 enum Command

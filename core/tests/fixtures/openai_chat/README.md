@@ -14,3 +14,5 @@ The fake LLM of the server tests streams these, in the order a test gives.
   `write_file` call.
 - `text_cached.sse` is `text.sse` with other usage: 150 prompt tokens, 120 of
   them cached, and 7 completion tokens.
+- `summary.sse` is the summary a compaction asks for, and `models_small.json` a
+  llama-server `GET /models` answer whose model has a window of 120 tokens.
