@@ -108,6 +108,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     compact_model: setup.compact_model,
     props_url: props_url(setup, fake),
     before_load: setup.before_load,
+    extra: Config.request_extra(setup.api),
   )
 
   server = try Server.start(options)

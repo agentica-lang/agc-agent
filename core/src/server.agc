@@ -58,6 +58,8 @@ struct Options
   props_url: String = ""
   ## The key `/props` takes, as the provider's.
   api_key: String = ""
+  ## Fields every request to the model API carries, in the format of that API (`Config.request_extra`).
+  extra: Map[String, JSON.Value] = {}
   ## Runs in the task that loads a session, with its id, before the file is read: a seam for the tests.
   before_load: Optional[Fn[String, Void]] = none
 end
@@ -426,6 +428,7 @@ def entry(
     compact_model: options.compact_model,
     props_url: options.props_url,
     api_key: options.api_key,
+    extra: options.extra,
   )
 
   Entry(summary: summary_of(header), header: header, file: file, session: some(Session.start(setup, saved)))

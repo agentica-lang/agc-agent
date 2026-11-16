@@ -3,7 +3,8 @@ import H from "support/harness"
 
 # On the OpenAI Responses format a turn runs as on chat completions: the system prompt goes as `instructions`, the
 # tools as functions, and the next request gives back the reasoning item (its encrypted content), the call and its
-# output by `call_id`. The usage counts the cached tokens, and the answer is shown.
+# output by `call_id`. The API keeps nothing (`store: false`) and sends the reasoning back encrypted. The usage counts
+# the cached tokens, and the answer is shown.
 def test_a_turn_runs_on_the_responses_format() -> Result[Void]
   setup = H.Setup(api: "openai_responses", replies: ["write_file.sse", "text.sse"])
   H.using(setup) do |h|
@@ -21,6 +22,8 @@ def test_a_turn_runs_on_the_responses_format() -> Result[Void]
     asked = try JSON.parse(first.body)
     try Test.assert(string(asked, "instructions").start_with?("You are a coding agent."), "no instructions")
     try Test.eq(types(asked, "input"), ["message"])
+    try Test.eq(JSON.get(asked, "store"), ok(JSON.from(false)))
+    try Test.eq(JSON.get(asked, "include"), ok(JSON.from(["reasoning.encrypted_content"])))
     try Test.assert(types(asked, "tools").all? { |t| t == "function" }, "the tools are not functions")
     second = try JSON.parse((try H.next_request(h)).body)
     try Test.eq(types(second, "input"), ["message", "reasoning", "message", "function_call", "function_call_output"])

@@ -40,6 +40,8 @@ struct Settings
   ## llama-server's `/props`, whose `n_ctx` is the window of one slot; empty for another API.
   props_url: String = ""
   api_key: String = ""
+  ## Fields of every request, as the turn's.
+  extra: Map[String, JSON.Value] = {}
 end
 
 def due?(settings: Settings, context: Int) -> Bool
@@ -89,7 +91,11 @@ def summarize(
 ) -> Result[Compaction]
   text = transcript(history.drop(span.from).take(span.to - span.from))
   prompt = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
-  stream = try LLM.stream(provider, LLM.Request(model: settings.model, system: SYSTEM, messages: [prompt]))
+  stream = try LLM.stream(
+    provider,
+    LLM.Request(model: settings.model, system: SYSTEM, messages: [prompt], extra: settings.extra),
+  )
+
   response = try LLM.response(stream)
   return error("the summary was cut at max_tokens") if response.stop_reason == LLM.StopReason.MaxTokens
 

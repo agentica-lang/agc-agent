@@ -18,7 +18,8 @@ APIS = ["openai", "openai_responses"]
 def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
   base_url = set(read, "AGC_AGENT_BASE_URL").unwrap_or(DEFAULT_BASE_URL)
   api_key = set(read, "AGC_AGENT_API_KEY").unwrap_or("")
-  provider = try provider(set(read, "AGC_AGENT_API").unwrap_or(APIS[0]), base_url, api_key)
+  api = set(read, "AGC_AGENT_API").unwrap_or(APIS[0])
+  provider = try provider(api, base_url, api_key)
   ok(
     Server.Options(
       state_dir: try state_dir(read),
@@ -31,6 +32,7 @@ def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
       compact_model: set(read, "AGC_AGENT_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(base_url),
       api_key: api_key,
+      extra: request_extra(api),
     ),
   )
 end
@@ -47,6 +49,14 @@ def provider(
     "openai_responses" -> ok(LLM.openai_responses(base_url, api_key, options))
     _ -> error("AGC_AGENT_API must be one of #{APIS.join(", ")}, not #{api.inspect}")
   end
+end
+
+## On the Responses format the API keeps nothing (`store: false`): the session file has the history, and the reasoning
+## comes back in its encrypted content.
+def request_extra(api: String) -> Map[String, JSON.Value]
+  return {} if api != "openai_responses"
+
+  {"store": JSON.from(false), "include": JSON.from(["reasoning.encrypted_content"])}
 end
 
 def state_dir(read: Fn[String, Result[String]]) -> Result[String]

@@ -42,6 +42,7 @@ struct Setup
   compact_model: String = ""
   props_url: String = ""
   api_key: String = ""
+  extra: Map[String, JSON.Value] = {}
 end
 
 enum Msg
@@ -431,11 +432,13 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     text: text,
     ctx: setup.ctx,
     link: link,
+    extra: setup.extra,
     compaction: Compaction.Settings(
       window: state.window,
       model: compact_model(setup),
       props_url: setup.props_url,
       api_key: setup.api_key,
+      extra: setup.extra,
     ),
     last_context: state.context,
   )
