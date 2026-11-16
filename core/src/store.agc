@@ -20,6 +20,8 @@ struct Header
   created_ms: Int
   ## The system prompt of every call of the session, so a cache of its prefix stays valid after a restart.
   system: Optional[String] = none
+  ## The model API of the session, by its `AGC_AGENT_API` name; none in a file made before the choice.
+  api: Optional[String] = none
 end
 
 struct Logged
@@ -64,6 +66,7 @@ def create(dir: String, header: Header) -> Result[String]
     "model": JSON.from(header.model),
     "created_ms": JSON.from(header.created_ms),
     "system": JSON.from(header.system),
+    "api": JSON.from(header.api),
   }
 
   written = File.write(handle, try line(fields))
@@ -211,6 +214,7 @@ def decode_header(json: JSON.Value) -> Result[Header]
       model: try field(json, "model"),
       created_ms: try JSON.int(try JSON.get(json, "created_ms")),
       system: optional_string(json, "system"),
+      api: optional_string(json, "api"),
     ),
   )
 end

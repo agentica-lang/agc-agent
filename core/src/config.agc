@@ -19,12 +19,14 @@ def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
   base_url = set(read, "AGC_AGENT_BASE_URL").unwrap_or(DEFAULT_BASE_URL)
   api_key = set(read, "AGC_AGENT_API_KEY").unwrap_or("")
   api = set(read, "AGC_AGENT_API").unwrap_or(APIS[0])
-  provider = try provider(api, base_url, api_key)
+  return error("AGC_AGENT_API must be one of #{APIS.join(", ")}, not #{api.inspect}") if not APIS.include?(api)
+
   ok(
     Server.Options(
       state_dir: try state_dir(read),
       data_dir: try data_dir(read),
-      provider: provider,
+      apis: apis(base_url, api_key),
+      api: api,
       model: set(read, "AGC_AGENT_MODEL").unwrap_or(DEFAULT_MODEL),
       env: read,
       rules: Tools.Rules(allow: [], deny: []),
@@ -32,31 +34,18 @@ def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
       compact_model: set(read, "AGC_AGENT_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(base_url),
       api_key: api_key,
-      extra: request_extra(api),
     ),
   )
 end
 
-## The provider of the model API `api` at `base_url`.
-def provider(
-  api: String,
-  base_url: String,
-  api_key: String,
-  options: LLM.Options = LLM.Options(),
-) -> Result[LLM.Provider]
-  case api
-    "openai" -> ok(LLM.openai_chat(base_url, api_key, options))
-    "openai_responses" -> ok(LLM.openai_responses(base_url, api_key, options))
-    _ -> error("AGC_AGENT_API must be one of #{APIS.join(", ")}, not #{api.inspect}")
-  end
-end
-
-## On the Responses format the API keeps nothing (`store: false`): the session file has the history, and the reasoning
-## comes back in its encrypted content.
-def request_extra(api: String) -> Map[String, JSON.Value]
-  return {} if api != "openai_responses"
-
-  {"store": JSON.from(false), "include": JSON.from(["reasoning.encrypted_content"])}
+## Every model API at `base_url`, by its `AGC_AGENT_API` name. On the Responses format the API keeps nothing
+## (`store: false`): the session file has the history, and the reasoning comes back in its encrypted content.
+def apis(base_url: String, api_key: String, options: LLM.Options = LLM.Options()) -> Map[String, Server.ModelApi]
+  stateless = {"store": JSON.from(false), "include": JSON.from(["reasoning.encrypted_content"])}
+  {
+    "openai": Server.ModelApi(provider: LLM.openai_chat(base_url, api_key, options)),
+    "openai_responses": Server.ModelApi(provider: LLM.openai_responses(base_url, api_key, options), extra: stateless),
+  }
 end
 
 def state_dir(read: Fn[String, Result[String]]) -> Result[String]

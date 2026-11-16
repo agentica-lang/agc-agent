@@ -98,7 +98,7 @@ def create(chat: Chat, options: Args.Options) -> Result[Chat]
     none -> try Path.cwd()
   end
 
-  id = try Client.create_session(chat.server, Protocol.NewSession(cwd: cwd, model: options.model))
+  id = try Client.create_session(chat.server, Protocol.NewSession(cwd: cwd, model: options.model, api: options.api))
   print_line("[session #{id}]")
   ok(subscribe(chat.with(id: id), 0))
 end
