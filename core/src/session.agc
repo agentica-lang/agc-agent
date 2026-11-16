@@ -7,9 +7,10 @@
 ##
 ## Every event and message goes to the session's file before a client sees it, so a session started again from its
 ## file keeps its ids. Text and thinking deltas are the exception: they are not saved. The first delta after a saved
-## event reserves a block of `RESERVE` ids in the file, so a restart that cuts a run of deltas starts after them. After a restart, a `Last-Event-ID` before a delta that was
-## not saved gets `resync`. A turn that a restart cut ends then as `cancelled`. When a write fails, the event gets no id:
-## the clients get an `error` without one, the running turn stops, and no turn starts until a write works again.
+## event reserves a block of `RESERVE` ids in the file, so a restart that cuts a run of deltas starts after them.
+## After a restart, a `Last-Event-ID` before a delta that was not saved gets `resync`. A turn that a restart cut ends
+## then as `cancelled`. When a write fails, the event gets no id: the clients get an `error` without one, the running
+## turn stops, and no turn starts until a write works again.
 
 import Actor from "std/actor"
 import LLM from "pkg/llm/llm"
