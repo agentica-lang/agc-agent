@@ -1,4 +1,4 @@
-## A fake agc-agent server on 127.0.0.1, port 0. It checks the token of every request, answers each route with the next
+## A fake Finn Agent server on 127.0.0.1, port 0. It checks the token of every request, answers each route with the next
 ## of its replies, keeps the requests it got, and streams recorded SSE fixtures on the events route: the ones a reply
 ## names, then the ones a test or a later reply pushes.
 
