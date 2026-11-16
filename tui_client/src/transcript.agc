@@ -25,6 +25,8 @@ struct Entry
   call: String = ""
   ## A click opened or closed the entry (a thinking block, a tool call); none follows the default.
   open: Optional[Bool] = none
+  ## The rows of the entry for the width and thinking they were cut for; a change of the entry drops them.
+  wrapped: Optional[Wrapped] = none
 end
 
 ## One drawn row of the transcript.
@@ -33,6 +35,12 @@ struct Line
   spans: List[Markdown.Span]
   ## The index of the entry it draws, -1 for the row between two entries.
   entry: Int = -1
+end
+
+struct Wrapped
+  width: Int
+  thinking: Bool
+  lines: List[Line]
 end
 
 def from_history(messages: List[Protocol.Message]) -> List[Entry]
@@ -49,7 +57,7 @@ def add(entries: List[Entry], kind: Kind, text: String) -> List[Entry]
   streamed = kind == Kind.Assistant or kind == Kind.Thinking
   if streamed and not entries.empty? and entries.last.kind == kind
     last = entries.last
-    return entries.take(entries.size - 1).push(last.with(text: last.text + text))
+    return entries.take(entries.size - 1).push(last.with(text: last.text + text, wrapped: none))
   end
 
   entries.push(Entry(kind: kind, text: text))
@@ -79,10 +87,10 @@ def toggle(entries: List[Entry], index: Int, thinking: Bool) -> List[Entry]
   return entries if index < 0 or index >= entries.size
 
   entry = entries[index]
-  return entries.set(index, entry.with(open: some(not open?(entry, thinking)))) if entry.kind == Kind.Thinking
-  return entries if not tool?(entry) or entry.call == ""
+  default = entry.kind == Kind.Thinking and thinking
+  return entries if entry.kind != Kind.Thinking and (not tool?(entry) or entry.call == "")
 
-  entries.set(index, entry.with(open: some(not open?(entry, false))))
+  entries.set(index, entry.with(open: some(not open?(entry, default)), wrapped: none))
 end
 
 ## The thinking blocks follow the default again (after ^T).
@@ -98,10 +106,41 @@ def lines(entries: List[Entry], width: Int, thinking: Bool) -> List[Line]
       rows = rows.push(Line(kind: entry.kind, spans: []))
     end
 
-    rows = rows + entry_lines(entry, width, thinking).map { |line| line.with(entry: index) }
+    rows = rows + entry_rows(entry, index, width, thinking)
   end
 
   rows
+end
+
+## The last `count` rows of `lines` (all of them when there are fewer), cutting only the entries they reach.
+def tail(entries: List[Entry], width: Int, thinking: Bool, count: Int) -> List[Line]
+  parts: List[List[Line]] = []
+  size = 0
+  index = entries.size - 1
+  while index >= 0 and size < count
+    rows = entry_rows(entries[index], index, width, thinking)
+    if index > 0
+      rows = [Line(kind: entries[index].kind, spans: [])] + rows
+    end
+
+    rows = rows.drop([rows.size - (count - size), 0].max.unwrap!)
+    parts = parts.push(rows)
+    size = size + rows.size
+    index = index - 1
+  end
+
+  parts.reverse.flat_map { |rows| rows }
+end
+
+## The entries with their rows cut for `width` and `thinking`, so that `lines` and `tail` cut only what changed.
+def wrapped(entries: List[Entry], width: Int, thinking: Bool) -> List[Entry]
+  return entries if (entries.all? { |entry| fresh?(entry, width, thinking) })
+
+  (0...entries.size).to_a.map do |index|
+    entry = entries[index]
+    cut = Wrapped(width: width, thinking: thinking, lines: entry_rows(entry, index, width, thinking))
+    entry.with(wrapped: some(cut))
+  end
 end
 
 ## `text` cut into rows of at most `width` columns, at spaces when it can.
@@ -119,7 +158,21 @@ private
 def unfolded(entry: Entry) -> Entry
   return entry if entry.kind != Kind.Thinking
 
-  entry.with(open: none)
+  entry.with(open: none, wrapped: none)
+end
+
+# Only a thinking block draws differently with `thinking`.
+def fresh?(entry: Entry, width: Int, thinking: Bool) -> Bool
+  case entry.wrapped
+    some(cut) -> cut.width == width and (entry.kind != Kind.Thinking or cut.thinking == thinking)
+    none -> false
+  end
+end
+
+def entry_rows(entry: Entry, index: Int, width: Int, thinking: Bool) -> List[Line]
+  return entry.wrapped.unwrap!.lines if fresh?(entry, width, thinking)
+
+  entry_lines(entry, width, thinking).map { |line| line.with(entry: index) }
 end
 
 def open?(entry: Entry, default: Bool) -> Bool = entry.open.unwrap_or(default)

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- `finn tui` keeps the wrapped rows of each transcript entry, so a key costs about the same on a long transcript as on a short one.
 - Approval rules come from a config file (`FINN_CONFIG`, else `~/.config/finn/config.json`) and the project's `.finn/config.json` (its allow rules only under `FINN_TRUSTED_DIRS`); an approval may allow a `bash` prefix (`allow_prefix`) or a whole tool (`allow_tool`) for the session, and `PATCH /v1/sessions/ID` with `accept_edits` runs file edits without asking (until the server restarts; the deny rules are checked first, as far as the parser sees a command, and nothing reaches into `.git/`).
 - `finn tui` draws a view tree and writes only the cells that change; the prompt cursor is a reversed cell, and a long pasted line no longer slows each key.
 - `finn tui --yolo` allows the tool calls of the turns it starts; the status line shows YOLO all the time, and a turn another client started is still asked.
