@@ -383,7 +383,8 @@ def test_at_lists_the_files_and_tab_completes_one() -> Result[Void]
 end
 
 # `/` lists the commands of the client's table under the editor, narrowed as the name grows; Tab completes the
-# selected one, Enter runs it, Esc closes the list, and a name no command starts with shows none and goes as text.
+# selected one, Enter completes a part of a name and runs a whole one, Esc closes the list, and a name no command
+# starts with shows none and goes as text.
 def test_slash_lists_the_commands_and_tab_completes_one() -> Result[Void]
   model = App.update(model_of(80, 20).with(id: "s1"), key_char("/")).model
   try Test.assert(
@@ -408,12 +409,50 @@ def test_slash_lists_the_commands_and_tab_completes_one() -> Result[Void]
   closed = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model
   try Test.assert(not rows(closed).any? { |row| row.start_with?("/model [") }, "Esc closes the list")
   try Test.eq(closed.stopping, false)
-  helped = App.update(model_of(80, 20).with(id: "s1", prompt: "/he", cursor: 3), enter()).model
-  try Test.eq([helped.prompt, helped.entries.last.text], ["", Client.help().last])
+  # Enter on part of a name completes it and runs nothing; on a whole name it runs the command.
+  partial = App.update(model_of(80, 20).with(id: "s1", prompt: "/c", cursor: 2), enter())
+  try Test.eq([partial.model.prompt, partial.model.outbox.size.to_s, partial.cmds.size.to_s], ["/clone", "0", "0"])
+  helped = App.update(model_of(80, 20).with(id: "s1", prompt: "/help", cursor: 5), enter()).model
+  try Test.eq(helped.prompt, "")
+  try Test.assert(
+    helped.entries.any? { |entry| entry.text == "/quit                      leave" },
+    "the help is drawn",
+  )
+
+  # Esc, then Enter, sends a prefix as text.
+  escaped = App.update(model_of(80, 20).with(id: "s1", prompt: "/c", cursor: 2), escape()).model
+  try Test.eq(App.update(escaped, enter()).model.outbox, ["/c"])
+  # The cursor inside the word, or a word after which more is typed, shows no list; at the end of the word the whole
+  # word is replaced.
+  inside = App.update(model_of(80, 20).with(id: "s1", prompt: "/resume", cursor: 3), enter()).model
+  try Test.eq([inside.prompt, inside.entries.last.text.start_with?("error:").to_s], ["", "true"])
+  middle = App.update(model_of(80, 20).with(id: "s1", prompt: "/mo foo", cursor: 3), tab()).model
+  try Test.eq(middle.prompt, "/model foo")
+  inside_rows = rows(model_of(80, 20).with(prompt: "/resume", cursor: 3))
+  try Test.assert(not inside_rows.any? { |row| row.start_with?("/resume [") }, "no list inside the word")
+  # Backspace from `/` closes the list; a prompt Up recalled shows none.
+  back = App.update(App.update(model_of(80, 20).with(id: "s1"), key_char("/")).model, backspace()).model
+  try Test.assert(not rows(back).any? { |row| row.start_with?("/new") }, "no list")
+  recalled = App.update(model_of(80, 20).with(id: "s1", history: ["/he"]), up()).model
+  try Test.eq(recalled.prompt, "/he")
+  try Test.assert(not rows(recalled).any? { |row| row.start_with?("/help") }, "a recalled prompt shows no list")
   try Test.eq(App.update(model_of(80, 20).with(id: "s1", prompt: "/", cursor: 1), enter()).model.outbox, ["/"])
   unknown = model_of(80, 20).with(id: "s1", prompt: "/zz", cursor: 3)
   try Test.assert(not rows(unknown).any? { |row| row.include?("no file matches") }, "no list")
   Test.eq(App.update(unknown, enter()).model.outbox, ["/zz"])
+end
+
+# On a small screen the list shows the rows it has room for and keeps the selected one among them.
+def test_the_command_list_follows_the_selection_on_a_small_screen() -> Result[Void]
+  model = App.update(model_of(80, 7).with(id: "s1"), key_char("/")).model
+  for _ in 0...11
+    model = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))).model
+  end
+
+  try Test.assert(rows(model).any? { |row| row.start_with?("/quit") }, "the selected row shows: #{rows(model)}")
+  tiny = App.update(model_of(80, 4).with(id: "s1"), key_char("/")).model
+  try Test.eq(App.update(tiny, App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))).model.mention_selected, 0)
+  Test.eq(App.update(tiny, enter()).model.outbox, ["/"])
 end
 
 def model_of(width: Int, height: Int) -> App.Model
@@ -436,6 +475,14 @@ def rows(model: App.Model) -> List[String]
 end
 
 def back_tab() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.BackTab, TUI.Mods()))
+
+def tab() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))
+
+def escape() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
+
+def backspace() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Backspace, TUI.Mods()))
+
+def up() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Up, TUI.Mods()))
 
 def key_char(c: String) -> App.Msg = App.Msg.Key(TUI.Event.Char(c, TUI.Mods()))
 

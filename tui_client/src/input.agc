@@ -65,12 +65,14 @@ def mention(text: String, cursor: Int) -> Optional[Mention]
   some(Mention(start: at, query: chars.drop(at + 1).join("")))
 end
 
-## The command word that the cursor ends, when the prompt starts with `/` and nothing but the name is typed yet.
+## The command word at the start of the prompt, `/` and a name, while the cursor is at its end.
 def command_word(text: String, cursor: Int) -> Optional[Mention]
-  before = text.slice(0, cursor)
-  return none if not before.start_with?("/") or before.include?(" ") or before.include?("\n")
+  return none if not text.start_with?("/")
 
-  some(Mention(start: 0, query: before.slice(1, before.length - 1), source: Source.Commands))
+  word = text.split("\n")[0].split(" ")[0]
+  return none if cursor != word.length
+
+  some(Mention(start: 0, query: word.slice(1, word.length - 1), source: Source.Commands))
 end
 
 ## The commands whose name starts with `/query`, each with its arguments and what it does, in a column. A command
@@ -104,15 +106,18 @@ def completed(text: String, cursor: Int, mention: Mention, value: String) -> Str
   rest = text.slice(cursor, text.length - cursor)
   case mention.source
     Source.Files -> text.slice(0, mention.start) + "@#{value} " + rest
+    # The rest starts with its own space.
+    Source.Commands if rest != "" -> text.slice(0, mention.start) + value.strip + rest
     Source.Commands -> text.slice(0, mention.start) + value + rest
   end
 end
 
-## The rows of a list, the selected one marked.
-def rows(found: List[Choice], selected: Int, width: Int) -> List[Layout.Row]
-  return [Layout.Row(text: " no file matches")] if found.empty?
+## The rows of a list in `room` rows, the selected one marked and always among them.
+def rows(found: List[Choice], selected: Int, width: Int, room: Int) -> List[Layout.Row]
+  return [Layout.Row(text: " no file matches")].take(room) if found.empty?
 
-  (0...found.size).to_a.map do |i|
+  first = [selected - room + 1, 0].max.unwrap!
+  (first...[first + room, found.size].min.unwrap!).to_a.map do |i|
     look = Layout.Look.Plain
     if i == selected
       look = Layout.Look.Selected

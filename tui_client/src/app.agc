@@ -481,7 +481,7 @@ def on_key(app: Model, event: TUI.Event) -> Model
   return app if Approvals.captures?(app.approvals, event)
 
   for found in option_list(mention_list(app))
-    return on_mention_key(app, found, event) if mention_key?(found, event)
+    return on_mention_key(app, found, event) if mention_key?(app, found, event)
   end
 
   on_prompt_key(unselected(app, event), event)
@@ -660,8 +660,9 @@ end
 # The list under the editor: the commands while the prompt is `/` and part of a name that some command starts with,
 # else the files while the cursor ends an `@` word and the files are read; none once Esc closed it.
 def mention_list(app: Model) -> Optional[Input.Mention]
-  # A prompt Up recalled shows none: Up and Down go on through the history.
-  return none if app.picker.some? or app.recall.some?
+  # A prompt Up recalled shows none: Up and Down go on through the history. Nor does a list without room, or under an
+  # approval, which takes the panel.
+  return none if app.picker.some? or app.recall.some? or not app.approvals.pending.empty? or list_room(app) <= 0
 
   found = Input.command_word(app.prompt, cursor(app))
   if found.none? or mention_choices(app, found.unwrap!).empty?
@@ -676,17 +677,29 @@ def mention_list(app: Model) -> Optional[Input.Mention]
   found
 end
 
-# Enter runs the selected command once part of its name is typed; it sends the prompt as it is under the file list or
-# after `/` alone.
-def mention_key?(found: Input.Mention, event: TUI.Event) -> Bool
+def mention_key?(app: Model, found: Input.Mention, event: TUI.Event) -> Bool
   case event
     TUI.Event.Key(TUI.Key.Tab, _) -> true
     TUI.Event.Key(TUI.Key.Up, _) -> true
     TUI.Event.Key(TUI.Key.Down, _) -> true
     TUI.Event.Key(TUI.Key.Escape, _) -> true
-    TUI.Event.Key(TUI.Key.Enter, mods) -> not mods.alt and found.source == Input.Source.Commands and found.query != ""
+    TUI.Event.Key(TUI.Key.Enter, mods) -> not mods.alt and completes?(app, found)
     _ -> false
   end
+end
+
+# Enter on part of a command's name completes it as Tab does; on a whole name it runs the command, and after `/` alone
+# or under the file list it sends the prompt.
+def completes?(app: Model, found: Input.Mention) -> Bool
+  return false if found.source != Input.Source.Commands or found.query == ""
+
+  word = "/#{found.query}"
+  not mention_choices(app, found).any? { |choice| choice.value.strip == word }
+end
+
+# The rows under the editor that the list may take.
+def list_room(app: Model) -> Int
+  Screen.panel_room(app.height, Prompt.view(app.prompt, cursor(app), app.width, app.height).rows.size)
 end
 
 def mention_choices(app: Model, found: Input.Mention) -> List[Input.Choice]
@@ -697,7 +710,8 @@ def mention_choices(app: Model, found: Input.Mention) -> List[Input.Choice]
   end
 end
 
-# Tab puts the selected choice in place of the word, Enter also runs a command, Up and Down move, Esc closes the list.
+# Tab, or Enter on part of a command name, puts the selected choice in place of the word; Up and Down move, Esc closes
+# the list.
 def on_mention_key(app: Model, found: Input.Mention, event: TUI.Event) -> Model
   choices = mention_choices(app, found)
   selected = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
@@ -706,13 +720,6 @@ def on_mention_key(app: Model, found: Input.Mention, event: TUI.Event) -> Model
     TUI.Event.Key(TUI.Key.Down, _) -> app.with(mention_selected: [selected + 1, choices.size - 1].min.unwrap!)
     TUI.Event.Key(TUI.Key.Escape, _) -> app.with(mention_closed: some(found.start))
     _ if choices.empty? -> app
-    TUI.Event.Key(TUI.Key.Enter, _) ->
-      send(
-        app.with(
-          prompt: Input.completed(app.prompt, cursor(app), found, choices[selected].value),
-          mention_selected: 0,
-        ),
-      )
     _ ->
       at = cursor(app)
       text = Input.completed(app.prompt, at, found, choices[selected].value)
@@ -1269,7 +1276,7 @@ def approval_rows(app: Model, room: Int) -> List[Layout.Row]
     some(found) ->
       choices = mention_choices(app, found)
       selected = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
-      Input.rows(choices, selected, app.width).take([room, 0].max.unwrap!)
+      Input.rows(choices, selected, app.width, room)
     none -> []
   end
 end
