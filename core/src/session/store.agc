@@ -60,9 +60,10 @@ struct Saved
   ## The model and the thinking level of the last `settings` record: what the session changed since its header.
   model: Optional[String] = none
   effort: Optional[String] = none
-  ## The last event id of the whole file, the number of its approval requests and its last `usage`.
+  ## The last event id of the whole file, the number of its approval requests and of its turns, and its last `usage`.
   last_id: Int = 0
   approvals: Int = 0
+  turns: Int = 0
   usage: Optional[Protocol.Usage] = none
 end
 
@@ -192,9 +193,11 @@ end
 
 def reopen(path: String) -> Result[Void] = write(path, "\n")
 
-## From now on the records follow entry `leaf`, a `Point` of the file.
-def append_branch(path: String, leaf: Int) -> Result[Void]
-  append(path, {"type": JSON.from("branch"), "parent": JSON.from(leaf)})
+## From now on the records follow entry `leaf`, a `Point` of the file. The branch takes event id `until`, so a client
+## that saw an id before it gets `resync`, after a restart too.
+def append_branch(path: String, leaf: Int, until: Int) -> Result[Void]
+  branch = try line({"type": JSON.from("branch"), "parent": JSON.from(leaf)})
+  write(path, branch + try line({"type": JSON.from("ids"), "until": JSON.from(until)}))
 end
 
 ## The user messages of every branch.
@@ -224,9 +227,7 @@ end
 ## fails is removed.
 def copy(path: String, dir: String, header: Header, leaf: Int) -> Result[String]
   entries = try read_entries(path)
-  if leaf != entries.start and not entries.records.has_key?(leaf)
-    return error("no entry #{leaf}", kind: Protocol.KIND_INVALID)
-  end
+  return error("no entry #{leaf}", kind: Protocol.KIND_INVALID) if not entry?(entries, leaf)
 
   created = try create(dir, header)
   written = write(created, branch(entries, leaf).map { |record| "#{record.line}\n" }.join(""))
@@ -251,10 +252,14 @@ def header(path: String) -> Result[Header]
   File.open(path, "read") do |handle| decode_header(try JSON.parse(try File.read_line(handle))) end
 end
 
-def load(path: String) -> Result[Saved]
+## The branch that ends at `leaf`, a `Point` of the file; the current one when none.
+def load(path: String, leaf: Optional[Int] = none) -> Result[Saved]
   lines = try File.foreach(path, MAX_LINE_BYTES).to_a
   size = (try File.stat(path)).size_bytes
   entries = try entries_of(path, lines)
+  end_at = leaf.unwrap_or(entries.leaf)
+  return error("no entry #{end_at}", kind: Protocol.KIND_INVALID) if not entry?(entries, end_at)
+
   saved = Saved(
     header: entries.header,
     events: [],
@@ -264,7 +269,7 @@ def load(path: String) -> Result[Saved]
     open_end: size != lines.map { |text| text.bytesize + 1 }.sum,
   )
 
-  for record in branch(entries, entries.leaf)
+  for record in branch(entries, end_at)
     case added(saved, record.json)
       ok(next_saved) -> saved = next_saved
       error(_) -> saved = saved.with(skipped: saved.skipped + 1)
@@ -380,6 +385,8 @@ def branch_target(
   branches.get(parent)
 end
 
+def entry?(entries: Entries, at: Int) -> Bool = at == entries.start or entries.records.has_key?(at)
+
 # The records from the session's line to `leaf`, in order.
 def branch(entries: Entries, leaf: Int) -> List[Record]
   out: List[Record] = []
@@ -399,6 +406,8 @@ def totals(saved: Saved, entries: Entries) -> Saved
   last_id = 0
   reserved = 0
   approvals = 0
+  users = 0
+  started = 0
   usage: Optional[JSON.Value] = none
   settings = Settings()
   for at in entries.order
@@ -415,10 +424,15 @@ def totals(saved: Saved, entries: Entries) -> Saved
           approvals = approvals + 1
         end
 
+        if name == "turn_started"
+          started = started + 1
+        end
+
         if name == "usage"
           usage = some(record.json)
         end
 
+      "user" -> users = users + 1
       "ids" -> reserved = JSON.int(JSON.get(record.json, "until").unwrap_or(JSON.null())).unwrap_or(reserved)
       "settings" -> settings = settings_of(record.json).unwrap_or(settings)
       _ -> nil
@@ -429,6 +443,7 @@ def totals(saved: Saved, entries: Entries) -> Saved
     last_id: last_id,
     reserved: reserved,
     approvals: approvals,
+    turns: [users, started].max.unwrap!,
     usage: usage_of(usage),
     model: settings.model,
     effort: settings.effort,
@@ -447,7 +462,8 @@ def usage_of(json: Optional[JSON.Value]) -> Optional[Protocol.Usage]
   none
 end
 
-# The user messages as the nodes of a tree: the message before each on its branch, and the entry that ends its turn.
+# The user messages as the nodes of a tree: the message before each on its branch, and the entry that ends its turn
+# (its `turn_finished`, so records that follow it later do not move it).
 def turns(entries: Entries) -> List[Protocol.TreeNode]
   children: Map[Int, List[Int]] = {}
   for at in entries.order
@@ -472,6 +488,8 @@ def node(entries: Entries, children: Map[Int, List[Int]], active: Set[Int], at: 
     if entries.records[last].kind == "answer"
       answer = field(entries.records[last].json, "text").unwrap_or("")
     end
+
+    break if field(entries.records[last].json, "name") == ok("turn_finished")
   end
 
   Protocol.TreeNode(

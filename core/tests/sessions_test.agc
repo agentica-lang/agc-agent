@@ -648,15 +648,15 @@ def test_a_session_branches_forks_and_copies() -> Result[Void]
     H.close(a)
     after = try H.session(h, id)
     try Test.eq(after.history, before.history.take(2))
-    try Test.eq(after.last_event_id, before.last_event_id)
-    old = try H.until(try H.subscribe(h, id, some(before.last_event_id - 1)), Protocol.EventKind.Resync)
+    try Test.eq(after.last_event_id, before.last_event_id + 1)
+    old = try H.until(try H.subscribe(h, id, some(before.last_event_id)), Protocol.EventKind.Resync)
     H.close(old)
     try Test.eq(H.kinds(old.seen), ["resync"])
     b = try H.subscribe(h, id, some(after.last_event_id))
     _ = try H.send(h, id, "Three.")
     b = try H.until(b, Protocol.EventKind.TurnFinished)
     H.close(b)
-    try Test.eq(b.seen[0].id, Protocol.format_event_id(before.last_event_id + 1))
+    try Test.eq(b.seen[0].id, Protocol.format_event_id(before.last_event_id + 2))
     second = try tree(h, id)
     try Test.eq(second.map { |n| "#{n.text} #{n.active}" }, ["One. true", "Two. false", "Three. true"])
     try Test.eq(second.map { |n| n.parent }, [none, some(first[0].id), some(first[0].id)])
@@ -674,6 +674,35 @@ def test_a_session_branches_forks_and_copies() -> Result[Void]
       try Test.eq((try H.session(r, id)).history, now.history)
       try Test.eq((try H.session(r, id)).last_event_id, now.last_event_id)
       Test.eq(try tree(r, id), second)
+    end
+  end
+end
+
+# After a restart, a client from the branch left gets `resync`, and the next turn takes a number no turn had.
+def test_a_restart_after_a_branch_resyncs_the_branch_left() -> Result[Void]
+  setup = H.Setup(replies: ["text.sse", "text.sse", "text.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "One.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "Two.")
+    a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
+    H.close(a)
+    before = try H.session(h, id)
+    nodes = try tree(h, id)
+    _ = try H.post(h, Protocol.branch_path(id), Protocol.encode_branch(Protocol.Branch(entry: nodes[1].id)))
+    H.restarted(h, setup, "") do |r|
+      old = try H.until(try H.subscribe(r, id, some(before.last_event_id)), Protocol.EventKind.Resync)
+      H.close(old)
+      try Test.eq(H.kinds(old.seen), ["resync"])
+      after = try H.session(r, id)
+      try Test.eq(after.history, before.history.take(2))
+      try Test.eq(after.last_event_id, before.last_event_id + 1)
+      sent = try H.send(r, id, "Three.")
+      try Test.eq(number((try Protocol.decode_message_accepted(sent.text)).turn_id), "turn-3")
+      _ = try H.idle(r, id)
+      ok()
     end
   end
 end

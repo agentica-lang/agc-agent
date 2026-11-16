@@ -1020,18 +1020,22 @@ end
 def moved(state: State, entry: Int) -> Result[Moved]
   file = state.setup.file
   point = try Store.point(file, some(entry))
-  case save(state, -> { Store.append_branch(file, point.leaf) })
+  # Read before the branch is written, so a session whose file follows the branch always has its state.
+  saved = try Store.load(file, some(point.leaf))
+  until = state.counter + 1
+  case save(state, -> { Store.append_branch(file, point.leaf, until) })
     ok(_) -> nil
     error(e) -> return error("the session file cannot be written: #{e.message}", kind: Protocol.KIND_SESSION_STORAGE)
   end
 
-  saved = try Store.load(file)
   on_branch = state.with(
     history: saved.history,
     display: saved.shown,
     marks: saved.marks,
     stripped: saved.stripped,
     context: last_usage(saved.events).context,
+    counter: until,
+    reserved: until,
     broken: none,
   )
 
@@ -1081,7 +1085,7 @@ def restore(setup: Setup, saved: Store.Saved) -> State
     marks: saved.marks,
     stripped: saved.stripped,
     display: saved.shown,
-    turns: [saved.users, count(events, Protocol.EventKind.TurnStarted)].max.unwrap!,
+    turns: saved.turns,
     approvals: saved.approvals,
     resolved: resolved_ids(events),
     output: saved.usage.map { |u| u.output }.unwrap_or(0),
@@ -1096,9 +1100,11 @@ def restore(setup: Setup, saved: Store.Saved) -> State
     turn_messages = turn_messages - 1
   end
 
-  # The deltas of a cut turn after its last saved event are lost too.
+  # The deltas of a cut turn after its last saved event are lost too, and so are the events of other branches after
+  # the last of this one.
   cut_state = state
-  if cut_turn(events).some? or saved.open_user
+  on_branch = events.map { |logged| logged.id }.max.unwrap_or(0)
+  if cut_turn(events).some? or saved.open_user or saved.last_id > on_branch
     cut_state = state.with(lost_below: state.counter)
   end
 
@@ -1133,10 +1139,6 @@ def lost_below(events: List[Store.Logged]) -> Int
   end
 
   lost
-end
-
-def count(events: List[Store.Logged], kind: Protocol.EventKind) -> Int
-  events.select { |logged| Protocol.event_kind(logged.event) == kind }.size
 end
 
 def last_usage(events: List[Store.Logged]) -> Protocol.Usage

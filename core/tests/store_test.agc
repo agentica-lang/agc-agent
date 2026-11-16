@@ -91,7 +91,7 @@ def test_a_session_file_of_the_linear_format_still_loads() -> Result[Void]
   try Test.eq(saved.usage.map { |u| u.session_cost }, some(some(0.5)))
   tree = try Store.tree(LINEAR)
   nodes = [
-    Protocol.TreeNode(id: 1, text: "Hi", answer: "Hi!", last: 8, active: true),
+    Protocol.TreeNode(id: 1, text: "Hi", answer: "Hi!", last: 7, active: true),
     Protocol.TreeNode(id: 9, parent: some(1), text: "Again.", answer: "Yes.", last: 13, active: true),
   ]
 
@@ -99,7 +99,9 @@ def test_a_session_file_of_the_linear_format_still_loads() -> Result[Void]
 end
 
 # A branch goes back before a message and the next records follow it; a branch to the end of a turn goes on from there.
-# The ids, the settings and the cost stay those of the whole file, and a copy keeps one branch.
+# The ids, the turns, the settings and the cost stay those of the whole file, the end of a turn stays where it was,
+# and a
+# copy keeps one branch.
 def test_a_branch_replays_its_own_records() -> Result[Void]
   dir = try temp_dir()
   result = branches(dir)
@@ -115,21 +117,24 @@ def branches(dir: String) -> Result[Void]
   before = try Store.point(path, some(9))
   try Test.eq(before, Store.Point(leaf: 8, text: "Again."))
   try Test.error?(Store.point(path, some(3)))
-  try Store.append_branch(path, before.leaf)
+  try Store.append_branch(path, before.leaf, 1006)
   try Store.append_user(path, "Other.")
-  try Store.append_event(path, started(1006))
+  try Store.append_event(path, started(1007))
   try Store.append_answer(path, "Sure.")
   try Store.append_settings(path, "m3", none)
   moved = try Store.load(path)
   try Test.eq(moved.shown.map { |m| m.text }, ["Hi", "Hi!", "Other.", "Sure."])
-  try Test.eq([moved.history.size, moved.users, moved.last_id, moved.skipped], [3, 2, 1006, 0])
+  try Test.eq([moved.history.size, moved.users, moved.turns, moved.last_id, moved.skipped], [3, 2, 3, 1007, 0])
   try Test.eq([moved.model, moved.effort], [some("m3"), none])
   tree = (try Store.tree(path)).nodes
-  try Test.eq(tree.map { |n| "#{n.id}<#{n.parent.unwrap_or(0)} #{n.active}" }, ["1<0 true", "9<1 false", "15<1 true"])
-  try Store.append_branch(path, (try Store.point(path, some(tree[1].last))).leaf)
+  try Test.eq(tree.map { |n| "#{n.id}<#{n.parent.unwrap_or(0)} #{n.active}" }, ["1<0 true", "9<1 false", "16<1 true"])
+  try Store.append_branch(path, (try Store.point(path, some(tree[1].last))).leaf, 1008)
   back = try Store.load(path)
   try Test.eq(back.shown.map { |m| m.text }, ["Hi", "Hi!", "Again.", "Yes."])
-  try Test.eq([back.events.size, back.last_id], [5, 1006])
+  try Test.eq([back.events.size, back.last_id, back.reserved], [5, 1007, 1008])
+  try Store.append_settings(path, "m4", none)
+  try Test.eq((try Store.tree(path)).nodes.map { |n| n.last }, tree.map { |n| n.last })
+  try Test.eq((try Store.point(path, some(tree[0].last))).leaf, tree[0].last)
   header = Store.Header(id: "s2-4567", cwd: "/work", model: "m", created_ms: 8)
   copy = try Store.copy(path, dir, header, (try Store.point(path, none)).leaf)
   copied = try Store.load(copy)
