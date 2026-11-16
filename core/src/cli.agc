@@ -17,7 +17,8 @@ USAGE = <<~TEXT
   another model and API (finn --model, --api), kept in its file. Past 80 % of the model's window
   (FINN_CONTEXT_WINDOW, else llama-server's /props, else GET /models), the history after the first task becomes a
   summary by FINN_COMPACT_MODEL (else the session's model), whose tokens are not in `usage`; the last round of the
-  running turn is kept whole.
+  running turn is kept whole. FINN_MCP_CONFIG names a JSON file of MCP servers on stdio ({"mcpServers": {NAME:
+  {"command", "args", "env"}}}): their tools are mcp__NAME__TOOL and ask before each call.
 TEXT
 
 enum Command

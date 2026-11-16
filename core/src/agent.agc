@@ -160,7 +160,10 @@ def compacted(turn: Turn, context: Int, folded: Folded) -> Folded
 end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
-  tools = Tools.all().map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }
+  tools = Tools.offered(turn.ctx).map { |t|
+    LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema)
+  }
+
   request = LLM.Request(model: turn.model, system: turn.system, messages: messages, tools: tools, extra: turn.extra)
   stream = try LLM.stream(turn.provider, request)
   while true

@@ -55,6 +55,8 @@ struct Setup
   before_load: Optional[Fn[String, Void]] = none
   ## The model API of the server, as `FINN_API` names it; the fixtures come from the folder of its format.
   api: String = "openai"
+  ## The tools of MCP servers.
+  tools: List[Tools.Tool] = []
 end
 
 def fake_env(name: String) -> Result[String]
@@ -109,6 +111,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     compact_model: setup.compact_model,
     props_url: props_url(setup, fake),
     before_load: setup.before_load,
+    tools: setup.tools,
   )
 
   server = try Server.start(options)

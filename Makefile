@@ -5,12 +5,12 @@ override AGENTICA := $(if $(findstring /,$(AGENTICA)),$(abspath $(AGENTICA)),$(A
 export AGENTICA
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
-PACKAGES = sse llm protocol core cli
+PACKAGES = sse llm mcp protocol core cli
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
-LEAVES = llm sse protocol
+LEAVES = llm mcp sse protocol
 SERVER_AND_CLIENTS = core|cli|tui_client|web_client
 # A client reaches the server only through the protocol: it never depends on these.
-NOT_FOR_CLIENTS = core|llm|tui_client|web_client
+NOT_FOR_CLIENTS = core|llm|mcp|tui_client|web_client
 
 # A fake key in the environment of every recipe: the bash test of core checks that the tool does not pass it on.
 export AGC_TEST_SECRET = sk-test-secret-must-not-reach-bash
