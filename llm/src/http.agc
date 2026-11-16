@@ -193,7 +193,8 @@ def retry(config: Config) -> Errors.Retry
   )
 end
 
-# A header of the caller replaces the provider's header of the same name, without regard to case.
+# A header of the caller replaces the provider's header of the same name, without regard to case; `anthropic-beta`
+# values add up, joined by commas, so a caller's beta keeps the provider's.
 def merge_headers(own: List[HTTP.Header], extra: Map[String, String]) -> List[HTTP.Header]
   by_name: Map[String, HTTP.Header] = {}
   for header in own
@@ -201,7 +202,14 @@ def merge_headers(own: List[HTTP.Header], extra: Map[String, String]) -> List[HT
   end
 
   for name in extra.keys
-    by_name = by_name.put(name.downcase, HTTP.Header(name: name, value: extra[name]))
+    value = extra[name]
+    key = name.downcase
+    case by_name.get(key)
+      some(old) if key == "anthropic-beta" -> value = "#{old.value},#{value}"
+      _ -> nil
+    end
+
+    by_name = by_name.put(key, HTTP.Header(name: name, value: value))
   end
 
   by_name.values

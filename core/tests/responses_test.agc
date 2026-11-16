@@ -2,8 +2,9 @@ import Protocol from "pkg/protocol/protocol"
 import H from "support/harness"
 
 # On the OpenAI Responses format a turn runs as on chat completions: the system prompt goes as `instructions`, the
-# tools as functions, and the next request gives back the reasoning item (its encrypted content), the call and its
-# output by `call_id`. The API keeps nothing (`store: false`) and sends the reasoning back encrypted, so no item goes
+# tools as functions (`apply_patch` as a custom tool), and the next request gives back the reasoning item (its
+# encrypted content), the call and its output by `call_id`. The API keeps nothing (`store: false`) and sends the
+# reasoning back encrypted, so no item goes
 # back with its id. The usage counts the cached tokens, and the answer is shown.
 def test_a_turn_runs_on_the_responses_format() -> Result[Void]
   setup = H.Setup(api: "openai_responses", replies: ["write_file.sse", "text.sse"])
@@ -24,7 +25,7 @@ def test_a_turn_runs_on_the_responses_format() -> Result[Void]
     try Test.eq(types(asked, "input"), ["message"])
     try Test.eq(JSON.get(asked, "store"), ok(JSON.from(false)))
     try Test.eq(JSON.get(asked, "include"), ok(JSON.from(["reasoning.encrypted_content"])))
-    try Test.assert(types(asked, "tools").all? { |t| t == "function" }, "the tools are not functions")
+    try Test.eq(types(asked, "tools").select { |t| t != "function" }, ["custom"])
     second = try JSON.parse((try H.next_request(h)).body)
     try Test.eq(types(second, "input"), ["message", "reasoning", "message", "function_call", "function_call_output"])
     items = try JSON.list(try JSON.get(second, "input"))
