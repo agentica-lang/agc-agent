@@ -10,6 +10,11 @@ import Protocol from "pkg/protocol/protocol"
 import Compaction from "compaction"
 
 EXTENSION = ".jsonl"
+## Beside a session file: the model of its last `settings` record, so a list of the sessions need not read the file.
+SETTINGS_EXTENSION = ".settings.json"
+## A listing looks this far into a file for the first user message: the lines, and the bytes.
+TITLE_LINES = 64
+TITLE_BYTES = 262_144
 MAX_LINE_BYTES = 16_777_216
 MAX_WRITE_BYTES = 1_048_576
 
@@ -44,6 +49,8 @@ struct Saved
   reserved: Int = 0
   ## The answer of the last turn so far at its last compaction, which may have folded part of it.
   folded: Optional[Folded] = none
+  ## The names that extensions noted in the session (the skills it loaded), in order.
+  marks: List[String] = []
   ## The model and the thinking level of the last `settings` record: what the session changed since its header.
   model: Optional[String] = none
   effort: Optional[String] = none
@@ -90,14 +97,22 @@ def append_event(path: String, logged: Logged) -> Result[Void]
   append(path, {"type": JSON.from("event"), "id": JSON.from(logged.id), "name": JSON.from(name), "data": data})
 end
 
-## The message that starts a turn: shown, and the first of the turn's history.
-def append_user(path: String, text: String) -> Result[Void]
-  append(path, {"type": JSON.from("user"), "text": JSON.from(text)})
+## The message that starts a turn, the first of the turn's history; `typed` is what is shown when not empty (the text
+## without what extensions put before it) and `marks` the names they noted.
+def append_user(path: String, text: String, typed: String = "", marks: List[String] = []) -> Result[Void]
+  fields = {"type": JSON.from("user"), "text": JSON.from(text)}
+  if typed != "" and typed != text
+    fields = fields.put("typed", JSON.from(typed))
+  end
+
+  append(path, with_marks(fields, marks))
 end
 
-## The messages a round added to the history, in one record so that a call never goes without its result.
-def append_messages(path: String, messages: List[LLM.Message]) -> Result[Void]
-  append(path, {"type": JSON.from("messages"), "messages": JSON.array(messages.map { |m| encode_message(m) })})
+## The messages a round added to the history, in one record so that a call never goes without its result, with the
+## names extensions noted in the round.
+def append_messages(path: String, messages: List[LLM.Message], marks: List[String] = []) -> Result[Void]
+  fields = {"type": JSON.from("messages"), "messages": JSON.array(messages.map { |m| encode_message(m) })}
+  append(path, with_marks(fields, marks))
 end
 
 ## Ids up to `until` may go to events that are not saved (deltas), so a restart starts after them. A saved event
@@ -120,10 +135,28 @@ def append_compaction(path: String, compaction: Compaction.Compaction, answer: L
   )
 end
 
-## The model and thinking level the session uses from now on.
+## The model and thinking level the session uses from now on, also in the file beside it (0600, replaced whole). The
+## record goes first: the session restores from it, and the side file only feeds the list of the sessions, so a side
+## file that cannot be written leaves the list with the model before while the change holds.
 def append_settings(path: String, model: String, effort: Optional[String]) -> Result[Void]
-  append(path, {"type": JSON.from("settings"), "model": JSON.from(model), "effort": JSON.from(effort)})
+  try append(path, {"type": JSON.from("settings"), "model": JSON.from(model), "effort": JSON.from(effort)})
+  _ = write_side(settings_file(path), JSON.encode(JSON.object({"model": JSON.from(model)})))
+  ok()
 end
+
+def write_side(side: String, text: String) -> Result[Void]
+  return File.replace(side, text.bytes) if File.stat(side).ok?
+
+  temporary = "#{side}.tmp"
+  _ = Path.remove(temporary)
+  handle = try File.open(temporary, "create_private")
+  written = File.write(handle, text)
+  try File.close(handle)
+  try written
+  Path.rename(temporary, side)
+end
+
+def settings_file(path: String) -> String = "#{path.slice(0, path.length - EXTENSION.length)}#{SETTINGS_EXTENSION}"
 
 ## The answer of a turn, as a client draws it.
 def append_answer(path: String, text: String) -> Result[Void]
@@ -132,8 +165,13 @@ end
 
 def reopen(path: String) -> Result[Void] = write(path, "\n")
 
-## Reads the file a line at a time and parses only the records a listing needs.
-def listing(path: String) -> Result[Listing] = File.open(path, "read") do |handle| ok(listed_lines(handle)) end
+## The model from the file beside the session's, and the first user message from the first TITLE_LINES lines in the
+## first TITLE_BYTES bytes (none when its line does not end in them).
+def listing(path: String) -> Result[Listing]
+  start = try File.open(path, "read") do |handle| File.read_bytes(handle, TITLE_BYTES) end
+  title = first_user(decoded(start))
+  ok(Listing(model: settings_model(path), title: title))
+end
 
 ## The first line of a file: the session, without reading the rest.
 def header(path: String) -> Result[Header]
@@ -196,28 +234,42 @@ end
 
 private
 
-def listed_lines(handle: File.Handle) -> Listing
-  found = Listing()
-  while true
-    read = File.read_line(handle)
-    break if not read.ok?
+def settings_model(path: String) -> Optional[String]
+  text = File.read_text(settings_file(path)).unwrap_or("")
+  case JSON.parse(text)
+    ok(json) ->
+      case field(json, "model")
+        ok(model) -> some(model)
+        error(_) -> none
+      end
 
-    text = read.unwrap!
+    error(_) -> none
+  end
+end
 
-    settings = text.include?("\"settings\"")
-    user = found.title == "" and text.include?("\"user\"")
-    next if not settings and not user
+# The text of bytes that may end inside a character (at most 3 bytes of one).
+def decoded(bytes: Bytes) -> String
+  for cut in 0..3
+    case String.from_bytes(bytes.take([bytes.size - cut, 0].max.unwrap!))
+      ok(text) -> return text
+      error(_) -> nil
+    end
+  end
+
+  ""
+end
+
+def first_user(start: String) -> String
+  for text in start.split("\n").take(TITLE_LINES)
+    next if not text.include?("\"user\"")
 
     case JSON.parse(text)
-      ok(json) if field(json, "type") == ok("settings") ->
-        found = found.with(model: some(field(json, "model").unwrap_or("")))
-      ok(json) if user and field(json, "type") == ok("user") ->
-        found = found.with(title: field(json, "text").unwrap_or(""))
+      ok(json) if field(json, "type") == ok("user") -> return field(json, "text").unwrap_or("")
       _ -> nil
     end
   end
 
-  found
+  ""
 end
 
 # A line longer than a load reads is refused.
@@ -271,7 +323,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
     "user" ->
       text = try field(json, "text")
       message = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
-      shown = Protocol.Message(role: Protocol.Role.User, text: text)
+      shown = Protocol.Message(role: Protocol.Role.User, text: optional_string(json, "typed").unwrap_or(text))
       users = saved.users + 1
       ok(
         saved.with(
@@ -280,6 +332,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
           users: users,
           open_user: true,
           folded: none,
+          marks: saved.marks + marks_of(json),
         ),
       )
     "messages" ->
@@ -288,7 +341,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
         messages = messages.push(try decode_message(item))
       end
 
-      ok(saved.with(history: saved.history + messages))
+      ok(saved.with(history: saved.history + messages, marks: saved.marks + marks_of(json)))
     "compaction" ->
       compaction = Compaction.Compaction(
         from: try JSON.int(try JSON.get(json, "from")),
@@ -318,6 +371,20 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
       shown = Protocol.Message(role: Protocol.Role.Assistant, text: try field(json, "text"))
       ok(saved.with(shown: saved.shown.push(shown)))
     _ -> error("unknown record #{kind}")
+  end
+end
+
+def with_marks(fields: Map[String, JSON.Value], marks: List[String]) -> Map[String, JSON.Value]
+  return fields if marks.empty?
+
+  fields.put("marks", JSON.from(marks))
+end
+
+# A `marks` that is missing or not a list of texts is none.
+def marks_of(json: JSON.Value) -> List[String]
+  case JSON.get(json, "marks")
+    ok(value) -> JSON.decode(value, List[String]).unwrap_or([])
+    error(_) -> []
   end
 end
 

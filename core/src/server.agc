@@ -16,6 +16,7 @@ import Protocol from "pkg/protocol/protocol"
 import CodeMode from "code_mode"
 import Sandbox from "sandbox"
 import Session from "session"
+import Skills from "skills"
 import Store from "store"
 import Tools from "tools"
 
@@ -75,6 +76,10 @@ struct Options
   before_load: Optional[Fn[String, Void]] = none
   ## Code mode: the model may also call the tools from a Python script (`run_script`).
   code_mode: Optional[CodeMode.Settings] = none
+  ## The home folder, whose skills every session has; empty for none.
+  home: String = ""
+  ## The folders whose sessions load the skills of their own folder: a project's skills are its instructions.
+  trusted: List[String] = []
 end
 
 struct Server
@@ -180,6 +185,7 @@ end
 ## What a list read of one session file, valid while its size and time of change stay.
 struct Cached
   id: String
+  summary: Protocol.SessionSummary
   size: Int
   modified_s: Int
   listing: Store.Listing
@@ -304,6 +310,10 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
       case ended(found[0])
         ok(entry) ->
           removed = remove_file(entry.file)
+          if removed.ok?
+            _ = Path.remove(Store.settings_file(entry.file))
+          end
+
           Actor.reply(reply, removed)
           sessions = registry.sessions.map { |e| replaced(e, entry) }
           if removed.ok?
@@ -351,21 +361,22 @@ def cached(entry: Entry) -> Cached
   end
 
   for old in option_list(entry.listed)
-    return old if old.size == size and old.modified_s == modified
+    return old.with(summary: entry.summary) if old.size == size and old.modified_s == modified
   end
 
   listing = Store.listing(entry.file).unwrap_or(Store.Listing())
-  Cached(id: entry.summary.id, size: size, modified_s: modified, listing: listing)
+  Cached(id: entry.summary.id, summary: entry.summary, size: size, modified_s: modified, listing: listing)
 end
 
 # A session with its model now (a `PATCH` changes it after the header), when it last changed and its first message
 # without control characters.
-def summary_now(summary: Protocol.SessionSummary, found: Cached) -> Protocol.SessionSummary
-  title = found.listing.title.split("").map { |c| printable(c) }.join("")
-  summary.with(
-    model: found.listing.model.unwrap_or(summary.model),
+def summary_now(found: Cached) -> Protocol.SessionSummary
+  title = found.listing.title
+  cut = title.slice(0, [title.length, TITLE_CHARS].min.unwrap!)
+  found.summary.with(
+    model: found.listing.model.unwrap_or(found.summary.model),
     updated_s: found.modified_s,
-    title: title.slice(0, [title.length, TITLE_CHARS].min.unwrap!),
+    title: cut.split("").map { |c| printable(c) }.join(""),
   )
 end
 
@@ -396,7 +407,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     cwd: context.root,
     model: request.model.unwrap_or(options.model),
     created_ms: Time.now_ms,
-    system: some(system_prompt(context.root)),
+    system: some(with_catalog(system_prompt(context.root), skills_of(options, context.root).skills)),
     api: some(api),
   )
 
@@ -504,14 +515,21 @@ def entry(
   return error("unknown API #{name}", kind: KIND_UNKNOWN_API) if not options.apis.has_key?(name)
 
   api = options.apis[name]
+  found = skills_of(options, context.root)
+  for warning in found.warnings
+    IO.warn("skills: #{warning}")
+  end
 
+  system = header.system.unwrap_or(system_prompt(context.root))
+  skills = Skills.restrict(found.skills, system)
   setup = Session.Setup(
     id: header.id,
     cwd: context.root,
     model: header.model,
     provider: api.provider,
-    system: header.system.unwrap_or(system_prompt(context.root)),
-    ctx: context,
+    system: system,
+    ctx: context.with(read_roots: skills.map { |skill| skill.dir }),
+    skills: skills,
     keep_events: options.keep_events,
     approval_timeout_ms: options.approval_timeout_ms,
     file: file,
@@ -569,6 +587,18 @@ def listed_session(file: String) -> Result[Store.Header]
 end
 
 # `AGENTS.md` goes to the model only when it is a regular file inside the folder: a link out of it could be any file.
+def skills_of(options: Options, root: String) -> Skills.Found
+  trusted = options.trusted.any? { |dir| Sandbox.inside?(Path.real(dir).unwrap_or(dir), root) }
+  Skills.discover(root, options.home, trusted)
+end
+
+def with_catalog(system: String, skills: List[Skills.Skill]) -> String
+  catalog = Skills.catalog(skills)
+  return system if catalog == ""
+
+  "#{system}\n#{catalog}"
+end
+
 def system_prompt(root: String) -> String
   case project_instructions(root)
     ok(text) -> "#{SYSTEM_PROMPT}\n# AGENTS.md of the session folder\n\n#{text}"
@@ -667,10 +697,7 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
       entries: Result[List[Entry]] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
       read = (try entries).map { |entry| cached(entry) }
       _ = Actor.cast(registry, Msg.Listed(read), CALL_MS)
-      sessions = (try entries).map do |entry|
-        found = read.select { |c| c.id == entry.summary.id }[0]
-        summary_now(entry.summary, found)
-      end
+      sessions = read.map { |found| summary_now(found) }
 
       response(
         200,
