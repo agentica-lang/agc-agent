@@ -17,6 +17,7 @@ def dispatch(command: Args.Command) -> Void
     Args.Command.Version -> puts("agc-agent cli #{Args.VERSION}")
     Args.Command.Help(text) -> puts(text)
     Args.Command.Run(options) -> finish(App.run(options))
+    Args.Command.Delete(options, id) -> finish(App.delete(options, id))
   end
 end
 

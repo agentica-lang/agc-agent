@@ -317,3 +317,29 @@ def quiet(rig: Driver.Rig) -> Result[Void]
   try Test.eq(Fake.unread(rig.fake, "GET", Protocol.events_path("s1")), 0)
   Test.eq(done.code, 0)
 end
+
+# `--delete ID` deletes that session and exits; a refusal (a turn runs) is an error.
+def test_delete_removes_a_session_and_exits() -> Result[Void]
+  busy = Protocol.Failure(kind: Protocol.KIND_SESSION_BUSY, message: "a turn is running")
+  routes = [
+    Fake.Route(method: "DELETE", path: Protocol.session_path("s1"), replies: [Fake.Reply(status: 200, body: "{}")]),
+    Fake.Route(
+      method: "DELETE",
+      path: Protocol.session_path("s2"),
+      replies: [Fake.Reply(status: 409, body: Protocol.encode_failure(busy))],
+    ),
+  ]
+
+  Driver.within(routes, &deletes)
+end
+
+def deletes(rig: Driver.Rig) -> Result[Void]
+  done = try Driver.exited(try Driver.start(rig.dir, ["--delete", "s1"]))
+  try Test.eq([done.lines, [done.code.to_s]], [["[session s1 deleted]"], ["0"]])
+  deleted = try Fake.request(rig.fake, "DELETE", Protocol.session_path("s1"))
+  try Test.assert(Driver.authorized?(deleted), "the delete carries the token")
+  refused = try Driver.exited(try Driver.start(rig.dir, ["--delete", "s2"]))
+  try Test.eq([refused.lines, [refused.code.to_s]], [[], ["1"]])
+  try Test.assert(refused.errors.include?("a turn is running"), refused.errors)
+  Test.eq(Fake.strays(rig.fake), 0)
+end

@@ -50,6 +50,7 @@ enum Msg
   Send(String, Channel[Result[String]])
   Answer(String, Protocol.Decision, Channel[Result[Void]])
   Stop(Channel[Bool])
+  Close(Channel[Result[Void]])
   Emit(String, Protocol.Event)
   Ask(String, Agent.Ask, Channel[Protocol.Decision])
   Expire(String)
@@ -140,6 +141,13 @@ def answer(address: Address[Msg], approval_id: String, decision: Protocol.Decisi
   ok()
 end
 
+## Ends the session when no turn runs; `session.busy` while one does.
+def end_session(address: Address[Msg]) -> Result[Void]
+  closed: Result[Result[Void]] = Actor.call(address, CALL_MS) do |reply| Msg.Close(reply) end
+  try try closed
+  ok()
+end
+
 ## Stops the running turn; whether one ran.
 def stop(address: Address[Msg]) -> Result[Bool] = Actor.call(address, CALL_MS) do |reply| Msg.Stop(reply) end
 
@@ -171,6 +179,14 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Subscribe(last, reply) -> Actor.continue(attach(state, last, reply))
     Msg.Send(text, reply) -> Actor.continue(start_turn(state, text, reply))
     Msg.Answer(approval_id, decision, reply) -> Actor.continue(answer_approval(state, approval_id, decision, reply))
+    Msg.Close(reply) ->
+      if state.turn.some?
+        Actor.reply(reply, error("a turn is running", kind: Protocol.KIND_SESSION_BUSY))
+        return Actor.continue(state)
+      end
+
+      Actor.reply(reply, ok())
+      Actor.done(state)
     Msg.Stop(reply) ->
       Actor.reply(reply, state.turn.some?)
       Actor.continue(stop_turn(state))
