@@ -77,6 +77,16 @@ def test_the_palette_follows_the_terminal() -> Result[Void]
   Test.eq(checks, [true, false, true])
 end
 
+# A full prompt row keeps its last column for the cursor, even after a wide character.
+def test_the_cursor_after_a_full_row_ending_in_a_wide_character() -> Result[Void]
+  prompt = Prompt.view("ab中", 3, 6, 4)
+  try Test.eq([prompt.rows, [prompt.cursor_x.to_s]], [[" ab中"], ["5"]])
+  frame = Screen.frame(6, 4, [], 0, parts_of(prompt))
+  cells = TUI.layout(Screen.view(frame, Theme.default()), 6, 4)
+  try Test.eq((try cells.find { |cell| cell.y == 1 and cell.x == 3 }).char, "中")
+  Test.eq((try cells.find { |cell| cell.y == 1 and cell.x == 5 }).style, TUI.Style(reverse: true))
+end
+
 def parts_of(prompt: Prompt.View) -> Screen.Parts
   Screen.Parts(prompt: prompt, picker: &nothing, panel: &nothing, label: "", level: none, status: "ready")
 end

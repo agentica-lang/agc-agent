@@ -61,7 +61,8 @@ def test_a_restarted_server_resumes_a_session_with_its_event_ids() -> Result[Voi
 end
 
 # A message sent while a turn runs is queued and read before the next model call, after the answer so far; it stays in
-# the history after a restart. One queued when the turn is stopped is dropped with an error event.
+# the history after a restart. Two queued into one turn get their own ids; queued when the turn is stopped, they are
+# dropped with one error event.
 def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Result[Void]
   setup = H.Setup(replies: ["write_file.sse", "text.sse", "write_file.sse", "text.sse"])
   H.using(setup) do |h|
@@ -88,7 +89,9 @@ def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Re
     try Test.eq(before.history.size, 4)
     _ = try H.send(h, id, "Write it again.")
     a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
-    _ = try H.send(h, id, "Never read.")
+    never = try Protocol.decode_message_accepted((try H.send(h, id, "Never read.")).text)
+    nor = try Protocol.decode_message_accepted((try H.send(h, id, "Nor this.")).text)
+    try Test.eq([never.message_id, nor.message_id], [some("#{never.turn_id}.1"), some("#{never.turn_id}.2")])
     try Test.eq((try H.post(h, Protocol.stop_path(id), "")).status, 200)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)

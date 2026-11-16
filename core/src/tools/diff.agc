@@ -11,11 +11,11 @@ def edit(text: String, old: String, new: String) -> String
 
   before = pieces[0]
   after = before + new + text.slice(before.length + old.length, text.length - before.length - old.length)
-  lines = text.split("\n")
-  changed = after.split("\n")
+  lines = lines_of(text)
+  changed = lines_of(after)
   first = before.split("\n").size - 1
-  removed = old.split("\n").size
-  added = new.split("\n").size
+  removed = touched(before, old)
+  added = touched(before, new)
   top = [first - CONTEXT, 0].max.unwrap!
   bottom = [first + added + CONTEXT, changed.size].min.unwrap!
   width = bottom.to_s.length
@@ -37,12 +37,28 @@ end
 
 ## A new file: each line of `content` added.
 def written(content: String) -> String
-  lines = content.split("\n")
+  lines = lines_of(content)
   width = lines.size.to_s.length
   capped((0...lines.size).to_a.map { |i| numbered("+", i, lines[i], width) })
 end
 
 private
+
+# The lines of a text; a line end at the end starts no line.
+def lines_of(text: String) -> List[String]
+  return text.split("\n").take(text.split("\n").size - 1) if text.end_with?("\n")
+
+  text.split("\n")
+end
+
+# How many lines `piece` takes when it starts after `before`: a line end at its end starts no line when the piece
+# starts a line.
+def touched(before: String, piece: String) -> Int
+  count = piece.split("\n").size
+  return count - 1 if piece.end_with?("\n") and (before == "" or before.end_with?("\n"))
+
+  count
+end
 
 def numbered(mark: String, index: Int, line: String, width: Int) -> String
   number = (index + 1).to_s

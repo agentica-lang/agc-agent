@@ -516,5 +516,7 @@ def test_an_edit_is_shown_as_numbered_lines() -> Result[Void]
 
   try Test.eq(Diff.edit("one\ntwo", "one", "1"), "- 1 one\n+ 1 1\n  2 two")
   try Test.eq(Diff.edit("x", "y", "z"), "")
+  try Test.eq(Diff.edit("a\nb\n", "b\n", "c\n"), "  1 a\n- 2 b\n+ 2 c")
+  try Test.eq(Diff.written("hi\n"), "+ 1 hi")
   Test.eq(Diff.written("a\nb"), "+ 1 a\n+ 2 b")
 end
