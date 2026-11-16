@@ -5,7 +5,7 @@
 ## more text, so `git status*` matches `git status --short` and not `git statusx`. A rule is a convenience and not a
 ## sandbox: see the security model of `Tools`.
 ##
-## A change to a path under `.git/` (`write_file`, `edit_file`) always asks, because `.git/config` and the hooks run
+## A change to a path under `.git/` (`write_file`, `edit_file`, `apply_patch`) always asks, because `.git/config` and the hooks run
 ## programs (`core.fsmonitor`, aliases) the next time git runs; the name is compared without case and trailing dots.
 ## Only a deny rule can change that. `edit_file` reads the file, so a deny rule of `read_file` denies it too.
 
@@ -111,7 +111,7 @@ private
 WORD = /\A[A-Za-z0-9_]\z/
 PLAIN = /\A[A-Za-z0-9_.\/:=,+@%\- \t]*\z/
 GIT = /\A\.git\.*\z/
-WRITES = ["write_file", "edit_file"]
+WRITES = ["write_file", "edit_file", "apply_patch"]
 
 def read_only?(root: String, command: String) -> Bool
   Shell.verdict(command, ->(path) { Sandbox.resolve(root, path).ok? }) == Shell.Verdict.Safe
