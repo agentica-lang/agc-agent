@@ -38,10 +38,11 @@ def read_file(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   return error("not a file: #{args.path}") if info.kind != "file"
 
   wanted = [limit, MAX_LINES].min.unwrap!
+  clamped = limit > wanted
   if info.size_bytes <= MAX_TEXT_BYTES
-    ok(render(try from_text(path, offset, wanted)))
+    ok(render(try from_text(path, offset, wanted, clamped)))
   else
-    ok(render(try from_stream(path, offset, wanted)))
+    ok(render(try from_stream(path, offset, wanted, clamped)))
   end
 end
 
@@ -97,29 +98,33 @@ struct Page
   chars: Int
   next: Int
   cut: Bool
+  capped: Bool
+  long_line: Optional[Int]
 end
 
 # A file of up to 1 MiB is shown as it is, `\r` and the last newline included, so an `edit_file` can match what was
 # read. A bigger file is read line by line, which loses the line ends.
-def from_text(path: String, offset: Int, limit: Int) -> Result[Page]
+def from_text(path: String, offset: Int, limit: Int, clamped: Bool) -> Result[Page]
   lines = (try File.read_text(path)).split("\n")
-  page = Page(lines: [], chars: 0, next: offset, cut: false)
+  page = Page(lines: [], chars: 0, next: offset, cut: false, capped: false, long_line: none)
   while page.next < lines.size and page.lines.size < limit and page.chars < READ_BUDGET
     page = add(page, lines[page.next])
   end
 
-  ok(page.with(cut: page.chars >= READ_BUDGET and page.next < lines.size and page.lines.size < limit))
+  more = page.next < lines.size
+  full = page.lines.size >= limit
+  ok(page.with(cut: page.chars >= READ_BUDGET and more and not full, capped: clamped and full and more))
 end
 
-def from_stream(path: String, offset: Int, limit: Int) -> Result[Page]
+def from_stream(path: String, offset: Int, limit: Int, clamped: Bool) -> Result[Page]
   file = try File.open(path)
-  page = stream(file, offset, limit)
+  page = stream(file, offset, limit, clamped)
   _ = File.close(file)
   page
 end
 
-def stream(file: File.Handle, offset: Int, limit: Int) -> Result[Page]
-  page = Page(lines: [], chars: 0, next: 0, cut: false)
+def stream(file: File.Handle, offset: Int, limit: Int, clamped: Bool) -> Result[Page]
+  page = Page(lines: [], chars: 0, next: 0, cut: false, capped: false, long_line: none)
   while page.next < offset
     case File.read_line(file)
       ok(_) -> page = page.with(next: page.next + 1)
@@ -135,14 +140,23 @@ def stream(file: File.Handle, offset: Int, limit: Int) -> Result[Page]
     end
   end
 
-  ok(collected.with(cut: collected.chars >= READ_BUDGET))
+  full = collected.lines.size >= limit
+  ok(collected.with(cut: collected.chars >= READ_BUDGET and not full, capped: clamped and full and more_lines(file)))
 end
 
+def more_lines(file: File.Handle) -> Bool
+  case File.read_line(file)
+    ok(_) -> true
+    error(e) -> e.kind != "io.eof"
+  end
+end
+
+# A line over 1 MiB cannot be read: the read stops at it, and the lines before it are kept.
 def end_of_file(e: Error, page: Page) -> Result[Page]
-  if e.kind == "io.eof"
-    ok(page)
-  else
-    error(e.message)
+  case e.kind
+    "io.eof" -> ok(page)
+    "io.too_large" -> ok(page.with(long_line: some(page.next)))
+    _ -> error(e.message)
   end
 end
 
@@ -159,13 +173,22 @@ def clip(line: String) -> String
   end
 end
 
-def render(page: Page) -> String = "#{page.lines.join("\n")}#{cut_note(page)}"
+def render(page: Page) -> String = "#{page.lines.join("\n")}#{cut_note(page)}#{long_line_note(page)}"
 
 def cut_note(page: Page) -> String
   if page.cut
     "\n[output cut at #{READ_BUDGET} characters: continue with offset #{page.next}]"
+  elsif page.capped
+    "\n[output limited to #{MAX_LINES} lines: continue with offset #{page.next}]"
   else
     ""
+  end
+end
+
+def long_line_note(page: Page) -> String
+  case page.long_line
+    some(n) -> "\n[line #{n + 1} is longer than #{MAX_TEXT_BYTES} bytes and cannot be read: reading stops there]"
+    none -> ""
   end
 end
 
