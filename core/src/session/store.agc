@@ -67,6 +67,8 @@ struct Saved
   approvals: Int = 0
   turns: Int = 0
   usage: Optional[Protocol.Usage] = none
+  ## The output of the commands since the last user message that go to the model before the next one.
+  shells: List[String] = []
 end
 
 ## Where a branch or a copy starts: the entry the next record follows, and the user message it goes back before ("" at
@@ -317,6 +319,16 @@ def load(path: String, leaf: Optional[Int] = none) -> Result[Saved]
   end
 
   ok(totals(saved, entries))
+end
+
+## A command's output as the model gets it, before the next user message.
+def shell_context(finished: Protocol.ShellFinished) -> String
+  output = finished.output
+  if output.strip.empty?
+    output = "(no output)"
+  end
+
+  "The user ran `#{finished.command}` in the session folder:\n```\n#{output}\n```"
 end
 
 def encode_message(message: LLM.Message) -> JSON.Value
@@ -710,7 +722,14 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
       event = try Protocol.decode_event(try field(json, "name"), JSON.encode(try JSON.get(json, "data")))
       logged = Logged(id: try JSON.int(try JSON.get(json, "id")), event: event)
       started = Protocol.event_kind(event) == Protocol.EventKind.TurnStarted
-      ok(saved.with(events: saved.events.push(logged), open_user: saved.open_user and not started, reserved: 0))
+      shells = saved.shells
+      case event
+        Protocol.Event.ShellFinished(finished) if finished.context -> shells = shells.push(shell_context(finished))
+        _ -> nil
+      end
+
+      events = saved.events.push(logged)
+      ok(saved.with(events: events, open_user: saved.open_user and not started, reserved: 0, shells: shells))
     "user" ->
       text = try field(json, "text")
       message = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
@@ -724,6 +743,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
           open_user: true,
           folded: none,
           marks: saved.marks + marks_of(json),
+          shells: [],
         ),
       )
     "queued" ->
