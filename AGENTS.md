@@ -21,8 +21,8 @@ core/                the server: agent loop, tools, approval, sessions, extensio
                      main.agc is the entry point
 core/src/            one folder per domain: config/ (settings, CLI), http/ (the routes), session/
                      (the registry, one session's actor, its store and prompt), agent/ (the loop, compaction, the model catalog),
-                     tools/ (the tools and their sandbox), ext/ (MCP, skills), approval/ (rules,
-                     session allows); core/tests stay flat
+                     tools/ (the tools and their sandbox), ext/ (MCP, skills), approval/ (the approval
+                     extension: rules, session allows); core/tests stay flat
 client/              what every client shares: finding or starting the server, the HTTP calls, the event reader;
                      client.agc is its public module
 cli/                 the line-mode client: depends only on client and protocol; main.agc is the entry point
@@ -49,7 +49,7 @@ A package is added by the phase that needs it, never as an empty folder.
   that passes no test fails), `smoke` (runs `core/main.agc`), `pty`
   (`tui_client/tests/test_pty.py`) and `peer` (`shell/tests/test_bash_peer.py`),
   both Python standard library only. `install`
-  fetches agentica-tui into `tui_client/deps/` (gitignored); `check`,
+  fetches bond into `core/deps/` and agentica-tui into `tui_client/deps/` (gitignored); `check`,
   `smoke` and `pty` run it first.
 - `cli` tests run the client as a child process on pipes (the Makefile
   exports `AGENTICA` for it) against a fake protocol server in
@@ -100,11 +100,12 @@ A package is added by the phase that needs it, never as an empty folder.
     the server only through `client`, `protocol` and `sse`: it never depends
     on `core`, `llm` or another client.
   - Inside `core/src`, a folder imports only these others (`make coupling`
-    checks them): `tools` imports `approval` (until #121), `approval` and
+    checks them): `tools` imports no other, `approval` and
     `ext` import `tools`, `agent` imports `tools` and `approval`, `session`
     imports `agent`, `tools`, `ext`, `approval` and `config`; `config` imports
     `tools`, `approval` and `agent` (the model catalog); `http` imports
-    `session` and `config`, and no folder imports `http`.
+    `config` and only `session/session` of `session`, and no folder imports
+    `http`. An import never has a `..` after its first folder.
   - Each package has one `VERSION` constant in its public module, equal to its
     tag (`llm-0.0.1` is `VERSION = "0.0.1"`). A release goes in this order: tag
     the dependency (`llm-X`), then a PR that bumps the dependent's entry and

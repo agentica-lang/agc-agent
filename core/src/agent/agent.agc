@@ -1,5 +1,6 @@
-## One turn of the agent: the model answers, the tools it calls run (after an approval when they ask), their results go
-## back in one user message, and so on until the model ends the turn, a limit stops it or the loop guard does.
+## One turn of the agent: the model answers, the tools it calls run (after the `gate` when there is one), their
+## results go back in one user message, and so on until the model ends the turn, a limit stops it or the loop guard
+## does.
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
@@ -93,6 +94,8 @@ struct Turn
   turn_tools: List[Tools.TurnTool] = []
   ## The names the session's extensions noted so far (the skills it loaded).
   marks: List[String] = []
+  ## The hook every tool call passes before it runs (the approval extension); without it every call runs.
+  gate: Optional[Fn[Tools.Context, String, JSON.Value, Tools.Verdict]] = none
   ## What a compaction puts after its summary, from the marks and the messages it keeps.
   on_fold: Optional[Fn[List[String], List[LLM.Message], String]] = none
 end
@@ -516,7 +519,12 @@ def base_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
 end
 
 def approved_run(turn: Turn, call: LLM.ToolCall, target: String) -> Tools.Output
-  case Tools.verdict(turn.ctx, call.name, call.input)
+  verdict = Tools.Verdict.Allow
+  for gate in option_list(turn.gate)
+    verdict = gate.call(turn.ctx, call.name, call.input)
+  end
+
+  case verdict
     Tools.Verdict.Deny -> Tools.Output(text: DENIED_BY_RULE, is_error: true)
     Tools.Verdict.Allow -> Tools.run(turn.ctx, call.name, call.input)
     Tools.Verdict.Ask ->

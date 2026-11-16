@@ -20,7 +20,7 @@ import Agent from "../agent/agent"
 import Catalog from "../agent/catalog"
 import CodeMode from "../tools/code_mode"
 import Compaction from "../agent/compaction"
-import Permissions from "../approval/permissions"
+import Extension from "../approval/extension"
 import Spec from "../tools/spec"
 import Skills from "../ext/skills"
 import Store from "store"
@@ -63,6 +63,8 @@ struct Setup
   skills: List[Skills.Skill] = []
   ## The thinking level of the calls; none leaves it to the model.
   effort: Optional[String] = none
+  ## The approval extension, with what the session's answers and mode allowed so far; none runs every call.
+  approvals: Optional[Extension.Approvals] = none
 end
 
 enum Msg
@@ -125,8 +127,6 @@ struct State
   approvals: Int = 0
   ## The approvals answered, so a late answer is told it came late.
   resolved: List[String] = []
-  ## What the answers of the session (`allow_session`, `allow_prefix`, `allow_tool`) and its mode allow.
-  allows: Permissions.Allows
   ## Since when no client is attached.
   alone_since: Optional[Int] = none
   ## Why the last write to the file failed; none once one works. The next write starts on a new line, since the failed
@@ -163,7 +163,7 @@ def start(setup: Setup, saved: Optional[Store.Saved] = none) -> Actor.Ref[State,
   init = -> {
     case saved
       some(s) -> restore(setup, s)
-      none -> State(setup: setup, window: setup.window, allows: Permissions.Allows())
+      none -> State(setup: setup, window: setup.window)
     end
   }
 
@@ -331,7 +331,7 @@ def session(state: State) -> Protocol.Session
     turn_from_event_id: state.turn.map { |t| t.from_event_id },
     pending_approvals: state.pending.map { |w| w.request },
     history: state.display,
-    accept_edits: state.allows.accept_edits,
+    accept_edits: state.setup.approvals.map { |a| Extension.accept_edits?(a) }.unwrap_or(false),
     cost: state.cost,
     effort: state.setup.effort,
   )
@@ -584,6 +584,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     marks: state.marks,
     on_fold: some(Skills.on_fold(setup.skills)),
     effort: setup.effort,
+    gate: gate(setup.approvals),
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
@@ -658,8 +659,16 @@ def wait_approval(address: Address[Msg], turn_id: String, call: Agent.Ask, timeo
   Protocol.Decision.Deny
 end
 
+def gate(approvals: Optional[Extension.Approvals]) -> Optional[Fn[Tools.Context, String, JSON.Value, Tools.Verdict]]
+  case approvals
+    some(a) -> some(->(ctx: Tools.Context, name: String, input: JSON.Value) { Extension.verdict(a, ctx, name, input) })
+    none -> none
+  end
+end
+
 def ask(state: State, call: Agent.Ask, reply: Channel[Protocol.Decision]) -> State
-  if Permissions.allows?(state.allows, state.setup.ctx.rules, call.tool, call.target, state.setup.ctx.root)
+  allowed = state.setup.approvals.map { |a| Extension.allows?(a, call.tool, call.target) }.unwrap_or(false)
+  if allowed
     _ = reply.send(Protocol.Decision.Allow, 0)
     return state
   end
@@ -670,7 +679,7 @@ def ask(state: State, call: Agent.Ask, reply: Channel[Protocol.Decision]) -> Sta
     tool: call.tool,
     preview: call.target,
     detail: call.detail,
-    prefix: Permissions.prefix(call.tool, call.target).map { |words| words.join(" ") },
+    prefix: Extension.prefix(call.tool, call.target),
   )
 
   waiting = Waiting(request: request, reply: reply, asked_ms: Time.monotonic_ms)
@@ -719,12 +728,12 @@ def resolve(state: State, approval_id: String, decision: Protocol.Decision, sour
     ok(waiting) ->
       _ = waiting.reply.send(decision, 0)
       asked = waiting.request
-      allows = Permissions.answered(state.allows, Protocol.decision_name(decision), asked.tool, asked.preview)
-
+      name = Protocol.decision_name(decision)
+      approvals = state.setup.approvals.map { |a| Extension.answered(a, name, asked.tool, asked.preview) }
       next_state = state.with(
+        setup: state.setup.with(approvals: approvals),
         pending: state.pending.select { |w| w.request.approval_id != approval_id },
         resolved: state.resolved.push(approval_id),
-        allows: allows,
       )
 
       resolved = Protocol.ApprovalResolved(approval_id: approval_id, decision: decision, source: source)
@@ -818,8 +827,11 @@ def busy_reason(state: State) -> String
 end
 
 def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Result[Void]]) -> State
-  allows = state.allows.with(accept_edits: change.accept_edits.unwrap_or(state.allows.accept_edits))
   setup = state.setup.with(model: change.model.unwrap_or(state.setup.model))
+  for on in option_list(change.accept_edits)
+    setup = setup.with(approvals: setup.approvals.map { |a| Extension.with_accept_edits(a, on) })
+  end
+
   case change.effort
     some(level) if level == Protocol.EFFORT_DEFAULT -> setup = setup.with(effort: none)
     some(level) -> setup = setup.with(effort: some(level))
@@ -829,7 +841,7 @@ def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Re
   case save(state, -> { Store.append_settings(state.setup.file, setup.model, setup.effort) })
     ok(_) ->
       Actor.reply(reply, ok())
-      state.with(setup: setup, allows: allows, broken: none)
+      state.with(setup: setup, broken: none)
     error(e) ->
       Actor.reply(
         reply,
@@ -962,7 +974,6 @@ def restore(setup: Setup, saved: Store.Saved) -> State
 
   state = State(
     setup: changed,
-    allows: Permissions.Allows(),
     counter: [last_saved, saved.reserved].max.unwrap!,
     reserved: [last_saved, saved.reserved].max.unwrap!,
     lost_below: lost_below(events),

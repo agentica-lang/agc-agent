@@ -131,10 +131,10 @@ def test_the_user_config_gives_the_rules() -> Result[Void]
   missing = Config.from_env(->(n) { env(dir, n, "#{dir}/none.json") })
   none_set = Config.from_env(->(n) { env(dir, n, "") })
   _ = Path.remove(dir)
-  rules = (try given).rules
+  rules = (try given).approvals.unwrap!
   try Test.eq([rules.allow.size, rules.deny.size], [1, 1])
   try Test.eq([broken.ok?, missing.ok?], [false, false])
-  Test.eq((try none_set).rules.allow.size, 0)
+  Test.eq((try none_set).approvals.map { |r| r.allow.size }, some(0))
 end
 
 private

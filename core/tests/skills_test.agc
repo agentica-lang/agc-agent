@@ -226,7 +226,7 @@ def test_read_file_reads_in_a_skill_folder_behind_a_link() -> Result[Void]
   try write("#{base}/dot/skills/release/references/steps.md", "1. tag\n")
   try link("#{base}/dot", "#{base}/home/.claude")
   skills = Skills.discover("#{base}/work", "#{base}/home", false).skills
-  ctx = try Tools.context("#{base}/work", ->(_name: String) { error("unset") }, Tools.Rules(allow: [], deny: []))
+  ctx = try Tools.context("#{base}/work", ->(_name: String) { error("unset") })
   roots = ctx.with(read_roots: skills.map { |s| s.dir })
   read = ->(path: String, c: Tools.Context) { Tools.run(c, "read_file", JSON.object({"path": JSON.from(path)})) }
   steps = "#{skills[0].dir}/references/steps.md"

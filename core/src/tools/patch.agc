@@ -1,8 +1,7 @@
 ## The `apply_patch` tool: the patch format of Codex, which OpenAI models are trained on. A patch adds, deletes and
-## updates files of the session folder; it is checked whole before any file changes. The path rule and the approval
-## rules are those of `edit_file`, for each path the patch touches.
+## updates files of the session folder; it is checked whole before any file changes. The path rule is that of
+## `edit_file`, for each path the patch touches.
 
-import Approval from "../approval/approval"
 import Sandbox from "sandbox"
 import Spec from "spec"
 
@@ -61,6 +60,17 @@ GRAMMAR = <<~TEXT
   %import common.LF
 TEXT
 
+enum Touch
+  Write
+  Edit
+  Remove
+end
+
+struct Touched
+  path: String
+  touch: Touch
+end
+
 struct PatchArgs
   input: String
 end
@@ -115,23 +125,8 @@ def target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   ok((try paths(ctx, try parse(try args(input)))).join(", "))
 end
 
-## Each path decides as the call that does the same would: an updated file as `edit_file`, an added file or the
-## target of a move as `write_file`, each also as `apply_patch`. A deny rule of `edit_file`, `write_file` or
-## `apply_patch` on a path (or of `read_file`, as for `edit_file`) denies the patch. A deleted file, or the old path of
-## a move, asks unless an `apply_patch` rule allows it. The patch runs without asking only when every path is allowed.
-def verdict(ctx: Spec.Context, input: JSON.Value) -> Approval.Verdict
-  case touched(ctx, input)
-    ok(found) -> combined(found.map { |t| path_verdict(ctx.rules, t) })
-    error(_) -> Approval.Verdict.Deny
-  end
-end
-
-def combined(verdicts: List[Approval.Verdict]) -> Approval.Verdict
-  return Approval.Verdict.Deny if verdicts.include?(Approval.Verdict.Deny)
-  return Approval.Verdict.Ask if verdicts.include?(Approval.Verdict.Ask)
-
-  Approval.Verdict.Allow
-end
+## What each path of the patch does, relative to the session folder.
+def touched(ctx: Spec.Context, input: JSON.Value) -> Result[List[Touched]] = touches(ctx, try parse(try args(input)))
 
 ## Applies the patch whole: every hunk is checked first, then the files are written, and the deleted files are set
 ## aside last (renamed to `.finn-patch-N` in their folder) and removed once every step worked. When a step fails,
@@ -351,17 +346,6 @@ struct Search
   spent: Int
 end
 
-enum Touch
-  Write
-  Edit
-  Remove
-end
-
-struct Touched
-  path: String
-  touch: Touch
-end
-
 struct Change
   ## The file written, with its content; none when nothing is written.
   write: Optional[String]
@@ -461,24 +445,6 @@ def moved(hunk: Hunk) -> List[Touched]
   end
 
   [Touched(path: hunk.path, touch: Touch.Edit)]
-end
-
-def touched(ctx: Spec.Context, input: JSON.Value) -> Result[List[Touched]] = touches(ctx, try parse(try args(input)))
-
-def path_verdict(rules: Approval.Rules, t: Touched) -> Approval.Verdict
-  decide = ->(tool: String) { Approval.decide(rules, tool, t.path, true) }
-  denied = ["edit_file", "write_file", NAME].any? { |tool| decide.call(tool) == Approval.Verdict.Deny }
-  return Approval.Verdict.Deny if denied
-
-  allowing = case t.touch
-    Touch.Edit -> ["edit_file", NAME]
-    Touch.Write -> ["write_file", NAME]
-    Touch.Remove -> [NAME]
-  end
-
-  return Approval.Verdict.Allow if (allowing.any? { |tool| decide.call(tool) == Approval.Verdict.Allow })
-
-  Approval.Verdict.Ask
 end
 
 # What a hunk will do, checked against the files as they are now, and the line comparisons its search took (at most

@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - `finn tui` looks like pi: the prompt sits between two rules whose color shows the thinking level (Shift+Tab sets the next one), a spinner and "Working" sit in the top rule during a turn, the transcript has no `>` or `·` marks, the `/resume` picker takes the prompt's place and an approval shows under it.
+- The core server runs on Bond 0.13.1 (a router with filters and `Bond.sse`) and no longer on `std/http` directly: the paths, status codes, JSON and event stream are the same. `agentica install` in `core/` fetches Bond, as `make install` does.
 - `finn tui` keeps reading keys while a message or a stop is sent, and an answer that only called tools draws no empty row.
 - `finn tui` keeps the wrapped rows of each transcript entry, so a key costs about the same on a long transcript as on a short one.
 - Approval rules come from a config file (`FINN_CONFIG`, else `~/.config/finn/config.json`) and the project's `.finn/config.json` (its allow rules only under `FINN_TRUSTED_DIRS`); an approval may allow a `bash` prefix (`allow_prefix`) or a whole tool (`allow_tool`) for the session, and `PATCH /v1/sessions/ID` with `accept_edits` runs file edits without asking (until the server restarts; the deny rules are checked first, as far as the parser sees a command, and nothing reaches into `.git/`).
