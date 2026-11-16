@@ -67,6 +67,30 @@ def test_past_the_window_the_history_is_compacted_and_keeps_the_first_task() -> 
   end
 end
 
+# On the Responses format the summary request keeps nothing on the API side either: `store: false`, and the
+# reasoning asked back encrypted.
+def test_the_summary_request_on_the_responses_format_stores_nothing() -> Result[Void]
+  replies = ["text.sse", "write_file.sse", "summary.sse", "text.sse"]
+  H.using(H.Setup(api: "openai_responses", replies: replies, context_window: 120)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Say hello.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq([H.stop_reason(a), failures(a.seen).join(",")], ["end_turn", ""])
+    _ = try body(h)
+    _ = try body(h)
+    summary_request = try body(h)
+    try Test.eq(string(summary_request, "instructions"), Compaction.SYSTEM)
+    try Test.eq(JSON.get(summary_request, "store"), ok(JSON.from(false)))
+    Test.eq(JSON.get(summary_request, "include"), ok(JSON.from(["reasoning.encrypted_content"])))
+  end
+end
+
 # The last call of a turn left the context past the limit: the next turn compacts before its first call. The summary
 # folds several messages, tool calls and results among them (as JSON data), and the answer of the turn is still shown.
 def test_a_turn_compacts_at_its_start() -> Result[Void]
