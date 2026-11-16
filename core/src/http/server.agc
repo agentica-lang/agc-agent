@@ -70,6 +70,9 @@ def app(token: String, sessions: Sessions.Sessions) -> Bond.App
     |> Bond.delete(one, ->(conn) { reply(conn, 200, delete(sessions, conn)) })
     |> Bond.post("#{one}/messages", ->(conn) { reply(conn, 202, send(sessions, conn)) })
     |> Bond.post("#{one}/compact", ->(conn) { reply(conn, 200, compact(sessions, conn)) })
+    |> Bond.get("#{one}/tree", ->(conn) { reply(conn, 200, tree(sessions, conn)) })
+    |> Bond.post("#{one}/branch", ->(conn) { reply(conn, 200, branch(sessions, conn)) })
+    |> Bond.post("#{one}/fork", ->(conn) { reply(conn, 201, fork(sessions, conn)) })
     |> Bond.post("#{one}/stop", ->(conn) { reply(conn, 200, stop_turn(sessions, conn)) })
     |> Bond.post("#{one}/approvals/:approval", ->(conn) { reply(conn, 200, approve(sessions, conn)) })
     |> Bond.get("#{one}/events", ->(conn) { events(sessions, conn) })
@@ -183,6 +186,20 @@ end
 def compact(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   compacted = try Sessions.compact(sessions, try Bond.param(conn, "id"))
   ok(Protocol.encode_compacted(Protocol.Compacted(compacted: compacted)))
+end
+
+def tree(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  ok(Protocol.encode_session_tree(try Sessions.tree(sessions, try Bond.param(conn, "id"))))
+end
+
+def branch(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  request = try Protocol.decode_branch(try String.from_bytes(conn.body))
+  ok(Protocol.encode_branched(try Sessions.branch(sessions, try Bond.param(conn, "id"), request.entry)))
+end
+
+def fork(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  request = try Protocol.decode_fork(try String.from_bytes(conn.body))
+  ok(Protocol.encode_branched(try Sessions.fork(sessions, try Bond.param(conn, "id"), request.entry)))
 end
 
 def stop_turn(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
