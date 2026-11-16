@@ -41,6 +41,7 @@ HINTS = [
   "^T show thinking",
   "^O show tool output",
   "@ files",
+  "/ commands",
   "↑ history",
   "PgUp/PgDn",
 ]
@@ -473,7 +474,7 @@ def on_key(app: Model, event: TUI.Event) -> Model
   return app if Approvals.captures?(app.approvals, event)
 
   for found in option_list(mention_list(app))
-    return on_mention_key(app, found, event) if mention_key?(event)
+    return on_mention_key(app, found, event) if mention_key?(found, event)
   end
 
   on_prompt_key(unselected(app, event), event)
@@ -533,6 +534,11 @@ def cursor(app: Model) -> Int = Prompt.clamp(app.prompt, app.cursor)
 def typed(app: Model, piece: String) -> Model
   at = cursor(app)
   edited = app.with(prompt: Prompt.insert(app.prompt, at, piece), cursor: at + piece.length, recall: none)
+  # A list Esc closed opens again for a new prompt.
+  if app.prompt == ""
+    edited = edited.with(mention_closed: none, mention_selected: 0)
+  end
+
   return edited if piece != "@" or edited.files.some? or edited.reading_files
 
   read_files(edited)
@@ -644,42 +650,65 @@ def under(root: String, path: String) -> String
   "#{root}/#{path}"
 end
 
-# The `@` list while the cursor ends an `@` word, the files are read and Esc did not close it.
+# The list under the editor: the commands while the prompt is `/` and part of a name that some command starts with,
+# else the files while the cursor ends an `@` word and the files are read; none once Esc closed it.
 def mention_list(app: Model) -> Optional[Input.Mention]
-  return none if app.files.none? or app.picker.some?
+  # A prompt Up recalled shows none: Up and Down go on through the history.
+  return none if app.picker.some? or app.recall.some?
 
-  found = Input.mention(app.prompt, cursor(app))
+  found = Input.command_word(app.prompt, cursor(app))
+  if found.none? or mention_choices(app, found.unwrap!).empty?
+    found = none
+    if app.files.some?
+      found = Input.mention(app.prompt, cursor(app))
+    end
+  end
+
   return none if found.none? or app.mention_closed == some(found.unwrap!.start)
 
   found
 end
 
-def mention_key?(event: TUI.Event) -> Bool
+# Enter runs the selected command once part of its name is typed; it sends the prompt as it is under the file list or
+# after `/` alone.
+def mention_key?(found: Input.Mention, event: TUI.Event) -> Bool
   case event
     TUI.Event.Key(TUI.Key.Tab, _) -> true
     TUI.Event.Key(TUI.Key.Up, _) -> true
     TUI.Event.Key(TUI.Key.Down, _) -> true
     TUI.Event.Key(TUI.Key.Escape, _) -> true
+    TUI.Event.Key(TUI.Key.Enter, mods) -> not mods.alt and found.source == Input.Source.Commands and found.query != ""
     _ -> false
   end
 end
 
-def mention_matches(app: Model, found: Input.Mention) -> List[String]
-  Input.matches(app.files.unwrap_or([]), found.query)
+def mention_choices(app: Model, found: Input.Mention) -> List[Input.Choice]
+  case found.source
+    Input.Source.Commands -> Input.commands(Client.listed(), found.query)
+    Input.Source.Files ->
+      Input.matches(app.files.unwrap_or([]), found.query).map { |p| Input.Choice(value: p, label: p) }
+  end
 end
 
-# Tab puts the selected file in place of the `@` word, Up and Down move, Esc closes the list.
+# Tab puts the selected choice in place of the word, Enter also runs a command, Up and Down move, Esc closes the list.
 def on_mention_key(app: Model, found: Input.Mention, event: TUI.Event) -> Model
-  files = mention_matches(app, found)
-  selected = [[app.mention_selected, files.size - 1].min.unwrap!, 0].max.unwrap!
+  choices = mention_choices(app, found)
+  selected = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
   case event
     TUI.Event.Key(TUI.Key.Up, _) -> app.with(mention_selected: [selected - 1, 0].max.unwrap!)
-    TUI.Event.Key(TUI.Key.Down, _) -> app.with(mention_selected: [selected + 1, files.size - 1].min.unwrap!)
+    TUI.Event.Key(TUI.Key.Down, _) -> app.with(mention_selected: [selected + 1, choices.size - 1].min.unwrap!)
     TUI.Event.Key(TUI.Key.Escape, _) -> app.with(mention_closed: some(found.start))
-    _ if files.empty? -> app
+    _ if choices.empty? -> app
+    TUI.Event.Key(TUI.Key.Enter, _) ->
+      send(
+        app.with(
+          prompt: Input.completed(app.prompt, cursor(app), found, choices[selected].value),
+          mention_selected: 0,
+        ),
+      )
     _ ->
       at = cursor(app)
-      text = Input.completed(app.prompt, at, found, files[selected])
+      text = Input.completed(app.prompt, at, found, choices[selected].value)
       app.with(prompt: text, cursor: at + text.length - app.prompt.length, mention_selected: 0)
   end
 end
@@ -813,7 +842,7 @@ def on_command(app: Model, command: Client.Command) -> Model
   case command
     Client.Command.Quit -> app.with(exit: some(0))
     Client.Command.Stop -> stop_command(app)
-    Client.Command.Help -> app.with(entries: app.entries + Client.HELP.map { |line| note_entry(line) })
+    Client.Command.Help -> app.with(entries: app.entries + Client.help().map { |line| note_entry(line) })
     Client.Command.Cost -> noted(app, "/cost comes with the model catalog")
     Client.Command.New -> switch_command(app, none)
     Client.Command.Resume(none) -> tried(app, picking(app))
@@ -1190,9 +1219,9 @@ def approval_rows(app: Model, room: Int) -> List[Layout.Row]
 
   case mention_list(app)
     some(found) ->
-      files = mention_matches(app, found)
-      selected = [[app.mention_selected, files.size - 1].min.unwrap!, 0].max.unwrap!
-      Input.rows(files, selected, app.width).take([room, 0].max.unwrap!)
+      choices = mention_choices(app, found)
+      selected = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
+      Input.rows(choices, selected, app.width).take([room, 0].max.unwrap!)
     none -> []
   end
 end

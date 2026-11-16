@@ -178,6 +178,25 @@ def tool_click(rig: Rig) -> Result[Void]
   Test.assert(not rows.any? { |row| row.include?("more lines") }, "the whole output shows")
 end
 
+# Typing `/` and part of a name lists the commands under the editor; Tab completes the selected one.
+def test_slash_suggests_the_commands_and_tab_completes() -> Result[Void] = within(80, 24, &slash)
+
+def slash(rig: Rig) -> Result[Void]
+  for char in ["/", "m", "o"]
+    try press(rig, TUI.Event.Char(char, TUI.Mods()))
+  end
+
+  rows = try shows(rig, " /model [PROVIDER/]NAME")
+  try Test.assert(not rows.any? { |row| row.include?("/new ") }, "the list narrows: #{rows}")
+  try press(rig, TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))
+  rows = try TUI.Testing.wait_for(
+    rig.fake,
+    ->(shown: List[String]) { not shown.any? { |row| row.include?("[PROVIDER/]") } },
+  )
+
+  Test.assert(rows.any? { |row| row == " /model" }, "the prompt holds the command: #{rows}")
+end
+
 # Runs `body` with the app on a fake terminal of `width` by `height` and a server that records its calls, then ends
 # the app with Ctrl-C. The server answers a call with its body in `replies` ("{}" when none), and an event stream
 # with one that stays open until the end.

@@ -220,7 +220,7 @@ def test_the_tree_picker_moves_the_session_and_fills_the_prompt() -> Result[Void
   held = App.update(picked.model.with(prompt: "hi"), enter())
   try Test.eq([held.cmds.size.to_s, held.model.prompt, held.model.outbox.size.to_s], ["0", "hi", "0"])
   helped = App.update(picked.model.with(prompt: "/help"), enter()).model
-  try Test.eq([helped.prompt, helped.entries.last.text], ["", Client.HELP.last])
+  try Test.eq([helped.prompt, helped.entries.last.text], ["", Client.help().last])
   renewed = App.update(picked.model.with(prompt: "/new"), enter()).model
   try Test.eq([renewed.prompt, renewed.entries.last.text], ["/new", "the session is moving: wait for it"])
   typed = App.update(model.with(picker: none, prompt: "/tree 3"), enter())
@@ -347,6 +347,40 @@ def test_at_lists_the_files_and_tab_completes_one() -> Result[Void]
   Test.assert(not rows(closed).include?("thinking.sse"), "Esc closes the list")
 end
 
+# `/` lists the commands of the client's table under the editor, narrowed as the name grows; Tab completes the
+# selected one, Enter runs it, Esc closes the list, and a name no command starts with shows none and goes as text.
+def test_slash_lists_the_commands_and_tab_completes_one() -> Result[Void]
+  model = App.update(model_of(80, 20).with(id: "s1"), key_char("/")).model
+  try Test.assert(
+    rows(model).any? { |row| row.start_with?("/new") and row.include?("a new session") },
+    "#{rows(model)}",
+  )
+
+  try Test.assert(not rows(model).any? { |row| row.start_with?("/cost") }, "an unlisted command is left out")
+  for c in ["m", "o"]
+    model = App.update(model, key_char(c)).model
+  end
+
+  try Test.assert(
+    rows(model).any? { |row| row.start_with?("/model [PROVIDER/]NAME  change the model") },
+    "#{rows(model)}",
+  )
+
+  try Test.assert(not rows(model).any? { |row| row.start_with?("/new") }, "the list narrows")
+  done = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))).model
+  try Test.eq([done.prompt, done.cursor.to_s], ["/model ", "7"])
+  try Test.assert(not rows(done).any? { |row| row.start_with?("/model [") }, "a space closes the list")
+  closed = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model
+  try Test.assert(not rows(closed).any? { |row| row.start_with?("/model [") }, "Esc closes the list")
+  try Test.eq(closed.stopping, false)
+  helped = App.update(model_of(80, 20).with(id: "s1", prompt: "/he", cursor: 3), enter()).model
+  try Test.eq([helped.prompt, helped.entries.last.text], ["", Client.help().last])
+  try Test.eq(App.update(model_of(80, 20).with(id: "s1", prompt: "/", cursor: 1), enter()).model.outbox, ["/"])
+  unknown = model_of(80, 20).with(id: "s1", prompt: "/zz", cursor: 3)
+  try Test.assert(not rows(unknown).any? { |row| row.include?("no file matches") }, "no list")
+  Test.eq(App.update(unknown, enter()).model.outbox, ["/zz"])
+end
+
 def model_of(width: Int, height: Int) -> App.Model
   options = Args.Options(
     state_dir: none,
@@ -367,6 +401,8 @@ def rows(model: App.Model) -> List[String]
 end
 
 def back_tab() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.BackTab, TUI.Mods()))
+
+def key_char(c: String) -> App.Msg = App.Msg.Key(TUI.Event.Char(c, TUI.Mods()))
 
 def enter() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
 

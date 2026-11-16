@@ -58,7 +58,14 @@ def test_commands_parse_with_their_arguments() -> Result[Void]
     end
   end
 
-  ok()
+  # Every command of the table parses, and the help lists those the suggestions list.
+  for usage in Client.COMMANDS
+    try Test.assert(Client.parse_command(usage.name).some?, usage.name)
+  end
+
+  help = Client.help()
+  try Test.eq(help[0], "/new                       a new session in this folder")
+  Test.assert(Client.listed().all? { |usage| help.any? { |line| line.start_with?("#{usage.name} ") } }, "#{help}")
 end
 
 def test_a_bang_line_is_a_shell_command() -> Result[Void]
