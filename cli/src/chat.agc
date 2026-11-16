@@ -51,6 +51,11 @@ def run(server: Client.Server, options: Args.Options, style: Render.Style) -> Re
   loop(try open(chat, options))
 end
 
+## What a logout says it did.
+def logged_out(name: Optional[String]) -> String
+  name.map { |n| "the key of #{n} is removed" }.unwrap_or("every stored key is removed")
+end
+
 private
 
 struct Chat
@@ -340,6 +345,8 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Stop -> stop_command(chat)
     Client.Command.Help -> said(chat, Client.help().join("\n"))
     Client.Command.Cost -> said(chat, "[/cost comes with the model catalog]")
+    Client.Command.Login(_) -> said(chat, "[a key is asked for on the full screen: finn login, or /login in finn tui]")
+    Client.Command.Logout(name) -> logout_command(chat, name)
     Client.Command.New -> switch_command(chat, none)
     Client.Command.Resume(choice) -> resume_command(chat, choice)
     Client.Command.Tree(choice) -> tree_command(chat, choice, &branched)
@@ -348,6 +355,13 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Model(model) -> model_command(chat, model)
     Client.Command.Thinking(level) -> setting_command(chat, "thinking", level, Protocol.UpdateSession(effort: level))
     Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
+  end
+end
+
+def logout_command(chat: Chat, name: Optional[String]) -> Result[Step]
+  case Client.logout(chat.server, name)
+    ok(_) -> said(chat, "[#{logged_out(name)}]")
+    error(e) -> said(chat, "[error] #{e.message}")
   end
 end
 

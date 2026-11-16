@@ -150,6 +150,91 @@ def answered(rig: Rig, decision: Protocol.Decision) -> Result[Void]
   Test.eq(rig.bodies.recv(2000), ok(Protocol.encode_approve(Protocol.Approve(decision: decision))))
 end
 
+# The first start with no provider set up opens the login picker. The key is drawn as dots, and goes once, in the
+# body of the login; the answer says the provider is set up.
+def test_the_first_start_offers_a_login_with_a_hidden_key() -> Result[Void]
+  replies = {
+    "GET #{Protocol.AUTH_PATH}": Protocol.encode_login_list(logins()),
+    "POST #{Protocol.auth_path("groq")}": Protocol.encode_login_status(groq("stored")),
+  }
+
+  within(80, 24, &first_login, replies, some(&App.welcomed))
+end
+
+def first_login(rig: Rig) -> Result[Void]
+  try shows(rig, "set up a provider")
+  try Test.eq(rig.requests.recv(2000), ok("GET #{Protocol.AUTH_PATH}"))
+  _ = try rig.bodies.recv(2000)
+  for char in ["g", "r"]
+    try press(rig, TUI.Event.Char(char, TUI.Mods()))
+  end
+
+  try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+  try shows(rig, "the key of groq")
+  for char in "sk-9".split("")
+    try press(rig, TUI.Event.Char(char, TUI.Mods()))
+  end
+
+  rows = try shows(rig, "key of groq: ••••")
+  try Test.eq(rows.any? { |row| row.include?("sk-9") }, false)
+  try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+  try Test.eq(rig.requests.recv(2000), ok("POST #{Protocol.auth_path("groq")}"))
+  try Test.eq(rig.bodies.recv(2000), ok("{\"key\":\"sk-9\"}"))
+  shown = try shows(rig, "groq is set up")
+  Test.eq(shown.any? { |row| row.include?("sk-9") }, false)
+end
+
+# Closing the first-start picker makes an empty key file when there is none (PUT), so the login is offered once.
+def test_closing_the_first_login_stores_no_key() -> Result[Void]
+  replies = {"GET #{Protocol.AUTH_PATH}": Protocol.encode_login_list(logins())}
+  within(80, 24, &first_closed, replies, some(&App.welcomed))
+end
+
+def first_closed(rig: Rig) -> Result[Void]
+  try shows(rig, "set up a provider")
+  try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
+  try shows(rig, "/login sets up a provider later")
+  try Test.eq(rig.requests.recv(2000), ok("GET #{Protocol.AUTH_PATH}"))
+  Test.eq(rig.requests.recv(2000), ok("PUT #{Protocol.AUTH_PATH}"))
+end
+
+# A key typed in the place of the name, or after it, leaves the screen: an unknown name is not shown again, and a
+# `/login` line with more words is cleared.
+def test_a_key_typed_as_a_login_name_is_not_shown() -> Result[Void]
+  within(80, 24, &misplaced_key, {"GET #{Protocol.AUTH_PATH}": Protocol.encode_login_list(logins())})
+end
+
+def misplaced_key(rig: Rig) -> Result[Void]
+  for line in ["/login sk-abc123", "/login groq sk-def456"]
+    for char in line.split("")
+      try press(rig, TUI.Event.Char(char, TUI.Mods()))
+    end
+
+    try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+  end
+
+  try shows(rig, "no login has that name")
+  rows = try shows(rig, "give the provider alone")
+  try Test.eq(rows.any? { |row| row.include?("sk-abc123") or row.include?("sk-def456") }, false)
+  Test.eq(rig.requests.recv(2000), ok("GET #{Protocol.AUTH_PATH}"))
+end
+
+def logins() -> Protocol.LoginList
+  coming = Protocol.LoginStatus(name: "claude", label: "Claude Pro/Max", key_env: "", from: "", coming: true)
+  Protocol.LoginList(providers: [groq(""), coming], first: true)
+end
+
+def groq(from: String) -> Protocol.LoginStatus
+  Protocol.LoginStatus(name: "groq", label: "", key_env: "GROQ_API_KEY", from: from, coming: false)
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
+end
+
 def options() -> Args.Options
   Args.Options(
     state_dir: none,
@@ -200,7 +285,13 @@ end
 # Runs `body` with the app on a fake terminal of `width` by `height` and a server that records its calls, then ends
 # the app with Ctrl-C. The server answers a call with its body in `replies` ("{}" when none), and an event stream
 # with one that stays open until the end.
-def within(width: Int, height: Int, body: Fn[Rig, Result[Void]], replies: Map[String, String] = {}) -> Result[Void]
+def within(
+  width: Int,
+  height: Int,
+  body: Fn[Rig, Result[Void]],
+  replies: Map[String, String] = {},
+  first: Optional[Fn[App.Model, App.Model]] = none,
+) -> Result[Void]
   requests: Channel[String] = Channel.new(32)
   streams: Channel[Channel[Bytes]] = Channel.new(8)
   bodies: Channel[String] = Channel.new(32)
@@ -229,6 +320,10 @@ def within(width: Int, height: Int, body: Fn[Rig, Result[Void]], replies: Map[St
     effects: [App.read_feed(1, feed)],
     approvals: Approvals.Panel(guard_ms: 0),
   )
+
+  for change in option_list(first)
+    model = change.call(model)
+  end
 
   fake = TUI.Testing.fake(width, height)
   runner = Task.spawn(-> { App.drive(TUI.Testing.backend(fake), model) })

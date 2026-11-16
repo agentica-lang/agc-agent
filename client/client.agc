@@ -25,6 +25,10 @@ export Http.stop
 export Http.list_sessions
 export Http.list_providers
 export Http.update_session
+export Http.list_logins
+export Http.login
+export Http.logout
+export Http.skip_login
 export Http.compact
 export Http.tree
 export Http.branch

@@ -23,6 +23,8 @@ COMMANDS = [
   ),
   Usage(name: "/thinking", args: "[low|medium|high|default]", about: "the thinking level, or change it"),
   Usage(name: "/compact", about: "fold the history into a summary now"),
+  Usage(name: "/login", args: "[PROVIDER]", about: "set up a provider with its key (finn tui); alone: pick one"),
+  Usage(name: "/logout", args: "[PROVIDER]", about: "remove a stored key; alone: every one"),
   Usage(name: "/stop", about: "stop the running turn"),
   Usage(name: "/cost", about: "what the session cost", listed: false),
   Usage(name: "/help", about: "this list"),
@@ -58,6 +60,10 @@ enum Command
   Stop
   ## The cost of the session, once the model catalog gives prices (#88).
   Cost
+  ## Picks a provider without an argument; then asks for its key.
+  Login(Optional[String])
+  ## Every stored key without an argument.
+  Logout(Optional[String])
   Help
   Quit
 end
@@ -184,6 +190,8 @@ def command(name: String, argument: String) -> Result[Command]
     "/compact" -> bare(Command.Compact, name, argument)
     "/stop" -> bare(Command.Stop, name, argument)
     "/cost" -> bare(Command.Cost, name, argument)
+    "/login" -> ok(Command.Login(try provider(argument)))
+    "/logout" -> ok(Command.Logout(try provider(argument)))
     "/help" -> bare(Command.Help, name, argument)
     # Only `/quit` is left of COMMANDS.
     _ -> bare(Command.Quit, name, argument)
@@ -200,6 +208,13 @@ def given(argument: String) -> Optional[String]
   return none if argument == ""
 
   some(argument)
+end
+
+# One word: a key typed after the name would be shown and kept as the line.
+def provider(argument: String) -> Result[Optional[String]]
+  return error("give the provider alone: the key is asked for next", kind: KIND_COMMAND) if argument.include?(" ")
+
+  ok(given(argument))
 end
 
 def model(argument: String) -> Result[Command]

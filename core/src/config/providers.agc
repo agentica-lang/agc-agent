@@ -2,7 +2,8 @@
 ## `FINN_API_KEY`, a llama-server by default), `anthropic` (`ANTHROPIC_*`), and the presets below, each offered only
 ## when its key variable is set. The user's config file adds or replaces providers under `providers`:
 ## `[{"name", "api", "base_url", "key_env", "models"}]`, where `api` is `openai` (the default) or `openai_responses`,
-## and a provider with a `key_env` is offered only when that variable is set. Keys come only from the environment.
+## and a provider with a `key_env` is offered only when that variable is set, or when a login stored its key
+## (`Auth`); the variable wins.
 
 import LLM from "pkg/llm/llm"
 
@@ -41,17 +42,35 @@ struct Custom
   base_url: String
   key_env: String = ""
   models: List[String] = []
+  ## Where a login checks a key, under `base_url`: a path that answers 401 to a wrong key.
+  check_path: String = "/models"
 end
 
-## The presets that need a key: name, API, base URL, key variable and models.dev id.
+## A provider a login will offer, with no flow yet (a subscription): its name and what it is.
+struct Coming
+  name: String
+  label: String
+end
+
+## The presets that need a key: name, API, base URL, key variable and where a login checks the key.
 def presets() -> List[Custom]
   [
     Custom(name: "openai", api: "openai_responses", base_url: "https://api.openai.com/v1", key_env: "OPENAI_API_KEY"),
     Custom(name: "fireworks", base_url: "https://api.fireworks.ai/inference/v1", key_env: "FIREWORKS_API_KEY"),
-    Custom(name: "openrouter", base_url: "https://openrouter.ai/api/v1", key_env: "OPENROUTER_API_KEY"),
+    # Its model list is public: the key has its own route.
+    Custom(
+      name: "openrouter",
+      base_url: "https://openrouter.ai/api/v1",
+      key_env: "OPENROUTER_API_KEY",
+      check_path: "/key",
+    ),
     Custom(name: "groq", base_url: "https://api.groq.com/openai/v1", key_env: "GROQ_API_KEY"),
     Custom(name: "deepseek", base_url: "https://api.deepseek.com/v1", key_env: "DEEPSEEK_API_KEY"),
   ]
+end
+
+def coming() -> List[Coming]
+  [Coming(name: "claude", label: "Claude Pro/Max"), Coming(name: "chatgpt", label: "ChatGPT and Codex")]
 end
 
 ## The custom providers of the config file at `path`; none when it has no `providers`.
@@ -63,14 +82,22 @@ def from_file(path: String) -> Result[List[Custom]]
   end
 end
 
-## The providers of `customs` whose key is set or that need none, with their model APIs. `options` are those of every
-## client.
-def offered(customs: List[Custom], read: Fn[String, Result[String]], options: LLM.Options) -> Map[String, Provider]
+## The providers of `customs` whose key is set or stored (`stored`, by provider) or that need none, with their model
+## APIs. `options` are those of every client.
+def offered(
+  customs: List[Custom],
+  read: Fn[String, Result[String]],
+  options: LLM.Options,
+  stored: Map[String, String] = {},
+) -> Map[String, Provider]
   out: Map[String, Provider] = {}
   for custom in customs
     key = ""
     if not custom.key_env.empty?
       key = read.call(custom.key_env).unwrap_or("")
+      if key.empty?
+        key = stored.get(custom.name).unwrap_or("")
+      end
     end
 
     if custom.key_env.empty? or not key.empty?

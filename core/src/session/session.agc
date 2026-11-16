@@ -11,6 +11,7 @@ import Protocol from "pkg/protocol/protocol"
 import Catalog from "../agent/catalog"
 import Extension from "../approval/extension"
 import Config from "../config/config"
+import Logins from "../config/logins"
 import Providers from "../config/providers"
 import Skills from "../ext/skills"
 import Sandbox from "../tools/sandbox"
@@ -46,8 +47,9 @@ end
 ## The folder of the session files.
 def folder(options: Config.Options) -> String = "#{options.data_dir}/#{SESSIONS_DIR}"
 
-## Starts the registry, which lists the session files of `options`.
-def start(options: Config.Options) -> Sessions
+## Starts the registry, which lists the session files of `options`, and the holder of the providers.
+def start(given: Config.Options) -> Sessions
+  options = given.with(logins: some(Logins.start(given.providers, given.login)))
   init = -> {
     inbox: Channel[Msg] = Actor.inbox()
     Registry(options: options, sessions: load_sessions(options), address: inbox.address)
@@ -60,12 +62,15 @@ end
 ## Stops the registry and the sessions it runs.
 def stop(sessions: Sessions) -> Void
   _ = Actor.stop(sessions.registry, CALL_MS)
+  for holder in option_list(sessions.options.logins)
+    Logins.stop(holder)
+  end
 end
 
 ## The providers a session may use, each with the models of the config file, then the server's model for its own
 ## provider, then those of the catalog that call tools.
 def providers(sessions: Sessions) -> Protocol.ProviderList
-  options = sessions.options
+  options = Config.now(sessions.options)
   infos = options.providers.keys.sort.map do |name| provider_info(options, name) end
 
   Protocol.ProviderList(provider: options.provider, providers: infos)
@@ -405,7 +410,7 @@ def printable(c: String) -> String
 end
 
 def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]
-  options = registry.options
+  options = Config.now(registry.options)
   ctx = case Tools.context(request.cwd, options.env, options.tools, options.late_tools, options.diff)
     ok(ctx) -> ok(ctx)
     error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
@@ -532,7 +537,7 @@ def started(options: Config.Options, listed: Entry, read: Result[Loaded]) -> Res
     try Store.reopen(listed.file)
   end
 
-  entry(options, loaded.saved.header, loaded.opened, listed.file, some(loaded.saved))
+  entry(Config.now(options), loaded.saved.header, loaded.opened, listed.file, some(loaded.saved))
 end
 
 def entry(
@@ -577,7 +582,7 @@ def entry(
     catalog_wait_ms: options.catalog_wait_ms,
     approvals: opened.approvals,
     origin: "#{chosen.provider}/#{chosen.api}",
-    endpoint: some(->(name: String, now: String) { switched_endpoint(options, name, now) }),
+    endpoint: some(->(name: String, now: String) { switched_endpoint(Config.now(options), name, now) }),
   )
 
   setup = SessionActor.switched(base, endpoint).with(model: header.model, refused: refusal(options, provider))

@@ -469,7 +469,7 @@ end
 # On a small screen the list shows the rows it has room for and keeps the selected one among them.
 def test_the_command_list_follows_the_selection_on_a_small_screen() -> Result[Void]
   model = App.update(model_of(80, 7).with(id: "s1"), key_char("/")).model
-  for _ in 0...11
+  for _ in 0...20
     model = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))).model
   end
 
@@ -491,6 +491,31 @@ def model_of(width: Int, height: Int) -> App.Model
   )
 
   App.seed(Client.Server(url: "http://127.0.0.1:1", token: ""), options, Channel.new(1), width, height)
+end
+
+# A coming login cannot be given a key; Esc in the key prompt drops what was typed; under `finn login` the answer to
+# the login ends the app.
+def test_a_login_drops_a_coming_pick_and_a_cancelled_key() -> Result[Void]
+  claude = Protocol.LoginStatus(name: "claude", label: "Claude Pro/Max", key_env: "", from: "", coming: true)
+  groq = Protocol.LoginStatus(name: "groq", label: "", key_env: "GROQ_API_KEY", from: "", coming: false)
+  list = Protocol.LoginList(providers: [groq, claude], first: false)
+  picking = model_of(60, 12).with(picker: some(Picker.logins(list)))
+  down = App.update(picking, App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))).model
+  coming = App.update(down, enter()).model
+  try Test.eq([coming.picker.none?, coming.key_for.none?], [true, true])
+  try Test.assert(coming.entries.any? { |e| e.text.include?("Claude Pro/Max: coming") }, "the coming login is said")
+  asked = App.update(picking, enter()).model
+  try Test.eq(asked.key_for, some("groq"))
+  typed = App.update(asked, App.Msg.Key(TUI.Event.Paste("sk-1\n"))).model
+  try Test.eq([typed.secret, typed.prompt], ["sk-1", ""])
+  cancelled = App.update(typed, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model
+  try Test.eq([cancelled.secret, "#{cancelled.key_for}"], ["", "none"])
+  only = typed.with(login_only: true)
+  sent = App.update(only, enter())
+  try Test.eq([sent.model.secret, "#{sent.cmds.size}"], ["", "1"])
+  done = App.update(sent.model, App.Msg.LoggedIn("groq", ok(groq.with(from: "stored"))))
+  try Test.eq(done.model.exit, some(0))
+  Test.eq(rows(done.model).any? { |row| row.include?("sk-1") }, false)
 end
 
 def rows(model: App.Model) -> List[String]

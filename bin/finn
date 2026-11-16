@@ -21,13 +21,15 @@ usage: finn [chat] [options]      talk to the agent in this folder (starts the s
        finn -p TASK [--yolo]      one task (- reads it from stdin): the answer on stdout, the rest on stderr
        finn tui [options]         the same on the full screen, --yolo too (finn tui --help lists the options)
        finn serve [options]       run the server in the foreground
+       finn login [PROVIDER]      set up a provider with its key: checked, then stored (pick one when none is given)
+       finn logout [PROVIDER]     remove the stored key of a provider, or every stored key
        finn server ACTION         status, start, stop, restart or logs of the server of the state folder
                                   (stop waits for the running turns, --now cancels them; finn server --help)
        finn --version | --help
 
 chat options: --provider NAME, --api NAME, --model NAME (of a new session), --session ID, --thinking, --yolo, ...
   (finn chat --help lists them all)
-in chat and tui: /new, /resume, /model, /thinking, /compact, /stop, /help, /quit
+in chat and tui: /new, /resume, /model, /thinking, /compact, /login, /logout, /stop, /help, /quit
 one-shot: approvals are denied unless --yolo; exit 0 when the turn ends normally (also after a denied call),
   130 when it is cancelled, 1 otherwise (a failed or busy send, an empty task); the server keeps running after it
 serve options (each overrides its environment variable):
@@ -72,5 +74,13 @@ case ${1:-} in
   serve) shift; serve "$@" ;;
   chat) shift; exec "$agentica" "$root/cli/main.agc" "$@" ;;
   tui) shift; exec "$agentica" "$root/tui_client/main.agc" "$@" ;;
+  login|logout)
+    # A key is never an argument: it is asked for, hidden.
+    [ $# -le 2 ] || { echo "finn $1: give the provider alone; the key is asked for next" >&2; exit 2; }
+    case $1 in
+      login) shift; exec "$agentica" "$root/tui_client/main.agc" --login ${1:+--provider "$1"} ;;
+      *) shift; exec "$agentica" "$root/cli/main.agc" --logout "${1:-all}" ;;
+    esac
+    ;;
   *) exec "$agentica" "$root/cli/main.agc" "$@" ;;
 esac

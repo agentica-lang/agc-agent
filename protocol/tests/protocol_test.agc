@@ -327,6 +327,16 @@ def test_a_shell_command_round_trips() -> Result[Void]
   Test.eq(Protocol.decode_shell_accepted(Protocol.encode_shell_accepted(accepted)), ok(accepted))
 end
 
+def test_a_login_round_trips() -> Result[Void]
+  login = Protocol.Login(key: "sk-1")
+  try Test.eq(Protocol.decode_login(Protocol.encode_login(login)), ok(login))
+  try Test.eq(error_kind(Protocol.decode_login("{\"key\": \"\"}")), "protocol.invalid")
+  status = Protocol.LoginStatus(name: "groq", label: "", key_env: "GROQ_API_KEY", from: "stored", coming: false)
+  list = Protocol.LoginList(providers: [status], first: false)
+  try Test.eq(Protocol.decode_login_status(Protocol.encode_login_status(status)), ok(status))
+  Test.eq(Protocol.decode_login_list(Protocol.encode_login_list(list)), ok(list))
+end
+
 def test_session_settings_round_trip_and_refuse_unknown_levels() -> Result[Void]
   both = Protocol.UpdateSession(provider: some("fireworks"), model: some("qwen3"), effort: some("high"))
   try Test.eq(Protocol.decode_update_session(Protocol.encode_update_session(both)), ok(both))
@@ -367,7 +377,7 @@ def test_the_wire_shape_has_every_record_enum_and_kind() -> Result[Void]
   Test.assert(found.size > 40, "the scan found #{found.size} names")
 end
 
-# Every constant of routes.agc is in the wire shape, and one path of a session for each `def *_path`.
+# Every constant of routes.agc is in the wire shape, and one path of a session for each `def *_path(session_id`.
 def test_the_wire_shape_has_every_path() -> Result[Void]
   shape = Protocol.wire_shape()
   defs = 0
@@ -375,7 +385,7 @@ def test_the_wire_shape_has_every_path() -> Result[Void]
     words = line.split(" ")
     if words.size > 2 and words[1] == "=" and words[0] == words[0].upcase
       try Test.assert(shape.include?(words[2].replace("\"", "")), words[0])
-    elsif words.size > 1 and words[0] == "def" and words[1].include?("_path(")
+    elsif words.size > 1 and words[0] == "def" and words[1].include?("_path(session_id")
       defs += 1
     end
   end

@@ -46,6 +46,7 @@ bin/finn serve                         # the server in the foreground, on a llam
 bin/finn serve --api openai_responses  # the same on /v1/responses
 bin/finn serve --api anthropic         # Anthropic: ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or `ant auth login`
 FIREWORKS_API_KEY=... bin/finn serve  # a preset provider once its key is set: /model fireworks/MODEL in a session
+bin/finn login                         # set up a provider with its key, checked and stored for the next starts
 bin/finn --version
 ```
 

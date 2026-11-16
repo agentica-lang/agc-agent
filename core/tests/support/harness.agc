@@ -9,7 +9,9 @@ import SSE from "pkg/sse/sse"
 import Approval from "../../src/approval/approval"
 import Catalog from "../../src/agent/catalog"
 import CodeMode from "../../src/tools/code_mode"
+import Auth from "../../src/config/auth"
 import Config from "../../src/config/config"
+import Logins from "../../src/config/logins"
 import Providers from "../../src/config/providers"
 import Server from "../../src/http/server"
 import Tools from "../../src/tools/tools"
@@ -75,6 +77,9 @@ struct Setup
   providers: List[String] = []
   provider: String = ""
   key_envs: Map[String, String] = {}
+  ## Providers a login sets up, each at `/NAME` of the fake with the key variable `NAME_KEY` (`NAME=VAR` for another),
+  ## and their keys in `config/finn/auth.json` of the test's folder.
+  logins: List[String] = []
   ## The approval extension, with the deny rules of the config, as `bash(rm *)`.
   approvals: Bool = true
   deny: List[String] = []
@@ -147,20 +152,47 @@ def apis(setup: Setup, fake: Fake.Fake) -> Map[String, Config.ModelApi]
   all.put("anthropic", all["anthropic"].with(refresh: some(refresh)))
 end
 
-def providers(setup: Setup, fake: Fake.Fake) -> Map[String, Config.Provider]
+def providers(setup: Setup, fake: Fake.Fake, keys: Map[String, String] = {}) -> Map[String, Config.Provider]
   all = Config.builtin(apis(setup, fake), setup.api)
-  root = fake.url.slice(0, fake.url.length - "/v1".length)
+  root = fake_root(fake)
   customs = setup.providers.map do |given|
     parts = given.split(":").push("openai")
     Providers.Custom(name: parts[0], api: parts[1], base_url: "#{root}/#{parts[0]}", models: ["m1"])
   end
 
-  more = Providers.offered(customs, &fake_env, LLM.Options(timeout_ms: 5000, retry_base_ms: 1))
+  customs = customs + login_customs(setup, fake)
+  more = Providers.offered(customs, &fake_env, LLM.Options(timeout_ms: 5000, retry_base_ms: 1), keys)
   for name in more.keys
     all = all.put(name, more[name])
   end
 
   all
+end
+
+def fake_root(fake: Fake.Fake) -> String = fake.url.slice(0, fake.url.length - "/v1".length)
+
+def login_customs(setup: Setup, fake: Fake.Fake) -> List[Providers.Custom]
+  setup.logins.map do |given|
+    parts = given.split("=").push("#{given.upcase}_KEY")
+    Providers.Custom(name: parts[0], base_url: "#{fake_root(fake)}/#{parts[0]}", key_env: parts[1])
+  end
+end
+
+def auth_file(base: String) -> String = "#{base}/config/finn/#{Auth.FILE}"
+
+def login_setup(setup: Setup, fake: Fake.Fake, base: String) -> Optional[Logins.Setup]
+  return none if setup.logins.empty?
+
+  path = auth_file(base)
+  some(
+    Logins.Setup(
+      path: some(path),
+      stored: Auth.load(path, none),
+      entries: login_customs(setup, fake),
+      read: &fake_env,
+      rebuild: ->(keys: Map[String, String]) { ok(providers(setup, fake, keys)) },
+    ),
+  )
 end
 
 def placed(reply: Fake.Reply, base: String) -> Fake.Reply
@@ -176,8 +208,9 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   options = Config.Options(
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
-    providers: providers(setup, fake),
+    providers: providers(setup, fake, login_setup(setup, fake, base).map { |l| l.stored.keys }.unwrap_or({})),
     provider: server_provider(setup),
+    login: login_setup(setup, fake, base),
     key_envs: setup.key_envs,
     model: setup.model,
     env: &fake_env,
@@ -309,7 +342,10 @@ def fixtures(names: List[String], dir: String = "openai_chat") -> Result[List[Fa
     end
 
     parts = name.split(":")
-    if name.include?("/")
+    if name.start_with?("302>")
+      location = HTTP.Header(name: "Location", value: name.slice(4, name.length - 4))
+      replies = replies.push(Fake.Reply(status: 302, body: "".bytes, headers: [location]))
+    elsif name.include?("/")
       replies = replies.push(try Fake.sse(name))
     elsif parts.size == 2
       replies = replies.push(try Fake.json(try parts[0].to_i, "#{dir}/#{parts[1]}"))

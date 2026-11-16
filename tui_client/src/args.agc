@@ -20,6 +20,8 @@ end
 
 enum Command
   Run(Options)
+  ## `finn login`: the login of the provider of the options (the picker when none), then the client ends.
+  Login(Options)
   Version
   Help(String)
 end
@@ -41,6 +43,11 @@ def parse(args: List[String]) -> Result[Command]
         name: "yolo",
         kind: Kind.Flag,
         help: "allow the tool calls of the turns sent from this client (other turns are still asked)",
+      ),
+      Opt(
+        name: "login",
+        kind: Kind.Flag,
+        help: "set up the --provider with its key (pick one when none is given), then exit",
       ),
       Opt(name: "version", kind: Kind.Flag, help: "print the version"),
     ],
@@ -82,6 +89,8 @@ def command(parsed: Parsed) -> Result[Command]
     thinking: OP.flag(parsed, "thinking"),
     yolo: OP.flag(parsed, "yolo"),
   )
+
+  return ok(Command.Login(options)) if OP.flag(parsed, "login")
 
   ok(Command.Run(options))
 end

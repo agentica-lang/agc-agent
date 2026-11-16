@@ -5,7 +5,8 @@ import {Kind, Opt, Parsed} from "std/option_parser"
 VERSION = "0.0.1"
 # The options of a client that take the next word.
 VALUE_OPTIONS = [
-  "--state-dir", "--server-command", "--session", "--cwd", "--model", "--api", "--prompt", "-p", "--delete",
+  "--state-dir", "--server-command", "--session", "--cwd", "--model", "--api", "--provider", "--prompt", "-p",
+  "--delete", "--logout",
 ]
 
 ## The options of a run. `none` takes the default: the state folder from the environment, a new session in the current
@@ -51,6 +52,8 @@ enum Command
   Server(ServerOptions)
   ## Deletes the session of that id, on the server of the options.
   Delete(Options, String)
+  ## Removes the stored key of that provider, or every one when none, on the server of the options.
+  Logout(Options, Optional[String])
   Version
   Help(String)
 end
@@ -88,6 +91,7 @@ def parse(args: List[String]) -> Result[Command]
         help: "allow the tool calls of the turns this client starts without asking (also in one-shot)",
       ),
       Opt(name: "delete", help: "id of a session to delete (with its file), then exit"),
+      Opt(name: "logout", help: "remove the stored key of this provider (all: every stored key), then exit"),
       Opt(name: "version", kind: Kind.Flag, help: "print the version"),
     ],
     "SERVER_COMMAND",
@@ -174,7 +178,17 @@ def command(parsed: Parsed) -> Result[Command]
     return ok(Command.Delete(options, id))
   end
 
+  for name in option_list(OP.optional_string(parsed, "logout"))
+    return ok(Command.Logout(options, logout_of(name)))
+  end
+
   ok(Command.Run(options))
+end
+
+def logout_of(name: String) -> Optional[String]
+  return none if name == "all"
+
+  some(name)
 end
 
 def server_command_of(parsed: Parsed) -> Result[Command]
