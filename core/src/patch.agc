@@ -16,6 +16,7 @@ MOVE = "*** Move to: "
 END_OF_FILE = "*** End of File"
 MAX_PATCH_CHARS = 1_048_576
 MAX_CHUNK_LINES = 1000
+MAX_CHUNKS = 1000
 ## The most line comparisons the search of a whole patch may take, so a patch cannot hold the session for long.
 MAX_SEARCH = 2_000_000
 
@@ -133,7 +134,8 @@ def combined(verdicts: List[Approval.Verdict]) -> Approval.Verdict
 end
 
 ## Applies the patch whole: every hunk is checked first, then the files are written, and the deleted files are set
-## aside last and removed once every step worked. When a step fails, every file and new folder is put back.
+## aside last (renamed to `.finn-patch-N` in their folder) and removed once every step worked. When a step fails,
+## every file and new folder is put back. A process killed midway can leave a `.finn-patch-N` file behind.
 def apply(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   hunks = try parse(try args(input))
   _ = try paths(ctx, hunks)
@@ -158,7 +160,7 @@ def apply(ctx: Spec.Context, input: JSON.Value) -> Result[String]
 
   for change in changes
     for path in option_list(change.remove)
-      aside = "#{Sandbox.parent(path)}/.#{path.split("/").last}.finn-patch-#{Random.int(0, 999_999_999)}"
+      aside = free_name(Sandbox.parent(path))
       case Path.rename(path, aside)
         ok(_) -> undo = undo.with(aside: undo.aside.push(Aside(path: path, aside: aside)))
         error(e) -> return failed(ctx.root, e.message, undo)
@@ -166,11 +168,14 @@ def apply(ctx: Spec.Context, input: JSON.Value) -> Result[String]
     end
   end
 
-  for each in undo.aside
-    _ = Path.remove(each.aside)
-  end
+  left_behind = undo.aside
+    .select { |each| not Path.remove(each.aside).ok? }
+    .map { |each| Sandbox.relative(ctx.root, each.aside) }
 
-  ok("Done. The files changed:\n#{changes.map { |change| change.summary }.join("\n")}")
+  done = "Done. The files changed:\n#{changes.map { |change| change.summary }.join("\n")}"
+  return ok(done) if left_behind.empty?
+
+  ok("#{done}\nThese set-aside copies could not be removed: #{left_behind.join(", ")}")
 end
 
 ## The hunks of a patch, or an error that says which line is wrong.
@@ -213,18 +218,22 @@ def parse(text: String) -> Result[List[Hunk]]
 
   return error("the patch has no hunk") if hunks.empty?
 
+  chunks = hunks.map { |hunk| hunk.chunks.size }.sum
+  return error("the patch has more than #{MAX_CHUNKS} changes") if chunks > MAX_CHUNKS
+
   ok(hunks)
 end
 
 ## The lines of a file after the chunks of an update, and the line comparisons its search took (at most `budget`), or
 ## an error when a chunk's lines are not found.
 def updated(lines: List[String], chunks: List[Chunk], path: String, budget: Int) -> Result[Placed]
+  forms = [lines, lines.map { |line| trim_end(line) }, lines.map { |line| line.strip }]
   at = 0
   spent = 0
   edits: List[Edit] = []
   for chunk in chunks
     for context in option_list(chunk.context)
-      search = try seek(lines, [context], at, false, budget - spent)
+      search = try seek(forms, [context], at, false, budget - spent)
       spent = spent + search.spent
       return error("#{path}: the context line is not found: #{context}") if search.at.none?
 
@@ -246,7 +255,7 @@ def updated(lines: List[String], chunks: List[Chunk], path: String, budget: Int)
 
     old = chunk.old
     new = chunk.new
-    search = try seek(lines, old, at, chunk.at_end, budget - spent)
+    search = try seek(forms, old, at, chunk.at_end, budget - spent)
     spent = spent + search.spent
     if search.at.none? and old.last == ""
       old = old.take(old.size - 1)
@@ -254,7 +263,7 @@ def updated(lines: List[String], chunks: List[Chunk], path: String, budget: Int)
         new = new.take(new.size - 1)
       end
 
-      search = try seek(lines, old, at, chunk.at_end, budget - spent)
+      search = try seek(forms, old, at, chunk.at_end, budget - spent)
       spent = spent + search.spent
     end
 
@@ -265,17 +274,37 @@ def updated(lines: List[String], chunks: List[Chunk], path: String, budget: Int)
     at = found + old.size
   end
 
-  # The edits by place, in order for the same place, applied from the end so each start still holds.
+  # The edits by place, in order for the same place, applied in one pass over the lines.
   ordered = (0...edits.size).to_a.sort_by { |i| edits[i].start * (edits.size + 1) + i }.map { |i| edits[i] }
-  out = lines
-  for edit in ordered.reverse
-    out = out.take(edit.start) + edit.new + out.drop(edit.start + edit.size)
+  out: List[String] = []
+  i = 0
+  e = 0
+  while i < lines.size or e < ordered.size
+    if e < ordered.size and ordered[e].start <= i
+      for line in ordered[e].new
+        out = out.push(line)
+      end
+
+      i = [i, ordered[e].start + ordered[e].size].max.unwrap!
+      e = e + 1
+    else
+      out = out.push(lines[i])
+      i = i + 1
+    end
   end
 
   ok(Placed(lines: out, spent: spent))
 end
 
+## Removes the folders of `folders` that are empty, in order, so deepest first; a folder that holds a file stays. Gives
+## the empty ones it could not remove.
+def cleared(folders: List[String]) -> List[String]
+  folders.select { |folder| Dir.list(folder).unwrap_or(["?"]).empty? and not Path.remove(folder).ok? }
+end
+
 private
+
+ASIDE_TRIES = 10
 
 struct Update
   hunk: Hunk
@@ -547,13 +576,19 @@ def rolled_back(undo: Undo) -> List[String]
     end
   end
 
-  for folder in undo.folders
-    if Dir.list(folder).unwrap_or(["?"]).empty? and not Path.remove(folder).ok?
-      lost = lost.push(folder)
-    end
+  lost + cleared(undo.folders)
+end
+
+# A name in `folder` that nothing has yet, for a file set aside.
+def free_name(folder: String) -> String
+  name = "#{folder}/.finn-patch-#{Random.int(0, 999_999_999)}"
+  for _try in 1...ASIDE_TRIES
+    return name if not File.lstat(name).ok?
+
+    name = "#{folder}/.finn-patch-#{Random.int(0, 999_999_999)}"
   end
 
-  lost
+  name
 end
 
 def gone(path: String) -> Result[Void]
@@ -593,8 +628,12 @@ end
 # Where `wanted` starts in `lines` from `from`: an exact match first, then one that ignores the spaces at the end of
 # each line, then at both ends. A change at the end of the file is looked for there first. Each place tried counts
 # `wanted.size` comparisons, and more than `budget` is an error.
-def seek(lines: List[String], wanted: List[String], from: Int, at_end: Bool, budget: Int) -> Result[Search]
+# `forms` holds the lines as they are, without the spaces at their end, and without the spaces at both ends.
+def seek(forms: List[List[String]], wanted: List[String], from: Int, at_end: Bool, budget: Int) -> Result[Search]
+  lines = forms[0]
   return ok(Search(at: none, spent: 0)) if wanted.size > lines.size
+
+  wanted_forms = [wanted, wanted.map { |line| trim_end(line) }, wanted.map { |line| line.strip }]
 
   over = "the patch needs more than #{MAX_SEARCH} line comparisons to place its changes"
   spent = 0
@@ -603,7 +642,7 @@ def seek(lines: List[String], wanted: List[String], from: Int, at_end: Bool, bud
     for compare in [0, 1, 2]
       spent = spent + wanted.size
       return error(over) if spent > budget
-      return ok(Search(at: some(last_start), spent: spent)) if same?(lines, wanted, last_start, compare)
+      return ok(Search(at: some(last_start), spent: spent)) if same?(forms[compare], wanted_forms[compare], last_start)
     end
   end
 
@@ -611,32 +650,23 @@ def seek(lines: List[String], wanted: List[String], from: Int, at_end: Bool, bud
     for start in from..last_start
       spent = spent + wanted.size
       return error(over) if spent > budget
-      return ok(Search(at: some(start), spent: spent)) if same?(lines, wanted, start, compare)
+      return ok(Search(at: some(start), spent: spent)) if same?(forms[compare], wanted_forms[compare], start)
     end
   end
 
   ok(Search(at: none, spent: spent))
 end
 
-def same?(lines: List[String], wanted: List[String], start: Int, compare: Int) -> Bool
-  (0...wanted.size).all? { |i| loose(lines[start + i], compare) == loose(wanted[i], compare) }
+def same?(lines: List[String], wanted: List[String], start: Int) -> Bool
+  (0...wanted.size).all? { |i| lines[start + i] == wanted[i] }
 end
 
-def loose(line: String, compare: Int) -> String
-  case compare
-    0 -> line
-    1 -> trim_end(line)
-    _ -> line.strip
-  end
-end
-
+# Without the spaces at the end: the line up to the end of its stripped text, which starts after the leading spaces.
 def trim_end(line: String) -> String
-  out = line
-  while out.end_with?(" ") or out.end_with?("\t")
-    out = out.slice(0, out.length - 1)
-  end
+  core = line.strip
+  return "" if core == ""
 
-  out
+  line.slice(0, line.index_of(core).unwrap_or(0) + core.length)
 end
 
 def trim_cr(line: String) -> String

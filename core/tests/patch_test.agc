@@ -3,6 +3,7 @@
 
 import Protocol from "pkg/protocol/protocol"
 import Approval from "../src/approval"
+import Patch from "../src/patch"
 import Tools from "../src/tools"
 import H from "support/harness"
 
@@ -48,7 +49,9 @@ def test_a_patch_applies_whole_or_not_at_all() -> Result[Void]
   good = run(ctx, patch)
   b = File.read_text("#{dir}/src/b.py")
   gone = [File.stat("#{dir}/a.py").ok?, File.stat("#{dir}/old.txt").ok?]
+  entries = try Dir.list(dir) + try Dir.list("#{dir}/src")
   _ = Path.remove(dir)
+  try Test.eq(entries.select { |name| name.include?(".finn-patch-") }, [])
   try Test.eq(good, Tools.Output(text: "Done. The files changed:\nM a.py -> src/b.py\nD old.txt", is_error: false))
   try Test.eq(b, ok("def f():\n    x = 1\n    return x\n\ndef g():\n    x = 2  \n    return x\n"))
   Test.eq(gone, [false, false])
@@ -99,7 +102,7 @@ def test_chunks_land_in_place() -> Result[Void]
   Test.eq(files, ["#{expected.join("\n")}\n", "a\nx\nb\nY\n", "A\nB\n", "A\r\nb\r\n"])
 end
 
-# Patches that cannot apply are refused before any file changes.
+# Patches that cannot apply are refused before any file changes, quickly even for a line of many spaces.
 def test_bad_patches_are_refused() -> Result[Void]
   dir = try fresh()
   ctx = try plain(dir)
@@ -118,6 +121,7 @@ def test_bad_patches_are_refused() -> Result[Void]
     "*** Begin Patch\n*** Update File: a.txt\n-one\n+ONE\n*** Delete File: a.txt\n*** End Patch",
     "*** Begin Patch\n*** Update File: a.txt\n-missing\n+x\n*** End Patch",
     "*** Begin Patch\n*** Update File: a.txt\n#{many}\n*** End Patch",
+    "*** Begin Patch\n*** Update File: a.txt\n-y#{" " * 400_000}\n+x\n*** End Patch",
   ]
 
   outputs = bad.map { |patch| run(ctx, patch) }
@@ -151,7 +155,7 @@ def test_a_failed_step_restores_the_files() -> Result[Void]
   entries = Dir.list(dir)
   _ = H.run("chmod", ["755", "#{dir}/ro"])
   _ = Path.remove(dir)
-  return ok() if writable
+  return error("this test needs a user that a 555 folder stops, not root") if writable
 
   try Test.eq(outputs.select { |o| not (o.is_error and o.text.include?("no file was changed")) }, [])
   try Test.eq(files, [ok("one\n"), ok("echo hi\n"), ok("keep\n")])
@@ -159,8 +163,21 @@ def test_a_failed_step_restores_the_files() -> Result[Void]
   Test.eq(entries, ok(["a.txt", "ro", "run.sh"]))
 end
 
-# The caps that keep one call short: the size of the patch, the old lines of a change, and the line comparisons of
-# the search, counted over the whole patch, so files that each fit can still be too much together.
+# The rollback removes only the new folders that are empty: one that gained a file stays.
+def test_a_new_folder_that_gained_a_file_stays() -> Result[Void]
+  dir = try fresh()
+  try Dir.mkdir("#{dir}/new/sub")
+  try File.write_text("#{dir}/new/sub/keep.txt", "keep\n")
+  try Dir.mkdir("#{dir}/empty")
+  failed = Patch.cleared(["#{dir}/new/sub", "#{dir}/new", "#{dir}/empty"])
+  entries = Dir.list(dir)
+  _ = Path.remove(dir)
+  try Test.eq(failed, [])
+  Test.eq(entries, ok(["new"]))
+end
+
+# The caps that keep one call short: the size of the patch, the old lines of a change, the line comparisons of the
+# search, counted over the whole patch, so files that each fit can still be too much together, and the changes.
 def test_a_patch_over_a_cap_is_refused() -> Result[Void]
   dir = try fresh()
   ctx = try plain(dir)
@@ -177,13 +194,18 @@ def test_a_patch_over_a_cap_is_refused() -> Result[Void]
     run(ctx, "*** Begin Patch\n*** Add File: big.txt\n+#{"x" * 1_048_576}\n*** End Patch"),
     run(ctx, update("f0.txt", many)),
     run(ctx, "*** Begin Patch\n#{each.join("\n")}\n*** End Patch"),
+    run(ctx, update("f0.txt", (0..1000).map { |_i| "@@\n+x" }.join("\n"))),
   ]
 
   untouched = names.map { |name| File.read_text("#{dir}/#{name}") == ok("#{long.join("\n")}\n") }
   one = run(ctx, "*** Begin Patch\n#{each.first}\n*** End Patch")
   _ = Path.remove(dir)
-  wanted = ["is longer than 1048576 characters", "more than 1000 old lines", "more than 2000000 line comparisons"]
-  try Test.eq((0...3).select { |i| not (outputs[i].is_error and outputs[i].text.include?(wanted[i])) }, [])
+  wanted = [
+    "is longer than 1048576 characters", "more than 1000 old lines", "more than 2000000 line comparisons",
+    "more than 1000 changes",
+  ]
+
+  try Test.eq((0...4).select { |i| not (outputs[i].is_error and outputs[i].text.include?(wanted[i])) }, [])
   try Test.eq(untouched, [true, true, true])
   Test.eq(one.is_error, false)
 end
