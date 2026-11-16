@@ -526,7 +526,7 @@ def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
         none -> failed
       end
 
-    Protocol.Event.MessageQueued(queued) -> noted(shown, "queued: #{queued.text}")
+    Protocol.Event.MessageQueued(queued) -> noted(shown, "queued: #{Client.printable(queued.text)}")
     _ -> shown
   end
 end

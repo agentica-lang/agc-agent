@@ -66,6 +66,8 @@ struct Setup
   deny: List[String] = []
   ## The token that Anthropic fetches again after a 401; none when empty.
   fresh_token: String = ""
+  ## How long a turn waits for its queued messages.
+  take_ms: Int = 5000
   ## Skills: the home folder is `home` under the test's folder, and the folders of `trust` (under the test's folder;
   ## the test's folder itself when none) are trusted.
   skills: Bool = false
@@ -148,6 +150,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     before_load: setup.before_load,
     tools: setup.tools,
     code_mode: code_mode(setup.monty),
+    take_ms: setup.take_ms,
     home: skills_home(setup, base),
     trusted: skills_trusted(setup, base),
   )

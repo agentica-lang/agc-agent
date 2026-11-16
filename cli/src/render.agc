@@ -1,5 +1,6 @@
 ## What the client prints, as text: the events, the approval prompt and the history. Pure.
 
+import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 
 ESC = 27
@@ -47,7 +48,7 @@ def event(event: Protocol.Event, style: Style) -> Optional[Out]
     Protocol.Event.TurnStarted(_) -> none
     Protocol.Event.ApprovalRequested(_) -> none
     Protocol.Event.Resync -> none
-    Protocol.Event.MessageQueued(queued) -> some(line("[queued] #{queued.text}"))
+    Protocol.Event.MessageQueued(queued) -> some(line("[queued] #{Client.printable(queued.text)}"))
   end
 end
 

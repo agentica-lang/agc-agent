@@ -25,6 +25,8 @@ import Tools from "tools"
 
 CALL_MS = 5000
 MAX_QUEUED = 20
+## The queued messages together, as the next turn would get them, are at most one message's size.
+MAX_QUEUED_BYTES = 1_048_576
 ## Room in a subscriber's channel past its replay; a client that falls this far behind is dropped.
 LIVE_ROOM = 1024
 RESERVE = 1000
@@ -47,6 +49,8 @@ struct Setup
   api_key: String = ""
   extra: Map[String, JSON.Value] = {}
   code_mode: Optional[CodeMode.Settings] = none
+  ## How long a turn waits for the queued messages before it goes on without them.
+  take_ms: Int = 5000
   ## Ask the provider for its prompt cache.
   cache: Bool = false
   ## A provider with a fresh token, after a 401.
@@ -66,11 +70,11 @@ enum Msg
   Emit(String, Protocol.Event)
   Ask(String, Agent.Ask, Channel[Protocol.Decision])
   Expire(String)
-  Commit(String, List[LLM.Message], List[String])
+  Commit(String, List[LLM.Message], List[String], List[Agent.Queued])
   Compacted(String, Compaction.Compaction)
   Window(Int)
   Finished(String, Protocol.StopReason)
-  Take(String, Channel[List[String]])
+  Take(String, Int, Channel[List[Agent.Queued]])
   Update(Protocol.UpdateSession, Channel[Result[Void]])
   Fold(Channel[Result[Fold]])
   Folded(Optional[Compaction.Compaction], Channel[Result[Void]])
@@ -268,9 +272,9 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Emit(turn_id, event) -> Actor.continue(if_current(state, turn_id, ->(s) { emit_counted(s, event) }))
     Msg.Ask(turn_id, call, reply) -> Actor.continue(if_current(state, turn_id, ->(s) { ask(s, call, reply) }))
     Msg.Expire(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { expire(s) }))
-    Msg.Take(turn_id, reply) -> Actor.continue(take(state, turn_id, reply))
-    Msg.Commit(turn_id, history, marks) ->
-      Actor.continue(if_current(state, turn_id, ->(s) { commit(s, history, marks) }))
+    Msg.Take(turn_id, after, reply) -> Actor.continue(take(state, turn_id, after, reply))
+    Msg.Commit(turn_id, history, marks, read) ->
+      Actor.continue(if_current(state, turn_id, ->(s) { commit(s, history, marks, read) }))
     Msg.Compacted(turn_id, compaction) -> Actor.continue(if_current(state, turn_id, ->(s) { compact(s, compaction) }))
     Msg.Window(window) -> Actor.continue(state.with(window: window))
     Msg.Stripped(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { stripped(s) }))
@@ -454,9 +458,15 @@ def broke(state: State, e: Error) -> State
       )
 
       end_frame = frame("", Protocol.Event.TurnFinished(cancelled))
-      lost = Lost(to: out.counter, frames: [error_frame, end_frame])
-      out.with(turn: none, pending: [], queued: [], subscribers: broadcast(out, end_frame), lost: some(lost))
-    none -> out
+      frames = [error_frame] + drop_frames(out) + [end_frame]
+      lost = Lost(to: out.counter, frames: frames)
+      live = out.subscribers
+      for each in frames.drop(1)
+        live = broadcast(out.with(subscribers: live), each)
+      end
+
+      out.with(turn: none, pending: [], queued: [], subscribers: live, lost: some(lost))
+    none -> unsent(out)
   end
 end
 
@@ -484,8 +494,9 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
   end
 
   for running in option_list(state.turn)
-    if state.queued.size >= MAX_QUEUED
-      Actor.reply(reply, error("a turn is running and #{MAX_QUEUED} messages wait", kind: Protocol.KIND_SESSION_BUSY))
+    if state.queued.size >= MAX_QUEUED or (state.queued + [typed]).join("\n\n").bytesize > MAX_QUEUED_BYTES
+      message = "a turn is running and its queue is full (#{MAX_QUEUED} messages, #{MAX_QUEUED_BYTES} bytes)"
+      Actor.reply(reply, error(message, kind: Protocol.KIND_SESSION_BUSY))
       return state
     end
 
@@ -514,8 +525,8 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
   link = Agent.Link(
     emit: ->(event) { tell(address, Msg.Emit(turn_id, event)) },
     approve: ->(call) { wait_approval(address, turn_id, call, setup.approval_timeout_ms) },
-    commit: ->(history, marks) { tell(address, Msg.Commit(turn_id, history, marks)) },
-    take: -> { taken(address, turn_id) },
+    commit: ->(history, marks, read) { tell(address, Msg.Commit(turn_id, history, marks, read)) },
+    take: ->(after) { taken(address, turn_id, after, setup.take_ms) },
     compacted: ->(compaction) { tell(address, Msg.Compacted(turn_id, compaction)) },
     window: ->(window) { tell(address, Msg.Window(window)) },
     stripped: -> { tell(address, Msg.Stripped(turn_id)) },
@@ -581,54 +592,28 @@ end
 
 # The session denies an approval once no client has been attached for `timeout_ms`; the turn asks it to check now and
 # then.
-def taken(address: Address[Msg], turn_id: String) -> List[String]
-  none_taken: List[String] = []
-  taken: Result[List[String]] = Actor.call(address, CALL_MS) do |reply| Msg.Take(turn_id, reply) end
+def taken(address: Address[Msg], turn_id: String, after: Int, wait_ms: Int) -> List[Agent.Queued]
+  none_taken: List[Agent.Queued] = []
+  taken: Result[List[Agent.Queued]] = Actor.call(address, wait_ms) do |reply| Msg.Take(turn_id, after, reply) end
   taken.unwrap_or(none_taken)
 end
 
-# The queued messages go into the history, after the answer of the turn so far, which is shown first.
-def take(state: State, turn_id: String, reply: Channel[List[String]]) -> State
+# The queued messages after the first `after`, each with the content of the skills it names. Nothing changes here: the
+# turn's next commit takes them out of the queue.
+def take(state: State, turn_id: String, after: Int, reply: Channel[List[Agent.Queued]]) -> State
   current = state.turn.map { |t| t.id == turn_id }.unwrap_or(false)
-  if not current or state.queued.empty?
-    Actor.reply(reply, [])
-    return state
-  end
-
-  shown = state
-  for turn in option_list(state.turn)
-    text = turn.texts.join("\n\n")
-    if not text.empty?
-      case save(state, -> { Store.append_answer(state.setup.file, text) })
-        ok(_) ->
-          answer = Protocol.Message(role: Protocol.Role.Assistant, text: text)
-          shown = state.with(display: state.display.push(answer), turn: some(turn.with(texts: [])))
-        error(e) ->
-          Actor.reply(reply, [])
-          return broke(state, e)
-      end
-    end
-  end
-
-  read: List[String] = []
-  for text in state.queued
-    case save(shown, -> { Store.append_queued(state.setup.file, text) })
-      ok(_) ->
-        message = LLM.Message(role: LLM.Role.User, content: [Agent.text_block(text)])
-        read = read.push(text)
-        shown = shown.with(
-          history: shown.history.push(message),
-          display: shown.display.push(Protocol.Message(role: Protocol.Role.User, text: text)),
-          queued: shown.queued.drop(1),
-        )
-      error(e) ->
-        Actor.reply(reply, read)
-        return broke(shown, e)
+  read: List[Agent.Queued] = []
+  if current
+    marks = state.marks
+    for typed in state.queued.drop(after)
+      expanded = Skills.on_message(typed, state.setup.skills, marks)
+      read = read.push(Agent.Queued(typed: typed, text: expanded.text, names: expanded.names))
+      marks = marks + expanded.names
     end
   end
 
   Actor.reply(reply, read)
-  shown.with(broken: none)
+  state
 end
 
 def wait_approval(address: Address[Msg], turn_id: String, call: Agent.Ask, timeout_ms: Int) -> Protocol.Decision
@@ -759,10 +744,30 @@ end
 # Messages that came after the turn's last read start the next turn, together.
 def next_turn(state: State) -> State
   return state if state.queued.empty?
-  return dropped(state) if state.broken.some?
+  return unsent(state) if state.broken.some?
 
   ignored: Channel[Result[String]] = Channel.new(1)
-  start_turn(state.with(queued: []), state.queued.join("\n\n"), ignored)
+  started = start_turn(state.with(queued: []), state.queued.join("\n\n"), ignored)
+  return unsent(started.with(queued: state.queued)) if started.turn.none?
+
+  started
+end
+
+# The queue of a session whose file cannot be written goes: an `error` event without an id says so.
+def unsent(state: State) -> State
+  live = state.subscribers
+  for each in drop_frames(state)
+    live = broadcast(state.with(subscribers: live), each)
+  end
+
+  state.with(queued: [], subscribers: live)
+end
+
+def drop_frames(state: State) -> List[String]
+  return [] if state.queued.empty?
+
+  message = "#{state.queued.size} queued message(s) were not sent: the session file cannot be written"
+  [frame("", Protocol.Event.Error(Protocol.Failure(kind: Protocol.KIND_QUEUE_DROPPED, message: message)))]
 end
 
 # Shows the answer of the turn, its `texts` together, then ends the turn.
@@ -877,16 +882,48 @@ def stripped(state: State) -> State
 end
 
 # The history of a turn only grows, so only its new messages go to the file.
-def commit(state: State, history: List[LLM.Message], marks: List[String]) -> State
+# The messages the turn read from the queue leave it here, shown after the answer of the turn so far.
+def commit(state: State, history: List[LLM.Message], marks: List[String], read: List[Agent.Queued]) -> State
   added = history.drop(state.history.size)
   return state if added.empty?
 
-  case save(state, -> { Store.append_messages(state.setup.file, added, marks) })
-    ok(_) ->
-      turn = state.turn.map { |t| t.with(texts: t.texts + answer_texts(added)) }
-      state.with(history: history, turn: turn, broken: none, marks: state.marks + marks)
-    error(e) -> broke(state, e)
+  shown = state
+  if not read.empty?
+    shown = answer_so_far(state)
+    return shown if shown.broken.some?
   end
+
+  for queued in read
+    case save(shown, -> { Store.append_queued(state.setup.file, queued.typed) })
+      ok(_) ->
+        message = Protocol.Message(role: Protocol.Role.User, text: queued.typed)
+        shown = shown.with(display: shown.display.push(message), queued: shown.queued.drop(1))
+      error(e) -> return broke(shown, e)
+    end
+  end
+
+  case save(shown, -> { Store.append_messages(state.setup.file, added, marks) })
+    ok(_) ->
+      turn = shown.turn.map { |t| t.with(texts: t.texts + answer_texts(added)) }
+      shown.with(history: history, turn: turn, broken: none, marks: shown.marks + marks)
+    error(e) -> broke(shown, e)
+  end
+end
+
+def answer_so_far(state: State) -> State
+  for turn in option_list(state.turn)
+    text = turn.texts.join("\n\n")
+    next if text.empty?
+
+    case save(state, -> { Store.append_answer(state.setup.file, text) })
+      ok(_) ->
+        answer = Protocol.Message(role: Protocol.Role.Assistant, text: text)
+        return state.with(display: state.display.push(answer), turn: some(turn.with(texts: [])))
+      error(e) -> return broke(state, e)
+    end
+  end
+
+  state
 end
 
 def restore(setup: Setup, saved: Store.Saved) -> State

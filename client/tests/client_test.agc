@@ -58,3 +58,8 @@ def test_resume_picks_by_number_or_id() -> Result[Void]
   try Test.eq(Client.pick(list, "a1"), ok("a1"))
   Test.error?(Client.pick(list, "3"))
 end
+
+# What a client echoes of another's text stays on one line, with no terminal escapes.
+def test_printable_turns_control_characters_into_spaces() -> Result[Void]
+  Test.eq(Client.printable("a#{String.from_code(27)}[2Jb\nc\td"), "a [2Jb c d")
+end

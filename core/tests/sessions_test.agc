@@ -2,6 +2,8 @@ import Protocol from "pkg/protocol/protocol"
 import Store from "../src/store"
 import H from "support/harness"
 
+ROLES = "\"user\" \"assistant\" \"tool\" \"assistant\" \"user\""
+
 # After a restart the session is listed and drawn as before; a client that saw all but the last events gets just those,
 # one that would miss text deltas (they are not saved) gets `resync`, and the next turn's ids follow the old ones. The
 # model gets the old history back, tool call included. A line that a
@@ -99,7 +101,107 @@ def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Re
   end
 end
 
-# A turn that waited for its second approval when the server stopped ends after the restart: the waiting approval is
+# A message that comes while the final answer streams is read after it: the same turn calls the model again. Past 20
+# messages, or past the size of one message together, the queue refuses with 409.
+def test_the_queue_is_read_after_a_final_answer_and_has_a_limit() -> Result[Void]
+  replies = ["text.sse@1500", "text.sse", "write_file.sse", "text.sse@3000", "text.sse"]
+  H.using(H.Setup(replies: replies)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hi.")
+    a = try H.until(a, Protocol.EventKind.TurnStarted)
+    _ = try H.send(h, id, "More.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    try Test.eq(H.kinds(a.seen).select { |k| k == "turn_started" }.size, 1)
+    _ = try H.next_request(h)
+    second = try H.request_messages(h, 1)
+    try Test.eq(JSON.get(second.last, "content"), ok(JSON.from("More.")))
+    try Test.eq(JSON.get(second[second.size - 2], "role"), ok(JSON.from("assistant")))
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
+    H.close(a)
+    statuses: List[String] = []
+    for i in 1..21
+      statuses = statuses.push((try H.send(h, id, "m#{i}")).status.to_s)
+    end
+
+    try Test.eq([statuses.take(20).uniq, statuses.drop(20)], [["202"], ["409"]])
+    _ = try H.post(h, Protocol.stop_path(id), "")
+    _ = try H.idle(h, id)
+    a = try H.subscribe(h, id, some((try H.session(h, id)).last_event_id))
+    _ = try H.send(h, id, "Long.")
+    a = try H.until(a, Protocol.EventKind.TurnStarted)
+    big = try H.send(h, id, "x" * 600_000)
+    bigger = try H.send(h, id, "y" * 500_000)
+    H.close(a)
+    try Test.eq([big.status, bigger.status], [202, 409])
+    shown = (try H.idle(h, id)).history.map { |m| m.text.size }
+    Test.eq(shown.include?(600_000), true)
+  end
+end
+
+# A turn that does not get its queue in time goes on without it: the messages stay queued and start the next turn,
+# and the file agrees with the history, so a restart gives every tool call its result.
+def test_a_late_read_leaves_the_queue_whole() -> Result[Void]
+  setup = H.Setup(replies: ["write_file.sse", "text.sse", "text.sse", "text.sse"], take_ms: 0)
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.send(h, id, "Also say hi.")
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
+    H.close(a)
+    turns = a.seen.map { |s| s.event }.flat_map do |event|
+      case event
+        Protocol.Event.TurnStarted(started) -> [started.turn_id]
+        _ -> []
+      end
+    end
+
+    try Test.eq(turns, ["turn-2"])
+    _ = try H.next_request(h)
+    _ = try H.next_request(h)
+    third = try H.request_messages(h, 1)
+    try Test.eq(third.map { |m| JSON.encode(JSON.get(m, "role").unwrap_or(JSON.null())) }.drop(1).join(" "), ROLES)
+    before = try H.session(h, id)
+    H.restarted(h, setup, "") do |r|
+      _ = try H.send(r, id, "Again.")
+      _ = try H.idle(r, id)
+      again = try H.request_messages(r, 1)
+      try Test.eq(again.take(third.size), third)
+      Test.eq((try H.session(r, id)).history.take(before.history.size), before.history)
+    end
+  end
+end
+
+# A queue whose session file cannot be written is dropped with an `error` event.
+def test_a_broken_file_drops_the_queue() -> Result[Void]
+  H.using(H.Setup(replies: ["write_file.sse", "text.sse"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.send(h, id, "Also say hi.")
+    try chmod("400", H.session_file(h, id))
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try chmod("600", H.session_file(h, id))
+    kinds = a.seen.map { |s| s.event }.flat_map do |event|
+      case event
+        Protocol.Event.Error(failure) -> [failure.kind]
+        _ -> []
+      end
+    end
+
+    Test.eq(kinds, [Protocol.KIND_SESSION_STORAGE, Protocol.KIND_QUEUE_DROPPED])
+  end
+end
+
+# A turn that waited for its second approval ends after the restart: the waiting approval is
 # denied, the answer the model gave so far is shown, and the turn is cancelled, with the next ids. Late answers to
 # either approval are told they came late, and the next turn and approval get the next numbers.
 def test_a_turn_cut_by_a_restart_ends_cancelled() -> Result[Void]
