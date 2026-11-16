@@ -207,6 +207,28 @@ def stopped(rig: Driver.Rig) -> Result[Void]
   Test.eq(done.code, 0)
 end
 
+# A line typed while a turn runs is sent, and shown as queued.
+def test_a_line_sent_during_a_turn_is_queued() -> Result[Void]
+  replies = ["working.sse", "queued.sse"].map { |name|
+    Fake.Reply(status: 202, body: "{\"turn_id\": \"t1\"}", push: [name])
+  }
+
+  sending = Fake.Route(method: "POST", path: Protocol.messages_path("s1"), replies: replies)
+  Driver.within([Routes.created(), Routes.held_events(), sending], &queued)
+end
+
+def queued(rig: Driver.Rig) -> Result[Void]
+  cli = try Driver.start(rig.dir, PLAIN)
+  try Driver.say(cli, "start")
+  try Driver.read_until(cli, "Working on it...")
+  try Driver.say(cli, "also the docs")
+  rest = try Driver.read_until(cli, "[turn finished]")
+  done = try Driver.finish(cli)
+  try Test.eq(Fake.unread(rig.fake, "POST", Protocol.messages_path("s1")), 2)
+  try Test.eq(rest, ["[queued] also the docs", "Docs too.", "[turn finished] end_turn"])
+  Test.eq(done.code, 0)
+end
+
 def test_a_second_ctrl_c_leaves() -> Result[Void]
   routes = [Routes.created(), Routes.held_events(), Routes.accepting(["working.sse"])]
   Driver.within(routes + [Routes.stopping(Fake.Reply(status: 202))], &left_after_stop)

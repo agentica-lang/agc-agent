@@ -110,6 +110,12 @@ def append_user(path: String, text: String, typed: String = "", marks: List[Stri
   append(path, with_marks(fields, marks))
 end
 
+## A message sent during a turn, once the turn read it: shown as a user message that starts no turn. The history has it
+## in the `messages` record that follows.
+def append_queued(path: String, text: String) -> Result[Void]
+  append(path, {"type": JSON.from("queued"), "text": JSON.from(text)})
+end
+
 ## The messages a round added to the history, in one record so that a call never goes without its result, with the
 ## names extensions noted in the round.
 def append_messages(path: String, messages: List[LLM.Message], marks: List[String] = []) -> Result[Void]
@@ -253,8 +259,10 @@ def settings_model(path: String) -> Optional[String]
   end
 end
 
-# The text of bytes that may end inside a character (at most 3 bytes of one).
+# The text of bytes that may end inside a character; a byte that is not UTF-8 becomes U+FFFD, line by line, so one bad
+# byte spoils only its character.
 def decoded(bytes: Bytes) -> String
+  # The read may cut the last character (at most 3 of its bytes).
   for cut in 0..3
     case String.from_bytes(bytes.take([bytes.size - cut, 0].max.unwrap!))
       ok(text) -> return text
@@ -262,7 +270,44 @@ def decoded(bytes: Bytes) -> String
     end
   end
 
-  ""
+  # latin-1 maps each byte to one character and back, so it finds the lines without decoding them.
+  lines = bytes.decode("latin-1").unwrap_or("").split("\n")
+  lines.map { |line| utf8_line(line.encode("latin-1").unwrap_or("".bytes)) }.join("\n")
+end
+
+def utf8_line(bytes: Bytes) -> String
+  case String.from_bytes(bytes)
+    ok(text) -> text
+    error(_) -> replaced(bytes)
+  end
+end
+
+# Each complete UTF-8 sequence as its character, anything else as U+FFFD for one byte.
+def replaced(bytes: Bytes) -> String
+  out: List[String] = []
+  at = 0
+  while at < bytes.size
+    size = sequence_size(bytes[at])
+    case String.from_bytes(bytes.slice(at, [size, bytes.size - at].min.unwrap!))
+      ok(text) if size > 0 ->
+        out = out.push(text)
+        at = at + size
+      _ ->
+        out = out.push(String.from_code(0xfffd))
+        at = at + 1
+    end
+  end
+
+  out.join("")
+end
+
+def sequence_size(lead: Int) -> Int
+  return 1 if lead < 0x80
+  return 2 if lead >= 0xc2 and lead < 0xe0
+  return 3 if lead >= 0xe0 and lead < 0xf0
+  return 4 if lead >= 0xf0 and lead < 0xf5
+
+  0
 end
 
 def first_user(start: String) -> String
@@ -341,6 +386,9 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
           marks: saved.marks + marks_of(json),
         ),
       )
+    "queued" ->
+      shown = Protocol.Message(role: Protocol.Role.User, text: try field(json, "text"))
+      ok(saved.with(shown: saved.shown.push(shown)))
     "messages" ->
       messages: List[LLM.Message] = []
       for item in try JSON.list(try JSON.get(json, "messages"))

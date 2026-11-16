@@ -121,6 +121,25 @@ def test_a_compaction_refuses_turns_and_another_compaction() -> Result[Void]
   end
 end
 
+# A byte that is not UTF-8 in the first message spoils only its character in the list.
+def test_a_bad_byte_in_the_title_becomes_a_replacement_character() -> Result[Void]
+  setup = H.Setup(replies: [])
+  H.using(setup) do |h|
+    head = "{\"type\":\"session\",\"id\":\"odd\",\"cwd\":\"#{h.work}\",\"model\":\"m\",\"created_ms\":1}\n"
+    bad = try Bytes.from_list([0xff])
+    record = "{\"type\":\"user\",\"text\":\"fix ".bytes + bad + "it\"}\n".bytes
+    try File.write_text(H.session_file(h, "odd"), head)
+    handle = try File.open(H.session_file(h, "odd"), "append")
+    written = File.write_bytes(handle, record)
+    try File.close(handle)
+    try written
+    H.restarted(h, setup, "") do |r|
+      listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
+      Test.eq(listed.sessions.map { |l| l.title }, ["fix #{String.from_code(0xfffd)}it"])
+    end
+  end
+end
+
 private
 
 def patch(h: H.Harness, id: String, body: String) -> Result[H.Answer]

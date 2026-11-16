@@ -87,6 +87,8 @@ struct Options
   api_key: String = ""
   ## Runs in the task that loads a session, with its id, before the file is read: a seam for the tests.
   before_load: Optional[Fn[String, Void]] = none
+  ## Runs in that task once what it read is on its way to the registry: a seam for the tests.
+  after_load: Optional[Fn[String, Void]] = none
   ## Code mode: the model may also call the tools from a Python script (`run_script`).
   code_mode: Optional[CodeMode.Settings] = none
   ## The models.dev catalog (`main.agc` starts it from `models_url`), for the cost of the calls and the window.
@@ -94,6 +96,8 @@ struct Options
   models_url: String = Catalog.URL
   ## The provider of the model in the catalog; empty is `anthropic` for that API and `openai` for the others.
   models_provider: String = ""
+  ## How long a turn waits for the messages queued for it (tests shorten it).
+  take_ms: Int = 5000
   ## The home folder, whose skills every session has; empty for none.
   home: String = ""
   ## The folders whose sessions load the skills of their own folder: a project's skills are its instructions.
@@ -466,6 +470,10 @@ def load(job: Load) -> Void
       _ -> break
     end
   end
+
+  for hook in option_list(job.options.after_load)
+    hook.call(job.entry.summary.id)
+  end
 end
 
 def read(options: Options, listed: Entry) -> Result[Loaded]
@@ -566,6 +574,7 @@ def entry(
     code_mode: options.code_mode,
     catalog: options.catalog,
     catalog_provider: catalog_provider(options.models_provider, api.provider),
+    take_ms: options.take_ms,
   )
 
   ok(
@@ -679,7 +688,7 @@ def route(token: String, registry: Address[Msg], request: HTTP.Request, body: HT
   end
 
   if request.method == "GET" and request.path == Protocol.HEALTH_PATH
-    return whole(200, Protocol.encode_health(Protocol.Health(version: VERSION)))
+    return whole(200, Protocol.encode_health(Protocol.Health(version: VERSION, wire: some(Protocol.wire_digest()))))
   end
 
   prefix = Protocol.SESSIONS_PATH

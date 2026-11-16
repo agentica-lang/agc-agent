@@ -167,7 +167,9 @@ def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Res
   end
 
   return refuse(401, Protocol.KIND_UNAUTHORIZED, "the token is missing or wrong") if not authorized?(request)
-  return json(200, "{\"version\": \"#{VERSION}\"}") if key == HEALTH and not script.queues.has_key?(key)
+  if key == HEALTH and not script.queues.has_key?(key)
+    return json(200, Protocol.encode_health(Protocol.Health(version: VERSION, wire: some(Protocol.wire_digest()))))
+  end
 
   case script.queues.get(key)
     some(replies) -> reply_with(script, replies.recv(0).unwrap_or(Reply(status: 500)), request, number)

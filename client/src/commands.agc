@@ -71,7 +71,17 @@ def pick(list: Protocol.SessionList, choice: String) -> Result[String]
   end
 end
 
+## The text on one line, each control character a space: what a client echoes of what another typed.
+def printable(text: String) -> String = text.split("").map { |c| shown(c) }.join("")
+
 private
+
+def shown(c: String) -> String
+  code = c.code
+  return " " if code < 0x20 or (code >= 0x7f and code < 0xa0)
+
+  c
+end
 
 def command(name: String, argument: String) -> Result[Command]
   case name

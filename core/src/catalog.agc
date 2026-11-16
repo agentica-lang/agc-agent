@@ -82,7 +82,9 @@ def wait(catalog: Catalog, timeout_ms: Int) -> Bool
   false
 end
 
+## Stops the catalog and a load that still runs.
 def stop(catalog: Catalog) -> Void
+  _ = Actor.call(catalog.actor.address, CALL_MS) do |reply| Msg.Stop(reply) end
   _ = Actor.stop(catalog.actor, 5000)
 end
 
@@ -155,6 +157,8 @@ enum Msg
   Loaded(Result[List[Model]])
   ## `loading`, `loaded`, or `none` when a load failed or the catalog is off.
   Ready(Channel[String])
+  ## Cancels a running load and waits for it to end.
+  Stop(Channel[Bool])
 end
 
 struct State
@@ -162,6 +166,7 @@ struct State
   models: List[Model] = []
   loaded: Bool = false
   loading: Bool = false
+  task: Optional[Task[Void]] = none
   ## When a load found nothing: the next try waits `RETRY_MS`.
   failed_ms: Int = 0
 end
@@ -178,6 +183,16 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
       _ = Actor.reply(query.reply, lookup(state.models, query.provider, query.id))
       Actor.continue(load(state))
     Msg.Load -> Actor.continue(load(state))
+    Msg.Stop(reply) ->
+      case state.task
+        some(task) ->
+          Task.cancel(task)
+          _ = Task.await(task, 5000)
+        none -> nil
+      end
+
+      _ = Actor.reply(reply, true)
+      Actor.continue(state.with(task: none))
     Msg.Loaded(result) ->
       case result
         ok(models) -> Actor.continue(state.with(models: models, loaded: true, loading: false))
@@ -204,6 +219,10 @@ def lookup(models: List[Model], provider: String, id: String) -> Optional[Model]
   end
 end
 
+def tell(address: Address[Msg], msg: Msg) -> Void
+  _ = Actor.cast(address, msg)
+end
+
 def off?(options: Options) -> Bool = options.url == "off" or options.url.empty?
 
 # Starts a load in a task of its own, so a slow fetch holds up no one: not while one runs, not once loaded, not with
@@ -215,8 +234,8 @@ def load(state: State) -> State
   inbox: Channel[Msg] = Actor.inbox
   address = inbox.address
   options = state.options
-  _ = Task.spawn { Actor.cast(address, Msg.Loaded(loaded_models(options))) }
-  state.with(loading: true)
+  task = Task.spawn { tell(address, Msg.Loaded(loaded_models(options))) }
+  state.with(loading: true, task: some(task))
 end
 
 def loaded_models(options: Options) -> Result[List[Model]]

@@ -1,6 +1,7 @@
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Agent from "../src/agent"
 import Catalog from "../src/catalog"
 import Fake from "support/fake_llm"
 import H from "support/harness"
@@ -79,6 +80,16 @@ def test_a_window_the_api_did_not_give_is_asked_again() -> Result[Void]
     Catalog.stop(catalog)
     result
   end
+end
+
+# The addresses of this machine ask a llama-server's `/props` first; another address does not.
+def test_the_local_addresses() -> Result[Void]
+  urls = [
+    "http://127.0.0.1:8080/props", "http://localhost:8080/props", "http://[::1]:8080/props",
+    "http://0.0.0.0:8080/props", "http://10.0.0.1:8080/props", "https://api.openai.com/props", "",
+  ]
+
+  Test.eq(urls.map { |url| Agent.local?(url) }, [true, true, true, true, false, false, false])
 end
 
 # A local llama-server says the window it runs with: `/props` goes before the catalog.
@@ -240,11 +251,20 @@ def within_models(body: Fn[Served, String, Result[Void]]) -> Result[Void]
   http = try HTTP.serve("127.0.0.1", 0, HTTP.app(handler))
   result = body.call(Served(http: http, url: "http://127.0.0.1:#{HTTP.local_port(http)}/api.json"), dir)
   HTTP.close_server(http)
+  settled()
   _ = Path.remove(dir)
   result
 end
 
 # `/slow.json` answers after 1 s and `/slower.json` after 3 s; every path fails while the file `down` is there.
+# Waits up to a second for the tasks of the run to end: the server's connections close a moment after the server.
+def settled() -> Void
+  deadline = Time.monotonic_ms() + 1000
+  while Task.pending_count() > 0 and Time.monotonic_ms() < deadline
+    Task.sleep(10)
+  end
+end
+
 def answer(dir: String, json: Bytes, request: HTTP.Request) -> Result[HTTP.Response]
   return ok(HTTP.Response(status: 503, headers: [], body: "".bytes)) if File.stat("#{dir}/down").ok?
 

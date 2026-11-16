@@ -16,6 +16,7 @@ LOCK_FILE = "server.lock"
 LOG_FILE = "server.log"
 KIND_STATE = "client.state"
 KIND_SERVER = "client.server"
+KIND_VERSION = "client.version"
 LOCK_WAIT_MS = 20_000
 START_WAIT_MS = 10_000
 POLL_MS = 100
@@ -55,6 +56,7 @@ def connect(options: Launch, dir: String) -> Result[Client.Server]
   case probe(dir)
     Probe.Alive(server) -> ok(server)
     Probe.Unusable(reason) -> refused(dir, reason)
+    Probe.Other(pid) -> other_version(dir, pid)
     Probe.Absent(reason) -> start(options, dir, reason)
   end
 end
@@ -67,6 +69,8 @@ enum Probe
   Absent(String)
   ## Something is there that does not serve this client: start nothing.
   Unusable(String)
+  ## A server of another version, with its pid.
+  Other(Int)
 end
 
 def environment_dir() -> Result[String]
@@ -108,6 +112,16 @@ def refused[T](dir: String, reason: String) -> Result[T]
   )
 end
 
+# A server from other code may not read what this client sends, nor send what it reads: it is never used. Stopping it
+# ends the turn it runs; the sessions are on disk, so the next server reads them.
+def other_version[T](dir: String, pid: Int) -> Result[T]
+  error(
+    "the server of #{dir} (pid #{pid}) runs another version of Finn Agent than this client: " +
+    "once no turn runs there, stop it with `kill #{pid}` and start the client again (the sessions are kept)",
+    kind: KIND_VERSION,
+  )
+end
+
 def probe(dir: String) -> Probe
   path = file_in(dir, SERVER_FILE)
   return Probe.Absent("#{path} does not exist") if not File.stat(path).ok?
@@ -128,6 +142,7 @@ def reach(info: Protocol.ServerInfo) -> Probe
 
   server = Client.Server(url: "http://127.0.0.1:#{info.port}", token: info.token)
   case Client.health(server)
+    ok(health) if health.wire != some(Protocol.wire_digest()) -> Probe.Other(info.pid)
     ok(_) -> Probe.Alive(server)
     error(e) if e.kind == Client.KIND_UNREACHABLE -> Probe.Absent(e.message)
     error(e) -> Probe.Unusable(e.message)
@@ -204,6 +219,7 @@ def start(options: Launch, dir: String, why_not: String) -> Result[Client.Server
     case probe(dir)
       Probe.Alive(server) -> ok(server)
       Probe.Unusable(reason) -> refused(dir, reason)
+      Probe.Other(pid) -> other_version(dir, pid)
       Probe.Absent(_) -> explained(started(options, dir), why_not)
     end
   end
@@ -321,6 +337,7 @@ def wait_alive(dir: String) -> Result[Client.Server]
     case probe(dir)
       Probe.Alive(server) -> return ok(server)
       Probe.Unusable(reason) -> return refused(dir, reason)
+      Probe.Other(pid) -> return other_version(dir, pid)
       Probe.Absent(_) -> Task.sleep(POLL_MS)
     end
 

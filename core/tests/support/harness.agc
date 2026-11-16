@@ -57,6 +57,7 @@ struct Setup
   ## The server asks the fake's `/props` for the window first.
   props: Bool = false
   before_load: Optional[Fn[String, Void]] = none
+  after_load: Optional[Fn[String, Void]] = none
   ## The model API of the server, as `FINN_API` names it; the fixtures come from the folder of its format.
   api: String = "openai"
   ## The tools of MCP servers, and those that come after the start.
@@ -70,6 +71,8 @@ struct Setup
   catalog: Optional[Catalog.Catalog] = none
   ## The token that Anthropic fetches again after a 401; none when empty.
   fresh_token: String = ""
+  ## How long a turn waits for its queued messages.
+  take_ms: Int = 5000
   ## Skills: the home folder is `home` under the test's folder, and the folders of `trust` (under the test's folder;
   ## the test's folder itself when none) are trusted.
   skills: Bool = false
@@ -150,10 +153,12 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     compact_model: setup.compact_model,
     props_url: props_url(setup, fake),
     before_load: setup.before_load,
+    after_load: setup.after_load,
     tools: setup.tools,
     late_tools: setup.late_tools,
     code_mode: code_mode(setup.monty),
     catalog: setup.catalog,
+    take_ms: setup.take_ms,
     home: skills_home(setup, base),
     trusted: skills_trusted(setup, base),
   )

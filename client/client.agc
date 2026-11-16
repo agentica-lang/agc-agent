@@ -26,6 +26,7 @@ export Http.open_events
 export Discovery.Launch
 export Discovery.KIND_STATE
 export Discovery.KIND_SERVER
+export Discovery.KIND_VERSION
 export Discovery.state_dir
 export Discovery.connect
 
@@ -37,6 +38,7 @@ export Commands.Command
 export Commands.HELP
 export Commands.KIND_COMMAND
 export Commands.parse_command
+export Commands.printable
 export Commands.listing
 export Commands.pick
 export Commands.model_warning

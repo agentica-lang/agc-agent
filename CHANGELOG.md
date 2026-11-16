@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- `finn tui --yolo` allows the tool calls of the turns it starts; the status line shows YOLO all the time, and a turn another client started is still asked.
+- `finn tui` takes pasted text whole (bracketed paste) into the prompt or the `/resume` filter.
+- `finn chat` and `finn tui` refuse a running server of another version (its wire records differ) and say how to stop it, instead of failing on its replies.
+
 - The repo skeleton: a workspace with the `llm` and `core` packages, and CI.
 - The `sse` package: a Server-Sent Events parser and writer.
 - The `protocol` package: the records of the commands and events between the server and its clients, with JSON codecs.
@@ -54,3 +58,4 @@
 - `core serve`: `PATCH /v1/sessions/ID` changes a session's model and thinking level (kept in its file), and `POST /v1/sessions/ID/compact` folds the history into a summary on demand; the session snapshot has `effort`, and the session list has the current model, the last change and the first message, newest first.
 - `apply_patch` (the Codex patch format) for models on `openai_responses`, as a custom tool with its grammar; each path it touches is approved as an `edit_file`, and a patch applies whole or not at all.
 - `apply_patch` rollback: a failed step puts back every file it can and names the ones it could not, removes the folders the patch made, and gives a deleted file back with its mode (deletes run last); the search of a patch takes at most 2,000,000 line comparisons in total, and a patch has at most 1000 changes.
+- Steering: a message sent while a turn runs is queued (`202`, a `message_queued` event) and read before the turn's next model call; one that comes after the last read starts the next turn, and a stopped turn drops its queue with an `error` event. `finn chat` and `finn tui` show it as queued.

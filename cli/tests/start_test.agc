@@ -85,6 +85,22 @@ def hung(rig: Driver.Rig) -> Result[Void]
   Test.assert(not File.stat("#{rig.dir}/starts.log").ok?, "no server was started")
 end
 
+def test_a_server_of_another_version_is_reported_with_how_to_stop_it() -> Result[Void]
+  old = Fake.Reply(body: "{\"version\": \"0.0.1\"}")
+  Driver.within([Fake.Route(method: "GET", path: Protocol.HEALTH_PATH, replies: [old])], &other_version)
+end
+
+def other_version(rig: Driver.Rig) -> Result[Void]
+  command = try Driver.fake_command()
+  cli = try Driver.start(rig.dir, ["--"] + command)
+  done = try Driver.finish(cli)
+  info = try Protocol.decode_server_info(try File.read_text("#{rig.dir}/server.json"))
+  try Test.eq(done.code, 1)
+  try Test.assert(done.errors.include?("runs another version"), "the version is the reason: #{done.errors}")
+  try Test.assert(done.errors.include?("`kill #{info.pid}`"), "it says how to stop it: #{done.errors}")
+  Test.assert(not File.stat("#{rig.dir}/starts.log").ok?, "no server was started")
+end
+
 def test_the_state_folder_is_made_private_and_an_open_one_is_refused() -> Result[Void]
   Driver.within_dir(&state_folders)
 end
