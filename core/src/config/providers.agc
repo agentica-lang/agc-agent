@@ -156,14 +156,21 @@ struct CustomWire
   models: Optional[List[String]] = none
 end
 
+# An entry that replaces a preset keeps where the preset checks a key.
 def custom_of(wire: CustomWire) -> Custom
-  Custom(
+  custom = Custom(
     name: wire.name,
     api: wire.api.unwrap_or("openai"),
     base_url: wire.base_url,
     key_env: wire.key_env.unwrap_or(""),
     models: wire.models.unwrap_or([]),
   )
+
+  for preset in (presets().select { |p| p.name == custom.name })
+    return custom.with(check_path: preset.check_path)
+  end
+
+  custom
 end
 
 def checked(path: String, customs: List[Custom]) -> Result[List[Custom]]

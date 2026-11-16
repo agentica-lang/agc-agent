@@ -421,7 +421,8 @@ def model_of(width: Int, height: Int) -> App.Model
 end
 
 # A coming login cannot be given a key; Esc in the key prompt drops what was typed; under `finn login` the answer to
-# the login ends the app.
+# the login ends the app. A `/login` or `/logout` line, which may hold a key typed by mistake, is not remembered and
+# drops its pastes.
 def test_a_login_drops_a_coming_pick_and_a_cancelled_key() -> Result[Void]
   claude = Protocol.LoginStatus(name: "claude", label: "Claude Pro/Max", key_env: "", from: "", coming: true)
   groq = Protocol.LoginStatus(name: "groq", label: "", key_env: "GROQ_API_KEY", from: "", coming: false)
@@ -442,7 +443,13 @@ def test_a_login_drops_a_coming_pick_and_a_cancelled_key() -> Result[Void]
   try Test.eq([sent.model.secret, "#{sent.cmds.size}"], ["", "1"])
   done = App.update(sent.model, App.Msg.LoggedIn("groq", ok(groq.with(from: "stored"))))
   try Test.eq(done.model.exit, some(0))
-  Test.eq(rows(done.model).any? { |row| row.include?("sk-1") }, false)
+  try Test.eq(rows(done.model).any? { |row| row.include?("sk-1") }, false)
+  for line in ["/login groq [paste #1]", "/logout sk-3"]
+    after = App.update(model_of(60, 12).with(prompt: line, pastes: ["sk-2"]), enter()).model
+    try Test.eq([after.history.size, after.pastes.size, after.prompt.size], [0, 0, 0])
+  end
+
+  ok()
 end
 
 def rows(model: App.Model) -> List[String]

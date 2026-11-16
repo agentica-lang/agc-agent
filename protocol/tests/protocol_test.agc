@@ -377,7 +377,8 @@ def test_the_wire_shape_has_every_record_enum_and_kind() -> Result[Void]
   Test.assert(found.size > 40, "the scan found #{found.size} names")
 end
 
-# Every constant of routes.agc is in the wire shape, and one path of a session for each `def *_path(session_id`.
+# Every constant of routes.agc is in the wire shape, one path of a session for each `def *_path(session_id`, and the
+# paths outside a session.
 def test_the_wire_shape_has_every_path() -> Result[Void]
   shape = Protocol.wire_shape()
   defs = 0
@@ -391,5 +392,6 @@ def test_the_wire_shape_has_every_path() -> Result[Void]
   end
 
   try Test.assert(defs > 5, "the scan found #{defs} paths")
+  try Test.assert(shape.include?(Protocol.auth_path("P")), "auth_path")
   Test.eq(shape.select { |s| s.start_with?("/v1/sessions/ID") }.size, defs)
 end

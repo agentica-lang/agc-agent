@@ -791,15 +791,16 @@ def send(app: Model) -> Model
 
   text = expanded(app, typed_text)
   base = app.with(history: remembered(app.history, text), recall: none, cursor: 0, mention_closed: none)
-  if typed_text.start_with?("/login")
-    # A key typed on a `/login` line by mistake is not kept: the line is not remembered.
-    base = base.with(history: app.history)
+  secret_line = ["/login", "/logout"].any? { |name| typed_text.start_with?(name) }
+  if secret_line
+    # A key typed on a `/login` or `/logout` line by mistake is not kept: not remembered, its pastes dropped.
+    base = base.with(history: app.history, pastes: [])
   end
 
   case Client.parse_command(typed_text)
     some(ok(command)) if not app.moving or local?(command) ->
       return on_command(base.with(prompt: "", scroll: 0), command)
-    some(error(e)) if typed_text.start_with?("/login") -> return noted(base.with(prompt: ""), e.message)
+    some(error(e)) if secret_line -> return noted(base.with(prompt: ""), e.message)
     some(error(e)) -> return noted(app, e.message)
     _ -> nil
   end
