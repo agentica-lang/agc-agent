@@ -62,8 +62,10 @@ struct Setup
   monty: String = ""
   ## Deny rules of the config, as `bash(rm *)`.
   deny: List[String] = []
-  ## Skills: the home folder is `home` under the test's folder, and the test's folder is trusted.
+  ## Skills: the home folder is `home` under the test's folder, and the folders of `trust` (under the test's folder;
+  ## the test's folder itself when none) are trusted.
   skills: Bool = false
+  trust: Optional[List[String]] = none
 end
 
 def fake_env(name: String) -> Result[String]
@@ -191,7 +193,7 @@ end
 def skills_trusted(setup: Setup, base: String) -> List[String]
   return [] if not setup.skills
 
-  [base]
+  setup.trust.unwrap_or(["."]).map { |dir| "#{base}/#{dir}" }
 end
 
 def window(tokens: Int) -> Optional[Int]

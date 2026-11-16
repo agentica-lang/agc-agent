@@ -8,7 +8,6 @@
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Compaction from "compaction"
-import Skills from "skills"
 
 EXTENSION = ".jsonl"
 MAX_LINE_BYTES = 16_777_216
@@ -45,6 +44,8 @@ struct Saved
   reserved: Int = 0
   ## The answer of the last turn so far at its last compaction, which may have folded part of it.
   folded: Optional[Folded] = none
+  ## The names that extensions noted in the session (the skills it loaded), in order.
+  marks: List[String] = []
 end
 
 ## The answer texts of a turn when it was compacted, and the size of the history after: the texts of the messages
@@ -82,14 +83,22 @@ def append_event(path: String, logged: Logged) -> Result[Void]
   append(path, {"type": JSON.from("event"), "id": JSON.from(logged.id), "name": JSON.from(name), "data": data})
 end
 
-## The message that starts a turn: shown, and the first of the turn's history.
-def append_user(path: String, text: String) -> Result[Void]
-  append(path, {"type": JSON.from("user"), "text": JSON.from(text)})
+## The message that starts a turn, the first of the turn's history; `typed` is what is shown when not empty (the text
+## without what extensions put before it) and `marks` the names they noted.
+def append_user(path: String, text: String, typed: String = "", marks: List[String] = []) -> Result[Void]
+  fields = {"type": JSON.from("user"), "text": JSON.from(text)}
+  if typed != "" and typed != text
+    fields = fields.put("typed", JSON.from(typed))
+  end
+
+  append(path, with_marks(fields, marks))
 end
 
-## The messages a round added to the history, in one record so that a call never goes without its result.
-def append_messages(path: String, messages: List[LLM.Message]) -> Result[Void]
-  append(path, {"type": JSON.from("messages"), "messages": JSON.array(messages.map { |m| encode_message(m) })})
+## The messages a round added to the history, in one record so that a call never goes without its result, with the
+## names extensions noted in the round.
+def append_messages(path: String, messages: List[LLM.Message], marks: List[String] = []) -> Result[Void]
+  fields = {"type": JSON.from("messages"), "messages": JSON.array(messages.map { |m| encode_message(m) })}
+  append(path, with_marks(fields, marks))
 end
 
 ## Ids up to `until` may go to events that are not saved (deltas), so a restart starts after them. A saved event
@@ -231,7 +240,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
     "user" ->
       text = try field(json, "text")
       message = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
-      shown = Protocol.Message(role: Protocol.Role.User, text: Skills.typed(text))
+      shown = Protocol.Message(role: Protocol.Role.User, text: optional_string(json, "typed").unwrap_or(text))
       users = saved.users + 1
       ok(
         saved.with(
@@ -240,6 +249,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
           users: users,
           open_user: true,
           folded: none,
+          marks: saved.marks + marks_of(json),
         ),
       )
     "messages" ->
@@ -248,7 +258,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
         messages = messages.push(try decode_message(item))
       end
 
-      ok(saved.with(history: saved.history + messages))
+      ok(saved.with(history: saved.history + messages, marks: saved.marks + marks_of(json)))
     "compaction" ->
       compaction = Compaction.Compaction(
         from: try JSON.int(try JSON.get(json, "from")),
@@ -271,6 +281,20 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
       shown = Protocol.Message(role: Protocol.Role.Assistant, text: try field(json, "text"))
       ok(saved.with(shown: saved.shown.push(shown)))
     _ -> error("unknown record #{kind}")
+  end
+end
+
+def with_marks(fields: Map[String, JSON.Value], marks: List[String]) -> Map[String, JSON.Value]
+  return fields if marks.empty?
+
+  fields.put("marks", JSON.from(marks))
+end
+
+# A `marks` that is missing or not a list of texts is none.
+def marks_of(json: JSON.Value) -> List[String]
+  case JSON.get(json, "marks")
+    ok(value) -> JSON.decode(value, List[String]).unwrap_or([])
+    error(_) -> []
   end
 end
 

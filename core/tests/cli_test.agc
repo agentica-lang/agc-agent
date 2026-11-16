@@ -41,6 +41,25 @@ def test_the_model_api_is_chat_completions_or_responses() -> Result[Void]
   Test.eq(JSON.encode(JSON.object(stateless)), "{\"include\":[\"reasoning.encrypted_content\"],\"store\":false}")
 end
 
+# No trusted folder when `FINN_TRUSTED_DIRS` is unset or empty; empty parts are skipped.
+def test_the_trusted_folders_come_from_finn_trusted_dirs() -> Result[Void]
+  for value in ["", ":"]
+    unset = try Config.from_env(->(name) { trusted_env(name, value) })
+    try Test.eq(unset.trusted.size, 0)
+  end
+
+  set = try Config.from_env(->(name) { trusted_env(name, "/a/b::/c") })
+  try Test.eq(set.trusted, ["/a/b", "/c"])
+  Test.eq(set.home, "/home/me")
+end
+
+def trusted_env(name: String, dirs: String) -> Result[String]
+  return ok(dirs) if name == "FINN_TRUSTED_DIRS"
+  return ok("/home/me") if name == "HOME"
+
+  env(name, "")
+end
+
 # The names of before Finn still work: `AGC_AGENT_` variables, and an `agc-agent` folder while no `finn` folder
 # is there.
 def test_the_names_before_finn_still_work() -> Result[Void]

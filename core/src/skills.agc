@@ -1,8 +1,11 @@
 ## Agent Skills (agentskills.io): folders with a `SKILL.md` under `.finn/skills`, `.agents/skills` and `.claude/skills`
 ## of the session folder (only when it is trusted) and of the home folder. The system prompt lists each skill's name and
 ## description; the model loads one with `activate_skill`, the user with `/name` in a message. A loaded skill is its
-## body in a `<skill_content>` block, which compaction keeps.
+## body in a `<skill_content>` block. The session keeps the names of the skills it loaded (its marks), so a skill loads
+## once, and a compaction that folds one puts its content after the summary.
 
+import LLM from "pkg/llm/llm"
+import Regex from "std/regex"
 import Spec from "spec"
 
 TOOL = "activate_skill"
@@ -12,14 +15,20 @@ MAX_DEPTH = 4
 MAX_DIRS = 2000
 MAX_RESOURCES = 50
 MAX_SKILL_BYTES = 1_048_576
+MAX_NAME = 64
+MAX_DESCRIPTION = 1024
+MAX_SKILLS = 100
 OPEN = "<skill_content name=\""
 CLOSE = "</skill_content>"
+NAME = /\A[a-z0-9-]+\z/
+CATALOG_NAME = /<name>([a-z0-9-]+)<\/name>/
 
 struct Skill
   name: String
   description: String
-  ## The absolute path of its SKILL.md.
+  ## The real path of its SKILL.md.
   location: String
+  ## Its real path.
   dir: String
   ## False when its frontmatter says `disable-model-invocation: true`: only the user loads it.
   for_model: Bool
@@ -36,8 +45,15 @@ struct Frontmatter
   body: String
 end
 
-## The skills of the session folder `root` (when `trusted`) and of `home` (none when empty), sorted by name. A project
-## skill shadows a user skill of the same name; in one scope the first root wins.
+## A user message with the content of the skills it names put before it, and their names.
+struct Expanded
+  text: String
+  names: List[String]
+end
+
+## The skills of the session folder `root` (when `trusted`) and of `home` (none when empty), sorted by name, at most
+## `MAX_SKILLS`. A project skill shadows a user skill of the same name; in one scope the first root wins. A skills root
+## may be a link, which is resolved once; a link inside it is not followed.
 def discover(root: String, home: String, trusted: Bool) -> Found
   found = Found(skills: [], warnings: [])
   if trusted
@@ -48,7 +64,10 @@ def discover(root: String, home: String, trusted: Bool) -> Found
     found = scope(found, home)
   end
 
-  found.with(skills: found.skills.sort_by { |skill| skill.name })
+  sorted = found.skills.sort_by { |skill| skill.name }
+  return found.with(skills: sorted) if sorted.size <= MAX_SKILLS
+
+  warned(found.with(skills: sorted.take(MAX_SKILLS)), "#{sorted.size} skills: only the first #{MAX_SKILLS} are used")
 end
 
 ## The catalog for the system prompt: the skills the model may load, sorted; empty when there is none.
@@ -57,7 +76,9 @@ def catalog(skills: List[Skill]) -> String
   return "" if shown.empty?
 
   entries = shown.map do |skill|
-    "  <skill>\n    <name>#{skill.name}</name>\n    <description>#{skill.description}</description>\n  </skill>"
+    (
+      "  <skill>\n    <name>#{skill.name}</name>\n    <description>#{escaped(skill.description)}</description>\n  </skill>"
+    )
   end
 
   (
@@ -67,82 +88,33 @@ def catalog(skills: List[Skill]) -> String
   )
 end
 
+## The skills of a session whose system prompt is `system`, as saved: the model's are only those its catalog lists, so
+## the tool and the folders `read_file` reads cannot drift from what the model was told.
+def restrict(skills: List[Skill], system: String) -> List[Skill]
+  listed = Regex.find_all(system, CATALOG_NAME).map { |m| m.groups[1].text }
+  skills.select { |skill| not skill.for_model or listed.include?(skill.name) }
+end
+
 ## The tools of the skills: `activate_skill`, its name an enum of the skills the model may load; none when there is
-## none. It answers with the skill's content, or a short note when the history has it already.
+## none. It answers with the skill's content and marks it, or a short note when the session's marks have it already.
 def tools(skills: List[Skill]) -> List[Spec.TurnTool]
   for tool in option_list(tool(skills))
-    run = ->(input: JSON.Value, texts: List[String]) { Spec.output(activate(skills, input, loaded(texts))) }
+    run = ->(input: JSON.Value, marks: List[String]) { activated(skills, input, marks) }
     return [Spec.TurnTool(tool: tool, run: run)]
   end
 
   []
 end
 
-## The user's `/name` of a skill in `text` puts its content before it, unless the history's `texts` have it already.
-def on_message(text: String, skills: List[Skill], texts: List[String]) -> String = expand(text, skills, loaded(texts))
-
-## The skill blocks of the folded `texts` that compaction keeps, once each, but those the `others` still hold.
-def kept(texts: List[String], others: List[String]) -> List[String]
-  present = loaded(others)
-  out: List[String] = []
-  names: List[String] = []
-  for block in (texts.flat_map { |text| blocks(text) })
-    name = block_name(block)
-    next if present.include?(name) or names.include?(name)
-
-    out = out.push(block)
-    names = names.push(name)
-  end
-
-  out
-end
-
-def tool(skills: List[Skill]) -> Optional[Spec.Tool]
-  names = skills.select { |skill| skill.for_model }.map { |skill| JSON.from(skill.name) }
-  return none if names.empty?
-
-  name = JSON.object({"type": JSON.from("string"), "enum": JSON.array(names)})
-  schema = JSON.object({
-    "type": JSON.from("object"),
-    "properties": JSON.object({"name": name}),
-    "required": JSON.array([JSON.from("name")]),
-  })
-
-  some(
-    Spec.Tool(
-      name: TOOL,
-      description: "Load the full instructions of a skill of the catalog, with the list of its files.",
-      input_schema: schema,
-      asks: false,
-      run: ->(_ctx: Spec.Context, _input: JSON.Value) { error("activate_skill runs in the agent") },
-      target: &target,
-    ),
-  )
-end
-
-def target(_ctx: Spec.Context, input: JSON.Value) -> Result[String]
-  args = try Spec.args(input, ActivateArgs.codec)
-  ok(args.name)
-end
-
-## The answer of `activate_skill`: the skill's content, or a short note when `seen` already holds it.
-def activate(skills: List[Skill], input: JSON.Value, seen: List[String]) -> Result[String]
-  args = try Spec.args(input, ActivateArgs.codec)
-  skill = try named(skills.select { |s| s.for_model }, args.name)
-  return ok("The skill #{skill.name} is already loaded in this session.") if seen.include?(skill.name)
-
-  content(skill)
-end
-
-## `text` with the content of each `/name` it mentions put before it, but for the skills `seen` already holds.
-def expand(text: String, skills: List[Skill], seen: List[String]) -> String
+## The user's `/name` of a skill in `text` puts its content before it, unless `marks` has it already.
+def on_message(text: String, skills: List[Skill], marks: List[String]) -> Expanded
   blocks: List[String] = []
   names: List[String] = []
   for word in (text.split(" ").flat_map { |part| part.split("\n") })
     next if not word.start_with?("/")
 
     name = word.slice(1, word.length - 1)
-    next if names.include?(name) or seen.include?(name)
+    next if names.include?(name) or marks.include?(name)
 
     for skill in (skills.select { |s| s.name == name })
       loaded_skill = content(skill)
@@ -153,57 +125,15 @@ def expand(text: String, skills: List[Skill], seen: List[String]) -> String
     end
   end
 
-  return text if blocks.empty?
+  return Expanded(text: text, names: []) if blocks.empty?
 
-  "#{blocks.join("\n\n")}\n\n#{text}"
+  Expanded(text: "#{blocks.join("\n\n")}\n\n#{text}", names: names)
 end
 
-## The names of the skills whose content is in `texts`.
-def loaded(texts: List[String]) -> List[String]
-  names: List[String] = []
-  for block in (texts.flat_map { |text| blocks(text) })
-    name = block_name(block)
-    if not names.include?(name)
-      names = names.push(name)
-    end
-  end
-
-  names
-end
-
-## The skill blocks of `text`, in order.
-def blocks(text: String) -> List[String]
-  out: List[String] = []
-  rest = text
-  while true
-    start = rest.index_of(OPEN)
-    break if start.none?
-
-    tail = rest.slice(start.unwrap!, rest.length - start.unwrap!)
-    stop = tail.index_of(CLOSE)
-    break if stop.none?
-
-    out = out.push(tail.slice(0, stop.unwrap! + CLOSE.length))
-    rest = tail.slice(stop.unwrap! + CLOSE.length, tail.length - stop.unwrap! - CLOSE.length)
-  end
-
-  out
-end
-
-## A user message as the user wrote it: without the skill blocks that `expand` put before it.
-def typed(text: String) -> String
-  rest = text
-  while rest.start_with?(OPEN)
-    stop = rest.index_of(CLOSE)
-    break if stop.none?
-
-    rest = rest.slice(stop.unwrap! + CLOSE.length, rest.length - stop.unwrap! - CLOSE.length)
-    while rest.start_with?("\n")
-      rest = rest.slice(1, rest.length - 1)
-    end
-  end
-
-  rest
+## What a compaction puts after its summary: the content of the skills of `marks`, but those an `activate_skill` call
+## of the `kept` messages loads.
+def on_fold(skills: List[Skill]) -> Fn[List[String], List[LLM.Message], String]
+  ->(marks: List[String], kept: List[LLM.Message]) { folded_skills(skills, marks, kept) }
 end
 
 ## The frontmatter of a SKILL.md and its body. Lenient: top-level `key: value` lines, where a value may hold colons,
@@ -258,17 +188,102 @@ struct ActivateArgs
   name: String
 end
 
+struct Answer
+  text: String
+  mark: Optional[String]
+end
+
 struct Walk
   found: Found
   dirs: Int
 end
 
+def tool(skills: List[Skill]) -> Optional[Spec.Tool]
+  names = skills.select { |skill| skill.for_model }.map { |skill| JSON.from(skill.name) }
+  return none if names.empty?
+
+  name = JSON.object({"type": JSON.from("string"), "enum": JSON.array(names)})
+  schema = JSON.object({
+    "type": JSON.from("object"),
+    "properties": JSON.object({"name": name}),
+    "required": JSON.array([JSON.from("name")]),
+  })
+
+  some(
+    Spec.Tool(
+      name: TOOL,
+      description: "Load the full instructions of a skill of the catalog, with the list of its files.",
+      input_schema: schema,
+      asks: false,
+      run: ->(_ctx: Spec.Context, _input: JSON.Value) { error("activate_skill runs in the agent") },
+      target: &target,
+    ),
+  )
+end
+
+def target(_ctx: Spec.Context, input: JSON.Value) -> Result[String]
+  args = try Spec.args(input, ActivateArgs.codec)
+  ok(args.name)
+end
+
+def activated(skills: List[Skill], input: JSON.Value, marks: List[String]) -> Spec.TurnOutput
+  case activate(skills, input, marks)
+    ok(answer) -> Spec.TurnOutput(output: Spec.output(ok(answer.text)), mark: answer.mark)
+    error(e) -> Spec.TurnOutput(output: Spec.output(error(e.message)), mark: none)
+  end
+end
+
+def activate(skills: List[Skill], input: JSON.Value, marks: List[String]) -> Result[Answer]
+  args = try Spec.args(input, ActivateArgs.codec)
+  skill = try named(skills.select { |s| s.for_model }, args.name)
+  if marks.include?(skill.name)
+    return ok(Answer(text: "The skill #{skill.name} is already loaded in this session.", mark: none))
+  end
+
+  ok(Answer(text: try content(skill), mark: some(skill.name)))
+end
+
+def folded_skills(skills: List[Skill], marks: List[String], kept: List[LLM.Message]) -> String
+  again = kept.flat_map { |message| message.content.flat_map { |block| activated_name(block) } }
+  blocks: List[String] = []
+  for name in marks
+    next if again.include?(name)
+
+    for skill in (skills.select { |s| s.name == name })
+      loaded_skill = content(skill)
+      if loaded_skill.ok?
+        blocks = blocks.push(loaded_skill.unwrap!)
+      end
+    end
+  end
+
+  return "" if blocks.empty?
+
+  "\n\nThe skills loaded in this session:\n\n#{blocks.join("\n\n")}"
+end
+
+def activated_name(block: LLM.Block) -> List[String]
+  case block
+    LLM.Block.ToolUse(call) if call.name == TOOL ->
+      case Spec.args(call.input, ActivateArgs.codec)
+        ok(args) -> [args.name]
+        error(_) -> []
+      end
+
+    _ -> []
+  end
+end
+
+def escaped(text: String) -> String = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
 def scope(found: Found, base: String) -> Found
   scoped = found
   names = found.skills.map { |skill| skill.name }
   for root in ROOTS
-    dir = "#{base}/#{root}"
-    next if not directory?(dir)
+    real = Path.real("#{base}/#{root}")
+    next if not real.ok? or not directory?(real.unwrap!)
+
+    dir = real.unwrap!
 
     walk = walked(Walk(found: Found(skills: [], warnings: []), dirs: 0), dir, 0)
     for skill in walk.found.skills
@@ -324,13 +339,18 @@ def read_skill(found: Found, dir: String) -> Found
         name = folder
       end
 
+      if name.length > MAX_NAME or not Regex.match?(name, NAME)
+        return warned(found, "#{location}: skipped, the name must be a-z, 0-9 and -, at most #{MAX_NAME} characters")
+      end
+
       noted = found
       if name != folder
         noted = warned(noted, "#{location}: the name #{name} is not the folder's #{folder}")
       end
 
-      if name.length > 64
-        noted = warned(noted, "#{location}: the name is longer than 64 characters")
+      if description.length > MAX_DESCRIPTION
+        description = description.slice(0, MAX_DESCRIPTION)
+        noted = warned(noted, "#{location}: the description is cut at #{MAX_DESCRIPTION} characters")
       end
 
       for_model = front.fields.get("disable-model-invocation").unwrap_or("false").strip != "true"
@@ -399,19 +419,15 @@ def names_in(dir: String) -> List[String]
   Dir.list(dir).unwrap_or(none_found).sort
 end
 
+# A link is not a directory here: a scan does not follow it.
 def directory?(path: String) -> Bool
-  case File.stat(path)
+  case File.lstat(path)
     ok(info) -> info.kind == "directory"
     error(_) -> false
   end
 end
 
 def warned(found: Found, warning: String) -> Found = found.with(warnings: found.warnings.push(warning))
-
-def block_name(block: String) -> String
-  rest = block.slice(OPEN.length, block.length - OPEN.length)
-  rest.slice(0, rest.index_of("\"").unwrap_or(0))
-end
 
 def trim_cr(line: String) -> String
   return line.slice(0, line.length - 1) if line.end_with?("\r")

@@ -59,7 +59,7 @@ enum Msg
   Emit(String, Protocol.Event)
   Ask(String, Agent.Ask, Channel[Protocol.Decision])
   Expire(String)
-  Commit(String, List[LLM.Message])
+  Commit(String, List[LLM.Message], List[String])
   Compacted(String, Compaction.Compaction)
   Window(Int)
   Finished(String, Protocol.StopReason)
@@ -104,6 +104,8 @@ struct State
   output: Int = 0
   ## The context of the last call.
   context: Int = 0
+  ## The names the extensions noted: the skills the session loaded.
+  marks: List[String] = []
   ## The model's window: 0 until it is known, -1 when the provider does not say.
   window: Int = 0
   ## The ids up to this one are saved or reserved in the file.
@@ -199,7 +201,8 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Emit(turn_id, event) -> Actor.continue(if_current(state, turn_id, ->(s) { emit_counted(s, event) }))
     Msg.Ask(turn_id, call, reply) -> Actor.continue(if_current(state, turn_id, ->(s) { ask(s, call, reply) }))
     Msg.Expire(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { expire(s) }))
-    Msg.Commit(turn_id, history) -> Actor.continue(if_current(state, turn_id, ->(s) { commit(s, history) }))
+    Msg.Commit(turn_id, history, marks) ->
+      Actor.continue(if_current(state, turn_id, ->(s) { commit(s, history, marks) }))
     Msg.Compacted(turn_id, compaction) -> Actor.continue(if_current(state, turn_id, ->(s) { compact(s, compaction) }))
     Msg.Window(window) -> Actor.continue(state.with(window: window))
     Msg.Finished(turn_id, reason) -> Actor.continue(if_current(state, turn_id, ->(s) { finish(s, reason) }))
@@ -405,9 +408,10 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
     return state
   end
 
-  text = Skills.on_message(typed, state.setup.skills, Agent.texts(state.history))
-  case save(state, -> { Store.append_user(state.setup.file, text) })
-    ok(_) -> nil
+  expanded = Skills.on_message(typed, state.setup.skills, state.marks)
+  text = expanded.text
+  case save(state, -> { Store.append_user(state.setup.file, text, typed, expanded.names) })
+    ok(_) -> state = state.with(marks: state.marks + expanded.names)
     error(e) ->
       Actor.reply(
         reply,
@@ -424,7 +428,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
   link = Agent.Link(
     emit: ->(event) { tell(address, Msg.Emit(turn_id, event)) },
     approve: ->(call) { wait_approval(address, turn_id, call, setup.approval_timeout_ms) },
-    commit: ->(history) { tell(address, Msg.Commit(turn_id, history)) },
+    commit: ->(history, marks) { tell(address, Msg.Commit(turn_id, history, marks)) },
     compacted: ->(compaction) { tell(address, Msg.Compacted(turn_id, compaction)) },
     window: ->(window) { tell(address, Msg.Window(window)) },
   )
@@ -449,6 +453,8 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
     last_context: state.context,
     code_mode: setup.code_mode,
     turn_tools: Skills.tools(setup.skills),
+    marks: state.marks,
+    on_fold: some(Skills.on_fold(setup.skills)),
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
@@ -628,14 +634,14 @@ def compact(state: State, compaction: Compaction.Compaction) -> State
 end
 
 # The history of a turn only grows, so only its new messages go to the file.
-def commit(state: State, history: List[LLM.Message]) -> State
+def commit(state: State, history: List[LLM.Message], marks: List[String]) -> State
   added = history.drop(state.history.size)
   return state if added.empty?
 
-  case save(state, -> { Store.append_messages(state.setup.file, added) })
+  case save(state, -> { Store.append_messages(state.setup.file, added, marks) })
     ok(_) ->
       turn = state.turn.map { |t| t.with(texts: t.texts + answer_texts(added)) }
-      state.with(history: history, turn: turn, broken: none)
+      state.with(history: history, turn: turn, broken: none, marks: state.marks + marks)
     error(e) -> broke(state, e)
   end
 end
@@ -650,6 +656,7 @@ def restore(setup: Setup, saved: Store.Saved) -> State
     lost_below: lost_below(events),
     log: events.drop([events.size - setup.keep_events, 0].max.unwrap!),
     history: saved.history,
+    marks: saved.marks,
     display: saved.shown,
     turns: [saved.users, count(events, Protocol.EventKind.TurnStarted)].max.unwrap!,
     approvals: count(events, Protocol.EventKind.ApprovalRequested),

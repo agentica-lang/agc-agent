@@ -450,14 +450,16 @@ def entry(
     IO.warn("skills: #{warning}")
   end
 
+  system = header.system.unwrap_or(system_prompt(context.root))
+  skills = Skills.restrict(found.skills, system)
   setup = Session.Setup(
     id: header.id,
     cwd: context.root,
     model: header.model,
     provider: api.provider,
-    system: header.system.unwrap_or(system_prompt(context.root)),
-    ctx: context.with(read_roots: found.skills.map { |skill| skill.dir }),
-    skills: found.skills,
+    system: system,
+    ctx: context.with(read_roots: skills.map { |skill| skill.dir }),
+    skills: skills,
     keep_events: options.keep_events,
     approval_timeout_ms: options.approval_timeout_ms,
     file: file,
