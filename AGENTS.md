@@ -13,9 +13,11 @@ protocol/            commands, replies and events between server and clients, wi
                      protocol.agc is its public module
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point
-cli/                 the line-mode client: depends only on sse and protocol; main.agc is the entry point
-tui_client/          the TUI client on agentica-tui (pinned commit): sse, protocol and tui; main.agc is the entry
-                     point; tests/test_pty.py runs it under a pty against core and a fake model
+client/              what every client shares: finding or starting the server, the HTTP calls, the event reader;
+                     client.agc is its public module
+cli/                 the line-mode client: depends only on client and protocol; main.agc is the entry point
+tui_client/          the TUI client on agentica-tui (pinned commit): client, protocol and tui; main.agc is the
+                     entry point; tests/test_pty.py runs it under a pty against core and a fake model
 <pkg>/tests/         *_test.agc tests of that package; fixtures/ the recorded data they read
 llm/smoke/           tests against a real llama-server (make smoke-llama)
 llm/live/            tests against a paid API (make live-fireworks): never in CI
@@ -73,8 +75,8 @@ A package is added by the phase that needs it, never as an empty folder.
     and `protocol` never depend on `core` or a client, and a package imports
     another only through its public module (`pkg/llm/llm`), never its `src/`.
     `make coupling` checks both. A client (`cli`, `tui_client`) reaches
-    the server only through `protocol` and `sse`: it never depends on `core`,
-    `llm` or another client.
+    the server only through `client`, `protocol` and `sse`: it never depends
+    on `core`, `llm` or another client.
   - Each package has one `VERSION` constant in its public module, equal to its
     tag (`llm-0.0.1` is `VERSION = "0.0.1"`). A release goes in this order: tag
     the dependency (`llm-X`), then a PR that bumps the dependent's entry and

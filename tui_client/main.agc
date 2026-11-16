@@ -1,7 +1,9 @@
+import Client from "pkg/client/client"
 import TUI from "pkg/tui/tui"
 import App from "src/app"
 import Args from "src/args"
-import Server from "src/server"
+
+RESTORE_MS = 150
 
 def main() -> Void
   case Args.parse(System.args())
@@ -23,7 +25,8 @@ def dispatch(command: Args.Command) -> Void
 end
 
 def run(options: Args.Options) -> Result[Int]
-  server = try Server.connect(options, try Server.state_dir(options))
+  launch = Args.launch(options)
+  server = try Client.connect(launch, try Client.state_dir(launch))
   TUI.open(->(screen) { App.run(screen, server, options) })
 end
 
@@ -33,6 +36,8 @@ def finish(result: Result[Int]) -> Void
       IO.flush()
       System.exit(code)
     error(e) ->
+      # The screen closes once the key reader's wait ends (at most 50 ms): an error written before is wiped.
+      Task.sleep(RESTORE_MS)
       IO.warn("finn tui: #{e.message}")
       System.exit(1)
   end

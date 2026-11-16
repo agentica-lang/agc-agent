@@ -3,11 +3,12 @@ AGENTICA ?= agentica
 export AGENTICA
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
-PACKAGES = sse llm protocol core cli tui_client
+PACKAGES = sse llm protocol client core cli tui_client
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
 LEAVES = llm sse protocol
-SERVER_AND_CLIENTS = core|cli|tui_client|web_client
-# A client reaches the server only through the protocol: it never depends on these (or on another client).
+SERVER_AND_CLIENTS = core|client|cli|tui_client|web_client
+# A client, and `client` (the code every client shares), reach the server only through the protocol: they never
+# depend on these (or on another client).
 NOT_FOR_CLIENTS = core|llm|cli|tui_client|web_client
 
 # A fake key in the environment of every recipe: the bash test of core checks that the tool does not pass it on.
@@ -39,7 +40,7 @@ check: coupling install
 coupling:
 	@$(call none,$(LEAVES) depend on the server or a client,$(foreach p,$(LEAVES),-g '$(p)/**') \
 	  -e 'subdir *= *"($(SERVER_AND_CLIENTS))"' -e '"pkg/($(SERVER_AND_CLIENTS))/' .)
-	@$(call none,a client depends on the server or the llm or another client,-g 'cli/**' -g 'tui_client/**' \
+	@$(call none,a client depends on the server or the llm or another client,-g 'client/**' -g 'cli/**' -g 'tui_client/**' \
 	  -e 'subdir *= *"($(NOT_FOR_CLIENTS))"' -e '"pkg/($(NOT_FOR_CLIENTS))/' .)
 	@$(call none,a package imports another package's src/ (use its public module),-g '*.agc' 'pkg/[a-z0-9_-]+/src/' .)
 

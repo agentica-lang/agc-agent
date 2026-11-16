@@ -1,5 +1,6 @@
 import OP from "std/option_parser"
 import {Kind, Opt, Parsed} from "std/option_parser"
+import Client from "pkg/client/client"
 
 VERSION = "0.0.1"
 
@@ -40,6 +41,11 @@ def parse(args: List[String]) -> Result[Command]
     error(e) if OP.help?(e.message) -> ok(Command.Help(OP.usage(parser)))
     error(e) -> error(OP.message(e.message), kind: "tui.usage")
   end
+end
+
+## How this client finds or starts its server.
+def launch(options: Options) -> Client.Launch
+  Client.Launch(main: "tui_client/main.agc", state_dir: options.state_dir, server_command: options.server_command)
 end
 
 private

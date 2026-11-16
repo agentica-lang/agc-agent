@@ -1,11 +1,10 @@
 ## One session on the full screen: the loop that reads the keys and the events of the server, keeps the state in one
 ## immutable `App` and draws it after each batch of inputs.
 
-import TUI from "pkg/tui/tui"
+import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
+import TUI from "pkg/tui/tui"
 import Args from "args"
-import Client from "client"
-import Feed from "feed"
 import Inbox from "inbox"
 import Prompt from "prompt"
 import Transcript from "transcript"
@@ -16,6 +15,7 @@ WAIT_MS = 3_600_000
 SEND_MS = 30_000
 RECONNECT_MS = 300
 MAX_RECONNECTS = 3
+MAX_RESYNCS = 2
 SCROLL_STEP = 3
 HINTS = "Enter send · Ctrl+J newline · Esc stop · PgUp/PgDn scroll · Ctrl+C quit"
 
@@ -49,6 +49,8 @@ struct App
   ## The highest event id already drawn, so a replay draws nothing twice.
   shown_id: Int = 0
   reconnects: Int = 0
+  ## `resync` events in a row, with no other event between.
+  resyncs: Int = 0
   exit: Optional[Int] = none
 end
 
@@ -74,7 +76,7 @@ end
 
 def open(app: App, options: Args.Options) -> Result[App]
   case options.session
-    some(id) -> attach(app.with(id: id), try Client.session(app.server, id))
+    some(id) -> ok(attach(app.with(id: id), try Client.session(app.server, id), false))
     none ->
       cwd = case options.cwd
         some(dir) -> dir
@@ -86,9 +88,14 @@ def open(app: App, options: Args.Options) -> Result[App]
   end
 end
 
-# Draws the history of the session and reads the events after it; while a turn runs, from the start of the turn.
-def attach(app: App, session: Protocol.Session) -> Result[App]
-  from = session.turn_from_event_id.unwrap_or(session.last_event_id)
+# Draws the history of the session and reads the events after it; while a turn runs, from the start of the turn, unless
+# `skip_replay` (a server that no longer has that start).
+def attach(app: App, session: Protocol.Session, skip_replay: Bool) -> App
+  from = session.last_event_id
+  if not skip_replay
+    from = session.turn_from_event_id.unwrap_or(session.last_event_id)
+  end
+
   fresh = app.with(
     entries: Transcript.from_history(session.history),
     turn: session.turn_id.some?,
@@ -96,7 +103,7 @@ def attach(app: App, session: Protocol.Session) -> Result[App]
     shown_id: from,
   )
 
-  ok(subscribe(fresh, from))
+  subscribe(fresh, from)
 end
 
 def subscribe(app: App, from: Int) -> App
@@ -105,15 +112,15 @@ def subscribe(app: App, from: Int) -> App
   end
 
   generation = app.generation + 1
-  feed = Feed.Feed(
+  inbox = app.inbox
+  feed = Client.Feed(
     server: app.server,
     session_id: app.id,
     last_event_id: from,
-    generation: generation,
-    inbox: app.inbox,
+    tell: ->(item) { inbox.send(Inbox.Input.Stream(generation, item), SEND_MS) },
   )
 
-  app.with(stream: some(Feed.start(feed)), generation: generation, last_event_id: from)
+  app.with(stream: some(Client.start(feed)), generation: generation, last_event_id: from)
 end
 
 def loop(start: App) -> Result[Int]
@@ -194,12 +201,13 @@ end
 
 def noted(app: App, text: String) -> App = app.with(entries: Transcript.note(app.entries, text))
 
-def on_stream(app: App, item: Inbox.Item) -> Result[App]
+def on_stream(app: App, item: Client.Item) -> Result[App]
   case item
-    Inbox.Item.Opened -> ok(app.with(reconnects: 0))
-    Inbox.Item.Event(_, Protocol.Event.Resync) -> attach(app, try Client.session(app.server, app.id))
-    Inbox.Item.Event(id, event) -> ok(on_event(app, id, event))
-    Inbox.Item.Ended(reason) -> reconnect(app, reason)
+    Client.Item.Opened -> ok(app.with(reconnects: 0))
+    Client.Item.Event(_, Protocol.Event.Resync) -> resync(app)
+    Client.Item.Event(id, event) -> ok(on_event(app.with(resyncs: 0), id, event))
+    Client.Item.Skipped(reason) -> ok(noted(app, reason))
+    Client.Item.Ended(reason) -> reconnect(app, reason)
   end
 end
 
@@ -226,6 +234,13 @@ def finished(app: App, reason: Protocol.StopReason) -> App
     Protocol.StopReason.Cancelled -> noted(app, "stopped")
     _ -> noted(app, "the turn ended: #{Protocol.stop_reason_name(reason)}")
   end
+end
+
+def resync(app: App) -> Result[App]
+  return error("the server keeps asking to read the session again", kind: "tui.resync") if app.resyncs >= MAX_RESYNCS
+
+  session = try Client.session(app.server, app.id)
+  ok(attach(app.with(resyncs: app.resyncs + 1), session, app.resyncs >= 1))
 end
 
 def reconnect(app: App, reason: String) -> Result[App]

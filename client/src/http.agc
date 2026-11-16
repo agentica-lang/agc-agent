@@ -1,23 +1,29 @@
-## The HTTP calls of the protocol to a server, with its token. A failed one is an error whose `kind` is the server's
-## and whose `code` is the HTTP status.
+## The HTTP calls of the protocol to a server. Every call carries the token. A failed one is an error whose `kind` is
+## the server's (`session.busy`, `approval.resolved`, ...) and whose `code` is the HTTP status.
 
 import HTTP from "std/http"
 import Protocol from "pkg/protocol/protocol"
 
 CALL_TIMEOUT_MS = 10_000
 PROBE_TIMEOUT_MS = 2_000
-# The protocol has no heartbeat: a session can be quiet for as long as the model thinks.
+# A session can be quiet for as long as the model thinks, and the protocol has no heartbeat: the stream is read without
+# a timeout of practical size.
 EVENTS_TIMEOUT_MS = 86_400_000
 ERROR_BODY_BYTES = 65_536
-KIND_UNREACHABLE = "tui.unreachable"
+## The server did not answer: nothing listens, or the connection failed.
+KIND_UNREACHABLE = "client.unreachable"
+KIND_TIMEOUT = "client.timeout"
 
+## Where a server listens and the token it wants.
 struct Server
   url: String
   token: String
 end
 
+## The health check is short: a server that does not answer in time is not started again, it is reported.
 def health(server: Server) -> Result[Protocol.Health]
-  Protocol.decode_health(try call_within(server, "GET", Protocol.HEALTH_PATH, "", PROBE_TIMEOUT_MS))
+  body = try call_within(server, "GET", Protocol.HEALTH_PATH, "", PROBE_TIMEOUT_MS)
+  Protocol.decode_health(body)
 end
 
 def create_session(server: Server, request: Protocol.NewSession) -> Result[String]
@@ -27,17 +33,34 @@ def create_session(server: Server, request: Protocol.NewSession) -> Result[Strin
 end
 
 def session(server: Server, id: String) -> Result[Protocol.Session]
-  Protocol.decode_session(try call(server, "GET", Protocol.session_path(id), ""))
+  body = try call(server, "GET", Protocol.session_path(id), "")
+  Protocol.decode_session(body)
 end
 
-def send_message(server: Server, id: String, text: String) -> Result[Void]
-  _ = try call(
+def send_message(server: Server, id: String, text: String) -> Result[Protocol.MessageAccepted]
+  body = try call(
     server,
     "POST",
     Protocol.messages_path(id),
     Protocol.encode_send_message(Protocol.SendMessage(text: text)),
   )
 
+  Protocol.decode_message_accepted(body)
+end
+
+def approve(server: Server, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
+  _ = try call(
+    server,
+    "POST",
+    Protocol.approval_path(id, approval_id),
+    Protocol.encode_approve(Protocol.Approve(decision: decision)),
+  )
+
+  ok()
+end
+
+def delete_session(server: Server, id: String) -> Result[Void]
+  _ = try call(server, "DELETE", Protocol.session_path(id), "")
   ok()
 end
 
@@ -46,7 +69,7 @@ def stop(server: Server, id: String) -> Result[Void]
   ok()
 end
 
-## The event stream of a session from the event after `last_event_id`.
+## The event stream of a session from the event after `last_event_id`. A failed answer is read and becomes the error.
 def open_events(server: Server, id: String, last_event_id: Int) -> Result[HTTP.Stream]
   headers = (
     headers(server, "")
@@ -90,15 +113,21 @@ end
 def network[T](result: Result[T]) -> Result[T]
   case result
     ok(value) -> ok(value)
-    error(e) -> error("cannot reach the server: #{e.message}", kind: KIND_UNREACHABLE, cause: e)
+    error(e) -> error("cannot reach the server: #{e.message}", kind: unreachable_kind(e.message), cause: e)
   end
+end
+
+def unreachable_kind(message: String) -> String
+  return KIND_TIMEOUT if message.include?("timed out")
+
+  KIND_UNREACHABLE
 end
 
 def failure[T](status: Int, headers: List[HTTP.Header], body: Bytes) -> Result[T]
   text = HTTP.text(body, headers).unwrap_or("")
   case Protocol.decode_failure(text)
     ok(wire) -> error(wire.message, kind: wire.kind, code: status)
-    error(_) -> error("the server answered HTTP #{status}", kind: "tui.http", code: status)
+    error(_) -> error("the server answered HTTP #{status}", kind: "client.http", code: status)
   end
 end
 

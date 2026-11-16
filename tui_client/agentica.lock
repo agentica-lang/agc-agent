@@ -1,6 +1,13 @@
 version = 1
 
 [[package]]
+name = "client"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "client"
+tag = "client-0.0.1"
+workspace = true
+
+[[package]]
 name = "protocol"
 git = "https://github.com/agentica-lang/agc-agent"
 subdir = "protocol"

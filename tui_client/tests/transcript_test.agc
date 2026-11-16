@@ -1,10 +1,18 @@
 import Prompt from "../src/prompt"
 import Transcript from "../src/transcript"
+import Width from "../src/width"
 
 def test_wrap_cuts_at_spaces_and_splits_long_words() -> Result[Void]
   try Test.eq(Transcript.wrap("the quick brown fox", 9), ["the quick", "brown fox"])
   try Test.eq(Transcript.wrap("abcdefghij", 4), ["abcd", "efgh", "ij"])
-  Test.eq(Transcript.wrap("one\n\ntwo", 10), ["one", "", "two"])
+  try Test.eq(Transcript.wrap("one\n\ntwo", 10), ["one", "", "two"])
+  Test.eq(Transcript.wrap("日本語 テキスト", 7), ["日本語", "テキス", "ト"])
+end
+
+def test_width_counts_wide_and_zero_width_characters() -> Result[Void]
+  try Test.eq(Width.text("aé日本"), 6)
+  try Test.eq(Width.text("e" + String.from_code(0x301)), 1)
+  Test.eq(Width.cut("日本語", 5), ["日本", "語"])
 end
 
 def test_streamed_text_joins_the_last_entry_of_its_kind() -> Result[Void]
