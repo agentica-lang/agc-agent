@@ -105,6 +105,11 @@ struct Usage
   cache_read: Int
   cache_write: Int
   context: Int
+  ## In USD, from the prices of the model catalog: this call, the turn so far and the session so far. None when the
+  ## catalog has no prices for the model.
+  cost: Optional[Float] = none
+  turn_cost: Optional[Float] = none
+  session_cost: Optional[Float] = none
 end
 
 struct TurnFinished
@@ -224,7 +229,19 @@ def encode_event(event: Event) -> String
           source: source_name(data.source),
         ),
       )
-    Event.Usage(data) -> JSON.encode(data)
+    Event.Usage(data) ->
+      wire = UsageWire(
+        input: data.input,
+        output: data.output,
+        cache_read: data.cache_read,
+        cache_write: data.cache_write,
+        context: data.context,
+        cost: Wire.field(data.cost),
+        turn_cost: Wire.field(data.turn_cost),
+        session_cost: Wire.field(data.session_cost),
+      )
+
+      JSON.encode(wire)
     Event.TurnFinished(data) ->
       wire = TurnFinishedWire(
         turn_id: data.turn_id,
@@ -273,6 +290,17 @@ struct ResolvedWire
   approval_id: String
   decision: String
   source: String
+end
+
+struct UsageWire
+  input: Int
+  output: Int
+  cache_read: Int
+  cache_write: Int
+  context: Int
+  cost: JSON.Field[Float]
+  turn_cost: JSON.Field[Float]
+  session_cost: JSON.Field[Float]
 end
 
 struct TurnStartedWire
@@ -329,7 +357,18 @@ def decode_tool_finished(data: String) -> Result[Event]
 end
 
 def decode_usage(data: String) -> Result[Event]
-  usage = try Wire.decode(data, Usage.codec)
+  wire = try Wire.decode(data, UsageWire.codec)
+  usage = Usage(
+    input: wire.input,
+    output: wire.output,
+    cache_read: wire.cache_read,
+    cache_write: wire.cache_write,
+    context: wire.context,
+    cost: Wire.optional(wire.cost),
+    turn_cost: Wire.optional(wire.turn_cost),
+    session_cost: Wire.optional(wire.session_cost),
+  )
+
   try Wire.non_negative("input", usage.input)
   try Wire.non_negative("output", usage.output)
   try Wire.non_negative("cache_read", usage.cache_read)

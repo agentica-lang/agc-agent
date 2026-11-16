@@ -1,0 +1,138 @@
+{
+ "anthropic": {
+  "id": "anthropic",
+  "env": [
+   "ANTHROPIC_API_KEY"
+  ],
+  "npm": "@ai-sdk/anthropic",
+  "name": "Anthropic",
+  "doc": "https://docs.anthropic.com/en/docs/about-claude/models",
+  "models": {
+   "claude-opus-5-5": {
+    "id": "claude-opus-5-5",
+    "name": "Claude Opus 5.5",
+    "reasoning": true,
+    "tool_call": true,
+    "limit": {
+     "context": 1000000,
+     "output": 128000
+    },
+    "cost": {
+     "input": 4,
+     "output": 20,
+     "cache_read": 0.2,
+     "cache_write": 5
+    }
+   },
+   "claude-haiku-5-5": {
+    "id": "claude-haiku-5-5",
+    "name": "Claude Haiku 5.5",
+    "reasoning": true,
+    "tool_call": true,
+    "limit": {
+     "context": 1000000,
+     "output": 128000
+    },
+    "cost": {
+     "input": 0.1,
+     "output": 0.5,
+     "cache_read": 0.01,
+     "cache_write": 0.125,
+     "tiers": [
+      {
+       "input": 0.5,
+       "output": 2.5,
+       "cache_read": 0.05,
+       "cache_write": 0.625,
+       "tier": {
+        "type": "context",
+        "size": 100000
+       }
+      }
+     ]
+    }
+   }
+  }
+ },
+ "openai": {
+  "id": "openai",
+  "env": [
+   "OPENAI_API_KEY"
+  ],
+  "npm": "@ai-sdk/openai",
+  "name": "OpenAI",
+  "doc": "https://platform.openai.com/docs/models",
+  "models": {
+   "gpt-5.1": {
+    "id": "gpt-5.1",
+    "name": "GPT-5.1",
+    "reasoning": true,
+    "tool_call": true,
+    "limit": {
+     "context": 400000,
+     "input": 272000,
+     "output": 128000
+    },
+    "cost": {
+     "input": 1.25,
+     "output": 10,
+     "cache_read": 0.125
+    }
+   }
+  }
+ },
+ "fireworks-ai": {
+  "id": "fireworks-ai",
+  "env": [
+   "FIREWORKS_API_KEY"
+  ],
+  "npm": "@ai-sdk/openai-compatible",
+  "api": "https://api.fireworks.ai/inference/v1/",
+  "name": "Fireworks AI",
+  "doc": "https://fireworks.ai/docs/",
+  "models": {
+   "accounts/fireworks/models/deepseek-v4p1-flash-1017": {
+    "id": "accounts/fireworks/models/deepseek-v4p1-flash-1017",
+    "name": "DeepSeek V4.1 Flash 1017",
+    "reasoning": true,
+    "tool_call": true,
+    "limit": {
+     "context": 1000000,
+     "output": 384000
+    },
+    "cost": {
+     "input": 0.3,
+     "output": 1.2,
+     "cache_read": 0.006
+    }
+   }
+  }
+ },
+ "302ai": {
+  "id": "302ai",
+  "env": [
+   "302AI_API_KEY"
+  ],
+  "npm": "@ai-sdk/openai-compatible",
+  "api": "https://api.302.ai/v1",
+  "name": "302.AI",
+  "doc": "https://doc.302.ai",
+  "models": {
+   "gpt-5.1": {
+    "id": "gpt-5.1",
+    "name": "gpt-5.1",
+    "reasoning": true,
+    "tool_call": true,
+    "limit": {
+     "context": 400000,
+     "input": 272000,
+     "output": 128000
+    },
+    "cost": {
+     "input": 1.25,
+     "output": 10
+    }
+   }
+  }
+ }
+}

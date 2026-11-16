@@ -19,7 +19,8 @@
     "history": [
       {"role": "user", "text": "Write hello.txt."},
       {"role": "assistant", "text": "Done."}
-    ]
+    ],
+    "cost": 0.42
   },
   "session_mid_turn": {
     "id": "s1",
