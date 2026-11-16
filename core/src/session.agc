@@ -17,8 +17,10 @@ import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
 import Agent from "agent"
+import Catalog from "catalog"
 import CodeMode from "code_mode"
 import Compaction from "compaction"
+import Spec from "spec"
 import Skills from "skills"
 import Store from "store"
 import Tools from "tools"
@@ -49,6 +51,8 @@ struct Setup
   api_key: String = ""
   extra: Map[String, JSON.Value] = {}
   code_mode: Optional[CodeMode.Settings] = none
+  catalog: Optional[Catalog.Catalog] = none
+  catalog_provider: String = ""
   ## How long a turn waits for the queued messages before it goes on without them.
   take_ms: Int = 5000
   ## Ask the provider for its prompt cache.
@@ -132,6 +136,9 @@ struct State
   output: Int = 0
   ## The context of the last call.
   context: Int = 0
+  ## What the calls cost in USD, from the catalog's prices: the session's and the running turn's.
+  cost: Optional[Float] = none
+  turn_cost: Float = 0.0
   ## Messages sent while the turn runs, which it has not read yet. They live only here: a crash of the server loses
   ## them with no `queue_dropped`.
   queued: List[String] = []
@@ -324,6 +331,7 @@ def session(state: State) -> Protocol.Session
     turn_from_event_id: state.turn.map { |t| t.from_event_id },
     pending_approvals: state.pending.map { |w| w.request },
     history: state.display,
+    cost: state.cost,
     effort: state.setup.effort,
   )
 end
@@ -376,16 +384,25 @@ def lost_after(state: State, id: Int) -> List[String]
   end
 end
 
-# A `usage` of one call goes out with the session's output so far, which counts it once it is saved. A call that a stop
-# cut is not counted: its `usage` comes after the turn ended, if at all.
+# A `usage` of one call goes out with the session's output and cost so far, which count it once it is saved. A
+# call that
+# a stop cut is not counted: its `usage` comes after the turn ended, if at all.
 def emit_counted(state: State, event: Protocol.Event) -> State
   case event
     Protocol.Event.Usage(usage) ->
       output = state.output + usage.output
-      emitted = emit(state, Protocol.Event.Usage(usage.with(output: output)))
+      cost = state.cost
+      turn_cost = state.turn_cost
+      for call in option_list(usage.cost)
+        cost = some(cost.unwrap_or(0.0) + call)
+        turn_cost = turn_cost + call
+      end
+
+      counted = usage.with(output: output, turn_cost: cost.map { |_| turn_cost }, session_cost: cost)
+      emitted = emit(state, Protocol.Event.Usage(counted))
       return emitted if emitted.counter == state.counter
 
-      emitted.with(output: output, context: usage.context)
+      emitted.with(output: output, context: usage.context, cost: cost, turn_cost: turn_cost)
     _ -> emit(state, event)
   end
 end
@@ -523,7 +540,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
       return state.with(broken: some(e.message))
   end
 
-  turn_id = "turn-#{state.turns + 1}"
+  turn_id = new_turn_id(state.turns + 1)
   inbox: Channel[Msg] = Actor.inbox
   address = inbox.address
   setup = state.setup
@@ -545,7 +562,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     system: setup.system,
     history: state.history,
     text: text,
-    ctx: setup.ctx,
+    ctx: Spec.snapshot(setup.ctx),
     link: link,
     extra: setup.extra,
     cache: setup.cache,
@@ -560,6 +577,8 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     ),
     last_context: state.context,
     code_mode: setup.code_mode,
+    catalog: setup.catalog,
+    catalog_provider: setup.catalog_provider,
     turn_tools: Skills.tools(setup.skills),
     marks: state.marks,
     on_fold: some(Skills.on_fold(setup.skills)),
@@ -571,6 +590,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
   started = state.with(
     turn: some(running),
     turns: state.turns + 1,
+    turn_cost: 0.0,
     history: state.history.push(LLM.Message(role: LLM.Role.User, content: [Agent.text_block(text)])),
     display: state.display.push(Protocol.Message(role: Protocol.Role.User, text: typed)),
     broken: none,
@@ -955,6 +975,7 @@ def restore(setup: Setup, saved: Store.Saved) -> State
     resolved: resolved_ids(events),
     output: last_usage(events).output,
     context: last_usage(events).context,
+    cost: last_usage(events).session_cost,
     window: setup.window,
   )
 
@@ -978,11 +999,15 @@ def restore(setup: Setup, saved: Store.Saved) -> State
   return ended_cut if not saved.open_user
 
   # The server stopped between the user message of a turn and its `turn_started`.
-  turn_id = "turn-#{ended_cut.turns}"
+  turn_id = new_turn_id(ended_cut.turns)
   size = some(ended_cut.display.size)
   started = emit(ended_cut, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id, history_size: size)))
   end_cut_turn(started, Cut(turn_id: turn_id, approvals: []), started.history.size, none)
 end
+
+# The number of the turn and a random part: a server that lost the last records of a session never gives a turn the id
+# of another.
+def new_turn_id(number: Int) -> String = "turn-#{number}-#{OpenSSL.Random.hex(4)}"
 
 # The last id that no saved event has, below the last saved one: a delta that was not saved.
 def lost_below(events: List[Store.Logged]) -> Int

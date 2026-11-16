@@ -99,6 +99,20 @@ def encode_compacted(body: Compacted) -> String = JSON.encode(body)
 
 def decode_compacted(text: String) -> Result[Compacted] = Wire.decode(text, Compacted.codec)
 
+## The fields of the requests and the names of their values on the wire, for `Protocol.WIRE`.
+def shape() -> List[String]
+  records = [
+    Wire.record("NewSession", NewSession.members),
+    Wire.record("SendMessage", SendMessage.members),
+    Wire.record("Approve", Approve.members),
+    Wire.record("UpdateSession", UpdateSession.members),
+    Wire.record("Compacted", Compacted.members),
+    Wire.record("ApproveWire", ApproveWire.members),
+  ]
+
+  records + [Wire.values("Decision", decisions().map(&decision_name))]
+end
+
 private
 
 struct ApproveWire

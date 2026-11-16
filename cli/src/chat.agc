@@ -483,6 +483,7 @@ def reconnect(chat: Chat, reason: String) -> Result[Step]
 
   IO.warn("[the event stream ended: #{reason}; reconnecting]")
   Task.sleep(RECONNECT_MS * reconnects)
+  try Client.recheck(chat.server)
   ok(Step(chat: subscribe(chat.with(reconnects: reconnects), chat.last_event_id)))
 end
 

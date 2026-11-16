@@ -46,3 +46,12 @@ def test_an_own_turn_read_again_without_its_events_is_asked() -> Result[Void]
   try Test.eq(Yolo.allows?(Yolo.attached(mine, some("turn-2"), false)), false)
   Test.eq(Yolo.allows?(Yolo.attached(mine, some("turn-3"), false)), false)
 end
+
+# A resync that skips the replay gives no turn_finished or turn_started: the snapshot says which turn runs.
+def test_a_snapshot_replaces_the_running_turn() -> Result[Void]
+  mine = Yolo.running(Yolo.accepted(Yolo.Yolo(on: true), Protocol.MessageAccepted(turn_id: "turn-2")), some("turn-2"))
+  idle = Yolo.attached(mine, none, false)
+  try Test.eq(Yolo.allows?(idle), false)
+  try Test.eq(Yolo.allows?(Yolo.attached(mine, some("turn-3"), true)), false)
+  Test.eq(Yolo.allows?(Yolo.attached(idle, some("turn-2"), true)), true)
+end

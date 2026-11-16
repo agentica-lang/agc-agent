@@ -7,6 +7,7 @@ import Monty from "pkg/monty/monty"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
 import Approval from "../../src/approval"
+import Catalog from "../../src/catalog"
 import CodeMode from "../../src/code_mode"
 import Config from "../../src/config"
 import Server from "../../src/server"
@@ -59,12 +60,15 @@ struct Setup
   after_load: Optional[Fn[String, Void]] = none
   ## The model API of the server, as `FINN_API` names it; the fixtures come from the folder of its format.
   api: String = "openai"
-  ## The tools of MCP servers.
+  ## The tools of MCP servers, and those that come after the start.
   tools: List[Tools.Tool] = []
+  late_tools: Optional[Fn[List[Tools.Tool]]] = none
   ## Code mode on a fake Monty worker that replays this fixture of `tests/fixtures/monty`.
   monty: String = ""
   ## Deny rules of the config, as `bash(rm *)`.
   deny: List[String] = []
+  model: String = "qwen2.5-0.5b-instruct"
+  catalog: Optional[Catalog.Catalog] = none
   ## The token that Anthropic fetches again after a 401; none when empty.
   fresh_token: String = ""
   ## How long a turn waits for its queued messages.
@@ -140,7 +144,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     data_dir: "#{base}/data",
     apis: apis(setup, fake),
     api: setup.api,
-    model: "qwen2.5-0.5b-instruct",
+    model: setup.model,
     env: &fake_env,
     rules: try Approval.parse_rules([], setup.deny),
     keep_events: setup.keep_events,
@@ -151,7 +155,9 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     before_load: setup.before_load,
     after_load: setup.after_load,
     tools: setup.tools,
+    late_tools: setup.late_tools,
     code_mode: code_mode(setup.monty),
+    catalog: setup.catalog,
     take_ms: setup.take_ms,
     home: skills_home(setup, base),
     trusted: skills_trusted(setup, base),

@@ -595,6 +595,7 @@ def reconnect(app: App, reason: String) -> Result[App]
   return error("lost the event stream: #{reason}", kind: "tui.stream") if reconnects > MAX_RECONNECTS
 
   Task.sleep(RECONNECT_MS * reconnects)
+  try Client.recheck(app.server)
   ok(subscribe(app.with(reconnects: reconnects), app.last_event_id))
 end
 

@@ -3,7 +3,7 @@
   "new_session_default_model": {"cwd": "/home/ana/project", "model": null, "api": null},
   "send_message": {"text": "Write hello.txt, then run it."},
   "approve": {"decision": "allow"},
-  "health": {"version": "0.0.1"},
+  "health": {"version": "0.0.1", "wire": "5d41402abc4b2a76b9719d911017c592"},
   "server_info": {"port": 41234, "token": "3f9a0c", "pid": 4242},
   "session_created": {"id": "s1"},
   "message_accepted": {"turn_id": "t1", "message_id": null},
@@ -21,7 +21,8 @@
     "history": [
       {"role": "user", "text": "Write hello.txt."},
       {"role": "assistant", "text": "Done."}
-    ]
+    ],
+    "cost": 0.42
   },
   "session_mid_turn": {
     "id": "s1",

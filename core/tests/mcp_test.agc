@@ -3,6 +3,7 @@ import Protocol from "pkg/protocol/protocol"
 import Approval from "../src/approval"
 import McpTools from "../src/mcp_tools"
 import Tools from "../src/tools"
+import Fake from "support/fake_llm"
 import H from "support/harness"
 
 FAKES = ["../mcp/tests/support/fake_server.agc", "mcp/tests/support/fake_server.agc"]
@@ -27,6 +28,44 @@ def test_a_session_calls_an_mcp_tool_after_an_approval() -> Result[Void]
       )
 
       Test.eq(JSON.get(messages.last, "content"), ok(JSON.from("hello from mcp")))
+    end
+  end
+end
+
+# Tools that a server lists after the start reach a session that started before them.
+def test_tools_listed_late_reach_the_sessions() -> Result[Void]
+  within_mcp do |started|
+    H.using(H.Setup(replies: ["mcp_echo.sse", "text.sse"], late_tools: some(-> { started.tools }))) do |h|
+      id = try H.new_session(h)
+      a = try H.subscribe(h, id)
+      _ = try H.send(h, id, "Echo it.")
+      a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+      _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+      _ = try H.until(a, Protocol.EventKind.TurnFinished)
+      H.close(a)
+      first = try JSON.parse((try H.next_request(h)).body)
+      Test.assert(JSON.encode(try JSON.get(first, "tools")).include?("\"mcp__fake__echo\""), "no MCP tool offered")
+    end
+  end
+end
+
+# The tools of a turn are those there were when it started: a tool listed during the turn waits for the next one, so
+# both requests of a turn offer the same tools.
+def test_a_turn_keeps_the_tools_it_started_with() -> Result[Void]
+  within_mcp do |started|
+    calls: Channel[Int] = Channel.new(1)
+    _ = calls.send(0, 1000)
+    late = -> { growing(calls, started.tools) }
+    H.using(H.Setup(replies: ["read_file.sse", "text.sse"], late_tools: some(late))) do |h|
+      id = try H.new_session(h)
+      a = try H.subscribe(h, id)
+      _ = try H.send(h, id, "Read it.")
+      a = try H.until(a, Protocol.EventKind.TurnFinished)
+      H.close(a)
+      first = tool_names(try H.next_request(h))
+      second = tool_names(try H.next_request(h))
+      try Test.eq(second, first)
+      Test.assert(second.size > 0, "no tools offered")
     end
   end
 end
@@ -60,7 +99,9 @@ def test_the_config_refuses_odd_names() -> Result[Void]
 
     env = JSON.object({"A=B": JSON.from("x")})
     try write_config(dir, {"ok": JSON.object({"command": JSON.from("true"), "env": env})})
-    Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok? == false, "A=B taken")
+    try Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok? == false, "A=B taken")
+    try write_config(dir, {"ok": JSON.object({"command": JSON.from("X=1")})})
+    Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok? == false, "a command with = taken")
   end
 end
 
@@ -86,6 +127,23 @@ def test_a_server_gets_a_short_environment_and_unique_tools() -> Result[Void]
     try Test.eq(started.warnings.size, 2)
     try Test.eq([key, greeting], ["", "hi"])
     Test.assert(not path.empty?, "no PATH")
+  end
+end
+
+# Slow servers list their tools at the same time and after the start: their tools come as they are listed.
+def test_slow_servers_list_their_tools_in_the_background() -> Result[Void]
+  within_dir do |dir|
+    slow = JSON.object({"FAKE_MCP_SLOW_MS": JSON.from("3000")})
+    try write_config(dir, {"one": try fake_server(slow), "two": try fake_server(slow)})
+    began = Time.monotonic_ms()
+    board = McpTools.background(try McpTools.servers(->(n) { config_env(dir, n) }, dir), ->(_w: String) { nil })
+    at_start = McpTools.tools(board)
+    started = McpTools.wait(board)
+    took = Time.monotonic_ms() - began
+    McpTools.stop(started)
+    try Test.eq(at_start.size, 0)
+    try Test.eq(started.tools.size, 18)
+    Test.assert(took < 5000, "the listings took #{took} ms: one after the other")
   end
 end
 
@@ -141,4 +199,17 @@ def existing(paths: List[String]) -> Result[String]
     ok(path) -> ok(path)
     error(_) -> error("none of #{paths.join(", ")} exists")
   end
+end
+
+# The tools listed so far: one more on each call.
+def growing(calls: Channel[Int], tools: List[Tools.Tool]) -> List[Tools.Tool]
+  n = calls.recv(1000).unwrap_or(0)
+  _ = calls.send(n + 1, 1000)
+  (0..n).to_a.map { |i| tools[0].with(name: "#{tools[0].name}#{i}") }
+end
+
+def tool_names(request: Fake.Seen) -> List[String]
+  json = JSON.parse(request.body).unwrap_or(JSON.object({}))
+  listed: List[JSON.Value] = JSON.list(JSON.get(json, "tools").unwrap_or(JSON.array([]))).unwrap_or([])
+  listed.map { |tool| JSON.encode(tool) }
 end
