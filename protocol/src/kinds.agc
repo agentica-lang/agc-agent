@@ -21,6 +21,9 @@ KIND_SESSION_BUSY = "session.busy"
 ## The server cannot write the session's file (`500`): the turn stops, and no turn starts until a write works.
 KIND_SESSION_STORAGE = "session.storage"
 
+## A session the server cannot load from its file now (`503`): a later request tries again.
+KIND_SESSION_UNAVAILABLE = "session.unavailable"
+
 KIND_APPROVAL_NOT_FOUND = "approval.not_found"
 
 ## An answer that came after the approval was resolved: the first answer won, a rule or the timeout answered, or the

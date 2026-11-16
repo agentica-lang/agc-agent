@@ -118,7 +118,8 @@ end
 
 enum Msg
   Create(Protocol.NewSession, Channel[Result[String]])
-  Find(String, Channel[Optional[Address[Session.Msg]]])
+  Find(String, Channel[Result[Address[Session.Msg]]])
+  Delete(String, Channel[Result[Void]])
   List(Channel[Protocol.SessionList])
 end
 
@@ -204,18 +205,41 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
     Msg.Find(id, reply) ->
       found = registry.sessions.select { |entry| entry.summary.id == id }
       if found.empty?
-        Actor.reply(reply, none)
+        Actor.reply(reply, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
         return Actor.continue(registry)
       end
 
       case started(registry.options, found[0])
         ok(entry) ->
-          Actor.reply(reply, entry.session.map { |session| session.address })
+          Actor.reply(reply, entry.session.map { |session| session.address }.to_result("not started"))
           Actor.continue(registry.with(sessions: registry.sessions.map { |e| replaced(e, entry) }))
         error(e) ->
-          IO.warn("session #{id} not loaded: #{e.message}")
-          Actor.reply(reply, none)
-          Actor.continue(registry.with(sessions: registry.sessions.select { |other| other.summary.id != id }))
+          message = "session #{id} cannot be loaded now: #{e.message}"
+          IO.warn(message)
+          Actor.reply(reply, error(message, kind: Protocol.KIND_SESSION_UNAVAILABLE))
+          Actor.continue(registry)
+      end
+
+    Msg.Delete(id, reply) ->
+      found = registry.sessions.select { |entry| entry.summary.id == id }
+      if found.empty?
+        Actor.reply(reply, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
+        return Actor.continue(registry)
+      end
+
+      case ended(found[0])
+        ok(entry) ->
+          removed = remove_file(entry.file)
+          Actor.reply(reply, removed)
+          sessions = registry.sessions.map { |e| replaced(e, entry) }
+          if removed.ok?
+            sessions = sessions.select { |e| e.summary.id != id }
+          end
+
+          Actor.continue(registry.with(sessions: sessions))
+        error(e) ->
+          Actor.reply(reply, error(e))
+          Actor.continue(registry)
       end
 
     Msg.List(reply) ->
@@ -244,6 +268,23 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
 
   file = try Store.create(sessions_dir(options), header)
   ok(entry(options, header, context, file, none))
+end
+
+# The entry with its session ended, refused while a turn runs; it loads again on its next use.
+def ended(listed: Entry) -> Result[Entry]
+  for session in option_list(listed.session)
+    try Session.end_session(session.address)
+    _ = Task.await(session.task, CALL_MS)
+  end
+
+  ok(listed.with(session: none))
+end
+
+def remove_file(file: String) -> Result[Void]
+  info = try File.lstat(file)
+  return error("#{file}: not a regular file") if info.kind != "file"
+
+  Path.remove(file)
 end
 
 def replaced(entry: Entry, by: Entry) -> Entry
@@ -429,6 +470,10 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
     "GET 0" ->
       list: Result[Protocol.SessionList] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
       response(200, Protocol.encode_session_list(try list))
+    "DELETE 1" ->
+      deleted: Result[Result[Void]] = Actor.call(registry, CALL_MS) do |reply| Msg.Delete(parts[0], reply) end
+      try try deleted
+      response(200, "{}")
     "GET 1" -> response(200, Protocol.encode_session(try Session.snapshot(try find(registry, parts[0]))))
     "POST 2" if parts[1] == "messages" ->
       message = try Protocol.decode_send_message(text)
@@ -465,23 +510,26 @@ def subscribe(registry: Address[Msg], id: String, last: Optional[Int]) -> Result
 end
 
 def find(registry: Address[Msg], id: String) -> Result[Address[Session.Msg]]
-  found: Result[Optional[Address[Session.Msg]]] = Actor.call(registry, CALL_MS) do |reply| Msg.Find(id, reply) end
-  case try found
-    some(address) -> ok(address)
-    none -> error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND)
-  end
+  found: Result[Result[Address[Session.Msg]]] = Actor.call(registry, CALL_MS) do |reply| Msg.Find(id, reply) end
+  ok(try try found)
 end
 
 def no_route(method: String, path: String) -> HTTP.Response
   failure_response(404, "not_found", "no route for #{method} #{path}")
 end
 
-def failure(e: Error) -> HTTP.Response = failure_response(status_of(e.kind), e.kind, e.message)
+def failure(e: Error) -> HTTP.Response
+  # A request that reached a session as it was deleted.
+  return failure_response(404, Protocol.KIND_SESSION_NOT_FOUND, "session deleted") if e.kind == "channel.gone"
+
+  failure_response(status_of(e.kind), e.kind, e.message)
+end
 
 def status_of(kind: String) -> Int
   return 400 if [Protocol.KIND_INVALID, Protocol.KIND_UNKNOWN].include?(kind)
   return 404 if [Protocol.KIND_SESSION_NOT_FOUND, Protocol.KIND_APPROVAL_NOT_FOUND].include?(kind)
   return 409 if [Protocol.KIND_SESSION_BUSY, Protocol.KIND_APPROVAL_RESOLVED].include?(kind)
+  return 503 if kind == Protocol.KIND_SESSION_UNAVAILABLE
 
   500
 end

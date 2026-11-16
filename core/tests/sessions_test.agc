@@ -156,9 +156,9 @@ def test_a_restart_after_unsaved_deltas_skips_their_ids() -> Result[Void]
   end
 end
 
-# After a restart the sessions are listed from the first line of their files, in the order they were made; a session
-# is loaded when it is first used (a turn the restart cut ends only then), and one that cannot be loaded leaves the
-# list.
+# After a restart the sessions are listed from the first line of their files, in the order they were made (not of
+# their ids); a session is loaded when it is first used (a turn the restart cut ends only then), and one that cannot
+# be loaded now answers 503 and is tried again on the next request.
 def test_a_session_is_loaded_when_first_used() -> Result[Void]
   setup = H.Setup(replies: ["write_file.sse"])
   H.using(setup) do |h|
@@ -172,16 +172,65 @@ def test_a_session_is_loaded_when_first_used() -> Result[Void]
     H.close(a)
     try Path.remove(gone_cwd)
     file = H.session_file(h, id)
+    late = (
+      "{\"type\":\"session\",\"id\":\"a-late\",\"cwd\":\"#{h.work}\",\"model\":\"m\"," +
+      "\"created_ms\":#{Time.now_ms + 1_000_000}}\n"
+    )
+
+    try File.write_text(H.session_file(h, "a-late"), late)
     H.restarted(h, setup, "") do |r|
       size = (try File.stat(file)).size_bytes
       listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
-      try Test.eq(listed.sessions.map { |s| s.id }, [id, gone])
+      try Test.eq(listed.sessions.map { |s| s.id }, [id, gone, "a-late"])
       try Test.eq((try File.stat(file)).size_bytes, size)
       try Test.eq((try H.session(r, id)).turn_id, none)
       try Test.assert((try File.stat(file)).size_bytes > size, "the cut turn did not end when the session loaded")
-      try Test.eq((try H.get(r, Protocol.session_path(gone))).status, 404)
+      unavailable = try H.get(r, Protocol.session_path(gone))
+      try Test.eq(
+        [unavailable.status.to_s, (try Protocol.decode_failure(unavailable.text)).kind],
+        ["503", Protocol.KIND_SESSION_UNAVAILABLE],
+      )
+
       after = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
-      Test.eq(after.sessions.map { |s| s.id }, [id])
+      try Test.eq(after.sessions.map { |s| s.id }, [id, gone, "a-late"])
+      try Dir.mkdir(gone_cwd)
+      Test.eq((try H.get(r, Protocol.session_path(gone))).status, 200)
+    end
+  end
+end
+
+# A session is deleted with its file, but not while a turn runs; one whose file stays loads again; one not loaded
+# since a restart is deleted too.
+def test_a_session_is_deleted() -> Result[Void]
+  setup = H.Setup(replies: ["write_file.sse", "text.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    other = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    busy = try H.call(h, "DELETE", Protocol.session_path(id), "", H.auth(h))
+    try Test.eq([busy.status.to_s, (try Protocol.decode_failure(busy.text)).kind], ["409", Protocol.KIND_SESSION_BUSY])
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Deny)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    try Test.eq((try H.call(h, "DELETE", Protocol.session_path(id), "", H.auth(h))).status, 200)
+    try Test.eq(File.stat(H.session_file(h, id)).ok?, false)
+    try Test.eq((try H.get(h, Protocol.session_path(id))).status, 404)
+    try Test.eq((try H.call(h, "DELETE", Protocol.session_path(id), "", H.auth(h))).status, 404)
+    try Test.eq(a.stream.body.recv(5000).ok?, false)
+    H.close(a)
+    kept = try H.new_session(h)
+    try chmod("500", H.sessions(h))
+    failed = H.call(h, "DELETE", Protocol.session_path(kept), "", H.auth(h))
+    try chmod("700", H.sessions(h))
+    try Test.eq((try failed).status, 500)
+    try Test.eq((try H.get(h, Protocol.session_path(kept))).status, 200)
+    try Test.eq((try H.call(h, "DELETE", Protocol.session_path(kept), "", H.auth(h))).status, 200)
+    H.restarted(h, setup, "") do |r|
+      try Test.eq((try H.call(r, "DELETE", Protocol.session_path(other), "", H.auth(r))).status, 200)
+      try Test.eq(File.stat(H.session_file(r, other)).ok?, false)
+      listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
+      Test.eq(listed.sessions.size, 0)
     end
   end
 end

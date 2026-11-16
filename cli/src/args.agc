@@ -17,6 +17,8 @@ end
 
 enum Command
   Run(Options)
+  ## Deletes the session of that id, on the server of the options.
+  Delete(Options, String)
   Version
   Help(String)
 end
@@ -39,6 +41,7 @@ def parse(args: List[String]) -> Result[Command]
       Opt(name: "cwd", help: "folder of a new session (default: the current folder)"),
       Opt(name: "model", help: "model of a new session (default: the server's)"),
       Opt(name: "thinking", kind: Kind.Flag, help: "show the model's thinking, dimmed"),
+      Opt(name: "delete", help: "id of a session to delete (with its file), then exit"),
       Opt(name: "version", kind: Kind.Flag, help: "print the version"),
     ],
     "SERVER_COMMAND",
@@ -57,18 +60,20 @@ def command(parsed: Parsed) -> Result[Command]
   return ok(Command.Version) if OP.flag(parsed, "version")
 
   server_command = try server_command(parsed)
-  ok(
-    Command.Run(
-      Options(
-        state_dir: OP.optional_string(parsed, "state-dir"),
-        server_command: server_command,
-        session: OP.optional_string(parsed, "session"),
-        cwd: OP.optional_string(parsed, "cwd"),
-        model: OP.optional_string(parsed, "model"),
-        thinking: OP.flag(parsed, "thinking"),
-      ),
-    ),
+  options = Options(
+    state_dir: OP.optional_string(parsed, "state-dir"),
+    server_command: server_command,
+    session: OP.optional_string(parsed, "session"),
+    cwd: OP.optional_string(parsed, "cwd"),
+    model: OP.optional_string(parsed, "model"),
+    thinking: OP.flag(parsed, "thinking"),
   )
+
+  for id in option_list(OP.optional_string(parsed, "delete"))
+    return ok(Command.Delete(options, id))
+  end
+
+  ok(Command.Run(options))
 end
 
 def server_command(parsed: Parsed) -> Result[Optional[List[String]]]
@@ -85,4 +90,11 @@ def server_command(parsed: Parsed) -> Result[Optional[List[String]]]
   end
 
   ok(some(text.unwrap!.split(" ").select { |word| word != "" }))
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
 end

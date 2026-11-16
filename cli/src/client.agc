@@ -59,6 +59,11 @@ def approve(server: Server, id: String, approval_id: String, decision: Protocol.
   ok()
 end
 
+def delete_session(server: Server, id: String) -> Result[Void]
+  _ = try call(server, "DELETE", Protocol.session_path(id), "")
+  ok()
+end
+
 def stop(server: Server, id: String) -> Result[Void]
   _ = try call(server, "POST", Protocol.stop_path(id), "")
   ok()
