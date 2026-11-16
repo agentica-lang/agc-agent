@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- `finn tui` reads Alt+Enter as one key (it was Escape, which stopped the turn, then Enter).
 - `finn chat` and `finn tui` have `/tree` (go back before an earlier message, or on after an answer, in the same session), `/fork` (a new session from a message) and `/clone` (a copy of the session); `/tree N` and `/fork N` name a message of the last list; `finn tui` picks from a list, and the message gone back before waits in the prompt, selected, so typing replaces it.
 - A session file is a tree: `GET /v1/sessions/ID/tree` lists the user messages of every branch, `POST /v1/sessions/ID/branch` goes on from an earlier message in the same session, and `POST /v1/sessions/ID/fork` starts a new session from one (or copies the session); older session files still load.
 - `finn tui` looks like pi: the prompt sits between two rules whose color shows the thinking level (Shift+Tab sets the next one), a spinner and "Working" sit in the top rule during a turn, the transcript has no `>` or `·` marks, the `/resume` picker takes the prompt's place and an approval shows under it.
