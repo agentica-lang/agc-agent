@@ -1,9 +1,11 @@
 ## The text the user types and its cursor, a character index. A row ends at the width, at any character, so a column
 ## of the screen maps to one place of the text. Pure.
 
+import Regex from "std/regex"
 import Width from "width"
 
 MAX_ROWS = 6
+NARROW = /\A[ -~]*\z/
 LEAD = "> "
 
 ## The rows the prompt draws (at most MAX_ROWS, the cursor's among them), and where the cursor is in them.
@@ -98,24 +100,39 @@ def window(text: String, at: Int, width: Int, height: Int) -> Window
   Window(rows: rows.drop(first), cursor_row: row - first)
 end
 
+# The rows of one line, each as wide as fits; a character wider than a row gets one of its own. A line of printable
+# ASCII is cut by length; another is read once, character by character.
 def cut_line(line: String, start: Int, columns: Int) -> List[Piece]
+  return narrow_rows(line, start, columns) if Regex.match?(line, NARROW)
+
   out: List[Piece] = []
-  rest = line
-  at = start
-  while true
-    parts = Width.cut(rest, columns)
-    if parts[0] == "" and rest != ""
-      parts = [rest.slice(0, 1), rest.slice(1, rest.length - 1)]
+  row = ""
+  from = 0
+  used = 0
+  at = 0
+  for c in line.split("")
+    wide = Width.char(c)
+    if used + wide > columns and row != ""
+      out = out.push(Piece(text: row, start: start + from))
+      row = ""
+      from = at
+      used = 0
     end
 
-    out = out.push(Piece(text: parts[0], start: at))
-    break if parts[1] == ""
-
-    at = at + parts[0].length
-    rest = parts[1]
+    row = row + c
+    used = used + wide
+    at = at + 1
   end
 
-  out
+  out.push(Piece(text: row, start: start + from))
+end
+
+def narrow_rows(line: String, start: Int, columns: Int) -> List[Piece]
+  count = [(line.length + columns - 1) / columns, 1].max.unwrap!
+  (0...count).to_a.map do |k|
+    from = k * columns
+    Piece(text: line.slice(from, [columns, line.length - from].min.unwrap!), start: start + from)
+  end
 end
 
 # The last row that starts at or before `cursor`.

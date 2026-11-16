@@ -7,10 +7,10 @@ import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
 import Args from "args"
 import Inbox from "inbox"
-import Markdown from "markdown"
 import Picker from "picker"
 import Layout from "panel"
 import Prompt from "prompt"
+import Screen from "screen"
 import Transcript from "transcript"
 import Width from "width"
 import Yolo from "pkg/client/yolo"
@@ -81,41 +81,16 @@ struct App
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
   new_model: Optional[String] = none
   yolo: Yolo.Yolo
-  ## Where the last draw put each part of the screen.
-  hits: Optional[Hits] = none
+  ## The regions of the last draw, which the clicks are matched against: what the user saw.
+  drawn: Optional[Screen.Frame] = none
+  ## What the screen shows after the last draw, so the next one writes only the cells that changed.
+  grid: Optional[TUI.Raw.Grid] = none
   ## A draw failed and the transcript says so; later failures are not noted again.
   draw_failed: Bool = false
   ## The thinking of the model is drawn.
   thinking: Bool = false
   approvals: Approvals.Panel
   exit: Optional[Int] = none
-end
-
-struct Row
-  text: String
-  style: TUI.Style
-end
-
-# Where each part of the screen is now: the transcript rows from `top` in `area` rows, the panel below them, the
-# status line, then the prompt.
-# What the last draw put where, for the clicks: the entry of each transcript row, the panel rows from `panel_top`, and
-# the first prompt row.
-struct Hits
-  entries: List[Int]
-  panel: List[Layout.Row]
-  panel_top: Int
-  prompt_top: Int
-  width: Int
-end
-
-struct Frame
-  width: Int
-  height: Int
-  prompt: Prompt.View
-  panel: List[Layout.Row]
-  area: Int
-  lines: List[Transcript.Line]
-  top: Int
 end
 
 def watch_signals(signals: Channel[System.Signal], inbox: Channel[Inbox.Input]) -> Void
@@ -288,29 +263,23 @@ def typed(app: App, piece: String) -> App
 end
 
 # A click on the transcript opens or closes a thinking block or a tool call; on a key of the approval panel it is
-# that key (with the same rules); in the prompt it moves the cursor.
-# The click is matched against what the last draw showed, which is what the user saw.
+# that key (with the same rules); in the prompt it moves the cursor. The click is matched against the regions of the
+# last draw, which is what the user saw.
 def clicked(app: App, x: Int, y: Int) -> App
-  case app.hits
-    some(hits) -> clicked_on(app, hits, x, y)
+  case app.drawn
+    some(frame) -> clicked_on(app, frame, x, y)
     none -> app
   end
 end
 
-def clicked_on(app: App, hits: Hits, x: Int, y: Int) -> App
-  return app.with(entries: Transcript.toggle(app.entries, hits.entries[y], app.thinking)) if y < hits.entries.size
-
-  if y >= hits.panel_top and y < hits.panel_top + hits.panel.size
-    case Layout.hit(hits.panel[y - hits.panel_top], x)
-      some(event) -> return on_key(app, event)
-      none -> return app
-    end
+def clicked_on(app: App, frame: Screen.Frame, x: Int, y: Int) -> App
+  case Screen.hit(frame, x, y)
+    Screen.Hit.Entry(index) -> app.with(entries: Transcript.toggle(app.entries, index, app.thinking))
+    Screen.Hit.Key(event) -> on_key(app, event)
+    Screen.Hit.Prompt(column, row) ->
+      app.with(cursor: Prompt.index_at(app.prompt, cursor(app), frame.width, frame.height, column, row))
+    Screen.Hit.Nothing -> app
   end
-
-  return app if y < hits.prompt_top
-
-  at = Prompt.index_at(app.prompt, cursor(app), hits.width, TUI.Raw.height(app.screen), x, y - hits.prompt_top)
-  app.with(cursor: at)
 end
 
 def ctrl_c?(event: TUI.Event) -> Bool
@@ -599,88 +568,45 @@ def reconnect(app: App, reason: String) -> Result[App]
   ok(subscribe(app.with(reconnects: reconnects), app.last_event_id))
 end
 
-# A draw that fails leaves the old screen; the client goes on, and the transcript says so once.
+# A draw that fails leaves the old screen; the client goes on, and the transcript says so once. The next draw after a
+# failure writes every cell.
 def drawn(app: App) -> App
-  case draw(app)
-    ok(hits) -> app.with(hits: some(hits))
-    error(_) if app.draw_failed -> app.with(hits: none)
-    error(e) -> noted(app.with(draw_failed: true, hits: none), "error: the screen was not drawn: #{e.message}")
+  frame = framed(app)
+  case TUI.Raw.render(app.screen, Screen.view(frame), app.grid)
+    ok(grid) -> app.with(drawn: some(frame), grid: some(grid))
+    error(_) if app.draw_failed -> app.with(drawn: none, grid: none)
+    error(e) ->
+      noted(app.with(draw_failed: true, drawn: none, grid: none), "error: the screen was not drawn: #{e.message}")
   end
 end
 
-def framed(app: App) -> Frame
+def framed(app: App) -> Screen.Frame
   width = TUI.Raw.width(app.screen)
   height = TUI.Raw.height(app.screen)
-  prompt = Prompt.view(app.prompt, cursor(app), width, height)
-  room = height - prompt.rows.size - 2
-  asked = panel_rows(app, width, room)
-
-  area = [height - prompt.rows.size - asked.size - 1, 0].max.unwrap!
-  lines = Transcript.lines(app.entries, width, app.thinking)
-  top = [lines.size - area - [app.scroll, [lines.size - area, 0].max.unwrap!].min.unwrap!, 0].max.unwrap!
-  Frame(width: width, height: height, prompt: prompt, panel: asked, area: area, lines: lines, top: top)
+  Screen.frame(
+    width,
+    height,
+    Transcript.lines(app.entries, width, app.thinking),
+    app.scroll,
+    ->(room: Int) { panel_rows(app, width, room) },
+    status(app, width),
+    Prompt.view(app.prompt, cursor(app), width, height),
+  )
 end
 
-# The rows of the panel over the prompt now: the session picker, else the approval asked.
 # The rows of the panel over the prompt, without the transcript: a key needs only these.
 def panel(app: App) -> List[Layout.Row]
   width = TUI.Raw.width(app.screen)
   height = TUI.Raw.height(app.screen)
-  room = height - Prompt.view(app.prompt, cursor(app), width, height).rows.size - 2
-  panel_rows(app, width, room)
+  panel_rows(app, width, Screen.panel_room(height, Prompt.view(app.prompt, cursor(app), width, height).rows.size))
 end
 
+# The panel over the prompt: the session picker, else the approval asked.
 def panel_rows(app: App, width: Int, room: Int) -> List[Layout.Row]
   case app.picker
     some(picker) -> Picker.rows(picker, width, room, Time.now_ms / 1000)
     none -> Approvals.rows(app.approvals, width, room)
   end
-end
-
-# Every write is clipped to the screen, which may be smaller than the panel and the prompt.
-def draw(app: App) -> Result[Hits]
-  screen = app.screen
-  frame = framed(app)
-  try TUI.Raw.clear(screen)
-  y = 0
-  for line in frame.lines.drop(frame.top).take(frame.area)
-    x = 0
-    for span in line.spans
-      written = try put(screen, x, y, span.text, style(line.kind, span.look))
-      x = x + written
-    end
-
-    y = y + 1
-  end
-
-  shown = frame.lines.drop(frame.top).take(frame.area).map { |line| line.entry }
-  y = frame.area
-  for row in frame.panel
-    _ = try put(screen, 0, y, row.text, row.style)
-    y = y + 1
-  end
-
-  _ = try put(screen, 0, y, status(app, frame.width), TUI.Style(reverse: true))
-  y = y + 1
-  prompt_top = y
-  cursor_y = y + frame.prompt.cursor_y
-  for row in frame.prompt.rows
-    _ = try put(screen, 0, y, row, TUI.Style())
-    y = y + 1
-  end
-
-  if cursor_y < frame.height and frame.width > 0
-    try TUI.Raw.set_cursor(screen, [frame.prompt.cursor_x, frame.width - 1].min.unwrap!, cursor_y)
-  end
-
-  try TUI.Raw.present(screen)
-  ok(Hits(entries: shown, panel: frame.panel, panel_top: frame.area, prompt_top: prompt_top, width: frame.width))
-end
-
-def put(screen: TUI.Raw.Screen, x: Int, y: Int, text: String, style: TUI.Style) -> Result[Int]
-  return ok(0) if y < 0 or y >= TUI.Raw.height(screen) or x >= TUI.Raw.width(screen)
-
-  TUI.Raw.write(screen, x, y, text, style)
 end
 
 def status(app: App, width: Int) -> String
@@ -701,21 +627,4 @@ def status(app: App, width: Int) -> String
 
   text = " #{state} · #{HINTS}"
   text + " " * [width - Width.text(text), 0].max.unwrap!
-end
-
-def style(kind: Transcript.Kind, look: Markdown.Look) -> TUI.Style
-  case kind
-    Transcript.Kind.User -> TUI.Style(fg: TUI.Color.Cyan, bold: true)
-    Transcript.Kind.Notice -> TUI.Style(fg: TUI.Color.Yellow)
-    Transcript.Kind.Tool -> TUI.Style(fg: TUI.Color.Blue)
-    Transcript.Kind.ToolFailed -> TUI.Style(fg: TUI.Color.Red)
-    Transcript.Kind.Thinking -> TUI.Style(dim: true)
-    Transcript.Kind.Assistant ->
-      case look
-        Markdown.Look.Plain -> TUI.Style()
-        Markdown.Look.Bold -> TUI.Style(bold: true)
-        Markdown.Look.Heading -> TUI.Style(fg: TUI.Color.Magenta, bold: true, underline: true)
-        Markdown.Look.Code -> TUI.Style(fg: TUI.Color.Green)
-      end
-  end
 end
