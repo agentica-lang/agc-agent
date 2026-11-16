@@ -1,6 +1,7 @@
 import HTTP from "std/http"
 import Cli from "src/cli"
 import Config from "src/config"
+import McpTools from "src/mcp_tools"
 import Server from "src/server"
 
 def main() -> Void
@@ -21,7 +22,17 @@ def serve() -> Void
   end
 end
 
-def start() -> Result[Server.Server] = Server.start(try Config.from_env(->(name) { System.env(name) }))
+# The MCP servers run as long as the server: the end of the process stops them.
+def start() -> Result[Server.Server]
+  read = ->(name) { System.env(name) }
+  options = try Config.from_env(read)
+  mcp = McpTools.start(try McpTools.servers(read, options.state_dir))
+  for warning in mcp.warnings
+    IO.warn(warning)
+  end
+
+  Server.start(options.with(tools: mcp.tools))
+end
 
 def fail(message: String, usage: String) -> Void
   IO.warn(message)

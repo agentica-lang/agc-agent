@@ -9,7 +9,8 @@ The fake LLM of the server tests streams these, in the order a test gives.
   `write_file.sse` writes `hello.txt`, `bash.sse` runs `cat hello.txt`,
   `bash_echo.sse` runs `echo other`, `slow_bash.sse` writes its pid to
   `pid.txt` and sleeps 30 s, `read_file.sse` reads a missing file, and
-  `long_text_then_write.sse` streams 12 text pieces before a `write_file` call.
+  `long_text_then_write.sse` streams 12 text pieces before a `write_file` call,
+  and `mcp_echo.sse` calls the `echo` tool of the fake MCP server `fake`.
 - `length_tool.sse` stops with `finish_reason: "length"` in the middle of a
   `write_file` call.
 - `bash_echo_small.sse` is `bash_echo.sse` with 50 prompt tokens.
@@ -22,3 +23,5 @@ The fake LLM of the server tests streams these, in the order a test gives.
   with `n_ctx` 120. `summary_empty.sse` is a summary of blanks, and
   `summary_length.sse` one cut by `finish_reason: "length"`.
   `not_found.json` and `bad_request.json` are error bodies (404 and 400).
+- `apply_patch.sse` is written by hand in the shape of `write_file.sse`: an
+  `apply_patch` call as a function, which only the Responses API is offered.

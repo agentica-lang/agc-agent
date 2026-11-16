@@ -15,6 +15,7 @@
 
 import Approval from "approval"
 import Files from "files"
+import Patch from "patch"
 import Sandbox from "sandbox"
 import Search from "search"
 import Shell from "shell"
@@ -26,12 +27,22 @@ export Spec.Tool
 export Approval.Verdict
 export Approval.Rules
 
+PATCH = Patch.NAME
+
 ## The context of a session in `cwd`: the real path of the folder, where bash reads its few environment variables, and
-## the approval rules. Change the rules with `ctx.with(rules: ...)`.
-def context(cwd: String, env: Fn[String, Result[String]], rules: Approval.Rules) -> Result[Spec.Context]
+## the approval rules, and the tools `more` after the base ones. Change the rules with `ctx.with(rules: ...)`.
+def context(
+  cwd: String,
+  env: Fn[String, Result[String]],
+  rules: Approval.Rules,
+  more: List[Spec.Tool] = [],
+) -> Result[Spec.Context]
   root = try Sandbox.open(cwd)
-  ok(Spec.Context(root: root, env: env, rules: rules))
+  ok(Spec.Context(root: root, env: env, rules: rules, tools: more))
 end
+
+## The tools a session offers the model: the base ones, then those of its context.
+def offered(ctx: Spec.Context) -> List[Spec.Tool] = all() + ctx.tools
 
 def all() -> List[Spec.Tool]
   [
@@ -92,8 +103,14 @@ def all() -> List[Spec.Tool]
   ]
 end
 
+## `apply_patch`, which only OpenAI models are offered (see `Patch`).
+def patch() -> Spec.Tool = Patch.tool()
+
+## The grammar of `apply_patch` as a custom tool.
+def patch_grammar() -> JSON.Value = Patch.grammar()
+
 def find(name: String) -> Result[Spec.Tool]
-  found = all().find { |tool| tool.name == name }
+  found = all().push(Patch.tool()).find { |tool| tool.name == name }
   case found
     ok(tool) -> ok(tool)
     error(_) -> error("unknown tool: #{name}")
@@ -102,7 +119,7 @@ end
 
 ## Runs the call. A failure, a refused path and a failed command are an output with `is_error`.
 def run(ctx: Spec.Context, name: String, input: JSON.Value) -> Spec.Output
-  case find(name)
+  case offered_tool(ctx, name)
     ok(tool) -> Spec.output(tool.run(ctx, input))
     error(e) -> Spec.Output(text: e.message, is_error: true)
   end
@@ -110,7 +127,9 @@ end
 
 ## Whether a call runs, waits for an answer or is refused. A call whose input or path is not valid is refused.
 def verdict(ctx: Spec.Context, name: String, input: JSON.Value) -> Approval.Verdict
-  case find(name)
+  return Patch.verdict(ctx, input) if name == Patch.NAME
+
+  case offered_tool(ctx, name)
     ok(tool) -> verdict_of(ctx, tool, input)
     error(_) -> Approval.Verdict.Deny
   end
@@ -118,12 +137,13 @@ end
 
 ## What a call touches, for the approval preview and the notices: the path or the command.
 def target(ctx: Spec.Context, name: String, input: JSON.Value) -> Result[String]
-  tool = try find(name)
+  tool = try offered_tool(ctx, name)
   tool.target(ctx, input)
 end
 
-## What a call would write, for the approval: the content of `write_file`, or the old text of `edit_file` with each line
-## marked `-` and the new text marked `+`, cut to `DETAIL_CHARS`; empty for the other tools.
+## What a call would write, for the approval: the content of `write_file`, the old text of `edit_file` with each line
+## marked `-` and the new text marked `+`, or the patch of `apply_patch`, cut to `DETAIL_CHARS`; empty for the other
+## tools.
 def detail(name: String, input: JSON.Value) -> String
   case name
     "write_file" ->
@@ -138,6 +158,7 @@ def detail(name: String, input: JSON.Value) -> String
         error(_) -> ""
       end
 
+    "apply_patch" -> cut(Patch.args(input).unwrap_or(""))
     _ -> ""
   end
 end
@@ -145,6 +166,13 @@ end
 private
 
 DETAIL_CHARS = 4000
+
+def offered_tool(ctx: Spec.Context, name: String) -> Result[Spec.Tool]
+  case (ctx.tools.find { |tool| tool.name == name })
+    ok(tool) -> ok(tool)
+    error(_) -> find(name)
+  end
+end
 
 def cut(text: String) -> String
   return text if text.length <= DETAIL_CHARS

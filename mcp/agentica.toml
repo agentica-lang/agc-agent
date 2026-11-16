@@ -1,0 +1,6 @@
+name = "mcp"
+# The oldest Agentica this package needs.
+agentica = "0.32.0"
+
+[style]
+blank_line_after_end = true
