@@ -282,23 +282,29 @@ end
 ## The fields of the events and the names of their values on the wire, for `Protocol.WIRE`.
 def shape() -> List[String]
   records = [
-    TurnStarted.members,
-    TextDelta.members,
-    ThinkingDelta.members,
-    ToolStarted.members,
-    ToolFinished.members,
-    ApprovalRequested.members,
-    ApprovalResolved.members,
-    Usage.members,
-    TurnFinished.members,
-    ResolvedWire.members,
-    TurnStartedWire.members,
-    TurnFinishedWire.members,
-    Errors.Failure.members,
+    Wire.record("TurnStarted", TurnStarted.members),
+    Wire.record("TextDelta", TextDelta.members),
+    Wire.record("ThinkingDelta", ThinkingDelta.members),
+    Wire.record("ToolStarted", ToolStarted.members),
+    Wire.record("ToolFinished", ToolFinished.members),
+    Wire.record("ApprovalRequested", ApprovalRequested.members),
+    Wire.record("ApprovalResolved", ApprovalResolved.members),
+    Wire.record("Usage", Usage.members),
+    Wire.record("MessageQueued", MessageQueued.members),
+    Wire.record("TurnFinished", TurnFinished.members),
+    Wire.record("ResolvedWire", ResolvedWire.members),
+    Wire.record("TurnStartedWire", TurnStartedWire.members),
+    Wire.record("TurnFinishedWire", TurnFinishedWire.members),
+    Wire.record("Failure", Errors.Failure.members),
   ]
 
-  names = event_kinds().map(&kind_name) + approval_sources().map(&source_name)
-  Wire.fields(records) + names + known_stop_reasons().map(&stop_reason_name)
+  values = [
+    Wire.values("EventKind", event_kinds().map(&kind_name)),
+    Wire.values("ApprovalSource", approval_sources().map(&source_name)),
+    Wire.values("StopReason", known_stop_reasons().map(&stop_reason_name)),
+  ]
+
+  records + values
 end
 
 private

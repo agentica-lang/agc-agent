@@ -123,9 +123,9 @@ export Events.decode_event
 export Events.format_event_id
 export Events.parse_event_id
 
-## A digest of every field and value name on the wire. A client and a server from different code have different ones
-## when a record changed, so a client can tell that the server it reached is of another version.
-def wire_digest() -> String
-  shape = Events.shape() + Replies.shape() + Requests.shape()
-  OpenSSL.Digest.sha256_hexdigest(shape.join(";").bytes)
-end
+## Every record with its fields, every enum with its names on the wire, the error kinds, the paths and the header.
+def wire_shape() -> List[String] = Events.shape() + Replies.shape() + Requests.shape() + Kinds.shape() + Routes.shape()
+
+## A digest of `wire_shape`. A client and a server from different code have different ones when the wire changed, so
+## a client can tell that the server it reached is of another version.
+def wire_digest() -> String = OpenSSL.Digest.sha256_hexdigest(wire_shape().join(";").bytes)

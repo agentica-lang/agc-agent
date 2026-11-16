@@ -50,7 +50,12 @@ def test_the_prompt_shows_its_last_rows_with_a_lead() -> Result[Void]
   try Test.eq(Prompt.rows(text, 20), ["> one", "  two"])
   try Test.eq(Prompt.rows("", 20), ["> "])
   try Test.eq(Prompt.rows("1\n2\n3\n4\n5\n6\n7", 20).size, Prompt.MAX_ROWS)
-  Test.eq(Prompt.view("1\n2\n3", 5, 20, 3).rows, ["  2", "  3"])
+  try Test.eq(Prompt.view("1\n2\n3", 5, 20, 3).rows, ["  2", "  3"])
+  numbers = (1..20).map { |n| n.to_s }.join("\n")
+  middle = Prompt.view(numbers, 4, 20, 24)
+  try Test.eq([middle.rows, [middle.cursor_y.to_s]], [["  3", "  4", "  5", "  6", "  7", "  8"], ["0"]])
+  last = Prompt.view(numbers, numbers.length - 1, 20, 24)
+  Test.eq([last.rows, [last.cursor_y.to_s]], [["  15", "  16", "  17", "  18", "  19", "  20"], ["5"]])
 end
 
 def test_a_paste_keeps_line_ends_and_tabs_but_no_other_control() -> Result[Void]
