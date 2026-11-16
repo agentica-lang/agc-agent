@@ -9,6 +9,7 @@ import Feed from "feed"
 import Inbox from "inbox"
 import Prompt from "prompt"
 import Transcript from "transcript"
+import Width from "width"
 
 INBOX_CAPACITY = 1024
 WAIT_MS = 3_600_000
@@ -18,10 +19,12 @@ MAX_RECONNECTS = 3
 SCROLL_STEP = 3
 HINTS = "Enter send · Ctrl+J newline · Esc stop · PgUp/PgDn scroll · Ctrl+C quit"
 
-## Runs the session of `options` on `screen` until the user leaves.
-def run(screen: TUI.Screen, server: Client.Server, options: Args.Options) -> Result[Void]
+## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
+def run(screen: TUI.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
   try TUI.set_input_mode(screen, TUI.InputMode.Esc, true)
   inbox: Channel[Inbox.Input] = Channel.new(INBOX_CAPACITY)
+  signals = try System.subscribe([System.Signal.Term, System.Signal.Hup])
+  _ = Task.spawn(-> { watch_signals(signals, inbox) })
   _ = Task.spawn(-> { read_keys(screen, inbox) })
   app = try open(App(screen: screen, server: server, id: "", inbox: inbox), options)
   loop(app)
@@ -46,7 +49,16 @@ struct App
   ## The highest event id already drawn, so a replay draws nothing twice.
   shown_id: Int = 0
   reconnects: Int = 0
-  quit: Bool = false
+  exit: Optional[Int] = none
+end
+
+def watch_signals(signals: Channel[System.Signal], inbox: Channel[Inbox.Input]) -> Void
+  while true
+    case signals.recv(WAIT_MS)
+      ok(signal) -> _ = inbox.send(Inbox.Input.Signal(signal), SEND_MS)
+      error(_) -> break if signals.closed?
+    end
+  end
 end
 
 def read_keys(screen: TUI.Screen, inbox: Channel[Inbox.Input]) -> Void
@@ -104,14 +116,14 @@ def subscribe(app: App, from: Int) -> App
   app.with(stream: some(Feed.start(feed)), generation: generation, last_event_id: from)
 end
 
-def loop(start: App) -> Result[Void]
+def loop(start: App) -> Result[Int]
   app = start
   try draw(app)
-  while not app.quit
+  while app.exit.none?
     case app.inbox.recv(WAIT_MS)
       ok(input) ->
         app = try handle(app, input)
-        while not app.quit
+        while app.exit.none?
           case app.inbox.recv(0)
             ok(more) -> app = try handle(app, more)
             error(_) -> break
@@ -124,12 +136,13 @@ def loop(start: App) -> Result[Void]
     end
   end
 
-  ok()
+  ok(app.exit.unwrap!)
 end
 
 def handle(app: App, input: Inbox.Input) -> Result[App]
   case input
     Inbox.Input.Terminal(event) -> ok(on_key(app, event))
+    Inbox.Input.Signal(signal) -> ok(app.with(exit: some(128 + System.signal_number(signal))))
     Inbox.Input.Closed(reason) -> error("the terminal closed: #{reason}", kind: "tui.terminal")
     Inbox.Input.Stream(generation, item) if generation == app.generation -> on_stream(app, item)
     Inbox.Input.Stream(_, _) -> ok(app)
@@ -138,7 +151,7 @@ end
 
 def on_key(app: App, event: TUI.Event) -> App
   case event
-    TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(quit: true)
+    TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(exit: some(0))
     TUI.Event.Key(TUI.Key.Enter, _) -> send(app)
     TUI.Event.Key(TUI.Key.Ctrl("j"), _) -> app.with(prompt: Prompt.insert(app.prompt, "\n"))
     TUI.Event.Key(TUI.Key.Backspace, _) -> app.with(prompt: Prompt.backspace(app.prompt))
@@ -200,6 +213,8 @@ def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
       shown.with(entries: Transcript.add(shown.entries, Transcript.Kind.Assistant, delta.text))
     Protocol.Event.TurnStarted(_) -> shown.with(turn: true)
     Protocol.Event.TurnFinished(done) -> finished(shown.with(turn: false, stopping: false), done.stop_reason)
+    Protocol.Event.ApprovalRequested(request) ->
+      noted(shown, "approval #{request.approval_id} waiting (#{request.tool}): answer it with finn")
     Protocol.Event.Error(failure) -> noted(shown, "error: #{failure.kind}: #{failure.message}")
     _ -> shown
   end
@@ -244,7 +259,7 @@ def draw(app: App) -> Result[Void]
   end
 
   last = prompt[prompt.size - 1]
-  try TUI.set_cursor(screen, [last.length, width - 1].min.unwrap!, area + prompt.size)
+  try TUI.set_cursor(screen, [Width.text(last), width - 1].min.unwrap!, area + prompt.size)
   TUI.present(screen)
 end
 
@@ -257,7 +272,7 @@ def status(app: App, width: Int) -> String
   end
 
   text = " #{state} · #{HINTS}"
-  text + " " * [width - text.length, 0].max.unwrap!
+  text + " " * [width - Width.text(text), 0].max.unwrap!
 end
 
 def style(kind: Transcript.Kind) -> TUI.Style

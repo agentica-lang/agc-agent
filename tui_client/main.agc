@@ -22,14 +22,16 @@ def dispatch(command: Args.Command) -> Void
   end
 end
 
-def run(options: Args.Options) -> Result[Void]
+def run(options: Args.Options) -> Result[Int]
   server = try Server.connect(options, try Server.state_dir(options))
   TUI.open(->(screen) { App.run(screen, server, options) })
 end
 
-def finish(result: Result[Void]) -> Void
+def finish(result: Result[Int]) -> Void
   case result
-    ok(_) -> IO.flush()
+    ok(code) ->
+      IO.flush()
+      System.exit(code)
     error(e) ->
       IO.warn("finn tui: #{e.message}")
       System.exit(1)

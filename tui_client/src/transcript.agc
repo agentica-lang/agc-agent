@@ -1,6 +1,7 @@
 ## What the transcript holds and the lines it draws in a given width. Pure.
 
 import Protocol from "pkg/protocol/protocol"
+import Width from "width"
 
 enum Kind
   User
@@ -56,7 +57,7 @@ def lines(entries: List[Entry], width: Int) -> List[Line]
   rows
 end
 
-## `text` cut into rows of at most `width` characters, at spaces when it can.
+## `text` cut into rows of at most `width` columns, at spaces when it can.
 def wrap(text: String, width: Int) -> List[String]
   rows: List[String] = []
   for paragraph in text.split("\n")
@@ -89,7 +90,7 @@ def wrap_paragraph(paragraph: String, width: Int) -> List[String]
       candidate = "#{row} #{word}"
     end
 
-    if candidate.length <= width
+    if Width.text(candidate) <= width
       row = candidate
     else
       if row != ""
@@ -97,9 +98,14 @@ def wrap_paragraph(paragraph: String, width: Int) -> List[String]
       end
 
       row = word
-      while row.length > width
-        rows = rows.push(row.slice(0, width))
-        row = row.slice(width, row.length - width)
+      while Width.text(row) > width
+        parts = Width.cut(row, width)
+        if parts[0] == ""
+          parts = [row.slice(0, 1), row.slice(1, row.length - 1)]
+        end
+
+        rows = rows.push(parts[0])
+        row = parts[1]
       end
     end
   end

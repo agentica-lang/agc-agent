@@ -5,6 +5,7 @@ import Protocol from "pkg/protocol/protocol"
 
 enum Input
   Terminal(TUI.Event)
+  Signal(System.Signal)
   ## The terminal can no longer be read: the reason.
   Closed(String)
   ## The first value is the generation of the stream that sent it, so the loop drops what an old stream sent.
