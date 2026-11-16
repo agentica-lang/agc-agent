@@ -31,7 +31,9 @@ end
 def parse(args: List[String]) -> Result[Command]
   parser = OP.new(
     "finn",
-    "The line-mode client of Finn Agent: it starts the server when none runs.",
+    "The line-mode client of Finn Agent: it starts the server when none runs, and leaves it running. With -p it " +
+    "runs one task: the answer on stdout, the rest on stderr, approvals denied unless --yolo; the exit code is 0 " +
+    "when the turn ends normally (even after a denied call), 130 when it is cancelled, 1 otherwise.",
     [],
     [
       Opt(name: "state-dir", help: "folder of server.json (default: FINN_STATE_DIR, else the user's state folder)"),
@@ -47,7 +49,7 @@ def parse(args: List[String]) -> Result[Command]
       Opt(
         name: "prompt",
         short: "p",
-        help: "send this task (- reads it from stdin), print the turn and exit with its status; approvals are denied",
+        help: "run this one task (- reads it from stdin) and exit: 0 end_turn, 130 cancelled, 1 otherwise",
       ),
       Opt(name: "yolo", kind: Kind.Flag, help: "allow every tool call without asking (also in one-shot)"),
       Opt(name: "delete", help: "id of a session to delete (with its file), then exit"),

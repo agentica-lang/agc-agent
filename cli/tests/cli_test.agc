@@ -355,14 +355,15 @@ def deletes(rig: Driver.Rig) -> Result[Void]
   Test.eq(Fake.strays(rig.fake), 0)
 end
 
-# `-p` sends one task, reads no line, prints the turn and exits with its status.
-def test_one_shot_prints_the_turn_and_exits_with_its_status() -> Result[Void]
+# `-p` sends one task, reads no line, prints only the answer on stdout and exits with the status of the turn.
+def test_one_shot_prints_the_answer_on_stdout_and_the_rest_on_stderr() -> Result[Void]
   Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["turn.sse"])]) do |rig|
-    cli = try Driver.start(rig.dir, PLAIN + ["-p", "hello"])
-    done = try Driver.exited(cli)
+    done = try Driver.exited(try Driver.start(rig.dir, PLAIN + ["-p", "hello"]))
     message = try Fake.request(rig.fake, "POST", Protocol.messages_path("s1"))
     try Test.eq(Protocol.decode_send_message(message.body), ok(Protocol.SendMessage(text: "hello")))
-    try Test.eq([done.lines[0], done.lines.last], ["[session s1]", "[turn finished] end_turn"])
+    try Test.eq(done.lines, ["I'll read the file.", "It says \"agc-agent\"."])
+    try Test.assert(done.errors.include?("[session s1]\n[tool] read_file README.md\n"), "stderr: #{done.errors}")
+    try Test.assert(done.errors.include?("[turn finished] end_turn"), "stderr: #{done.errors}")
     Test.eq(done.code, 0)
   end
 end
@@ -389,7 +390,8 @@ def test_one_shot_denies_approvals_and_yolo_allows_them() -> Result[Void]
       done = try Driver.exited(try Driver.start(rig.dir, args))
       answer = try Fake.request(rig.fake, "POST", Protocol.approval_path("s1", "a1"))
       try Test.eq(Protocol.decode_approve(answer.body), ok(Protocol.Approve(decision: decision)))
-      try Test.assert(not done.lines.include?(PROMPT), "nothing is asked: #{done.lines}")
+      try Test.assert(not done.errors.include?(PROMPT), "nothing is asked: #{done.errors}")
+      try Test.eq(done.errors.include?("--yolo: every tool call is approved"), yolo)
       Test.eq(done.code, 0)
     end
   end
@@ -397,25 +399,73 @@ def test_one_shot_denies_approvals_and_yolo_allows_them() -> Result[Void]
   ok()
 end
 
-def test_a_cancelled_one_shot_turn_exits_130() -> Result[Void]
-  Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["cancelled.sse"])]) do |rig|
-    done = try Driver.exited(try Driver.start(rig.dir, PLAIN + ["-p", "start"]))
-    Test.eq(done.code, 130)
+# 0 for a turn that ends normally, 130 for a cancelled one, 1 for any other end.
+def test_one_shot_exits_130_when_cancelled_and_1_when_the_turn_fails() -> Result[Void]
+  for pair in [["cancelled.sse", "130"], ["failed.sse", "1"]]
+    try Driver.within([Routes.created(), Routes.held_events(), Routes.accepting([pair[0]])]) do |rig|
+      done = try Driver.exited(try Driver.start(rig.dir, PLAIN + ["-p", "start"]))
+      Test.eq(done.code.to_s, pair[1])
+    end
+  end
+
+  ok()
+end
+
+# A task that cannot be sent fails at once: a busy session, a failed request, an empty task (sent never).
+def test_one_shot_fails_when_the_task_is_not_sent() -> Result[Void]
+  failure = Protocol.Failure(kind: Protocol.KIND_SESSION_BUSY, message: "a turn runs")
+  busy = Fake.Reply(status: 409, body: Protocol.encode_failure(failure))
+  for reply in [busy, Routes.failing()]
+    sending = Fake.Route(method: "POST", path: Protocol.messages_path("s1"), replies: [reply])
+    try Driver.within([Routes.created(), Routes.held_events(), sending]) do |rig|
+      done = try Driver.exited(try Driver.start(rig.dir, PLAIN + ["-p", "start"]))
+      try Test.assert(done.errors.include?("[error]"), "the failure is said on stderr: #{done.errors}")
+      try Test.eq(done.lines, [])
+      Test.eq(done.code, 1)
+    end
+  end
+
+  Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["turn.sse"])]) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN + ["-p", "-"])
+    try Driver.say(cli, "")
+    done = try Driver.finish(cli)
+    try Test.assert(done.errors.include?("the task is empty"), "stderr: #{done.errors}")
+    try Test.eq(Fake.unread_requests(rig.fake, "POST", Protocol.messages_path("s1")).size, 0)
+    Test.eq(done.code, 1)
   end
 end
 
+# `-p -` keeps the task as typed: only the newlines at its end go.
 def test_one_shot_reads_the_task_from_stdin_with_a_dash() -> Result[Void]
   Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["turn.sse"])]) do |rig|
     cli = try Driver.start(rig.dir, PLAIN + ["-p", "-"])
-    try Driver.say(cli, "read the README")
+    try Driver.say(cli, "  indented code")
     try Driver.say(cli, "and sum it up")
+    try Driver.say(cli, "")
     done = try Driver.finish(cli)
     message = try Fake.request(rig.fake, "POST", Protocol.messages_path("s1"))
-    try Test.eq(
-      Protocol.decode_send_message(message.body),
-      ok(Protocol.SendMessage(text: "read the README\nand sum it up")),
-    )
+    expected = Protocol.SendMessage(text: "  indented code\nand sum it up")
+    try Test.eq(Protocol.decode_send_message(message.body), ok(expected))
+    Test.eq(done.code, 0)
+  end
+end
 
+# `--yolo` allows the approvals of this run only: one that was pending before the client attached is asked.
+def test_yolo_asks_an_approval_pending_before_it_attached() -> Result[Void]
+  routes = [
+    Routes.session([Fake.Reply(session: "session_running_approval.json")]),
+    Routes.events([Fake.Reply(fixture: "replay_pending.sse", hold: true)]),
+    Routes.answering("a1", Fake.Reply(push: ["turn_rest.sse"])),
+  ]
+
+  Driver.within(routes) do |rig|
+    cli = try Driver.start(rig.dir, ["--session", "s1", "--yolo"])
+    try Driver.read_until(cli, PROMPT)
+    try Driver.say(cli, "n")
+    try Driver.read_until(cli, "[turn finished]")
+    done = try Driver.finish(cli)
+    answer = try Fake.request(rig.fake, "POST", Protocol.approval_path("s1", "a1"))
+    try Test.eq(Protocol.decode_approve(answer.body), ok(Protocol.Approve(decision: Protocol.Decision.Deny)))
     Test.eq(done.code, 0)
   end
 end
