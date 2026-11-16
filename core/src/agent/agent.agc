@@ -75,6 +75,10 @@ struct Turn
   refresh: Optional[Fn[Result[LLM.Provider]]] = none
   ## The session sends no thinking blocks until its next fold.
   stripped: Bool = false
+  ## The provider of the turn, which marks its thinking: the thinking of another one is not sent. `origin` is the
+  ## provider of the thinking that names none (saved before providers): the session's first.
+  source: String = ""
+  origin: String = ""
   ## `window` 0 asks the provider for it.
   compaction: Compaction.Settings
   ## The context of the session's last call.
@@ -130,7 +134,7 @@ def run(given: Turn) -> Outcome
     messages = messages + more.map { |q| LLM.Message(role: LLM.Role.User, content: [text_block(q.text)]) }
     read = read + more
     marks = marks + more.flat_map { |q| q.names }
-    asked = messages
+    asked = Compaction.own_thinking(messages, turn.source, turn.origin)
     if stripped
       asked = Compaction.without_thinking(messages)
     end
@@ -146,6 +150,7 @@ def run(given: Turn) -> Outcome
     called = renewal.result
 
     response = called.unwrap_or(EMPTY)
+    response = response.with(message: Compaction.tagged(response.message, turn.source))
     case called
       ok(_) -> nil
       error(e) ->
@@ -461,14 +466,22 @@ def noticed_run(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Tools.Tu
     Protocol.Event.ToolStarted(Protocol.ToolStarted(call_id: call.id, name: call.name, summary: summary)),
   )
 
+  change = Tools.change(turn.ctx, call.name, call.input)
   started = Time.monotonic_ms
   ran = checked_run(turn, call, marks)
   output = ran.output
+  diff = change
+  if output.is_error
+    diff = none
+  end
+
   finished = Protocol.ToolFinished(
     call_id: call.id,
     ok: not output.is_error,
     summary: first_line(output.text),
     duration_ms: Time.monotonic_ms - started,
+    output: Tools.shown_output(output.text),
+    diff: diff,
   )
 
   turn.link.emit.call(Protocol.Event.ToolFinished(finished))

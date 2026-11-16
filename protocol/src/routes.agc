@@ -2,6 +2,9 @@
 
 HEALTH_PATH = "/v1/health"
 SESSIONS_PATH = "/v1/sessions"
+SERVER_PATH = "/v1/server"
+SERVER_STOP_PATH = "/v1/server/stop"
+PROVIDERS_PATH = "/v1/providers"
 
 ## The header a client sends to resume an event stream.
 LAST_EVENT_ID_HEADER = "Last-Event-ID"
@@ -33,7 +36,11 @@ def shape() -> List[String]
   [
     HEALTH_PATH,
     SESSIONS_PATH,
+    SERVER_PATH,
+    SERVER_STOP_PATH,
+    PROVIDERS_PATH,
     LAST_EVENT_ID_HEADER,
+    session_path("ID"),
     events_path("ID"),
     messages_path("ID"),
     approval_path("ID", "A"),

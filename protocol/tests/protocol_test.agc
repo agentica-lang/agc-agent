@@ -88,7 +88,13 @@ end
 
 def test_requests_round_trip() -> Result[Void]
   new_session = try decode_fixture("new_session", &Protocol.decode_new_session, &Protocol.encode_new_session)
-  expected = Protocol.NewSession(cwd: "/home/ana/project", model: some("qwen2.5-0.5b"), api: some("openai_responses"))
+  expected = Protocol.NewSession(
+    cwd: "/home/ana/project",
+    model: some("qwen2.5-0.5b"),
+    api: some("openai_responses"),
+    provider: some("fireworks"),
+  )
+
   try Test.eq(new_session, expected)
   try Test.eq(Protocol.decode_new_session(Protocol.encode_new_session(new_session)), ok(new_session))
 
@@ -139,6 +145,8 @@ def test_replies_round_trip() -> Result[Void]
   list = try decode_fixture("session_list", &Protocol.decode_session_list, &Protocol.encode_session_list)
   try Test.eq(list.sessions.size, 1)
   try Test.eq(Protocol.decode_session_list(Protocol.encode_session_list(list)), ok(list))
+  providers = try decode_fixture("provider_list", &Protocol.decode_provider_list, &Protocol.encode_provider_list)
+  try Test.eq(providers.providers.map { |p| p.name }, ["local", "fireworks"])
 
   failure = try decode_fixture("failure", &Protocol.decode_failure, &Protocol.encode_failure)
   try Test.eq(failure.kind, Protocol.KIND_APPROVAL_RESOLVED)
@@ -289,6 +297,25 @@ def test_the_tree_and_its_branches_round_trip() -> Result[Void]
   Test.eq(error_kind(Protocol.decode_fork("{\"entri\": 1}")), "protocol.invalid")
 end
 
+def test_the_server_status_and_its_stop_round_trip() -> Result[Void]
+  status = Protocol.ServerStatus(
+    pid: 42,
+    version: "0.0.1",
+    started_s: 1000,
+    sessions: 3,
+    running_turns: 1,
+    stopping: true,
+  )
+
+  try Test.eq(Protocol.decode_server_status(Protocol.encode_server_status(status)), ok(status))
+  stop = Protocol.StopServer(now: some(true))
+  try Test.eq(Protocol.decode_stop_server(Protocol.encode_stop_server(stop)), ok(stop))
+  try Test.eq(Protocol.decode_stop_server("{}"), ok(Protocol.StopServer()))
+  try Test.eq(error_kind(Protocol.decode_stop_server("{\"later\": true}")), "protocol.invalid")
+  try Test.eq(Protocol.SERVER_PATH, "/v1/server")
+  Test.eq(Protocol.SERVER_STOP_PATH, "/v1/server/stop")
+end
+
 def test_a_shell_command_round_trips() -> Result[Void]
   run = Protocol.RunShell(command: "ls", context: false)
   try Test.eq(Protocol.decode_run_shell(Protocol.encode_run_shell(run)), ok(run))
@@ -299,7 +326,7 @@ def test_a_shell_command_round_trips() -> Result[Void]
 end
 
 def test_session_settings_round_trip_and_refuse_unknown_levels() -> Result[Void]
-  both = Protocol.UpdateSession(model: some("qwen3"), effort: some("high"))
+  both = Protocol.UpdateSession(provider: some("fireworks"), model: some("qwen3"), effort: some("high"))
   try Test.eq(Protocol.decode_update_session(Protocol.encode_update_session(both)), ok(both))
   try Test.eq(Protocol.decode_update_session("{\"effort\": \"low\"}"), ok(Protocol.UpdateSession(effort: some("low"))))
   try Test.eq(Protocol.decode_update_session("{}"), ok(Protocol.UpdateSession()))
@@ -336,4 +363,21 @@ def test_the_wire_shape_has_every_record_enum_and_kind() -> Result[Void]
   end
 
   Test.assert(found.size > 40, "the scan found #{found.size} names")
+end
+
+# Every constant of routes.agc is in the wire shape, and one path of a session for each `def *_path`.
+def test_the_wire_shape_has_every_path() -> Result[Void]
+  shape = Protocol.wire_shape()
+  defs = 0
+  for line in (try File.read_text("src/routes.agc")).split("\n")
+    words = line.split(" ")
+    if words.size > 2 and words[1] == "=" and words[0] == words[0].upcase
+      try Test.assert(shape.include?(words[2].replace("\"", "")), words[0])
+    elsif words.size > 1 and words[0] == "def" and words[1].include?("_path(")
+      defs += 1
+    end
+  end
+
+  try Test.assert(defs > 5, "the scan found #{defs} paths")
+  Test.eq(shape.select { |s| s.start_with?("/v1/sessions/ID") }.size, defs)
 end

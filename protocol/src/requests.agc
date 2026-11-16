@@ -20,11 +20,13 @@ enum Decision
   AllowTool
 end
 
-## `POST /v1/sessions`. `model` and `api` (the model API, by the name the server gives it) default to the server's.
+## `POST /v1/sessions`. `provider`, `model` and `api` (the model API, by the name the server gives it) default to the
+## server's; `api` to the provider's own.
 struct NewSession
   cwd: String
   model: Optional[String]
   api: Optional[String] = none
+  provider: Optional[String] = none
 end
 
 ## `POST /v1/sessions/ID/messages`.
@@ -39,6 +41,8 @@ end
 
 ## `PATCH /v1/sessions/ID`: what to change from the next turn on; a field left out stays.
 struct UpdateSession
+  ## Another provider takes its own model API, and its default model unless `model` names one.
+  provider: Optional[String] = none
   model: Optional[String] = none
   effort: Optional[String] = none
   ## The edits of files in the session folder run without asking.
@@ -60,6 +64,12 @@ end
 ## session as it is now.
 struct Fork
   entry: Optional[Int] = none
+end
+
+## `POST /v1/server/stop`: the server stops starting work and goes once its turns end; `now` cancels them first (none
+## is false). A second request with `now` while it waits makes it cancel.
+struct StopServer
+  now: Optional[Bool] = none
 end
 
 ## `POST /v1/sessions/ID/shell`: runs `command` in the session folder as the `bash` tool would, while no turn runs, for
@@ -91,6 +101,7 @@ def decode_new_session(text: String) -> Result[NewSession]
   try Wire.non_empty("cwd", body.cwd)
   try Wire.non_empty_if_present("model", body.model)
   try Wire.non_empty_if_present("api", body.api)
+  try Wire.non_empty_if_present("provider", body.provider)
   ok(body)
 end
 
@@ -114,6 +125,7 @@ def encode_update_session(body: UpdateSession) -> String = JSON.encode(body)
 def decode_update_session(text: String) -> Result[UpdateSession]
   body = try Wire.decode_strict(text, UpdateSession.codec)
   try Wire.non_empty_if_present("model", body.model)
+  try Wire.non_empty_if_present("provider", body.provider)
   for effort in Wire.option_list(body.effort)
     known = EFFORTS.include?(effort) or effort == EFFORT_DEFAULT
     return error("unknown effort: #{effort}", kind: Kinds.KIND_UNKNOWN) if not known
@@ -142,6 +154,10 @@ def decode_fork(text: String) -> Result[Fork]
   ok(body)
 end
 
+def encode_stop_server(body: StopServer) -> String = JSON.encode(body)
+
+def decode_stop_server(text: String) -> Result[StopServer] = Wire.decode_strict(text, StopServer.codec)
+
 def encode_run_shell(body: RunShell) -> String = JSON.encode(body)
 
 def decode_run_shell(text: String) -> Result[RunShell]
@@ -160,6 +176,7 @@ def shape() -> List[String]
     Wire.record("Compacted", Compacted.members),
     Wire.record("Branch", Branch.members),
     Wire.record("Fork", Fork.members),
+    Wire.record("StopServer", StopServer.members),
     Wire.record("RunShell", RunShell.members),
     Wire.record("ApproveWire", ApproveWire.members),
   ]

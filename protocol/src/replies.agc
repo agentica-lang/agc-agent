@@ -17,6 +17,17 @@ struct Health
   wire: Optional[String] = none
 end
 
+## `GET /v1/server`: `started_s` is when the process started (Unix seconds); `running_turns` counts the sessions that
+## have a turn or a shell command running now; `stopping` says a stop waits for them.
+struct ServerStatus
+  pid: Int
+  version: String
+  started_s: Int
+  sessions: Int
+  running_turns: Int
+  stopping: Bool
+end
+
 ## The answer of `POST /v1/sessions`.
 struct SessionCreated
   id: String
@@ -29,14 +40,15 @@ struct MessageAccepted
   message_id: Optional[String] = none
 end
 
-## `api` is the model API of the session, by the name the server gives it.
-## `model` is the one the session uses now, `updated_s` when its file last changed (Unix seconds), and `title` its first
+## `api` is the model API of the session, by the name the server gives it, and `provider` its provider (none from a
+## server before providers). `model` is the one the session uses now, `updated_s` when its file last changed (Unix seconds), and `title` its first
 ## user message ("" before one).
 struct SessionSummary
   id: String
   cwd: String
   model: String
   api: String
+  provider: Optional[String] = none
   updated_s: Int = 0
   title: String = ""
 end
@@ -44,6 +56,19 @@ end
 ## The answer of `GET /v1/sessions`.
 struct SessionList
   sessions: List[SessionSummary]
+end
+
+## A provider a session may use: its own model API, and the models it offers (`/model` lists them).
+struct ProviderInfo
+  name: String
+  api: String
+  models: List[String]
+end
+
+## The answer of `GET /v1/providers`: what the server offers now, and the provider of a session that names none.
+struct ProviderList
+  provider: String
+  providers: List[ProviderInfo]
 end
 
 ## A finished message, as the text to draw.
@@ -76,6 +101,8 @@ struct Session
   cost: Optional[Float] = none
   ## The thinking level of the session's calls; none leaves it to the model.
   effort: Optional[String] = none
+  provider: String = ""
+  api: String = ""
 end
 
 ## A user message of `SessionTree`. `id` is its entry: a branch from it goes back before the message. `last` is the
@@ -151,9 +178,17 @@ def encode_session_tree(reply: SessionTree) -> String = JSON.encode(reply)
 
 def decode_session_tree(text: String) -> Result[SessionTree] = Wire.decode(text, SessionTree.codec)
 
+def encode_server_status(reply: ServerStatus) -> String = JSON.encode(reply)
+
+def decode_server_status(text: String) -> Result[ServerStatus] = Wire.decode(text, ServerStatus.codec)
+
 def encode_branched(reply: Branched) -> String = JSON.encode(reply)
 
 def decode_branched(text: String) -> Result[Branched] = Wire.decode(text, Branched.codec)
+
+def encode_provider_list(reply: ProviderList) -> String = JSON.encode(reply)
+
+def decode_provider_list(text: String) -> Result[ProviderList] = Wire.decode(text, ProviderList.codec)
 
 def encode_shell_accepted(reply: ShellAccepted) -> String = JSON.encode(reply)
 
@@ -176,6 +211,8 @@ def encode_session(reply: Session) -> String
       accept_edits: some(reply.accept_edits),
       cost: Wire.field(reply.cost),
       effort: reply.effort,
+      provider: some(reply.provider),
+      api: some(reply.api),
     ),
   )
 end
@@ -203,6 +240,8 @@ def decode_session(text: String) -> Result[Session]
       accept_edits: wire.accept_edits.unwrap_or(false),
       cost: Wire.optional(wire.cost),
       effort: wire.effort,
+      provider: wire.provider.unwrap_or(""),
+      api: wire.api.unwrap_or(""),
     ),
   )
 end
@@ -215,12 +254,15 @@ def shape() -> List[String]
     Wire.record("MessageAccepted", MessageAccepted.members),
     Wire.record("SessionSummary", SessionSummary.members),
     Wire.record("SessionList", SessionList.members),
+    Wire.record("ProviderInfo", ProviderInfo.members),
+    Wire.record("ProviderList", ProviderList.members),
     Wire.record("Message", Message.members),
     Wire.record("Session", Session.members),
     Wire.record("ServerInfo", ServerInfo.members),
     Wire.record("TreeNode", TreeNode.members),
     Wire.record("SessionTree", SessionTree.members),
     Wire.record("Branched", Branched.members),
+    Wire.record("ServerStatus", ServerStatus.members),
     Wire.record("ShellAccepted", ShellAccepted.members),
     Wire.record("MessageWire", MessageWire.members),
     Wire.record("SessionWire", SessionWire.members),
@@ -248,6 +290,8 @@ struct SessionWire
   accept_edits: Optional[Bool] = none
   cost: JSON.Field[Float]
   effort: Optional[String] = none
+  provider: Optional[String] = none
+  api: Optional[String] = none
 end
 
 def check_turn(wire: SessionWire) -> Result[Void]

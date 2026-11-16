@@ -136,7 +136,11 @@ def create(chat: Chat, options: Args.Options) -> Result[Chat]
     none -> try Path.cwd()
   end
 
-  id = try Client.create_session(chat.server, Protocol.NewSession(cwd: cwd, model: options.model, api: options.api))
+  id = try Client.create_session(
+    chat.server,
+    Protocol.NewSession(cwd: cwd, model: options.model, api: options.api, provider: options.provider),
+  )
+
   ok(subscribe(note(chat, "[session #{id}]").with(id: id), 0))
 end
 
@@ -340,7 +344,7 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Tree(choice) -> tree_command(chat, choice, &branched)
     Client.Command.Fork(choice) -> tree_command(chat, choice, &forked)
     Client.Command.Clone -> moved_command(chat, -> { Client.fork(chat.server, chat.id, none) })
-    Client.Command.Model(model) -> setting_command(chat, "model", model, Protocol.UpdateSession(model: model))
+    Client.Command.Model(model) -> model_command(chat, model)
     Client.Command.Thinking(level) -> setting_command(chat, "thinking", level, Protocol.UpdateSession(effort: level))
     Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
   end
@@ -453,9 +457,22 @@ end
 
 def shown_setting(chat: Chat, name: String) -> Result[Chat]
   session = try Client.session(chat.server, chat.id)
-  return ok(note(chat, "[model #{session.model}]")) if name == "model"
+  return ok(note(chat, "[model (#{session.provider}) #{session.model}]")) if name == "model"
 
   ok(note(chat, "[thinking #{session.effort.unwrap_or("as the model's default")}]"))
+end
+
+def model_command(chat: Chat, model: Optional[String]) -> Result[Step]
+  case model
+    some(text) -> tried(chat, model_changed(chat, text))
+    none -> tried(chat, shown_setting(chat, "model"))
+  end
+end
+
+def model_changed(chat: Chat, text: String) -> Result[Chat]
+  current = (try Client.session(chat.server, chat.id)).provider
+  change = Client.model_change(try Client.list_providers(chat.server), current, text)
+  changed(chat, change, "[model #{text} from the next turn]")
 end
 
 def changed(chat: Chat, change: Protocol.UpdateSession, done: String) -> Result[Chat]

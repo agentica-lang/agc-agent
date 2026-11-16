@@ -31,11 +31,11 @@ def test_a_turn_another_client_steers_is_asked() -> Result[Void]
   started = Yolo.accepted(Yolo.Yolo(on: true), Protocol.MessageAccepted(turn_id: "turn-2"))
   mine = Yolo.running(started, some("turn-2"))
   sent = Yolo.accepted(mine, Protocol.MessageAccepted(turn_id: "turn-2", message_id: some("turn-2.1")))
-  event = Protocol.MessageQueued(turn_id: "turn-2", text: "and docs", message_id: "turn-2.1")
+  event = Protocol.MessageQueued(turn_id: "turn-2", text: "and docs", message_id: some("turn-2.1"))
   try Test.eq(Yolo.allows?(Yolo.steered(Yolo.steered(sent, event), event)), true)
-  foreign = Yolo.steered(sent, event.with(message_id: "turn-2.2"))
+  foreign = Yolo.steered(sent, event.with(message_id: some("turn-2.2")))
   try Test.eq(Yolo.allows?(foreign), false)
-  other = Yolo.steered(mine, event.with(turn_id: "turn-9", message_id: "turn-9.1"))
+  other = Yolo.steered(mine, event.with(turn_id: "turn-9", message_id: some("turn-9.1")))
   Test.eq(Yolo.allows?(other), true)
 end
 

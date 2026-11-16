@@ -1,3 +1,4 @@
+import Protocol from "pkg/protocol/protocol"
 import Markdown from "../src/markdown"
 import Prompt from "../src/prompt"
 import Transcript from "../src/transcript"
@@ -41,7 +42,7 @@ def test_streamed_text_joins_the_last_entry_of_its_kind() -> Result[Void]
   entries = Transcript.add(entries, Transcript.Kind.Assistant, "again")
   texts = entries.map { |entry| entry.text }
   try Test.eq(texts, ["hi", "Hello", "stopped", "again"])
-  rows = Transcript.lines(entries, 20, false).map { |line| Markdown.plain(line.spans) }
+  rows = Transcript.lines(entries, 20, Transcript.Folds()).map { |line| Markdown.plain(line.spans) }
   Test.eq(rows, [" hi", "", " Hello", "", " stopped", "", " again"])
 end
 
@@ -51,7 +52,7 @@ def test_the_prompt_shows_its_last_rows_with_a_lead() -> Result[Void]
   try Test.eq(Prompt.rows("", 20), [" "])
   try Test.eq(Prompt.rows("1\n2\n3\n4\n5\n6\n7", 20).size, Prompt.MAX_ROWS)
   try Test.eq(Prompt.view("1\n2\n3", 5, 20, 5).rows, [" 2", " 3"])
-  try Test.eq(Prompt.view("a" * 25, 25, 12, 24).rows, [" aaaaaaaaaaa", " aaaaaaaaaaa", " aaa"])
+  try Test.eq(Prompt.view("a" * 25, 25, 12, 24).rows, [" aaaaaaaaaa", " aaaaaaaaaa", " aaaaa"])
   numbers = (1..20).map { |n| n.to_s }.join("\n")
   middle = Prompt.view(numbers, 4, 20, 24)
   try Test.eq([middle.rows, [middle.cursor_y.to_s]], [[" 3", " 4", " 5", " 6", " 7", " 8"], ["0"]])
@@ -66,18 +67,20 @@ end
 
 # The cursor edits in the middle; a click maps a column of a row back to the place in the text, wide characters too.
 def test_the_prompt_cursor_and_clicks() -> Result[Void]
+  # A row keeps its last column for the cursor, so a wide character at the end of a full row is not under it.
+  try Test.eq([Prompt.view("日本語", 3, 8, 24).rows, [Prompt.view("日本語", 3, 8, 24).cursor_x.to_s]], [[" 日本語"], ["7"]])
   try Test.eq(Prompt.insert("held", 2, "XY"), "heXYld")
   try Test.eq(Prompt.backspace("held", 2), "hld")
   try Test.eq(Prompt.backspace("held", 0), "held")
   text = "abcdefgh\n日本語"
-  view = Prompt.view(text, 3, 6, 24)
+  view = Prompt.view(text, 3, 7, 24)
   try Test.eq(view.rows, [" abcde", " fgh", " 日本", " 語"])
   try Test.eq([view.cursor_x, view.cursor_y], [4, 0])
-  end_view = Prompt.view(text, text.length, 6, 24)
+  end_view = Prompt.view(text, text.length, 7, 24)
   try Test.eq([end_view.cursor_x, end_view.cursor_y], [3, 3])
-  try Test.eq(Prompt.index_at(text, 0, 6, 24, 3, 1), 7)
-  try Test.eq(Prompt.index_at(text, 0, 6, 24, 4, 2), 10)
-  try Test.eq(Prompt.index_at(text, 0, 6, 24, 50, 1), 8)
+  try Test.eq(Prompt.index_at(text, 0, 7, 24, 3, 1), 7)
+  try Test.eq(Prompt.index_at(text, 0, 7, 24, 4, 2), 10)
+  try Test.eq(Prompt.index_at(text, 0, 7, 24, 50, 1), 8)
   Test.eq(Prompt.index_at(text, 0, 7, 24, 0, 0), 0)
 end
 
@@ -85,26 +88,33 @@ end
 def test_the_tail_matches_the_lines_and_a_change_cuts_again() -> Result[Void]
   entries = Transcript.add(Transcript.note([], "one two three four"), Transcript.Kind.Thinking, "hmm")
   entries = Transcript.add(entries, Transcript.Kind.Assistant, "the answer")
-  kept = Transcript.wrapped(entries, 8, false)
-  all = Transcript.lines(entries, 8, false)
+  kept = Transcript.wrapped(entries, 8, Transcript.Folds())
+  all = Transcript.lines(entries, 8, Transcript.Folds())
   for count in [0, 2, 5, all.size, all.size + 3]
-    try Test.eq(Transcript.tail(kept, 8, false, count), all.drop([all.size - count, 0].max.unwrap!))
+    try Test.eq(Transcript.tail(kept, 8, Transcript.Folds(), count), all.drop([all.size - count, 0].max.unwrap!))
   end
 
   grown = Transcript.add(kept, Transcript.Kind.Assistant, " grows")
   try Test.eq(grown.last.wrapped, none)
-  try Test.eq(Transcript.tail(grown, 8, false, 3), Transcript.lines(grown, 8, false).drop(all.size - 2))
-  Test.eq(Transcript.tail(kept, 8, true, 9), Transcript.lines(entries, 8, true))
+  try Test.eq(
+    Transcript.tail(grown, 8, Transcript.Folds(), 3),
+    Transcript.lines(grown, 8, Transcript.Folds()).drop(all.size - 2),
+  )
+
+  Test.eq(
+    Transcript.tail(kept, 8, Transcript.Folds(thinking: true), 9),
+    Transcript.lines(entries, 8, Transcript.Folds(thinking: true)),
+  )
 end
 
 # An entry with no rows (an answer that only called tools) takes no empty row, at the start or between.
 def test_an_entry_without_rows_adds_no_empty_row() -> Result[Void]
   empty = Transcript.Entry(kind: Transcript.Kind.Assistant, text: "")
   entries = [empty] + Transcript.note([], "one") + [empty] + Transcript.note([], "two")
-  all = Transcript.lines(entries, 20, false)
+  all = Transcript.lines(entries, 20, Transcript.Folds())
   try Test.eq(all.map { |line| Markdown.plain(line.spans) }, [" one", "", " two"])
   for count in 0..4
-    try Test.eq(Transcript.tail(entries, 20, false, count), all.drop([all.size - count, 0].max.unwrap!))
+    try Test.eq(Transcript.tail(entries, 20, Transcript.Folds(), count), all.drop([all.size - count, 0].max.unwrap!))
   end
 
   ok()
@@ -115,23 +125,48 @@ def test_thinking_is_folded_unless_shown_or_clicked_open() -> Result[Void]
   entries = Transcript.add(entries, Transcript.Kind.Assistant, "yes")
   try Test.eq(texts(entries, false), [Transcript.FOLDED_THINKING, "", "yes"])
   try Test.eq(texts(entries, true), ["hmm", "", "yes"])
-  try Test.eq(Transcript.lines(entries, 20, false).map { |line| line.entry }, [0, -1, 1])
-  opened = Transcript.toggle(entries, 0, false)
+  try Test.eq(Transcript.lines(entries, 20, Transcript.Folds()).map { |line| line.entry }, [0, -1, 1])
+  opened = Transcript.toggle(entries, 0, Transcript.Folds())
   try Test.eq(texts(opened, false), ["hmm", "", "yes"])
-  try Test.eq(texts(Transcript.toggle(opened, 0, false), false)[0], Transcript.FOLDED_THINKING)
-  try Test.eq(Transcript.toggle(entries, 1, false), entries)
+  try Test.eq(texts(Transcript.toggle(opened, 0, Transcript.Folds()), false)[0], Transcript.FOLDED_THINKING)
+  try Test.eq(Transcript.toggle(entries, 1, Transcript.Folds()), entries)
   Test.eq(texts(Transcript.unfold_thinking(opened), false)[0], Transcript.FOLDED_THINKING)
 end
 
-def test_a_finished_tool_opens_to_show_its_call() -> Result[Void]
-  entries = Transcript.tool([], "c1", Transcript.Kind.Tool, "⚙ bash make test")
-  entries = Transcript.tool(entries, "c1", Transcript.Kind.Tool, "✓ ran (8 ms)")
-  try Test.eq(texts(entries, false), ["✓ ran (8 ms)"])
-  opened = Transcript.toggle(entries, 0, false)
-  try Test.eq(texts(opened, false), ["⚙ bash make test", "✓ ran (8 ms)"])
-  try Test.eq(texts(Transcript.toggle(opened, 0, false), false), ["✓ ran (8 ms)"])
-  running = Transcript.tool([], "c2", Transcript.Kind.Tool, "⚙ bash make")
-  Test.eq(Transcript.toggle(running, 0, false), running)
+# A tool call is a shell line; once it ran its output is folded to a few rows (a click opens it) and says how long
+# it took; a diff shows its numbered lines.
+def test_a_tool_call_is_a_shell_line_with_its_folded_output() -> Result[Void]
+  started = Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "make test")
+  running = Transcript.tool_started([], started)
+  try Test.eq(texts(running, false), ["$ make test"])
+  try Test.eq(Transcript.toggle(running, 0, Transcript.Folds()), running)
+  try Test.eq(
+    Transcript.lines(running, 40, Transcript.Folds())[0].spans.map { |span| span.look },
+    [Markdown.Look.Plain, Markdown.Look.Title, Markdown.Look.Plain, Markdown.Look.Arg],
+  )
+
+  output = "1\n2\n3\n4\n5\n6"
+  done = Protocol.ToolFinished(call_id: "c1", ok: true, summary: "1", duration_ms: 1234, output: some(output))
+  ran = Transcript.tool_finished(running, done)
+  try Test.eq(
+    texts(ran, false),
+    ["$ make test", "1", "2", "3", "4", "… 2 more lines (click or ^O shows them)", "Took 1.2s"],
+  )
+
+  try Test.eq(texts(Transcript.toggle(ran, 0, Transcript.Folds()), false).size, 8)
+  edit = Transcript.tool_started([], Protocol.ToolStarted(call_id: "c2", name: "edit_file", summary: "a.txt"))
+  failed = Protocol.ToolFinished(
+    call_id: "c2",
+    ok: false,
+    summary: "old_string not found",
+    duration_ms: 5,
+    diff: some("- 1 a"),
+  )
+
+  Test.eq(
+    texts(Transcript.tool_finished(edit, failed), false),
+    ["edit a.txt", "- 1 a", "old_string not found", "Took 0.0s"],
+  )
 end
 
 def test_markdown_headings_lists_code_and_bold() -> Result[Void]
@@ -161,5 +196,5 @@ def test_a_long_code_line_wraps_and_keeps_its_spaces() -> Result[Void]
 end
 
 def texts(entries: List[Transcript.Entry], thinking: Bool) -> List[String]
-  Transcript.lines(entries, 40, thinking).map { |line| Markdown.plain(line.spans).strip }
+  Transcript.lines(entries, 40, Transcript.Folds(thinking: thinking)).map { |line| Markdown.plain(line.spans).strip }
 end

@@ -2,7 +2,8 @@
 ## `~/.local/state/finn`), `FINN_DATA_DIR` for the sessions (else `$XDG_DATA_HOME/finn`, else
 ## `~/.local/share/finn`), and the model API: `FINN_API` (`openai`, chat completions, by default, or
 ## `openai_responses`), `FINN_BASE_URL` (a local llama-server by default), `FINN_API_KEY` and
-## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction; `FINN_MODELS_URL` (the models.dev
+## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction; `FINN_DRAIN_MS` (how long a stop waits for the turns,
+## 60000); `FINN_MODELS_URL` (the models.dev
 ## catalog of prices and windows, `off` for none) and `FINN_MODELS_PROVIDER` (the provider of the model there).
 ## `FINN_CODE_MODE=1` adds code mode, whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is
 ## not checked), else the pinned one fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be private to the user). Skills:
@@ -22,7 +23,11 @@ import Approval from "../approval/approval"
 import Catalog from "../agent/catalog"
 import CodeMode from "../tools/code_mode"
 import Permissions from "../approval/permissions"
+import Providers from "providers"
 import Tools from "../tools/tools"
+
+export Providers.ModelApi
+export Providers.Provider
 
 STATE_DIR_ENV = "FINN_STATE_DIR"
 DATA_DIR_ENV = "FINN_DATA_DIR"
@@ -35,37 +40,30 @@ DEFAULT_MODEL = "default"
 APIS = ["openai", "openai_responses", "anthropic"]
 ANT_MS = 15000
 
-## A model API a session can use: its provider, and the fields every request to it carries.
-struct ModelApi
-  provider: LLM.Provider
-  extra: Map[String, JSON.Value] = {}
-  ## The model of a session that picks this API without a model, when it is not the server's API; empty for the
-  ## server's model.
-  model: String = ""
-  ## Ask for the prompt cache (Anthropic).
-  cache: Bool = false
-  ## A local server whose `/props` may give the window (llama-server), and which may get `FINN_API_KEY` there.
-  local: Bool = true
-  ## A provider with a fresh token, after a 401 (the token of `ant`).
-  refresh: Optional[Fn[Result[LLM.Provider]]] = none
-end
-
 struct Options
   state_dir: String
   data_dir: String
-  ## The model APIs by name (`Config.apis`), and the one of a session that names none.
-  apis: Map[String, ModelApi]
-  api: String
+  ## The providers by name (`Providers`), the one of a session that names none, and its model.
+  providers: Map[String, Providers.Provider]
+  provider: String
   model: String
+  ## The key variable of each provider that has one, offered or not, for the hint of a session on one not offered.
+  key_envs: Map[String, String] = {}
+  ## What the server warns about when it starts.
+  warnings: List[String] = []
   env: Fn[String, Result[String]]
   ## The rules of the approval extension; none turns it off, and every tool call runs without asking.
   approvals: Optional[Approval.Rules] = none
   ## The tools of the MCP servers, and those of the servers that list them after the start.
   tools: List[Tools.Tool] = []
   late_tools: Optional[Fn[List[Tools.Tool]]] = none
+  ## A test seam: makes the diff of each tool call (see `Tools.Context.diff`).
+  diff: Optional[Fn[String, JSON.Value, String]] = none
   port: Int = 0
   keep_events: Int = 1000
   approval_timeout_ms: Int = 90000
+  ## How long a stop of the server waits for the running turns before it cancels them.
+  drain_ms: Int = 60000
   ## The model's window in tokens; none asks the provider (`GET /models`).
   context_window: Optional[Int] = none
   ## The model that writes the summary of a compaction; empty is the session's model.
@@ -121,16 +119,41 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     model = LLM.ANTHROPIC_MODEL
   end
 
+  providers = builtin(apis(base_url, api_key, LLM.Options(), access), api)
+  customs = Providers.presets()
+  for path in option_list(Permissions.config_path(read))
+    customs = customs + try Providers.from_file(path)
+  end
+
+  offered = Providers.offered(customs, read, LLM.Options())
+  for name in offered.keys
+    providers = providers.put(name, offered[name])
+  end
+
+  provider = set(read, "FINN_PROVIDER").unwrap_or(default_provider(api))
+  if not providers.has_key?(provider)
+    return error(
+      "FINN_PROVIDER #{provider.inspect} is not offered (is its key set?): one of #{providers.keys.join(", ")}",
+    )
+  end
+
+  if provider != default_provider(api)
+    model = DEFAULT_MODEL
+  end
+
   ok(
     Options(
       state_dir: try state_dir(read),
       data_dir: try data_dir(read),
-      apis: apis(base_url, api_key, LLM.Options(), access),
-      api: api,
+      providers: providers,
+      provider: provider,
+      key_envs: Providers.key_envs(customs),
+      warnings: Providers.shared_keys(customs),
       model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,
       approvals: some(try Permissions.user_rules(read)),
       context_window: try context_window(read),
+      drain_ms: try drain_ms(read),
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(base_url),
       api_key: api_key,
@@ -173,8 +196,7 @@ def apis(
   api_key: String,
   options: LLM.Options = LLM.Options(),
   anthropic: AnthropicAccess = AnthropicAccess(),
-) -> Map[String, ModelApi]
-  stateless = {"store": JSON.from(false), "include": JSON.from(["reasoning.encrypted_content"])}
+) -> Map[String, Providers.ModelApi]
   access = anthropic
   if access.inherit
     access = access.with(url: base_url, api_key: api_key)
@@ -188,10 +210,41 @@ def apis(
   end
 
   {
-    "openai": ModelApi(provider: LLM.openai_chat(base_url, api_key, options)),
-    "openai_responses": ModelApi(provider: LLM.openai_responses(base_url, api_key, options), extra: stateless),
-    "anthropic": ModelApi(provider: claude, model: LLM.ANTHROPIC_MODEL, cache: true, local: false, refresh: refresh),
+    "openai": Providers.ModelApi(provider: LLM.openai_chat(base_url, api_key, options)),
+    "openai_responses": Providers.ModelApi(
+      provider: LLM.openai_responses(base_url, api_key, options),
+      extra: Providers.stateless(),
+    ),
+    "anthropic": Providers.ModelApi(
+      provider: claude,
+      model: LLM.ANTHROPIC_MODEL,
+      cache: true,
+      local: false,
+      refresh: refresh,
+    ),
   }
+end
+
+## The built-in providers of a server whose own model APIs are `apis` (`Config.apis`): `local` has the OpenAI ones,
+## with `api` as its own when it is one, and `anthropic` the other.
+def builtin(apis: Map[String, Providers.ModelApi], api: String) -> Map[String, Providers.Provider]
+  openai = {"openai": apis["openai"], "openai_responses": apis["openai_responses"]}
+  local_api = "openai"
+  if openai.has_key?(api)
+    local_api = api
+  end
+
+  {
+    Providers.LOCAL: Providers.Provider(apis: openai, api: local_api),
+    Providers.ANTHROPIC: Providers.Provider(apis: {"anthropic": apis["anthropic"]}, api: "anthropic"),
+  }
+end
+
+## The provider of a server that names none: the one of its `FINN_API`.
+def default_provider(api: String) -> String
+  return Providers.ANTHROPIC if api == "anthropic"
+
+  Providers.LOCAL
 end
 
 ## The token of `ant auth login`, from `ant auth print-credentials --access-token`. Its output is never shown: a
@@ -277,6 +330,17 @@ def set(read: Fn[String, Result[String]], name: String) -> Optional[String]
   end
 
   none
+end
+
+def drain_ms(read: Fn[String, Result[String]]) -> Result[Int]
+  for text in option_list(set(read, "FINN_DRAIN_MS"))
+    case text.to_i
+      ok(ms) if ms >= 0 -> return ok(ms)
+      _ -> return error("FINN_DRAIN_MS must be a number of milliseconds, not #{text.inspect}")
+    end
+  end
+
+  ok(60000)
 end
 
 def context_window(read: Fn[String, Result[String]]) -> Result[Optional[Int]]

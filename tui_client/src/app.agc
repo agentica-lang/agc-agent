@@ -1,14 +1,16 @@
 ## One session on the full screen, as an Elm program of agentica-tui: the `Model` holds the whole state, `update`
 ## takes the keys and the events of the server as messages and gives the next model with the work to start, and
 ## `view` draws a model. The event stream, the signals, the answers of approvals and the compactions run as commands,
-## each giving one message, which `update` arms again. The short calls to the server (send, stop, session, list,
-## update) run inside `update`, so the loop waits at most the client's call timeout (10 s) for each of them.
+## each giving one message, which `update` arms again; so do the sends, the stops, the level changes and the read of
+## the files for `@`. The short calls to the server (session, list, update) run inside `update`, so the loop waits at
+## most the client's call timeout (10 s) for each of them.
 
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
 import Args from "args"
+import Input from "input"
 import Picker from "picker"
 import Layout from "panel"
 import Prompt from "prompt"
@@ -28,7 +30,23 @@ MAX_RECONNECTS = 3
 MAX_RESYNCS = 2
 SCROLL_STEP = 3
 YOLO_WARNING = "--yolo: the tool calls of turns sent from here run without asking"
-HINTS = "Enter send · ^J newline · ⇧Tab thinking level · ^T show thinking · Esc stop · PgUp/PgDn · ^C quit"
+## The key hints of the status line, most needed first: those that do not fit are left out.
+HINTS = [
+  "Enter send",
+  "Esc stop",
+  "^C quit",
+  "^J newline",
+  "Alt+Enter follow-up",
+  "⇧Tab thinking level",
+  "^T show thinking",
+  "^O show tool output",
+  "@ files",
+  "↑ history",
+  "PgUp/PgDn",
+]
+## The most files the `@` list reads from the session's folder, and the folders it never enters.
+MAX_FILES = 5000
+SKIPPED_DIRS = ["node_modules", "deps", "target", "dist", "build", "__pycache__"]
 SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 SPIN_MS = 80
 ## The thinking levels Shift+Tab goes through, none for the model's default.
@@ -37,6 +55,8 @@ LEVELS: List[Optional[String]] = [none, some("low"), some("medium"), some("high"
 struct Model
   server: Client.Server
   id: String
+  ## The folder of the session, where `@` finds files.
+  cwd: String = ""
   ## What `/new` makes a session with.
   options: Args.Options
   signals: Channel[System.Signal]
@@ -64,12 +84,26 @@ struct Model
   ## reply came, so its events meet the state the replies give (the turn this client started, the message it queued).
   outbox: List[String] = []
   held: List[Client.Item] = []
+  ## Messages for after the turn (Alt+Enter), sent together when it ends.
+  follow_ups: List[String] = []
+  ## The prompts sent, oldest first, and the one Up shows (none: the prompt being typed).
+  history: List[String] = []
+  recall: Optional[Int] = none
+  ## The large pastes behind the tokens of the prompt, until it is sent.
+  pastes: List[String] = []
+  ## The files of the session's folder once read, the selected one of the `@` list, and the `@` that Esc closed.
+  files: Optional[List[String]] = none
+  reading_files: Bool = false
+  mention_selected: Int = 0
+  mention_closed: Optional[Int] = none
   ## Esc came before the turn of a message sent started: the turn stops once the reply says it did.
   stop_wanted: Bool = false
   ## How many times a session was opened, so the reply to a send made before is dropped.
   opened: Int = 0
   ## The picker of `/resume`, `/tree` or `/fork`, open over the prompt.
   picker: Optional[Picker.Picker] = none
+  ## The provider and model of the session, as `provider/model`, for the status line and the `/model` picker.
+  serving: String = ""
   ## The tree the picker of `/tree` or `/fork` showed last, whose numbers `/tree N` and `/fork N` name.
   listed: Optional[Protocol.SessionTree] = none
   ## A branch, a fork or a copy is on its way: nothing is sent until its reply.
@@ -81,6 +115,8 @@ struct Model
   yolo: Yolo.Yolo
   ## The thinking of the model is drawn.
   thinking: Bool = false
+  ## The output of the tool calls is shown whole.
+  tools: Bool = false
   ## The thinking level the rules show, none for the model's default; the server's own is `confirmed`.
   effort: Optional[String] = none
   confirmed: Optional[String] = none
@@ -123,6 +159,8 @@ enum Msg
   Leveled(Result[Void])
   ## The reply to a branch, a fork or a copy: the session to go on in.
   Moved(Result[Protocol.Branched])
+  ## The files of the session's folder, for the `opened` count when they were asked.
+  Files(Int, List[String])
 end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
@@ -203,7 +241,7 @@ def update(model: Model, msg: Msg) -> TUI.Step[Model, Msg]
   app = handled(model.with(now: Time.monotonic_ms, clock_s: Time.now_ms / 1000), msg)
   # The answer that streams changes on every delta: it is cut again when the stream rests.
   if not stream?(msg)
-    app = app.with(entries: Transcript.wrapped(app.entries, app.width, app.thinking))
+    app = app.with(entries: Transcript.wrapped(app.entries, app.width, folds(app)))
   end
 
   cmds = app.effects
@@ -261,6 +299,8 @@ def handled(app: Model, msg: Msg) -> Model
     Msg.Moved(result) -> moved(app, result)
     Msg.Rechecked(generation, result) if generation == app.generation -> rechecked(app, result)
     Msg.Rechecked(_, _) -> app
+    Msg.Files(opened, files) if opened == app.opened -> app.with(files: some(files), reading_files: false)
+    Msg.Files(_, _) -> app
   end
 end
 
@@ -347,9 +387,10 @@ def create(app: Model) -> Result[Model]
     none -> try Path.cwd()
   end
 
-  request = Protocol.NewSession(cwd: cwd, model: options.model, api: options.api)
+  request = Protocol.NewSession(cwd: cwd, model: options.model, api: options.api, provider: options.provider)
   id = try Client.create_session(app.server, request)
-  ok(subscribe(noted(app.with(id: id, opened: app.opened + 1), "session #{id}"), 0))
+  serving = serving_of(try Client.session(app.server, id))
+  ok(subscribe(noted(app.with(id: id, cwd: cwd, opened: app.opened + 1, serving: serving), "session #{id}"), 0))
 end
 
 def resume(app: Model, id: String) -> Result[Model]
@@ -364,11 +405,17 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
     from = session.turn_from_event_id.unwrap_or(session.last_event_id)
   end
 
+  entries = Transcript.from_history(session.history)
   fresh = app.with(
+    serving: serving_of(session),
     opened: app.opened + 1,
-    entries: Transcript.from_history(session.history),
+    cwd: session.cwd,
+    entries: entries,
+    history: entries.select { |entry| entry.kind == Transcript.Kind.User }.map { |entry| entry.text },
+    files: none,
+    reading_files: false,
     turn: session.turn_id.some?,
-    effort: session.effort,
+    effort: wanted_level(app, session.effort),
     confirmed: session.effort,
     stopping: false,
     shown_id: from,
@@ -376,7 +423,11 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
     yolo: Yolo.attached(app.yolo, session.turn_id, not skip_replay),
   )
 
-  subscribe(fresh, from)
+  subscribed = subscribe(fresh, from)
+  return subscribed if session.turn_id.some?
+
+  # The end of the turn they waited for was not seen.
+  after_turn(subscribed, Protocol.StopReason.EndTurn)
 end
 
 # A new reader of the stream from `from`; the old one stops, and its channel is closed so its last read ends.
@@ -421,6 +472,10 @@ def on_key(app: Model, event: TUI.Event) -> Model
 
   return app if Approvals.captures?(app.approvals, event)
 
+  for found in option_list(mention_list(app))
+    return on_mention_key(app, found, event) if mention_key?(event)
+  end
+
   on_prompt_key(unselected(app, event), event)
 end
 
@@ -438,13 +493,20 @@ end
 def on_prompt_key(app: Model, event: TUI.Event) -> Model
   case event
     TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(exit: some(0))
+    TUI.Event.Key(TUI.Key.Enter, mods) if mods.alt -> follow_up(app)
     TUI.Event.Key(TUI.Key.Enter, _) -> send(app)
+    TUI.Event.Key(TUI.Key.Up, _) if app.prompt == "" or app.recall.some? -> recalled(app, -1)
+    TUI.Event.Key(TUI.Key.Down, _) if app.recall.some? -> recalled(app, 1)
     TUI.Event.Key(TUI.Key.Ctrl("t"), _) ->
-      app.with(thinking: not app.thinking, entries: Transcript.unfold_thinking(app.entries))
+      shown = app.with(thinking: not app.thinking, entries: Transcript.unfold_thinking(app.entries))
+      noted(shown, "thinking blocks: #{shown_name(shown.thinking)}")
+    TUI.Event.Key(TUI.Key.Ctrl("o"), _) ->
+      shown = app.with(tools: not app.tools, entries: Transcript.unfold_tools(app.entries))
+      noted(shown, "tool output: #{shown_name(shown.tools)}")
     TUI.Event.Key(TUI.Key.Ctrl("j"), _) -> typed(app, "\n")
     TUI.Event.Key(TUI.Key.Backspace, _) ->
       at = cursor(app)
-      app.with(prompt: Prompt.backspace(app.prompt, at), cursor: [at - 1, 0].max.unwrap!)
+      app.with(prompt: Prompt.backspace(app.prompt, at), cursor: [at - 1, 0].max.unwrap!, recall: none)
     TUI.Event.Key(TUI.Key.Left, _) -> app.with(cursor: [cursor(app) - 1, 0].max.unwrap!)
     TUI.Event.Key(TUI.Key.Right, _) -> app.with(cursor: Prompt.clamp(app.prompt, cursor(app) + 1))
     TUI.Event.Key(TUI.Key.Home, _) -> app.with(cursor: 0)
@@ -454,13 +516,14 @@ def on_prompt_key(app: Model, event: TUI.Event) -> Model
     TUI.Event.Key(TUI.Key.BackTab, _) -> leveled(app)
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
       app.with(approvals: Approvals.toggled(app.approvals, app.now))
+    TUI.Event.Key(TUI.Key.Escape, _) if not app.follow_ups.empty? -> stop(put_back(app))
     TUI.Event.Key(TUI.Key.Escape, _) -> stop(app)
     TUI.Event.Key(TUI.Key.PageUp, _) -> scrolled(app, page(app))
     TUI.Event.Key(TUI.Key.PageDown, _) -> scrolled(app, -page(app))
     TUI.Event.Mouse(TUI.Mouse.WheelUp, _, _, _) -> scrolled(app, SCROLL_STEP)
     TUI.Event.Mouse(TUI.Mouse.WheelDown, _, _, _) -> scrolled(app, -SCROLL_STEP)
     TUI.Event.Char(char, _) -> typed(app, char)
-    TUI.Event.Paste(text) -> typed(app, Prompt.pasted(text))
+    TUI.Event.Paste(text) -> pasted(app, Prompt.pasted(text))
     _ -> app
   end
 end
@@ -469,7 +532,156 @@ def cursor(app: Model) -> Int = Prompt.clamp(app.prompt, app.cursor)
 
 def typed(app: Model, piece: String) -> Model
   at = cursor(app)
-  app.with(prompt: Prompt.insert(app.prompt, at, piece), cursor: at + piece.length)
+  edited = app.with(prompt: Prompt.insert(app.prompt, at, piece), cursor: at + piece.length, recall: none)
+  return edited if piece != "@" or edited.files.some? or edited.reading_files
+
+  read_files(edited)
+end
+
+# A large paste goes in as a token, which the send puts back.
+def pasted(app: Model, text: String) -> Model
+  return typed(app, text) if not Input.large?(text)
+
+  pastes = app.pastes.push(text)
+  typed(app.with(pastes: pastes), Input.token(pastes.size, text))
+end
+
+# Up shows the prompt sent before the one shown, Down the one after; past the newest the prompt is empty again.
+def recalled(app: Model, step: Int) -> Model
+  return app if app.history.empty?
+
+  at = app.recall.unwrap_or(app.history.size) + step
+  return app if at < 0
+
+  return app.with(prompt: "", cursor: 0, recall: none) if at >= app.history.size
+
+  text = app.history[at]
+  app.with(prompt: text, cursor: text.length, recall: some(at))
+end
+
+# Alt+Enter: while a turn runs (or a message that starts one is on its way), the text waits for the turn's end.
+def follow_up(app: Model) -> Model
+  text = app.prompt.strip
+  # A command runs now, as with Enter: it is no message for the model.
+  return send(app) if text == "" or (not app.turn and app.outbox.empty?) or Client.parse_command(text).some?
+
+  whole = expanded(app, text)
+  waiting = app.with(prompt: "", cursor: 0, recall: none, follow_ups: app.follow_ups.push(whole), pastes: [])
+  waiting.with(history: remembered(waiting.history, whole))
+end
+
+# Esc puts the follow-ups back in the prompt, before what it holds.
+def put_back(app: Model) -> Model
+  text = (app.follow_ups + [app.prompt].select { |t| t.strip != "" }).join("\n")
+  noted(app.with(prompt: text, cursor: text.length, follow_ups: []), "follow-ups back in the prompt")
+end
+
+# The follow-ups go as one message once the turn ended by itself; a stopped turn puts them back in the prompt.
+def after_turn(app: Model, reason: Protocol.StopReason) -> Model
+  return app if app.follow_ups.empty?
+  return put_back(app) if reason == Protocol.StopReason.Cancelled
+
+  text = app.follow_ups.join("\n\n")
+  queued = app.with(follow_ups: [], outbox: app.outbox.push(text))
+  return queued if not app.outbox.empty?
+
+  sending(queued, text)
+end
+
+def expanded(app: Model, text: String) -> String = Input.expanded(text, app.pastes)
+
+def remembered(history: List[String], text: String) -> List[String]
+  return history if not history.empty? and history.last == text
+
+  history.push(text)
+end
+
+# The files of the session's folder are read once, by a command.
+def read_files(app: Model) -> Model
+  root = app.cwd
+  opened = app.opened
+  effect(app.with(reading_files: true), TUI.Cmd.Run(-> { Msg.Files(opened, listed(root)) }))
+end
+
+# The paths of the files under `root`, at most MAX_FILES, without hidden files and the folders of SKIPPED_DIRS.
+def listed(root: String) -> List[String]
+  found: List[String] = []
+  dirs = [""]
+  while not dirs.empty? and found.size < MAX_FILES
+    dir = dirs[0]
+    dirs = dirs.drop(1)
+    names: List[String] = Dir.list(under(root, dir)).unwrap_or([])
+    for name in names.sort
+      next if name.start_with?(".") or SKIPPED_DIRS.include?(name)
+
+      path = name
+      if dir != ""
+        path = "#{dir}/#{name}"
+      end
+
+      kind = kind_of(under(root, path))
+      if kind == "directory"
+        dirs = dirs.push(path)
+      elsif kind == "file"
+        found = found.push(path)
+      end
+    end
+  end
+
+  found.take(MAX_FILES)
+end
+
+def kind_of(path: String) -> String
+  case File.lstat(path)
+    ok(info) -> info.kind
+    error(_) -> ""
+  end
+end
+
+def under(root: String, path: String) -> String
+  return root if path == ""
+
+  "#{root}/#{path}"
+end
+
+# The `@` list while the cursor ends an `@` word, the files are read and Esc did not close it.
+def mention_list(app: Model) -> Optional[Input.Mention]
+  return none if app.files.none? or app.picker.some?
+
+  found = Input.mention(app.prompt, cursor(app))
+  return none if found.none? or app.mention_closed == some(found.unwrap!.start)
+
+  found
+end
+
+def mention_key?(event: TUI.Event) -> Bool
+  case event
+    TUI.Event.Key(TUI.Key.Tab, _) -> true
+    TUI.Event.Key(TUI.Key.Up, _) -> true
+    TUI.Event.Key(TUI.Key.Down, _) -> true
+    TUI.Event.Key(TUI.Key.Escape, _) -> true
+    _ -> false
+  end
+end
+
+def mention_matches(app: Model, found: Input.Mention) -> List[String]
+  Input.matches(app.files.unwrap_or([]), found.query)
+end
+
+# Tab puts the selected file in place of the `@` word, Up and Down move, Esc closes the list.
+def on_mention_key(app: Model, found: Input.Mention, event: TUI.Event) -> Model
+  files = mention_matches(app, found)
+  selected = [[app.mention_selected, files.size - 1].min.unwrap!, 0].max.unwrap!
+  case event
+    TUI.Event.Key(TUI.Key.Up, _) -> app.with(mention_selected: [selected - 1, 0].max.unwrap!)
+    TUI.Event.Key(TUI.Key.Down, _) -> app.with(mention_selected: [selected + 1, files.size - 1].min.unwrap!)
+    TUI.Event.Key(TUI.Key.Escape, _) -> app.with(mention_closed: some(found.start))
+    _ if files.empty? -> app
+    _ ->
+      at = cursor(app)
+      text = Input.completed(app.prompt, at, found, files[selected])
+      app.with(prompt: text, cursor: at + text.length - app.prompt.length, mention_selected: 0)
+  end
 end
 
 # A click on the transcript opens or closes a thinking block or a tool call; on a key of the approval panel it is
@@ -479,7 +691,7 @@ def clicked(app: Model, x: Int, y: Int) -> Model = clicked_on(app, framed(app), 
 
 def clicked_on(app: Model, frame: Screen.Frame, x: Int, y: Int) -> Model
   case Screen.hit(frame, x, y)
-    Screen.Hit.Entry(index) -> app.with(entries: Transcript.toggle(app.entries, index, app.thinking))
+    Screen.Hit.Entry(index) -> app.with(entries: Transcript.toggle(app.entries, index, folds(app)))
     Screen.Hit.Key(event) -> on_key(app, event)
     Screen.Hit.Prompt(column, row) ->
       app.with(cursor: Prompt.index_at(app.prompt, cursor(app), frame.width, frame.height, column, row))
@@ -514,19 +726,21 @@ def page(app: Model) -> Int = [app.height / 2, 1].max.unwrap!
 def scrolled(app: Model, rows: Int) -> Model = app.with(scroll: [app.scroll + rows, 0].max.unwrap!)
 
 def send(app: Model) -> Model
-  text = app.prompt.strip
-  return app if text == ""
+  typed_text = app.prompt.strip
+  return app if typed_text == ""
 
-  case Client.parse_command(text)
+  text = expanded(app, typed_text)
+  base = app.with(history: remembered(app.history, text), recall: none, cursor: 0, mention_closed: none)
+  case Client.parse_command(typed_text)
     some(ok(command)) if not app.moving or local?(command) ->
-      return on_command(app.with(prompt: "", scroll: 0), command)
+      return on_command(base.with(prompt: "", scroll: 0), command)
     some(error(e)) -> return noted(app, e.message)
     _ -> nil
   end
 
   return noted(app, "the session is moving: wait for it") if app.moving
 
-  queued = app.with(prompt: "", scroll: 0, outbox: app.outbox.push(text))
+  queued = base.with(prompt: "", scroll: 0, outbox: app.outbox.push(text), pastes: [])
   return queued if not app.outbox.empty?
 
   sending(queued, text)
@@ -555,16 +769,24 @@ def next_send(app: Model) -> Model
 end
 
 # A message sent while a turn runs is queued; its `message_queued` event shows it. A message that was not sent goes
-# back to an empty prompt.
+# back to an empty prompt; one that may have been sent (a timeout) stays only in the note, so it is not sent twice.
 def sent_reply(app: Model, text: String, result: Result[Protocol.MessageAccepted]) -> Model
   case result
-    ok(accepted) if accepted.message_id.some? -> app.with(yolo: Yolo.accepted(app.yolo, accepted))
+    ok(accepted) if accepted.message_id.some? ->
+      queued = app.with(yolo: Yolo.accepted(app.yolo, accepted))
+      return queued if not app.stop_wanted
+
+      # The message went into a turn that runs (another client's): that is the turn Esc asked to stop.
+      stop(queued.with(turn: true, stop_wanted: false))
     ok(accepted) ->
       entries = Transcript.add(app.entries, Transcript.Kind.User, text)
       started = app.with(entries: entries, turn: true, stopping: false, yolo: Yolo.accepted(app.yolo, accepted))
       return started if not app.stop_wanted
 
       stop(started.with(stop_wanted: false))
+    # The text stays in the note: put back in the prompt, it would take the keys typed after it.
+    error(e) if e.kind == Client.KIND_TIMEOUT ->
+      noted(app, "error: the message may not have been sent (#{e.message}): #{Client.printable(text)}")
     error(e) ->
       failed = noted(app, "error: the message was not sent: #{e.message}: #{Client.printable(text)}")
       return failed if app.prompt != ""
@@ -599,8 +821,8 @@ def on_command(app: Model, command: Client.Command) -> Model
     Client.Command.Tree(choice) -> tried(app, tree_command(app, Picker.Kind.Tree, choice))
     Client.Command.Fork(choice) -> tried(app, tree_command(app, Picker.Kind.Fork, choice))
     Client.Command.Clone -> move(app, Picker.Kind.Fork, none)
-    Client.Command.Model(model) -> setting_command(app, "model", model, Protocol.UpdateSession(model: model))
-    Client.Command.Thinking(level) -> setting_command(app, "thinking", level, Protocol.UpdateSession(effort: level))
+    Client.Command.Model(model) -> model_command(app, model)
+    Client.Command.Thinking(level) -> thinking_command(app, level)
     Client.Command.Compact -> compact_command(app)
   end
 end
@@ -621,10 +843,18 @@ def tried(app: Model, result: Result[Model]) -> Model
   end
 end
 
-# The state of no session yet, with the stream that `subscribe` replaces.
+# The state of no session yet, with the stream that `subscribe` replaces; the follow-ups not sent wait in the prompt.
 def fresh(app: Model) -> Model
+  kept = app.with(prompt: "", cursor: 0)
+  if not app.follow_ups.empty?
+    kept = put_back(app)
+  end
+
   seed(app.server, app.options, app.signals, app.width, app.height).with(
+    prompt: kept.prompt,
+    cursor: kept.cursor,
     thinking: app.thinking,
+    tools: app.tools,
     theme: app.theme,
     stream: app.stream,
     feed: app.feed,
@@ -655,6 +885,8 @@ def picking(app: Model) -> Result[Model]
 end
 
 def picked(app: Model, kind: Picker.Kind, key: String) -> Model
+  return model_command(app, some(key)) if kind == Picker.Kind.Models
+
   case key.to_i
     ok(entry) if kind != Picker.Kind.Sessions -> move(app, kind, some(entry))
     _ -> switch_command(app, some(key))
@@ -701,6 +933,12 @@ def moved(app: Model, result: Result[Protocol.Branched]) -> Model
       opened = tried(app.with(moving: false), resume(fresh(app), done.id))
       return opened if done.text.empty?
 
+      # Follow-ups put back in the prompt stay after the message; typing then adds to both.
+      if opened.prompt != ""
+        both = "#{done.text}\n#{opened.prompt}"
+        return noted(opened.with(prompt: both, cursor: both.length), "went back before a message: it is in the prompt")
+      end
+
       filled = opened.with(prompt: done.text, cursor: done.text.length, prefilled: true)
       noted(filled, "went back before a message: it is in the prompt (typing replaces it, an arrow keeps it)")
     error(e) -> noted(app.with(moving: false), "error: #{e.message}")
@@ -711,18 +949,38 @@ def switched(app: Model, choice: String) -> Result[Model]
   resume(fresh(app), try Client.pick(try Client.list_sessions(app.server), choice))
 end
 
-def setting_command(app: Model, name: String, value: Optional[String], change: Protocol.UpdateSession) -> Model
-  case value
-    some(text) -> tried(app, changed(app, change, "#{name} #{text} from the next turn"))
-    none -> tried(app, shown_setting(app, name))
+def thinking_command(app: Model, level: Optional[String]) -> Model
+  case level
+    some(text) ->
+      tried(app, changed(app, Protocol.UpdateSession(effort: level), "thinking #{text} from the next turn"))
+    none -> tried(app, shown_thinking(app))
   end
 end
 
-def shown_setting(app: Model, name: String) -> Result[Model]
+def shown_thinking(app: Model) -> Result[Model]
   session = try Client.session(app.server, app.id)
-  return ok(noted(app, "model #{session.model}")) if name == "model"
-
   ok(noted(app, "thinking #{session.effort.unwrap_or("as the model's default")}"))
+end
+
+# `/model` opens the picker; `/model provider/model` moves the session to that provider when one has that name, else
+# `/model NAME` changes the model.
+def model_command(app: Model, given: Optional[String]) -> Model
+  case given
+    some(text) -> tried(app, model_changed(app, text))
+    none -> tried(app, model_picking(app))
+  end
+end
+
+def model_picking(app: Model) -> Result[Model]
+  list = try Client.list_providers(app.server)
+  ok(app.with(picker: some(Picker.models(list, app.serving))))
+end
+
+def model_changed(app: Model, text: String) -> Result[Model]
+  current = app.serving.split("/")[0]
+  change = Client.model_change(try Client.list_providers(app.server), current, text)
+  done = try changed(app, change, "model #{text} from the next turn")
+  ok(done.with(serving: serving_of(try Client.session(app.server, app.id))))
 end
 
 def changed(app: Model, change: Protocol.UpdateSession, done: String) -> Result[Model]
@@ -823,17 +1081,15 @@ def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
       shown.with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)))
     Protocol.Event.TurnFinished(done) ->
       ended = shown.with(turn: false, stopping: false, new_model: none, yolo: Yolo.running(shown.yolo, none))
-      finished(ended, done.stop_reason)
+      after_turn(finished(ended, done.stop_reason), done.stop_reason)
     Protocol.Event.ApprovalRequested(request) if Yolo.allows?(shown.yolo) -> allowed(shown, request)
     Protocol.Event.ApprovalRequested(request) ->
       shown.with(approvals: Approvals.requested(shown.approvals, request, app.now))
     Protocol.Event.ApprovalResolved(done) ->
       decided = "approval #{done.approval_id}: #{Protocol.decision_name(done.decision)}"
       noted(resolved(shown, done.approval_id), "#{decided} (#{Protocol.source_name(done.source)})")
-    Protocol.Event.ToolStarted(tool) ->
-      text = "⚙ #{tool.name} #{tool.summary}"
-      shown.with(entries: Transcript.tool(shown.entries, tool.call_id, Transcript.Kind.Tool, text))
-    Protocol.Event.ToolFinished(tool) -> shown.with(entries: tool_finished(shown.entries, tool))
+    Protocol.Event.ToolStarted(tool) -> shown.with(entries: Transcript.tool_started(shown.entries, tool))
+    Protocol.Event.ToolFinished(tool) -> shown.with(entries: Transcript.tool_finished(shown.entries, tool))
     Protocol.Event.Error(failure) ->
       failed = noted(shown, "error: #{failure.kind}: #{failure.message}")
       case shown.new_model
@@ -848,11 +1104,12 @@ def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
   end
 end
 
-def tool_finished(entries: List[Transcript.Entry], tool: Protocol.ToolFinished) -> List[Transcript.Entry]
-  timing = "#{tool.summary} (#{tool.duration_ms} ms)"
-  return Transcript.tool(entries, tool.call_id, Transcript.Kind.Tool, "✓ #{timing}") if tool.ok
+def folds(app: Model) -> Transcript.Folds = Transcript.Folds(thinking: app.thinking, tools: app.tools)
 
-  Transcript.tool(entries, tool.call_id, Transcript.Kind.ToolFailed, "✗ #{timing}")
+def shown_name(shown: Bool) -> String
+  return "shown" if shown
+
+  "folded"
 end
 
 def finished(app: Model, reason: Protocol.StopReason) -> Model
@@ -898,12 +1155,13 @@ def framed(app: Model) -> Screen.Frame
     label: label(app),
     level: app.effort,
     status: status(app, app.width),
+    queued: app.follow_ups.map { |text| "follow-up: #{Client.printable(text)}" },
   )
 
   Screen.frame(
     app.width,
     app.height,
-    Transcript.tail(app.entries, app.width, app.thinking, app.height + app.scroll),
+    Transcript.tail(app.entries, app.width, folds(app), app.height + app.scroll),
     app.scroll,
     parts,
   )
@@ -927,7 +1185,16 @@ end
 def approval_rows(app: Model, room: Int) -> List[Layout.Row]
   return [] if app.picker.some?
 
-  Approvals.rows(app.approvals, app.width, room)
+  asked = Approvals.rows(app.approvals, app.width, room)
+  return asked if not asked.empty?
+
+  case mention_list(app)
+    some(found) ->
+      files = mention_matches(app, found)
+      selected = [[app.mention_selected, files.size - 1].min.unwrap!, 0].max.unwrap!
+      Input.rows(files, selected, app.width).take([room, 0].max.unwrap!)
+    none -> []
+  end
 end
 
 # The spinner and what the turn does, in the top rule.
@@ -961,6 +1228,9 @@ end
 # A level wanted while the change was on its way goes next; the note comes once the level settles, and a failure
 # with nothing newer wanted goes back to the server's level.
 def level_reply(app: Model, result: Result[Void]) -> Model
+  # A reply after /new or a switch belongs to the session before.
+  return app if app.level_sending.none?
+
   sent = app.level_sending.unwrap_or("")
   done = app.with(level_sending: none)
   if result.ok?
@@ -975,6 +1245,13 @@ def level_reply(app: Model, result: Result[Void]) -> Model
   end
 end
 
+# A level wanted while its change is on its way stays across a new read of the session.
+def wanted_level(app: Model, server: Optional[String]) -> Optional[String]
+  return app.effort if app.level_sending.some?
+
+  server
+end
+
 def level_of(effort: String) -> Optional[String]
   return none if effort == Protocol.EFFORT_DEFAULT
 
@@ -982,6 +1259,16 @@ def level_of(effort: String) -> Optional[String]
 end
 
 def level_name(level: Optional[String]) -> String = level.unwrap_or(Protocol.EFFORT_DEFAULT)
+
+def serving_of(session: Protocol.Session) -> String = "#{session.provider}/#{session.model}"
+
+# `provider/model` as `(provider) model`.
+def footer_model(serving: String) -> String
+  case serving.index_of("/")
+    some(at) -> "(#{serving.slice(0, at)}) #{serving.slice(at + 1, serving.length - at - 1)}"
+    none -> serving
+  end
+end
 
 # What the turn does is in the top rule; the status line says when the client is ready.
 def status(app: Model, width: Int) -> String
@@ -998,6 +1285,21 @@ def status(app: Model, width: Int) -> String
     parts = parts.push("approval waiting")
   end
 
-  text = " #{(parts + [HINTS]).join(" · ")}"
+  if not app.serving.empty?
+    parts = parts.push(footer_model(app.serving))
+  end
+
+  text = " #{parts.join(" · ")}"
+  for hint in HINTS
+    more = "#{text} · #{hint}"
+    if text == " "
+      more = " #{hint}"
+    end
+
+    break if Width.text(more) > width
+
+    text = more
+  end
+
   text + " " * [width - Width.text(text), 0].max.unwrap!
 end

@@ -37,7 +37,7 @@ folder (link it into your PATH if you like):
 ```sh
 bin/finn --help
 bin/finn                               # chat in this folder; starts the server when none runs
-bin/finn tui                           # the same on the full screen: Enter sends, Ctrl+J newline, Ctrl+T thinking, Shift+Tab level, Esc stops
+bin/finn tui                           # the same on the full screen: Enter sends, Alt+Enter after the turn, Ctrl+J newline, Ctrl+T thinking, Ctrl+O tools, Shift+Tab level, @ files, Up history, Esc stops
 # (the mouse answers panel keys, opens tool calls and thinking, and moves the prompt cursor; --yolo allows its own turns)
 # in both: /new, /resume, /tree, /fork, /clone, /model, /thinking, /compact, /stop, /help, /quit
 # in finn: !CMD runs CMD in the folder and the model gets its output with the next message; !!CMD does not give it
@@ -45,11 +45,17 @@ bin/finn -p "fix the failing test"    # one task, then exit with its status; app
 bin/finn serve                         # the server in the foreground, on a llama-server at http://127.0.0.1:8080/v1
 bin/finn serve --api openai_responses  # the same on /v1/responses
 bin/finn serve --api anthropic         # Anthropic: ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or `ant auth login`
+FIREWORKS_API_KEY=... bin/finn serve  # a preset provider once its key is set: /model fireworks/MODEL in a session
 bin/finn --version
 ```
+
+`finn server status`, `stop` (waits for the running turns and ends when the server has gone; `--now` cancels them),
+`restart`, `start` and `logs [-f]` manage the server a
+client started in the background.
 
 The flags of `finn serve` (`--api`, `--model`, `--base-url`) override their environment variables (`FINN_API`,
 `FINN_MODEL`, `FINN_BASE_URL`); `finn serve --help` lists them all.
 
 Development: `make test` and `make smoke-llama` (the second fetches llama.cpp and a 0.5B model, about 500 MB, into
-`.tools/`).
+`.tools/`). The tests against a real model (`make smoke-llama` and the targets that call a paid API) run only on your
+machine, never in CI.

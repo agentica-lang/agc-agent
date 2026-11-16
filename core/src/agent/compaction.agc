@@ -156,6 +156,40 @@ def without_thinking(messages: List[LLM.Message]) -> List[LLM.Message]
   out
 end
 
+## The messages without the thinking blocks of another provider than `source`, where a block that names none is of
+## `origin`; a message of thinking alone goes.
+def own_thinking(messages: List[LLM.Message], source: String, origin: String) -> List[LLM.Message]
+  out: List[LLM.Message] = []
+  for message in messages
+    kept = message.content.select { |block| not foreign?(block, source, origin) }
+    if not kept.empty?
+      out = out.push(message.with(content: kept))
+    end
+  end
+
+  out
+end
+
+## The message with its thinking blocks marked as given by `source`.
+def tagged(message: LLM.Message, source: String) -> LLM.Message
+  content = message.content.map do |block|
+    case block
+      LLM.Block.Thinking(part) -> LLM.Block.Thinking(part.with(source: source))
+      _ -> block
+    end
+  end
+
+  message.with(content: content)
+end
+
+def foreign?(block: LLM.Block, source: String, origin: String) -> Bool
+  case block
+    LLM.Block.Thinking(part) if part.source.empty? -> origin != source
+    LLM.Block.Thinking(part) -> part.source != source
+    _ -> false
+  end
+end
+
 def thinking?(block: LLM.Block) -> Bool
   case block
     LLM.Block.Thinking(_) -> true

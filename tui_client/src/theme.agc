@@ -11,8 +11,15 @@ struct TranscriptColors
   code: TUI.Style
   thinking: TUI.Style
   notice: TUI.Style
+  ## The title of a tool call (`$`, `read`), its argument while it runs, after it ran well or failed, its output
+  ## and the removed and added lines of its diff.
   tool: TUI.Style
-  tool_failed: TUI.Style
+  arg_running: TUI.Style
+  arg_done: TUI.Style
+  arg_failed: TUI.Style
+  output: TUI.Style
+  removed: TUI.Style
+  added: TUI.Style
 end
 
 ## The panel over the prompt (an approval, the session picker).
@@ -63,8 +70,13 @@ def default() -> Theme
       code: TUI.Style(fg: TUI.Color.Index(141)),
       thinking: TUI.Style(fg: TUI.Color.Index(245), italic: true),
       notice: TUI.Style(fg: TUI.Color.Index(245)),
-      tool: TUI.Style(fg: TUI.Color.Index(110)),
-      tool_failed: TUI.Style(fg: TUI.Color.Index(203)),
+      tool: TUI.Style(fg: TUI.Color.Index(255), bold: true),
+      arg_running: TUI.Style(fg: TUI.Color.Index(250), bg: TUI.Color.Index(237)),
+      arg_done: TUI.Style(fg: TUI.Color.Index(250), bg: TUI.Color.Index(22)),
+      arg_failed: TUI.Style(fg: TUI.Color.Index(250), bg: TUI.Color.Index(52)),
+      output: TUI.Style(fg: TUI.Color.Index(245)),
+      removed: TUI.Style(fg: TUI.Color.Index(203)),
+      added: TUI.Style(fg: TUI.Color.Index(114)),
     ),
     panel: PanelColors(
       head: TUI.Style(fg: TUI.Color.Index(221), bold: true),
@@ -95,8 +107,13 @@ def basic() -> Theme
       code: TUI.Style(fg: TUI.Color.Magenta),
       thinking: TUI.Style(dim: true, italic: true),
       notice: TUI.Style(dim: true),
-      tool: TUI.Style(fg: TUI.Color.Cyan),
-      tool_failed: TUI.Style(fg: TUI.Color.Red),
+      tool: TUI.Style(bold: true),
+      arg_running: TUI.Style(dim: true),
+      arg_done: TUI.Style(fg: TUI.Color.Green),
+      arg_failed: TUI.Style(fg: TUI.Color.Red),
+      output: TUI.Style(dim: true),
+      removed: TUI.Style(fg: TUI.Color.Red),
+      added: TUI.Style(fg: TUI.Color.Green),
     ),
     panel: PanelColors(
       head: TUI.Style(fg: TUI.Color.Yellow, bold: true),

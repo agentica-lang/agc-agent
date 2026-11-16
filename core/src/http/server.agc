@@ -15,6 +15,22 @@ VERSION = "0.0.1"
 SERVER_JSON = "server.json"
 LOCK_FILE = "core.lock"
 MAX_BODY_BYTES = 1_048_576
+DRAIN_POLL_MS = 100
+## A cancelled turn ends in this time at most before the sessions stop.
+CANCEL_MS = 3000
+## Then the connections that are still open are closed.
+SHUTDOWN_MS = 5000
+## How long `stop_requested` waits before it waits again.
+STOP_POLL_MS = 3_600_000
+
+## What the routes of the server control share with the task that owns it: a stop request, as `now`, the start, the
+## flags `draining` (no new work) and `now` (cancel the turns), and how long a stop waits for the turns.
+struct Control
+  stopping: Channel[Bool]
+  started_s: Int
+  flags: ATS[String, Bool]
+  drain_ms: Int
+end
 
 struct Server
   http: HTTP.Server
@@ -23,6 +39,7 @@ struct Server
   sessions: Sessions.Sessions
   lock: File.Handle
   state_dir: String
+  control: Control
 end
 
 ## Starts the server in the calling task, which owns it: call it from the task that keeps it.
@@ -47,6 +64,41 @@ def start(options: Config.Options) -> Result[Server]
   started
 end
 
+def new_control(drain_ms: Int) -> Control
+  Control(stopping: Channel.new(1), started_s: Time.now_ms / 1000, flags: ATS.new(), drain_ms: drain_ms)
+end
+
+## Asks the server to stop, as `POST /v1/server/stop` does; a signal does the same with `now`.
+def request_stop(server: Server, now: Bool) -> Void
+  asked(server.control, now)
+end
+
+## Waits for the request to stop (it waits again after `poll_ms` without one): whether it asks to cancel the turns.
+def stop_requested(server: Server, poll_ms: Int = STOP_POLL_MS) -> Bool
+  while true
+    case server.control.stopping.recv(poll_ms)
+      ok(now) -> return now
+      error(_) -> nil
+    end
+  end
+
+  false
+end
+
+## The stop that a request asked for, from the task that owns the server. The server stops starting work but still
+## answers its status and the stop (a second one with `now` cancels the turns); the turns end (cancelled at once with
+## `now`, else after `drain_ms` at most, a turn that waits for an approval counts as ended); the sessions are flushed,
+## which ends the event streams; then no connection is taken, and the files of the server go. `http_ms` is how long the
+## connections that are still open get.
+def shutdown(server: Server, now: Bool, http_ms: Int = SHUTDOWN_MS) -> Void
+  asked(server.control, now)
+  drain(server.sessions, server.control)
+  Sessions.stop(server.sessions)
+  HTTP.shutdown(server.http, http_ms)
+  _ = Path.remove("#{server.state_dir}/#{SERVER_JSON}")
+  _ = File.close(server.lock)
+end
+
 def stop(server: Server) -> Void
   Bond.stop(server.http)
   _ = Bond.wait(server.http)
@@ -56,15 +108,18 @@ def stop(server: Server) -> Void
 end
 
 ## The routes of the protocol behind the checks, over the sessions: what `start` serves.
-def app(token: String, sessions: Sessions.Sessions) -> Bond.App
+def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.App
   all = Protocol.SESSIONS_PATH
   one = "#{all}/:id"
   (
     Bond.app()
-    |> Bond.before(->(conn) { ok(guard(token, conn)) })
+    |> Bond.before(->(conn) { ok(guard(token, control, conn)) })
     |> Bond.get(Protocol.HEALTH_PATH, &health)
+    |> Bond.get(Protocol.SERVER_PATH, ->(conn) { reply(conn, 200, status(sessions, control)) })
+    |> Bond.post(Protocol.SERVER_STOP_PATH, ->(conn) { reply(conn, 200, stop_route(control, conn)) })
     |> Bond.post(all, ->(conn) { reply(conn, 201, create(sessions, conn)) })
     |> Bond.get(all, ->(conn) { reply(conn, 200, list(sessions)) })
+    |> Bond.get(Protocol.PROVIDERS_PATH, ->(conn) { reply(conn, 200, providers(sessions)) })
     |> Bond.get(one, ->(conn) { reply(conn, 200, snapshot(sessions, conn)) })
     |> Bond.patch(one, ->(conn) { reply(conn, 200, update(sessions, conn)) })
     |> Bond.delete(one, ->(conn) { reply(conn, 200, delete(sessions, conn)) })
@@ -86,8 +141,9 @@ private
 
 def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handle) -> Result[Server]
   token = OpenSSL.Random.hex(32)
+  control = new_control(options.drain_ms)
   http = try Bond.start_with(
-    app(token, sessions),
+    app(token, sessions, control),
     "127.0.0.1",
     options.port,
     HTTP.ServerOptions(max_body_bytes: MAX_BODY_BYTES),
@@ -96,7 +152,17 @@ def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handl
   port = Bond.local_port(http)
   case write_server_json(options.state_dir, Protocol.ServerInfo(port: port, token: token, pid: System.pid))
     ok(_) ->
-      ok(Server(http: http, port: port, token: token, sessions: sessions, lock: lock, state_dir: options.state_dir))
+      ok(
+        Server(
+          http: http,
+          port: port,
+          token: token,
+          sessions: sessions,
+          lock: lock,
+          state_dir: options.state_dir,
+          control: control,
+        ),
+      )
     error(e) ->
       Bond.stop(http)
       error(e)
@@ -151,6 +217,71 @@ end
 
 def health(conn: Bond.Conn) -> Result[Bond.Conn]
   reply(conn, 200, ok(Protocol.encode_health(Protocol.Health(version: VERSION, wire: some(Protocol.wire_digest())))))
+end
+
+def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
+  activity = try Sessions.activity(sessions)
+  ok(
+    Protocol.encode_server_status(
+      Protocol.ServerStatus(
+        pid: System.pid,
+        version: VERSION,
+        started_s: control.started_s,
+        sessions: activity.sessions,
+        running_turns: activity.running,
+        stopping: flag?(control, "draining"),
+      ),
+    ),
+  )
+end
+
+# The answer goes out first: the task that owns the server stops it after, without cutting this request.
+def stop_route(control: Control, conn: Bond.Conn) -> Result[String]
+  request = try Protocol.decode_stop_server(try String.from_bytes(conn.body))
+  asked(control, request.now.unwrap_or(false))
+  ok("{}")
+end
+
+def asked(control: Control, now: Bool) -> Void
+  ATS.put(control.flags, "draining", true)
+  if now
+    ATS.put(control.flags, "now", true)
+  end
+
+  _ = control.stopping.send(now, 0)
+end
+
+def flag?(control: Control, name: String) -> Bool = ATS.get(control.flags, name).unwrap_or(false)
+
+# Waits until no session works but on an approval nobody answers now, or `drain_ms` pass, or a stop with `now` comes;
+# then cancels what is left and waits for it to end.
+def drain(sessions: Sessions.Sessions, control: Control) -> Void
+  waited = 0
+  while waited < control.drain_ms and not flag?(control, "now") and busy?(sessions)
+    Task.sleep(DRAIN_POLL_MS)
+    waited = waited + DRAIN_POLL_MS
+  end
+
+  _ = Sessions.cancel_turns(sessions)
+  ended = 0
+  while ended < CANCEL_MS and running?(sessions)
+    Task.sleep(DRAIN_POLL_MS)
+    ended = ended + DRAIN_POLL_MS
+  end
+end
+
+def busy?(sessions: Sessions.Sessions) -> Bool
+  case Sessions.activity(sessions)
+    ok(activity) -> activity.busy > 0
+    error(_) -> false
+  end
+end
+
+def running?(sessions: Sessions.Sessions) -> Bool
+  case Sessions.activity(sessions)
+    ok(activity) -> activity.running > 0
+    error(_) -> false
+  end
 end
 
 def create(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
@@ -213,6 +344,10 @@ def stop_turn(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   ok("{}")
 end
 
+def providers(sessions: Sessions.Sessions) -> Result[String]
+  ok(Protocol.encode_provider_list(Sessions.providers(sessions)))
+end
+
 def approve(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   approve = try Protocol.decode_approve(try String.from_bytes(conn.body))
   try Sessions.answer(sessions, try Bond.param(conn, "id"), try Bond.param(conn, "approval"), approve.decision)
@@ -236,7 +371,7 @@ end
 
 # `Host` must name this machine, so a web page of another name that resolves here (DNS rebinding) is refused. A
 # browser sends `Origin`: only a page of this server may call it.
-def guard(token: String, conn: Bond.Conn) -> Bond.Conn
+def guard(token: String, control: Control, conn: Bond.Conn) -> Bond.Conn
   host = header(conn, "host")
   return refuse(conn, 403, Protocol.KIND_FORBIDDEN, "host not allowed") if not local_host?(host)
 
@@ -249,7 +384,21 @@ def guard(token: String, conn: Bond.Conn) -> Bond.Conn
     return refuse(conn, 401, Protocol.KIND_UNAUTHORIZED, "missing or wrong token")
   end
 
+  if flag?(control, "draining") and starts_work?(conn)
+    return refuse(conn, 503, Protocol.KIND_SERVER_STOPPING, "the server is stopping")
+  end
+
   conn
+end
+
+# A request that would start a session, a turn, a shell command, a compaction or a branch.
+def starts_work?(conn: Bond.Conn) -> Bool
+  return false if conn.method != "POST"
+
+  (
+    conn.path == Protocol.SESSIONS_PATH or
+    ["/messages", "/shell", "/compact", "/branch", "/fork"].any? { |end_| conn.path.end_with?(end_) }
+  )
 end
 
 # A repeated header is refused as a wrong one.

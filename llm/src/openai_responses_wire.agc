@@ -300,11 +300,12 @@ def output_item(result: Types.ToolOutput, custom_ids: Set[String]) -> JSON.Value
   JSON.object({"type": JSON.from(kind), "call_id": JSON.from(result.tool_use_id), "output": JSON.from(content)})
 end
 
-# Reasoning goes back as the item that came, less an empty `encrypted_content`.
+# Reasoning goes back as the item that came, less an empty `encrypted_content`; the thinking of another API is dropped.
 def assistant_items(block: Types.Block) -> List[JSON.Value]
   case block
     Types.Block.Text(part) -> [assistant_message(part)]
-    Types.Block.Thinking(part) -> option_list(part.replay).map { |item| if_sealed(item) }
+    Types.Block.Thinking(part) ->
+      option_list(part.replay).select { |item| text_at(item, "type") == "reasoning" }.map { |item| if_sealed(item) }
     Types.Block.ToolUse(call) -> [call_item(call)]
     Types.Block.ToolResult(_) -> []
   end

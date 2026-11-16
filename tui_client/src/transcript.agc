@@ -1,6 +1,7 @@
 ## What the transcript holds and the lines it draws in a given width. Pure.
 
 import Protocol from "pkg/protocol/protocol"
+import Calls from "calls"
 import Markdown from "markdown"
 import Width from "width"
 
@@ -13,21 +14,27 @@ enum Kind
   Assistant
   Thinking
   Notice
-  ## A tool call that runs or ran well.
+  ## A tool call that runs, ran well or failed.
+  ToolRunning
   Tool
   ToolFailed
+end
+
+## What the entries show unless a click opened or closed one: the thinking blocks, the bodies of the tool calls.
+struct Folds
+  thinking: Bool = false
+  tools: Bool = false
 end
 
 struct Entry
   kind: Kind
   text: String
-  ## The call of a tool entry, which its end replaces.
+  ## The id of a tool call and the call.
   call_id: String = ""
-  ## The line of a tool call when it started, which an open entry shows above its end.
-  call: String = ""
+  call: Optional[Calls.Call] = none
   ## A click opened or closed the entry (a thinking block, a tool call); none follows the default.
   open: Optional[Bool] = none
-  ## The rows of the entry for the width and thinking they were cut for; a change of the entry drops them.
+  ## The rows of the entry for the width and folds they were cut for; a change of the entry drops them.
   wrapped: Optional[Wrapped] = none
 end
 
@@ -41,7 +48,7 @@ end
 
 struct Wrapped
   width: Int
-  thinking: Bool
+  folds: Folds
   lines: List[Line]
 end
 
@@ -67,43 +74,78 @@ end
 
 def note(entries: List[Entry], text: String) -> List[Entry] = entries.push(Entry(kind: Kind.Notice, text: text))
 
-## Puts the entry of a tool call in place of the one of the same call, or at the end.
-def tool(entries: List[Entry], call_id: String, kind: Kind, text: String) -> List[Entry]
-  entry = Entry(kind: kind, text: text, call_id: call_id)
-  case (entries.find_index { |e| e.call_id == call_id and call_id != "" })
-    some(at) ->
-      old = entries[at]
-      call = old.call
-      if call == ""
-        call = old.text
-      end
-
-      entries.set(at, entry.with(call: call, open: old.open))
+## A tool call starts: its entry at the end, or in place of the one of the same call (a replay).
+def tool_started(entries: List[Entry], started: Protocol.ToolStarted) -> List[Entry]
+  call = Calls.Call(name: started.name, target: started.summary)
+  entry = Entry(kind: Kind.ToolRunning, text: "", call_id: started.call_id, call: some(call))
+  case found(entries, started.call_id)
+    some(at) -> entries.set(at, entry.with(open: entries[at].open))
     none -> entries.push(entry)
   end
 end
 
-## Opens or closes the entry at `index` when it is a thinking block or a tool call; `thinking` is the default of the
-## thinking blocks.
-def toggle(entries: List[Entry], index: Int, thinking: Bool) -> List[Entry]
+## A tool call ends: its entry shows how, with its output and diff.
+def tool_finished(entries: List[Entry], done: Protocol.ToolFinished) -> List[Entry]
+  state = Calls.State.Failed
+  kind = Kind.ToolFailed
+  if done.ok
+    state = Calls.State.Done
+    kind = Kind.Tool
+  end
+
+  base = Entry(kind: kind, text: "", call_id: done.call_id, call: some(Calls.Call(name: "", target: done.summary)))
+  at = found(entries, done.call_id)
+  if at.some?
+    base = entries[at.unwrap!].with(kind: kind, wrapped: none)
+  end
+
+  call = (
+    base.call
+      .unwrap_or(Calls.Call(name: "", target: done.summary))
+      .with(
+        state: state,
+        summary: done.summary,
+        output: done.output.unwrap_or(""),
+        diff: done.diff.unwrap_or(""),
+        duration_ms: done.duration_ms,
+      )
+  )
+
+  entry = base.with(call: some(call))
+  case at
+    some(index) -> entries.set(index, entry)
+    none -> entries.push(entry)
+  end
+end
+
+## Opens or closes the entry at `index` when it is a thinking block or a finished tool call.
+def toggle(entries: List[Entry], index: Int, folds: Folds) -> List[Entry]
   return entries if index < 0 or index >= entries.size
 
   entry = entries[index]
-  default = entry.kind == Kind.Thinking and thinking
-  return entries if entry.kind != Kind.Thinking and (not tool?(entry) or entry.call == "")
+  if entry.kind == Kind.Thinking
+    return entries.set(index, entry.with(open: some(not open?(entry, folds.thinking)), wrapped: none))
+  end
 
-  entries.set(index, entry.with(open: some(not open?(entry, default)), wrapped: none))
+  return entries if entry.kind != Kind.Tool and entry.kind != Kind.ToolFailed
+
+  entries.set(index, entry.with(open: some(not open?(entry, folds.tools)), wrapped: none))
 end
 
-## The thinking blocks follow the default again (after ^T).
-def unfold_thinking(entries: List[Entry]) -> List[Entry] = entries.map { |entry| unfolded(entry) }
+## The thinking blocks follow the folds again (after ^T).
+def unfold_thinking(entries: List[Entry]) -> List[Entry] = entries.map { |entry| unfolded(entry, Kind.Thinking) }
+
+## The tool calls follow the folds again (after ^O).
+def unfold_tools(entries: List[Entry]) -> List[Entry]
+  entries.map { |entry| unfolded(unfolded(entry, Kind.Tool), Kind.ToolFailed) }
+end
 
 ## The entries as rows of at most `width` columns, an empty row between two entries that have rows; the answers as
 ## markdown, and the thinking only when `thinking`.
-def lines(entries: List[Entry], width: Int, thinking: Bool) -> List[Line]
+def lines(entries: List[Entry], width: Int, folds: Folds) -> List[Line]
   rows: List[Line] = []
   for index in 0...entries.size
-    drawn = entry_rows(entries[index], index, width, thinking)
+    drawn = entry_rows(entries[index], index, width, folds)
     next if drawn.empty?
 
     if not rows.empty?
@@ -117,14 +159,14 @@ def lines(entries: List[Entry], width: Int, thinking: Bool) -> List[Line]
 end
 
 ## The last `count` rows of `lines` (all of them when there are fewer), cutting only the entries they reach.
-def tail(entries: List[Entry], width: Int, thinking: Bool, count: Int) -> List[Line]
+def tail(entries: List[Entry], width: Int, folds: Folds, count: Int) -> List[Line]
   parts: List[List[Line]] = []
   size = 0
   # The kind of the entry after, which the empty row between takes.
   after: Optional[Kind] = none
   index = entries.size - 1
   while index >= 0 and size < count
-    drawn = entry_rows(entries[index], index, width, thinking)
+    drawn = entry_rows(entries[index], index, width, folds)
     if not drawn.empty?
       case after
         some(kind) ->
@@ -145,13 +187,13 @@ def tail(entries: List[Entry], width: Int, thinking: Bool, count: Int) -> List[L
   parts.reverse.flat_map { |rows| rows }
 end
 
-## The entries with their rows cut for `width` and `thinking`, so that `lines` and `tail` cut only what changed.
-def wrapped(entries: List[Entry], width: Int, thinking: Bool) -> List[Entry]
-  return entries if (entries.all? { |entry| fresh?(entry, width, thinking) })
+## The entries with their rows cut for `width` and `folds`, so that `lines` and `tail` cut only what changed.
+def wrapped(entries: List[Entry], width: Int, folds: Folds) -> List[Entry]
+  return entries if (entries.all? { |entry| fresh?(entry, width, folds) })
 
   (0...entries.size).to_a.map do |index|
     entry = entries[index]
-    cut = Wrapped(width: width, thinking: thinking, lines: entry_rows(entry, index, width, thinking))
+    cut = Wrapped(width: width, folds: folds, lines: entry_rows(entry, index, width, folds))
     entry.with(wrapped: some(cut))
   end
 end
@@ -168,38 +210,50 @@ end
 
 private
 
-def unfolded(entry: Entry) -> Entry
-  return entry if entry.kind != Kind.Thinking
+def found(entries: List[Entry], call_id: String) -> Optional[Int]
+  return none if call_id == ""
+
+  entries.find_index { |e| e.call_id == call_id }
+end
+
+def unfolded(entry: Entry, kind: Kind) -> Entry
+  return entry if entry.kind != kind
 
   entry.with(open: none, wrapped: none)
 end
 
-# Only a thinking block draws differently with `thinking`.
-def fresh?(entry: Entry, width: Int, thinking: Bool) -> Bool
+# Only a thinking block draws differently with `folds.thinking`, and only a tool call with `folds.tools`.
+def fresh?(entry: Entry, width: Int, folds: Folds) -> Bool
   case entry.wrapped
-    some(cut) -> cut.width == width and (entry.kind != Kind.Thinking or cut.thinking == thinking)
+    some(cut) -> cut.width == width and folded(entry, cut.folds) == folded(entry, folds)
     none -> false
   end
 end
 
-def entry_rows(entry: Entry, index: Int, width: Int, thinking: Bool) -> List[Line]
-  return entry.wrapped.unwrap!.lines if fresh?(entry, width, thinking)
+def folded(entry: Entry, folds: Folds) -> Bool
+  case entry.kind
+    Kind.Thinking -> folds.thinking
+    Kind.Tool -> folds.tools
+    Kind.ToolFailed -> folds.tools
+    _ -> false
+  end
+end
 
-  entry_lines(entry, width, thinking).map { |line| line.with(entry: index) }
+def entry_rows(entry: Entry, index: Int, width: Int, folds: Folds) -> List[Line]
+  return entry.wrapped.unwrap!.lines if fresh?(entry, width, folds)
+
+  entry_lines(entry, width, folds).map { |line| line.with(entry: index) }
 end
 
 def open?(entry: Entry, default: Bool) -> Bool = entry.open.unwrap_or(default)
 
-def tool?(entry: Entry) -> Bool = entry.kind == Kind.Tool or entry.kind == Kind.ToolFailed
-
-def entry_lines(entry: Entry, width: Int, thinking: Bool) -> List[Line]
-  if entry.kind == Kind.Thinking and not open?(entry, thinking)
+def entry_lines(entry: Entry, width: Int, folds: Folds) -> List[Line]
+  if entry.kind == Kind.Thinking and not open?(entry, folds.thinking)
     return [Line(kind: entry.kind, spans: [Markdown.Span(text: INDENT + FOLDED_THINKING, look: Markdown.Look.Plain)])]
   end
 
-  if tool?(entry) and entry.call != "" and open?(entry, false)
-    call = entry_lines(Entry(kind: Kind.Tool, text: entry.call), width, thinking)
-    return call + entry_lines(entry.with(call: ""), width, thinking)
+  for call in option_list(entry.call)
+    return Calls.rows(call, width, open?(entry, folds.tools)).map { |spans| Line(kind: entry.kind, spans: spans) }
   end
 
   if entry.kind == Kind.Assistant
@@ -213,6 +267,13 @@ def entry_lines(entry: Entry, width: Int, thinking: Bool) -> List[Line]
 
   wrap(entry.text, width - INDENT.length).map do |row|
     Line(kind: entry.kind, spans: [Markdown.Span(text: INDENT + row, look: Markdown.Look.Plain)])
+  end
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
   end
 end
 

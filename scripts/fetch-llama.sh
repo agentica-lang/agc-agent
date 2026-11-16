@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Fetches the pinned prebuilt CPU llama.cpp release into .tools/llama.cpp (gitignored), checked against its sha256.
-# To bump it, change TAG and SHA256 together; CI caches by the hash of this file.
+# To bump it, change TAG and SHA256 together.
 set -euo pipefail
 TAG="b12426"
 SHA256="011212b7a6052a213034d4c313f99f131cb09fb5fb5a4ee61cd7572b81febf67"

@@ -60,8 +60,37 @@ def test_a_restarted_server_resumes_a_session_with_its_event_ids() -> Result[Voi
   end
 end
 
+# A diff that crashes is only left out: the call still runs, the turn ends, and the file is written.
+def test_a_crashing_diff_never_stops_the_call() -> Result[Void]
+  setup = H.Setup(replies: ["write_file.sse", "text.sse"], diff: some(&crashed_diff))
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    finished = a.seen.select do |s|
+      case s.event
+        Protocol.Event.ToolFinished(done) -> done.ok and done.diff.none?
+        _ -> false
+      end
+    end
+
+    try Test.eq(finished.size, 1)
+    Test.eq(File.read_text("#{h.work}/hello.txt"), ok("hi\n"))
+  end
+end
+
+def crashed_diff(_name: String, _input: JSON.Value) -> String
+  none_yet: List[String] = []
+  none_yet[0]
+end
+
 # A message sent while a turn runs is queued and read before the next model call, after the answer so far; it stays in
-# the history after a restart. One queued when the turn is stopped is dropped with an error event.
+# the history after a restart. Two queued into one turn get their own ids; queued when the turn is stopped, they are
+# dropped with one error event.
 def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Result[Void]
   setup = H.Setup(replies: ["write_file.sse", "text.sse", "write_file.sse", "text.sse"])
   H.using(setup) do |h|
@@ -75,7 +104,7 @@ def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Re
     message_id = "#{accepted.turn_id}.1"
     try Test.eq(accepted.message_id, some(message_id))
     a = try H.until(a, Protocol.EventKind.MessageQueued)
-    event = Protocol.MessageQueued(turn_id: accepted.turn_id, text: "Also say hi.", message_id: message_id)
+    event = Protocol.MessageQueued(turn_id: accepted.turn_id, text: "Also say hi.", message_id: some(message_id))
     try Test.eq(a.seen.last.event, Protocol.Event.MessageQueued(event))
     _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
@@ -88,7 +117,9 @@ def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Re
     try Test.eq(before.history.size, 4)
     _ = try H.send(h, id, "Write it again.")
     a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
-    _ = try H.send(h, id, "Never read.")
+    never = try Protocol.decode_message_accepted((try H.send(h, id, "Never read.")).text)
+    nor = try Protocol.decode_message_accepted((try H.send(h, id, "Nor this.")).text)
+    try Test.eq([never.message_id, nor.message_id], [some("#{never.turn_id}.1"), some("#{never.turn_id}.2")])
     try Test.eq((try H.post(h, Protocol.stop_path(id), "")).status, 200)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
@@ -402,7 +433,8 @@ def test_a_session_is_loaded_when_first_used() -> Result[Void]
       )
 
       after = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
-      try Test.eq(after.sessions.map { |s| s.id }, [id, gone, "a-late"])
+      # The list is newest first by the second a file changed, and the three files may fall on different seconds.
+      try Test.eq(after.sessions.map { |s| s.id }.sort, [id, gone, "a-late"].sort)
       try Dir.mkdir(gone_cwd)
       Test.eq((try H.get(r, Protocol.session_path(gone))).status, 200)
     end
@@ -511,6 +543,108 @@ def test_a_session_keeps_its_model_api() -> Result[Void]
       try Test.eq([odd.status.to_s, failure.kind], ["503", Protocol.KIND_SESSION_UNAVAILABLE])
       Test.assert(failure.message.include?("unknown API nope"), "the reason is not said: #{failure.message}")
     end
+  end
+end
+
+# A session picks a provider of the config, and a PATCH moves it to another with a model; both survive a restart, and
+# an unknown provider is refused.
+def test_a_session_keeps_its_provider_and_model() -> Result[Void]
+  setup = H.Setup(replies: ["text.sse", "text.sse", "text.sse"], providers: ["other"])
+  H.using(setup) do |h|
+    id = try H.new_session_in(h, h.work, none, some("other"))
+    _ = try H.send(h, id, "Hi.")
+    _ = try H.idle(h, id)
+    try Test.eq((try H.next_request(h)).path, "/other/chat/completions")
+    offered = try Protocol.decode_provider_list((try H.get(h, Protocol.PROVIDERS_PATH)).text)
+    try Test.eq(
+      offered.providers.map { |p| [p.name, p.models.join(" ")] },
+      [["anthropic", ""], ["local", "qwen2.5-0.5b-instruct"], ["other", "m1"]],
+    )
+
+    shown = try H.session(h, id)
+    try Test.eq([shown.provider, shown.api, shown.model], ["other", "openai", "default"])
+    change = Protocol.UpdateSession(provider: some("local"), model: some("m2"))
+    patched = try H.call(h, "PATCH", Protocol.session_path(id), Protocol.encode_update_session(change), H.auth(h))
+    try Test.eq(patched.status, 200)
+    nope = Protocol.encode_update_session(Protocol.UpdateSession(provider: some("nope")))
+    try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), nope, H.auth(h))).status, 400)
+    unknown = Protocol.NewSession(cwd: h.work, model: none, provider: some("nope"))
+    try Test.eq((try H.post(h, Protocol.SESSIONS_PATH, Protocol.encode_new_session(unknown))).status, 400)
+    H.restarted(h, setup, "") do |r|
+      listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
+      try Test.eq(listed.sessions.map { |s| [s.provider.unwrap_or(""), s.model] }, [["local", "m2"]])
+      _ = try H.send(r, id, "Again.")
+      _ = try H.idle(r, id)
+      seen = try H.next_request(r)
+      try Test.eq(seen.path, "/v1/chat/completions")
+      try Test.eq(JSON.get(try JSON.parse(seen.body), "model"), ok(JSON.from("m2")))
+      again = try H.session(r, id)
+      Test.eq([again.provider, again.api, again.model], ["local", "openai", "m2"])
+    end
+  end
+end
+
+# A file made before providers runs on the built-in provider of its API, never on the server's (`other` here). A
+# session whose provider is not offered now (its key is unset) loads, refuses a turn with the key to set, and moves
+# to another provider by a PATCH.
+def test_old_and_orphan_sessions_load() -> Result[Void]
+  setup = H.Setup(
+    replies: ["text.sse", "text.sse"],
+    providers: ["other"],
+    provider: "other",
+    key_envs: {"gone": "GONE_KEY"},
+  )
+
+  H.using(setup) do |h|
+    try File.write_text(H.session_file(h, "old"), header(h.work, "old", ",\"api\":\"openai\""))
+    try File.write_text(
+      H.session_file(h, "orphan"),
+      header(h.work, "orphan", ",\"api\":\"openai\",\"provider\":\"gone\""),
+    )
+
+    H.restarted(h, setup, "") do |r|
+      listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
+      providers = listed.sessions.map { |s| "#{s.id} #{s.provider.unwrap_or("")}" }.sort
+      try Test.eq(providers, ["old local", "orphan gone"])
+      try Test.eq((try H.session(r, "orphan")).provider, "gone")
+      refused = try H.send(r, "orphan", "Hi.")
+      failure = try Protocol.decode_failure(refused.text)
+      try Test.eq([refused.status.to_s, failure.kind], ["503", Protocol.KIND_SESSION_UNAVAILABLE])
+      try Test.assert(failure.message.include?("GONE_KEY"), "the key is not named: #{failure.message}")
+      change = Protocol.encode_update_session(Protocol.UpdateSession(provider: some("local")))
+      try Test.eq((try H.call(r, "PATCH", Protocol.session_path("orphan"), change, H.auth(r))).status, 200)
+      for id in ["old", "orphan"]
+        _ = try H.send(r, id, "Hi.")
+        _ = try H.idle(r, id)
+      end
+
+      Test.eq(
+        [(try H.next_request(r)).path, (try H.next_request(r)).path],
+        ["/v1/chat/completions", "/v1/chat/completions"],
+      )
+    end
+  end
+end
+
+# A PATCH while a turn runs applies from the next turn: the rest of the running one stays on its provider and model.
+def test_a_change_during_a_turn_applies_from_the_next_turn() -> Result[Void]
+  setup = H.Setup(replies: ["write_file.sse", "text.sse", "text.sse"], providers: ["other"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    change = Protocol.encode_update_session(Protocol.UpdateSession(provider: some("other"), model: some("m1")))
+    try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), change, H.auth(h))).status, 200)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Deny)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    _ = try H.send(h, id, "Again.")
+    _ = try H.idle(h, id)
+    seen = [try H.next_request(h), try H.next_request(h), try H.next_request(h)]
+    try Test.eq(seen.map { |s| s.path }, ["/v1/chat/completions", "/v1/chat/completions", "/other/chat/completions"])
+    try Test.eq(JSON.get(try JSON.parse(seen[1].body), "model"), ok(JSON.from(setup.model)))
+    Test.eq(JSON.get(try JSON.parse(seen[2].body), "model"), ok(JSON.from("m1")))
   end
 end
 

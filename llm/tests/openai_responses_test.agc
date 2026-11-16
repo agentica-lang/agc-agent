@@ -182,16 +182,19 @@ def test_a_stored_reasoning_item_goes_back_by_its_id() -> Result[Void]
 end
 
 # With `store: false`, a reasoning item without `encrypted_content` is dropped, and the other items of its turn lose
-# their ids (and a message its status); the call keeps its `call_id`.
+# their ids (and a message its status); the call keeps its `call_id`. The thinking of another API (Anthropic) is
+# dropped.
 def test_an_unstored_reasoning_item_is_dropped_with_the_ids_of_its_turn() -> Result[Void]
   fake = try Fake.start([try Fake.sse("openai_responses/text.sse")])
   reasoning = try JSON.parse(
     "{\"type\": \"reasoning\", \"id\": \"rs_1\", \"summary\": [], \"encrypted_content\": null}",
   )
 
+  claude = try JSON.parse("{\"type\": \"thinking\", \"thinking\": \"x\", \"signature\": \"sig\"}")
   turn = LLM.Message(
     role: LLM.Role.Assistant,
     content: [
+      LLM.Block.Thinking(LLM.ThinkingPart(text: "x", replay: some(claude))),
       LLM.Block.Thinking(LLM.ThinkingPart(text: "", replay: some(reasoning))),
       LLM.Block.Text(
         LLM.TextPart(
