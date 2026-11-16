@@ -37,7 +37,7 @@ folder (link it into your PATH if you like):
 ```sh
 bin/finn --help
 bin/finn                               # chat in this folder; starts the server when none runs
-bin/finn tui                           # the same on the full screen: Enter sends, Ctrl+J newline, Ctrl+T thinking, Esc stops
+bin/finn tui                           # the same on the full screen: Enter sends, Ctrl+J newline, Ctrl+T thinking, Esc stops, clicks open blocks
 # in both: /new, /resume, /model, /thinking, /compact, /stop, /help, /quit
 bin/finn -p "fix the failing test"    # one task, then exit with its status; approvals denied (--yolo allows all)
 bin/finn serve                         # the server in the foreground, on a llama-server at http://127.0.0.1:8080/v1

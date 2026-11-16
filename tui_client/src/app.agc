@@ -57,6 +57,8 @@ struct App
   options: Args.Options
   entries: List[Transcript.Entry] = []
   prompt: String = ""
+  ## The cursor in the prompt, a character index (clamped to the text when used).
+  cursor: Int = 0
   ## Rows above the bottom of the transcript, 0 to follow its end.
   scroll: Int = 0
   turn: Bool = false
@@ -84,6 +86,18 @@ end
 struct Row
   text: String
   style: TUI.Style
+end
+
+# Where each part of the screen is now: the transcript rows from `top` in `area` rows, the panel below them, the
+# status line, then the prompt.
+struct Frame
+  width: Int
+  height: Int
+  prompt: Prompt.View
+  panel: List[Layout.Row]
+  area: Int
+  lines: List[Transcript.Line]
+  top: Int
 end
 
 def watch_signals(signals: Channel[System.Signal], inbox: Channel[Inbox.Input]) -> Void
@@ -222,9 +236,17 @@ def on_key(app: App, event: TUI.Event) -> App
   case event
     TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(exit: some(0))
     TUI.Event.Key(TUI.Key.Enter, _) -> send(app)
-    TUI.Event.Key(TUI.Key.Ctrl("t"), _) -> app.with(thinking: not app.thinking)
-    TUI.Event.Key(TUI.Key.Ctrl("j"), _) -> app.with(prompt: Prompt.insert(app.prompt, "\n"))
-    TUI.Event.Key(TUI.Key.Backspace, _) -> app.with(prompt: Prompt.backspace(app.prompt))
+    TUI.Event.Key(TUI.Key.Ctrl("t"), _) ->
+      app.with(thinking: not app.thinking, entries: Transcript.unfold_thinking(app.entries))
+    TUI.Event.Key(TUI.Key.Ctrl("j"), _) -> typed(app, "\n")
+    TUI.Event.Key(TUI.Key.Backspace, _) ->
+      at = cursor(app)
+      app.with(prompt: Prompt.backspace(app.prompt, at), cursor: [at - 1, 0].max.unwrap!)
+    TUI.Event.Key(TUI.Key.Left, _) -> app.with(cursor: [cursor(app) - 1, 0].max.unwrap!)
+    TUI.Event.Key(TUI.Key.Right, _) -> app.with(cursor: Prompt.clamp(app.prompt, cursor(app) + 1))
+    TUI.Event.Key(TUI.Key.Home, _) -> app.with(cursor: 0)
+    TUI.Event.Key(TUI.Key.End, _) -> app.with(cursor: app.prompt.length)
+    TUI.Event.Mouse(TUI.Mouse.Left, x, y, mods) if not mods.motion -> clicked(app, x, y)
     TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals))
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused -> app.with(approvals: Approvals.toggled(app.approvals))
     TUI.Event.Key(TUI.Key.Escape, _) -> stop(app)
@@ -232,9 +254,43 @@ def on_key(app: App, event: TUI.Event) -> App
     TUI.Event.Key(TUI.Key.PageDown, _) -> scrolled(app, -page(app))
     TUI.Event.Mouse(TUI.Mouse.WheelUp, _, _, _) -> scrolled(app, SCROLL_STEP)
     TUI.Event.Mouse(TUI.Mouse.WheelDown, _, _, _) -> scrolled(app, -SCROLL_STEP)
-    TUI.Event.Char(char, _) -> app.with(prompt: Prompt.insert(app.prompt, char))
+    TUI.Event.Char(char, _) -> typed(app, char)
     _ -> app
   end
+end
+
+def cursor(app: App) -> Int = Prompt.clamp(app.prompt, app.cursor)
+
+def typed(app: App, piece: String) -> App
+  at = cursor(app)
+  app.with(prompt: Prompt.insert(app.prompt, at, piece), cursor: at + piece.length)
+end
+
+# A click on the transcript opens or closes a thinking block or a tool call; on a key of the approval panel it is
+# that key (with the same rules); in the prompt it moves the cursor.
+def clicked(app: App, x: Int, y: Int) -> App
+  frame = framed(app)
+  if y < frame.area
+    at = frame.top + y
+    return app if at >= frame.lines.size
+
+    return app.with(entries: Transcript.toggle(app.entries, frame.lines[at].entry, app.thinking))
+  end
+
+  panel_y = y - frame.area
+  if panel_y < frame.panel.size
+    return app if app.picker.some?
+
+    case Approvals.button(frame.panel[panel_y].text, x)
+      some(event) -> return on_key(app, event)
+      none -> return app
+    end
+  end
+
+  prompt_y = panel_y - frame.panel.size - 1
+  return app if prompt_y < 0
+
+  app.with(cursor: Prompt.index_at(app.prompt, cursor(app), frame.width, x, prompt_y))
 end
 
 def ctrl_c?(event: TUI.Event) -> Bool
@@ -503,29 +559,32 @@ def drawn(app: App) -> App
   end
 end
 
-# The rows of the panel over the prompt now: the session picker, else the approval asked.
-def panel(app: App) -> List[Layout.Row]
+def framed(app: App) -> Frame
   width = TUI.width(app.screen)
-  room = TUI.height(app.screen) - Prompt.rows(app.prompt, width).size - 2
-  case app.picker
+  height = TUI.height(app.screen)
+  prompt = Prompt.view(app.prompt, cursor(app), width)
+  room = height - prompt.rows.size - 2
+  asked = case app.picker
     some(picker) -> Picker.rows(picker, width, room, Time.now_ms / 1000)
     none -> Approvals.rows(app.approvals, width, room)
   end
+
+  area = [height - prompt.rows.size - asked.size - 1, 0].max.unwrap!
+  lines = Transcript.lines(app.entries, width, app.thinking)
+  top = [lines.size - area - [app.scroll, [lines.size - area, 0].max.unwrap!].min.unwrap!, 0].max.unwrap!
+  Frame(width: width, height: height, prompt: prompt, panel: asked, area: area, lines: lines, top: top)
 end
+
+# The rows of the panel over the prompt now: the session picker, else the approval asked.
+def panel(app: App) -> List[Layout.Row] = framed(app).panel
 
 # Every write is clipped to the screen, which may be smaller than the panel and the prompt.
 def draw(app: App) -> Result[Void]
   screen = app.screen
-  width = TUI.width(screen)
-  height = TUI.height(screen)
+  frame = framed(app)
   try TUI.clear(screen)
-  prompt = Prompt.rows(app.prompt, width)
-  asked = panel(app)
-  area = [height - prompt.size - asked.size - 1, 0].max.unwrap!
-  lines = Transcript.lines(app.entries, width, app.thinking)
-  top = [lines.size - area - [app.scroll, [lines.size - area, 0].max.unwrap!].min.unwrap!, 0].max.unwrap!
   y = 0
-  for line in lines.drop(top).take(area)
+  for line in frame.lines.drop(frame.top).take(frame.area)
     x = 0
     for span in line.spans
       written = try put(screen, x, y, span.text, style(line.kind, span.look))
@@ -535,22 +594,22 @@ def draw(app: App) -> Result[Void]
     y = y + 1
   end
 
-  y = area
-  for row in asked
+  y = frame.area
+  for row in frame.panel
     _ = try put(screen, 0, y, row.text, row.style)
     y = y + 1
   end
 
-  _ = try put(screen, 0, y, status(app, width), TUI.Style(attrs: [TUI.Attr.Reverse]))
+  _ = try put(screen, 0, y, status(app, frame.width), TUI.Style(attrs: [TUI.Attr.Reverse]))
   y = y + 1
-  for row in prompt
+  cursor_y = y + frame.prompt.cursor_y
+  for row in frame.prompt.rows
     _ = try put(screen, 0, y, row, TUI.Style())
     y = y + 1
   end
 
-  last = prompt[prompt.size - 1]
-  if y - 1 < height and width > 0
-    try TUI.set_cursor(screen, [Width.text(last), width - 1].min.unwrap!, y - 1)
+  if cursor_y < frame.height and frame.width > 0
+    try TUI.set_cursor(screen, [frame.prompt.cursor_x, frame.width - 1].min.unwrap!, cursor_y)
   end
 
   TUI.present(screen)

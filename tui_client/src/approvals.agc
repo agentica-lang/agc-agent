@@ -71,6 +71,19 @@ def captures?(panel: Panel, event: TUI.Event) -> Bool
   end
 end
 
+## The key that a click at column `x` of a panel row stands for: one of the keys the row names, as "^Y allow".
+def button(row: String, x: Int) -> Optional[TUI.Event]
+  from = 0
+  for part in row.split(" · ")
+    to = from + Width.text(part)
+    return key_of(part.strip) if x >= from and x < to
+
+    from = to + Width.text(" · ")
+  end
+
+  none
+end
+
 ## The answer of the first approval is being sent.
 def sending(panel: Panel) -> Panel = panel.with(answering: some(panel.pending[0].approval_id))
 
@@ -116,6 +129,16 @@ def shortcut(c: String) -> Optional[Protocol.Decision]
   end
 end
 
+def key_of(label: String) -> Optional[TUI.Event]
+  held = TUI.Mods()
+  return some(TUI.Event.Key(TUI.Key.Ctrl("y"), held)) if label.start_with?("^Y ")
+  return some(TUI.Event.Key(TUI.Key.Ctrl("n"), held)) if label.start_with?("^N ")
+  return some(TUI.Event.Key(TUI.Key.Tab, held)) if label.start_with?("Tab ")
+  return some(TUI.Event.Char(label.slice(0, 1), held)) if ["y ", "n ", "a "].include?(label.slice(0, 2))
+
+  none
+end
+
 def letter(c: String) -> Optional[Protocol.Decision]
   case c.downcase
     "y" -> some(Protocol.Decision.Allow)
@@ -136,7 +159,7 @@ def keys_text(panel: Panel) -> String
   return "sending the answer…#{more}" if panel.answering.some?
   return "y allow · n deny · a #{session} · Tab back to the prompt#{more}" if panel.focused
 
-  "Tab to answer (a: #{session}) · ^Y allow · ^N deny#{more}"
+  "^Y allow · ^N deny · Tab to answer (a: #{session})#{more}"
 end
 
 def detail(text: String, width: Int, room: Int) -> List[Layout.Row]

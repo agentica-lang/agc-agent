@@ -78,14 +78,30 @@ def test_the_panel_caps_its_detail_and_fits_the_room() -> Result[Void]
   small = texts(Approvals.rows(panel, 200, 4))
   try Test.eq(small.size, 4)
   try Test.eq(small[2], "  … 24 more lines")
-  try Test.assert(small[3].start_with?("Tab to answer"), small[3])
+  try Test.assert(small[3].start_with?("^Y allow · ^N deny · Tab to answer"), small[3])
   try Test.eq(texts(Approvals.rows(panel, 200, 1)).size, 1)
   try Test.eq(Approvals.rows(panel, 200, 0), [])
   narrow = Approvals.rows(panel, 12, 3)
   Test.eq(narrow.size, 3)
 end
 
+# A click on a key of the panel stands for that key, so it goes through the same rules.
+def test_a_click_on_a_panel_key_is_that_key() -> Result[Void]
+  row = "Tab to answer (a: allow x) · ^Y allow · ^N deny · 2 more waiting"
+  try Test.eq(Approvals.button(row, 0), some(TUI.Event.Key(TUI.Key.Tab, TUI.Mods())))
+  try Test.eq(Approvals.button(row, 30), some(ctrl_plain("y")))
+  try Test.eq(Approvals.button(row, 42), some(ctrl_plain("n")))
+  try Test.eq(Approvals.button(row, 27), none)
+  try Test.eq(Approvals.button(row, 55), none)
+  focused = "y allow · n deny · a allow x · Tab back to the prompt"
+  try Test.eq(Approvals.button(focused, 0), some(char("y")))
+  try Test.eq(Approvals.button(focused, 21), some(char("a")))
+  Test.eq(Approvals.button("approval a1 · write_file: hello.txt", 3), none)
+end
+
 private
+
+def ctrl_plain(c: String) -> TUI.Event = TUI.Event.Key(TUI.Key.Ctrl(c), TUI.Mods())
 
 def asked(ids: List[String]) -> Approvals.Panel
   panel = Approvals.Panel()

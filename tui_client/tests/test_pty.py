@@ -301,6 +301,15 @@ class Terminal:
     def type(self, text: str) -> None:
         os.write(self.master, text.encode())
 
+    def click(self, row: int, col: int) -> None:
+        """A left click at a cell (from 0), as an SGR mouse report: press, then release."""
+        self.type(f"\x1b[<0;{col + 1};{row + 1}M\x1b[<0;{col + 1};{row + 1}m")
+
+    def find(self, text: str) -> tuple[int, int]:
+        rows = self.wait_for(text)
+        row = next(i for i, line in enumerate(rows) if text in line)
+        return row, rows[row].index(text)
+
     def finish(self) -> int:
         code = self.process.wait(TIMEOUT)
         while self._read(0.1):
@@ -533,11 +542,35 @@ class PtyTest(unittest.TestCase):
             term.wait_for("ready")
             self.assertEqual(self.fake.requests.get(timeout=5)["messages"][-1]["content"], text)
 
+    def test_clicks_answer_toggle_and_move_the_cursor(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("thinking.sse")])
+        term.type("write it\r")
+        term.find("^Y allow")
+        term.settle(0.4)
+        term.click(*term.find("^Y allow"))
+        term.wait_for(": allow (client)")
+        term.wait_for("ready")
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
+        self.assertNotIn("⚙ write_file", text_of(term.screen()))
+        term.click(*term.find("✓ "))
+        term.wait_for("⚙ write_file")
+        term.type("helo")
+        row, col = term.find("> helo")
+        term.click(row, col + 5)
+        term.type("l")
+        term.wait_for("> hello")
+        term.type("\r")
+        term.click(*term.find("▸ thinking"))
+        term.wait_for("The user greets me. I greet back.")
+        term.click(*term.find("The user greets me."))
+        rows = term.wait_for("▸ thinking")
+        self.assertNotIn("greets", text_of(rows))
+
     def test_a_tool_is_approved_and_its_notices_shown(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")
-        rows = term.wait_for("Tab to answer (a: allow write_file on this exact target for the session)")
-        self.assertIn("^Y allow · ^N deny", " ".join(rows))
+        rows = term.wait_for("^Y allow · ^N deny · Tab to answer (a: allow write_file")
+        self.assertIn("(a: allow write_file on this exact target for the session)", " ".join(rows))
         self.assertIn("approval waiting", text_of(rows))
         self.assertIn("· write_file:", text_of(rows))
         self.assertIn("  hi", rows)
