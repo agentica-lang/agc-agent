@@ -285,6 +285,7 @@ def test_a_failed_write_stops_the_turn_and_reuses_no_id() -> Result[Void]
     try Test.eq(H.stop_reason(a), "cancelled")
     snapshot = try H.session(h, id)
     try Test.eq([snapshot.turn_id.some?, snapshot.last_event_id == saved_last], [false, true])
+    try Test.eq(history_size(unsaved[1]), some(snapshot.history.size))
     refused = try H.send(h, id, "Hello.")
     try Test.eq(
       [refused.status.to_s, (try Protocol.decode_failure(refused.text)).kind],
