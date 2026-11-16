@@ -51,4 +51,5 @@ export Commands.model_warning
 export Tree.TreeRow
 export Tree.tree_rows
 export Tree.tree_listing
+export Tree.tree_indent
 export Tree.tree_entry
