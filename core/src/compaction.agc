@@ -2,13 +2,16 @@
 ## first task and the running turn become one summary, written by the compaction model. The system prompt and the
 ## tools are not part of the history, so the prefix a prompt cache keeps stays the same bytes.
 ##
-## The running turn is kept whole, so the first turn, or one long turn, is never compacted. The tokens of the summary
-## call are not in the session's `usage`.
+## The last round of the running turn is kept whole, its tool call with its result; the older rounds are folded too, so
+## the first turn, or one long turn, is compacted as well. The tokens of the summary call are not in the session's
+## `usage`.
 
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 
 PERCENT = 80
+## The user message after a summary that folded rounds of the running turn, when the turn's task was not folded.
+GO_ON = "Go on with the task."
 MAX_TEXT = 2000
 PROPS_MS = 5000
 ## The `error` events of compaction: a summary that failed, and a window that is not known.
@@ -43,19 +46,21 @@ def due?(settings: Settings, context: Int) -> Bool
   settings.window > 0 and context * 100 >= settings.window * settings.percent
 end
 
-## The messages to fold: after the first task, before the running turn (whose user message is the last one with text).
-## None when there is nothing between them.
+## The messages to fold: after the first task, up to the running turn (whose user message is the last one with text),
+## or up to the last round of the running turn when it has older ones. None when there is nothing to fold.
 def span(history: List[LLM.Message]) -> Optional[Compaction]
-  last = 0
-  for i in 0...history.size
-    if (history[i].role == LLM.Role.User and history[i].content.any? { |b| text?(b) })
-      last = i
-    end
+  task = last_task(history)
+  return none if task == history.size
+
+  rounds = (0...history.size).select { |i| i > task and history[i].role == LLM.Role.Assistant }
+  to = task
+  if rounds.size >= 2
+    to = rounds.last
   end
 
-  return none if last <= 1
+  return none if to <= 1
 
-  some(Compaction(from: 1, to: last, summary: ""))
+  some(Compaction(from: 1, to: to, summary: ""))
 end
 
 ## The window of `model`: llama-server's `/props` when it answers, else the model of `GET /models` (the only one, or
@@ -94,11 +99,29 @@ def summarize(
   ok(span.with(summary: summary))
 end
 
+## The history with the span as one assistant message. When a round of the running turn follows, a user message goes
+## between them, so the roles still take turns: the task of the turn when it was folded, else `GO_ON`.
 def apply(history: List[LLM.Message], compaction: Compaction) -> List[LLM.Message]
-  text = "Summary of the session so far:\n\n#{compaction.summary}"
-  summary = LLM.Message(role: LLM.Role.Assistant, content: [LLM.Block.Text(LLM.TextPart(text: text))])
-  history.take(compaction.from).push(summary) + history.drop(compaction.to)
+  summary = LLM.Message(
+    role: LLM.Role.Assistant,
+    content: [LLM.Block.Text(LLM.TextPart(text: summary_text(compaction.summary)))],
+  )
+
+  kept = history.drop(compaction.to)
+  folded = history.take(compaction.to).drop(compaction.from)
+  start = history.take(compaction.from).push(summary)
+  return start + kept if kept.empty? or kept[0].role != LLM.Role.Assistant
+
+  task = last_task(folded)
+  bridge = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: GO_ON))])
+  if task < folded.size
+    bridge = folded[task]
+  end
+
+  start.push(bridge) + kept
 end
+
+def summary_text(summary: String) -> String = "Summary of the session so far:\n\n#{summary}"
 
 ## The messages as a JSON list of their blocks, long texts cut.
 def transcript(messages: List[LLM.Message]) -> String
@@ -148,6 +171,18 @@ def props_window(settings: Settings) -> Result[Int]
 
   props = try JSON.parse(try String.from_bytes(response.body))
   JSON.int(try JSON.get(try JSON.get(props, "default_generation_settings"), "n_ctx"))
+end
+
+# The index of the last user message with text (a task; tool results have none), or the size when there is none.
+def last_task(history: List[LLM.Message]) -> Int
+  at = history.size
+  for i in 0...history.size
+    if (history[i].role == LLM.Role.User and history[i].content.any? { |b| text?(b) })
+      at = i
+    end
+  end
+
+  at
 end
 
 def cut(text: String) -> String
