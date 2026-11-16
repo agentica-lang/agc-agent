@@ -559,6 +559,8 @@ class PtyTest(unittest.TestCase):
         term.type("helo")
         row, col = term.find("> helo")
         term.click(row, col + 5)
+        # A key sent right after the mouse report was dropped here; a person never types that fast.
+        term.settle(0.3)
         term.type("l")
         term.wait_for("> hello")
         term.type("\r")
