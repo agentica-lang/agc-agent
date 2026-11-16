@@ -1,12 +1,11 @@
 ## One session on the terminal: the loop that reads what the user types, the signals and the events of the server, and
 ## what it does with each. The state is one immutable `Chat`; each input gives the next one.
 
+import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import Args from "args"
-import Client from "client"
 import Inbox from "inbox"
 import Render from "render"
-import Stream from "stream"
 
 INBOX_CAPACITY = 256
 WAIT_MS = 3_600_000
@@ -179,15 +178,15 @@ def subscribe(chat: Chat, from: Int) -> Chat
   end
 
   generation = chat.generation + 1
-  feed = Stream.Feed(
+  inbox = chat.inbox
+  feed = Client.Feed(
     server: chat.server,
     session_id: chat.id,
     last_event_id: from,
-    generation: generation,
-    inbox: chat.inbox,
+    tell: ->(item) { inbox.send(Inbox.Input.Stream(generation, item), SEND_MS) },
   )
 
-  chat.with(stream: some(Stream.start(feed)), generation: generation, last_event_id: from)
+  chat.with(stream: some(Client.start(feed)), generation: generation, last_event_id: from)
 end
 
 def loop(chat: Chat) -> Result[Int]
@@ -216,14 +215,17 @@ def handle(chat: Chat, input: Inbox.Input) -> Result[Step]
   end
 end
 
-def on_stream(chat: Chat, generation: Int, item: Inbox.Item) -> Result[Step]
+def on_stream(chat: Chat, generation: Int, item: Client.Item) -> Result[Step]
   return ok(Step(chat: chat)) if generation != chat.generation
 
   case item
-    Inbox.Item.Opened -> ok(Step(chat: chat.with(reconnects: 0)))
-    Inbox.Item.Event(_, Protocol.Event.Resync) -> resync(chat)
-    Inbox.Item.Event(id, event) -> on_event(chat.with(resyncs: 0), id, event)
-    Inbox.Item.Ended(reason) -> reconnect(chat, reason)
+    Client.Item.Opened -> ok(Step(chat: chat.with(reconnects: 0)))
+    Client.Item.Event(_, Protocol.Event.Resync) -> resync(chat)
+    Client.Item.Event(id, event) -> on_event(chat.with(resyncs: 0), id, event)
+    Client.Item.Skipped(reason) ->
+      IO.warn(reason)
+      ok(Step(chat: chat))
+    Client.Item.Ended(reason) -> reconnect(chat, reason)
   end
 end
 

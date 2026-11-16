@@ -17,6 +17,7 @@ import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
 import Agent from "agent"
+import CodeMode from "code_mode"
 import Compaction from "compaction"
 import Skills from "skills"
 import Store from "store"
@@ -44,6 +45,7 @@ struct Setup
   props_url: String = ""
   api_key: String = ""
   extra: Map[String, JSON.Value] = {}
+  code_mode: Optional[CodeMode.Settings] = none
   skills: List[Skills.Skill] = []
 end
 
@@ -445,6 +447,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
       extra: setup.extra,
     ),
     last_context: state.context,
+    code_mode: setup.code_mode,
     turn_tools: Skills.tools(setup.skills),
   )
 

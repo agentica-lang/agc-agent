@@ -7,8 +7,8 @@ A coding agent for the terminal, like Claude Code or OpenCode, written in
   Server-Sent Events. A line-mode client comes first, then a TUI.
 - The `llm` package is the client for LLM APIs: one provider-neutral API with
   providers underneath: `openai_chat` and `openai_responses` (OpenAI, llama.cpp's
-  `llama-server`, Fireworks and other compatible APIs); Anthropic Messages and
-  Codex come later.
+  `llama-server`, Fireworks and other compatible APIs) and `anthropic` (the
+  Anthropic Messages API); Codex comes later.
 - Extensions are Agentica packages that your own `main.agc` registers, or MCP
   servers on stdio.
 
@@ -23,7 +23,8 @@ The repo is an Agentica workspace (`agentica.toml`): one folder per package.
 | `sse` | Server-Sent Events: a parser and a writer |
 | `llm` | client for LLM APIs |
 | `protocol` | the records, events and JSON codecs between the server and its clients |
-| `core` | the server: agent loop, tools, approval, sessions, extensions |
+| `monty` | Python scripts in pydantic's Monty sandbox, through its `monty subprocess` worker |
+| `core` | the server: agent loop, tools, approval, sessions, extensions, code mode (`FINN_CODE_MODE=1`) |
 | `cli` | the line-mode client: sends messages, prints the events, answers approvals, stops with Ctrl+C |
 
 ## Try it

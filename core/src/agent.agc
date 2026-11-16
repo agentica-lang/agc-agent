@@ -3,11 +3,14 @@
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import CodeMode from "code_mode"
 import Compaction from "compaction"
 import Tools from "tools"
 
 MAX_ROUNDS = 50
 SAME_ROUNDS = 3
+DENIED_BY_RULE = "denied by a rule of the config"
+DENIED_BY_USER = "the user denied this call"
 
 ## How a turn reaches its session. `approve` waits for the answer; `commit` gets the history after each finished
 ## round, so a stopped turn keeps no unfinished tool call. `compacted` gets a compaction of the history it committed,
@@ -44,6 +47,8 @@ struct Turn
   ## The context of the session's last call.
   last_context: Int = 0
   max_rounds: Int = MAX_ROUNDS
+  ## Adds `run_script`, which calls the tools from a Python script.
+  code_mode: Optional[CodeMode.Settings] = none
   ## The tools of extensions, after the base tools.
   turn_tools: List[Tools.TurnTool] = []
 end
@@ -196,14 +201,14 @@ def usage(u: LLM.Usage) -> Protocol.Usage
   )
 end
 
-def offered(turn: Turn) -> List[Tools.Tool] = Tools.all() + turn.turn_tools.map { |t| t.tool }
-
-def target(turn: Turn, call: LLM.ToolCall) -> Result[String]
-  for extra in option_list(turn_tool(turn, call.name))
-    return extra.tool.target.call(turn.ctx, call.input)
+def offered(turn: Turn) -> List[Tools.Tool]
+  base = Tools.all()
+  extras = turn.turn_tools.map { |t| t.tool }
+  for _settings in option_list(turn.code_mode)
+    return base.push(CodeMode.spec(base)) + extras
   end
 
-  Tools.target(turn.ctx, call.name, call.input)
+  base + extras
 end
 
 def turn_tool(turn: Turn, name: String) -> Optional[Tools.TurnTool]
@@ -215,6 +220,12 @@ end
 
 # `seen` is the history so far, which a tool of an extension reads.
 def run_call(turn: Turn, call: LLM.ToolCall, seen: List[LLM.Message]) -> LLM.Block
+  output = noticed_run(turn, call, seen)
+  LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: output.text, is_error: output.is_error))
+end
+
+# Runs the call between its `tool_started` and `tool_finished` events.
+def noticed_run(turn: Turn, call: LLM.ToolCall, seen: List[LLM.Message]) -> Tools.Output
   summary = target(turn, call).unwrap_or(call.name)
   turn.link.emit.call(
     Protocol.Event.ToolStarted(Protocol.ToolStarted(call_id: call.id, name: call.name, summary: summary)),
@@ -230,7 +241,16 @@ def run_call(turn: Turn, call: LLM.ToolCall, seen: List[LLM.Message]) -> LLM.Blo
   )
 
   turn.link.emit.call(Protocol.Event.ToolFinished(finished))
-  LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: output.text, is_error: output.is_error))
+  output
+end
+
+def target(turn: Turn, call: LLM.ToolCall) -> Result[String]
+  return CodeMode.target(turn.ctx, call.input) if call.name == CodeMode.NAME and turn.code_mode.some?
+  for extra in option_list(turn_tool(turn, call.name))
+    return extra.tool.target.call(turn.ctx, call.input)
+  end
+
+  Tools.target(turn.ctx, call.name, call.input)
 end
 
 def checked_run(turn: Turn, call: LLM.ToolCall, seen: List[LLM.Message]) -> Tools.Output
@@ -242,6 +262,18 @@ def checked_run(turn: Turn, call: LLM.ToolCall, seen: List[LLM.Message]) -> Tool
     return extra.run.call(call.input, texts(seen))
   end
 
+  if call.name == CodeMode.NAME
+    for settings in option_list(turn.code_mode)
+      names = Tools.all().map { |tool| tool.name }
+      return CodeMode.run(
+        settings,
+        call.input,
+        names,
+        ->(name: String, input: JSON.Value) { nested(turn, call, name, input) },
+      )
+    end
+  end
+
   case Tools.target(turn.ctx, call.name, call.input)
     ok(found) -> approved_run(turn, call, found)
     error(e) -> Tools.Output(text: e.message, is_error: true)
@@ -250,15 +282,26 @@ end
 
 def approved_run(turn: Turn, call: LLM.ToolCall, target: String) -> Tools.Output
   case Tools.verdict(turn.ctx, call.name, call.input)
-    Tools.Verdict.Deny -> Tools.Output(text: "denied by a rule of the config", is_error: true)
+    Tools.Verdict.Deny -> Tools.Output(text: DENIED_BY_RULE, is_error: true)
     Tools.Verdict.Allow -> Tools.run(turn.ctx, call.name, call.input)
     Tools.Verdict.Ask ->
       ask = Ask(call_id: call.id, tool: call.name, target: target, detail: Tools.detail(call.name, call.input))
       case turn.link.approve.call(ask)
-        Protocol.Decision.Deny -> Tools.Output(text: "the user denied this call", is_error: true)
+        Protocol.Decision.Deny -> Tools.Output(text: DENIED_BY_USER, is_error: true)
         _ -> Tools.run(turn.ctx, call.name, call.input)
       end
   end
+end
+
+# A tool call of a script: a call of its own for the notices and the approval, with an id under the script's.
+def nested(turn: Turn, script: LLM.ToolCall, name: String, input: JSON.Value) -> CodeMode.Reply
+  id = "#{script.id}.#{Random.int(0, 999_999_999)}"
+  call = LLM.ToolCall(id: id, name: name, arguments: JSON.encode(input), input: input)
+  output = noticed_run(turn, call, [])
+  return CodeMode.Reply.Done(output.text) if not output.is_error
+  return CodeMode.Reply.Denied(output.text) if [DENIED_BY_RULE, DENIED_BY_USER].include?(output.text)
+
+  CodeMode.Reply.Failed(output.text)
 end
 
 def tool_calls(message: LLM.Message) -> List[LLM.ToolCall]

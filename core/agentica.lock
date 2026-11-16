@@ -8,6 +8,13 @@ tag = "llm-0.0.1"
 workspace = true
 
 [[package]]
+name = "monty"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "monty"
+tag = "monty-0.0.1"
+workspace = true
+
+[[package]]
 name = "protocol"
 git = "https://github.com/agentica-lang/agc-agent"
 subdir = "protocol"

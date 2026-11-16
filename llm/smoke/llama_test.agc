@@ -6,8 +6,9 @@ READ_FILE_SCHEMA = (
   "\"required\":[\"path\"]}"
 )
 
-# Small models are not reliable: these check shapes, not words, at temperature 0 with a seed. Each test runs both
-# providers against one server.
+# Small models are not reliable: these check shapes, not words, at temperature 0 with a seed (anthropic sends
+# neither). Each test runs every
+# provider against one server.
 def test_a_real_server_streams_text() -> Result[Void]
   request = LLM.Request(
     model: "qwen",
@@ -16,6 +17,8 @@ def test_a_real_server_streams_text() -> Result[Void]
     max_tokens: 24,
     temperature: some(0.0),
     seed: some(1),
+    # Anthropic's cache breakpoints, which llama-server takes and does not use.
+    cache: true,
   )
 
   server = try Llama.start("text")
@@ -46,7 +49,7 @@ def test_a_real_server_calls_a_tool_with_json_arguments() -> Result[Void]
   )
 
   server = try Llama.start("tool_call")
-  results = providers(server).map { |provider| tool_round(provider, request) }
+  results = providers(server).map { |provider| tool_round(provider, forced(provider, request)) }
   Llama.stop(server)
   for result in results
     try result
@@ -63,7 +66,7 @@ struct Answer
 end
 
 def providers(server: Llama.Server) -> List[LLM.Provider]
-  [LLM.openai_chat(server.url, ""), LLM.openai_responses(server.url, "")]
+  [LLM.openai_chat(server.url, ""), LLM.openai_responses(server.url, ""), LLM.anthropic(server.url, "")]
 end
 
 def check_text(answer: Answer) -> Result[Void]
@@ -84,8 +87,20 @@ def tool_round(provider: LLM.Provider, request: LLM.Request) -> Result[Void]
   try check_tool_call(answer)
   results = answer.response.message.content.select { |b| tool_use?(b) }.map { |b| result_of(b) }
   messages = request.messages + [answer.response.message, LLM.Message(role: LLM.Role.User, content: results)]
-  again = try call(provider, request.with(messages: messages, tool_choice: LLM.ToolChoice.Auto, max_tokens: 24))
+  again = try call(
+    provider,
+    request.with(messages: messages, tool_choice: LLM.ToolChoice.Auto, extra: {}, max_tokens: 24),
+  )
+
   Test.assert(not again.response.message.content.empty?, "no answer after the tool result")
+end
+
+# anthropic refuses `Required` (the current Claude models do); llama-server takes `any`, sent as an extra field.
+def forced(provider: LLM.Provider, request: LLM.Request) -> LLM.Request
+  return request if provider.name != "anthropic"
+
+  any = JSON.object({"type": JSON.from("any")})
+  request.with(tool_choice: LLM.ToolChoice.Auto, extra: {"tool_choice": any})
 end
 
 def check_tool_call(answer: Answer) -> Result[Void]

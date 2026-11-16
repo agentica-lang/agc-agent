@@ -11,19 +11,26 @@ sse/                 Server-Sent Events: parser and writer, pure; sse.agc is its
 llm/                 client for LLM APIs; llm.agc is its public module, src/ the rest
 protocol/            commands, replies and events between server and clients, with JSON codecs, pure;
                      protocol.agc is its public module
+monty/               Python scripts in pydantic's Monty sandbox: the pinned `monty subprocess` worker (fetched
+                     with its sha256), its protobuf codec, and a fake worker that replays recorded frames
+                     (`serve_fake`); monty.agc is its public module; real/ the tests on the real worker
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point
-cli/                 the line-mode client: depends only on sse and protocol; main.agc is the entry point
+client/              what every client shares: finding or starting the server, the HTTP calls, the event reader;
+                     client.agc is its public module
+cli/                 the line-mode client: depends only on client and protocol; main.agc is the entry point
+tui_client/          the TUI client on agentica-tui (pinned commit): client, protocol and tui; main.agc is the
+                     entry point; tests/test_pty.py runs it under a pty against core and a fake model
 <pkg>/tests/         *_test.agc tests of that package; fixtures/ the recorded data they read
 llm/smoke/           tests against a real llama-server (make smoke-llama)
-llm/live/            tests against a paid API (make live-fireworks): never in CI
+llm/live/            tests against a paid API (live-fireworks, smoke-anthropic): never in CI
 scripts/             fetch the pinned llama.cpp release and model into .tools/ (sha256)
-Makefile             check, fmt-check, unit, smoke, test over every package; smoke-llama, live-fireworks
+Makefile             check, fmt-check, unit, smoke, test over every package; smoke-llama, live-fireworks,
+                     smoke-anthropic
 .github/workflows/   ci.yml: the pinned Agentica release, then fmt-check and test; the llama job
 ```
 
-Later phases add `tui_client`. A package is added
-by the phase that needs it, never as an empty folder.
+A package is added by the phase that needs it, never as an empty folder.
 
 ## Commands
 
@@ -32,7 +39,10 @@ by the phase that needs it, never as an empty folder.
   (gitignored), never `/tmp`.
 - `make test AGENTICA=...`: `check` (first `coupling`: the package rules
   below, with `rg`), `unit` (`agentica test tests` in each package; a package
-  that passes no test fails) and `smoke` (runs `core/main.agc`).
+  that passes no test fails), `smoke` (runs `core/main.agc`) and `pty`
+  (`tui_client/tests/test_pty.py`, Python standard library only). `install`
+  fetches agentica-tui into `tui_client/deps/` (gitignored); `check`,
+  `smoke` and `pty` run it first.
 - `cli` tests run the client as a child process on pipes (the Makefile
   exports `AGENTICA` for it) against a fake protocol server in
   `cli/tests/support/`. The client finds the server in the state folder
@@ -47,9 +57,16 @@ by the phase that needs it, never as an empty folder.
   `scripts/`, one tag and its sha256 to bump), then runs `llm/smoke` against a
   llama-server it starts on port 0 and stops; `LLAMA_URL` uses a running one.
   CI runs it in the `llama` job.
+- `make smoke-monty`: the `monty` tests on the real worker (the pinned wheel
+  from PyPI into `.tools/cache`, or `MONTY_BIN`). Record the fixtures again
+  with `MONTY_RECORD=path/to/monty` set for `make unit`.
 - `make live-fireworks`: one real call to Fireworks (`FIREWORKS_API_KEY`,
   `FIREWORKS_MODEL`); it skips without the key. It costs money: only with the
   owner's yes, never in CI.
+- `make smoke-anthropic`: four calls to `claude-haiku-5-5` (text, a tool
+  round, a cache read) with `ANTHROPIC_API_KEY`, else `ANTHROPIC_AUTH_TOKEN`,
+  else the token of `ant auth login`; it skips without any. It costs money:
+  only with the owner's yes, never in CI. The token is never printed.
 - After a change of a package's dependencies: `agentica update` in that
   package's folder, and commit its `agentica.lock`.
 
@@ -68,9 +85,9 @@ by the phase that needs it, never as an empty folder.
   - Keep them loosely coupled, so one can move to its own repo: `llm`, `sse`
     and `protocol` never depend on `core` or a client, and a package imports
     another only through its public module (`pkg/llm/llm`), never its `src/`.
-    `make coupling` checks both. A client (`cli`, later `tui_client`) reaches
-    the server only through `protocol` and `sse`: it never depends on `core` or
-    `llm`.
+    `make coupling` checks both. A client (`cli`, `tui_client`) reaches
+    the server only through `client`, `protocol` and `sse`: it never depends
+    on `core`, `llm` or another client.
   - Each package has one `VERSION` constant in its public module, equal to its
     tag (`llm-0.0.1` is `VERSION = "0.0.1"`). A release goes in this order: tag
     the dependency (`llm-X`), then a PR that bumps the dependent's entry and

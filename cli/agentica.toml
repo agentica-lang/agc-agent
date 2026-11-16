@@ -6,5 +6,6 @@ agentica = "0.32.0"
 blank_line_after_end = true
 
 [dependencies]
+client = { git = "https://github.com/agentica-lang/agc-agent", subdir = "client", tag = "client-0.0.1" }
 protocol = { git = "https://github.com/agentica-lang/agc-agent", subdir = "protocol", tag = "protocol-0.0.1" }
 sse = { git = "https://github.com/agentica-lang/agc-agent", subdir = "sse", tag = "sse-0.0.1" }

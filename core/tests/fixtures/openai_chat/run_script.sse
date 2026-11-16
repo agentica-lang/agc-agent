@@ -1,0 +1,12 @@
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"role":"assistant","content":null}}],"id":"chatcmpl-core-9","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_script","type":"function","function":{"name":"run_script","arguments":"{\"code\": \"text = read_file(path='hello.t"}}]}}],"id":"chatcmpl-core-9","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"xt')\\ntry:\\n    bash(command='rm hello.txt')\\nexcept PermissionError as e:\\n    print('denied:', e)\\nprint(text.strip())\\nlen(text)\\n\"}"}}]}}],"id":"chatcmpl-core-9","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":"tool_calls","index":0,"delta":{}}],"id":"chatcmpl-core-9","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[],"id":"chatcmpl-core-9","model":"m","object":"chat.completion.chunk","usage":{"completion_tokens":40,"prompt_tokens":200,"total_tokens":240}}
+
+data: [DONE]
+

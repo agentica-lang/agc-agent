@@ -3,12 +3,13 @@ AGENTICA ?= agentica
 export AGENTICA
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
-PACKAGES = sse llm protocol core cli
+PACKAGES = sse llm protocol monty client core cli tui_client
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
-LEAVES = llm sse protocol
-SERVER_AND_CLIENTS = core|cli|tui_client|web_client
-# A client reaches the server only through the protocol: it never depends on these.
-NOT_FOR_CLIENTS = core|llm|tui_client|web_client
+LEAVES = llm sse protocol monty
+SERVER_AND_CLIENTS = core|client|cli|tui_client|web_client
+# A client, and `client` (the code every client shares), reach the server only through the protocol: they never
+# depend on these (or on another client).
+NOT_FOR_CLIENTS = core|llm|monty|cli|tui_client|web_client
 
 # A fake key in the environment of every recipe: the bash test of core checks that the tool does not pass it on.
 export AGC_TEST_SECRET = sk-test-secret-must-not-reach-bash
@@ -27,15 +28,19 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: check coupling fmt-check unit smoke test smoke-llama live-fireworks
+.PHONY: install check coupling fmt-check unit smoke pty test smoke-llama smoke-monty live-fireworks smoke-anthropic
 
-check: coupling
+# The packages from outside this repository (agentica-tui) go into the package's deps/ (gitignored).
+install:
+	cd tui_client && $(AGENTICA) install
+
+check: coupling install
 	for pkg in $(PACKAGES); do (cd $$pkg && $(AGENTICA) check .) || exit 1; done
 
 coupling:
 	@$(call none,$(LEAVES) depend on the server or a client,$(foreach p,$(LEAVES),-g '$(p)/**') \
 	  -e 'subdir *= *"($(SERVER_AND_CLIENTS))"' -e '"pkg/($(SERVER_AND_CLIENTS))/' .)
-	@$(call none,cli depends on the server or on the llm,-g 'cli/**' \
+	@$(call none,a client depends on the server or the llm or another client,-g 'client/**' -g 'cli/**' -g 'tui_client/**' \
 	  -e 'subdir *= *"($(NOT_FOR_CLIENTS))"' -e '"pkg/($(NOT_FOR_CLIENTS))/' .)
 	@$(call none,a package imports another package's src/ (use its public module),-g '*.agc' 'pkg/[a-z0-9_-]+/src/' .)
 
@@ -47,7 +52,7 @@ unit:
 
 # The entry points run, with their packages read from the workspace; bin/finn also from another folder, through a
 # relative symlink to the bin folder and one to the script (in .tools/, gitignored).
-smoke:
+smoke: install
 	out=$$($(AGENTICA) core/main.agc --version) && echo "$$out" | grep -qx 'Finn Agent core [0-9.]* (llm [0-9.]*)'
 	out=$$($(AGENTICA) cli/main.agc --version) && echo "$$out" | grep -qx 'Finn Agent cli [0-9.]*'
 	mkdir -p .tools/smoke && ln -sfn ../../bin .tools/smoke/bin && ln -sf '$(CURDIR)/bin/finn' .tools/smoke/finn
@@ -56,8 +61,13 @@ smoke:
 	  "$$finn" --help | grep -q '^usage: finn' && "$$finn" serve --help | grep -q '^usage: finn serve' && \
 	  "$$finn" chat --help | grep -q '^Usage: finn' && ! "$$finn" serve --bogus 2>/dev/null && \
 	  '$(CURDIR)/.tools/smoke/finn' --version | grep -qx 'Finn Agent cli [0-9.]*'
+	out=$$($(AGENTICA) tui_client/main.agc --version) && echo "$$out" | grep -qx 'Finn Agent tui [0-9.]*'
 
-test: check unit smoke
+# The TUI client under a pseudo-terminal, against the server against a fake model (Python, standard library only).
+pty: install
+	python3 -m unittest tui_client/tests/test_pty.py -v
+
+test: check unit smoke pty
 
 # The llm tests against a real llama-server with Qwen2.5-0.5B (fetched and checked by sha256 first), or the one at
 # LLAMA_URL.
@@ -67,8 +77,26 @@ smoke-llama:
 	export LLAMA_SERVER='$(LLAMA_SERVER)' LLAMA_MODEL='$(LLAMA_MODEL)' LLAMA_LOG_DIR='$(CURDIR)/llm/_build/llama-logs'; \
 	$(call tests,llm,smoke)
 
+# The monty tests against the real worker: the pinned wheel of this platform, fetched from PyPI into .tools/cache with
+# its sha256 checked, or the binary at MONTY_BIN.
+smoke-monty:
+	$(call tests,monty,real)
+
 # A real Fireworks call, which costs money: local only, with the owner's yes, never in CI. Skips without the key.
 live-fireworks:
 	@if [ -n "$$CI" ]; then echo "live-fireworks: refused in CI" >&2; exit 1; fi; \
 	if [ -z "$$FIREWORKS_API_KEY" ]; then echo "live-fireworks: FIREWORKS_API_KEY is unset, skipped"; exit 0; fi; \
-	export FIREWORKS_MODEL='$(FIREWORKS_MODEL)'; $(call tests,llm,live)
+	export FIREWORKS_MODEL='$(FIREWORKS_MODEL)'; $(call tests,llm,live/fireworks_test.agc)
+
+# Four real calls to Anthropic's cheap model (a text turn, a tool round, a cache read), which cost money: local only,
+# with the owner's yes, never in CI. Without ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN it takes the token of
+# `ant auth login`, never printed; it skips when ant is missing or not logged in.
+smoke-anthropic:
+	@if [ -n "$$CI" ]; then echo "smoke-anthropic: refused in CI" >&2; exit 1; fi; \
+	if [ -z "$$ANTHROPIC_API_KEY$$ANTHROPIC_AUTH_TOKEN" ]; then \
+	  if ! command -v ant >/dev/null; then echo "smoke-anthropic: no key, no token and no ant, skipped"; exit 0; fi; \
+	  ANTHROPIC_AUTH_TOKEN=$$(ant auth print-credentials --access-token 2>/dev/null) || ANTHROPIC_AUTH_TOKEN=; \
+	  if [ -z "$$ANTHROPIC_AUTH_TOKEN" ]; then echo "smoke-anthropic: ant is not logged in, skipped"; exit 0; fi; \
+	  export ANTHROPIC_AUTH_TOKEN; \
+	fi; \
+	$(call tests,llm,live/anthropic_test.agc)

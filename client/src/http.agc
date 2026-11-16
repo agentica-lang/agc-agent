@@ -11,8 +11,8 @@ PROBE_TIMEOUT_MS = 2_000
 EVENTS_TIMEOUT_MS = 86_400_000
 ERROR_BODY_BYTES = 65_536
 ## The server did not answer: nothing listens, or the connection failed.
-KIND_UNREACHABLE = "cli.unreachable"
-KIND_TIMEOUT = "cli.timeout"
+KIND_UNREACHABLE = "client.unreachable"
+KIND_TIMEOUT = "client.timeout"
 
 ## Where a server listens and the token it wants.
 struct Server
@@ -127,7 +127,7 @@ def failure[T](status: Int, headers: List[HTTP.Header], body: Bytes) -> Result[T
   text = HTTP.text(body, headers).unwrap_or("")
   case Protocol.decode_failure(text)
     ok(wire) -> error(wire.message, kind: wire.kind, code: status)
-    error(_) -> error("the server answered HTTP #{status}", kind: "cli.http", code: status)
+    error(_) -> error("the server answered HTTP #{status}", kind: "client.http", code: status)
   end
 end
 
