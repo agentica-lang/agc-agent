@@ -23,7 +23,7 @@ def test_a_turn_runs_tools_after_approvals_for_two_clients() -> Result[Void]
     try Test.eq((try Protocol.decode_failure(late.text)).kind, Protocol.KIND_APPROVAL_RESOLVED)
     a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
     bash = try H.approval(a)
-    try Test.eq([bash.tool, bash.preview], ["bash", "cat hello.txt"])
+    try Test.eq([bash.tool, bash.preview], ["bash", "cat hello.txt | tee copy.txt"])
     try Test.eq((try H.approve(h, id, bash.approval_id, Protocol.Decision.Allow)).status, 200)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     b = try H.until(b, Protocol.EventKind.TurnFinished)
@@ -160,7 +160,7 @@ def test_allow_session_allows_the_same_command_only() -> Result[Void]
     _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.AllowSession)
     a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
     echo = try H.approval(a)
-    try Test.eq(echo.preview, "echo other")
+    try Test.eq(echo.preview, "echo other | tee other.txt")
     try Test.eq(H.kinds(a.seen).select { |k| k == "tool_finished" }.size, 2)
     _ = try H.approve(h, id, echo.approval_id, Protocol.Decision.Allow)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
@@ -327,6 +327,31 @@ def foreign_owner(h: H.Harness) -> Result[Void]
   end
 end
 
+# A bash command that only reads runs without asking; a deny rule of one of its commands still refuses it.
+def test_a_read_only_command_runs_without_asking_unless_denied() -> Result[Void]
+  try H.using(H.Setup(replies: ["write_file.sse", "bash_read.sse", "text.sse"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt, then show it.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.kinds(a.seen).select { |k| k == "approval_requested" }.size, 1)
+    Test.eq(finished_ok(a), [true, true])
+  end
+
+  H.using(H.Setup(replies: ["bash_read.sse", "text.sse"], deny: ["bash(cat *)"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Show hello.txt.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.kinds(a.seen).select { |k| k == "approval_requested" }.size, 0)
+    Test.eq(finished_ok(a), [false])
+  end
+end
+
 private
 
 def tool_event?(event: Protocol.Event) -> Bool
@@ -380,4 +405,16 @@ def gone(pid: String) -> Result[Bool]
   end
 
   ok(false)
+end
+
+def finished_ok(sub: H.Sub) -> List[Bool]
+  out: List[Bool] = []
+  for seen in sub.seen
+    case seen.event
+      Protocol.Event.ToolFinished(done) -> out = out.push(done.ok)
+      _ -> nil
+    end
+  end
+
+  out
 end

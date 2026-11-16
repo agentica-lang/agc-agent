@@ -10,4 +10,5 @@ llm = { git = "https://github.com/agentica-lang/agc-agent", subdir = "llm", tag 
 mcp = { git = "https://github.com/agentica-lang/agc-agent", subdir = "mcp", tag = "mcp-0.0.1" }
 monty = { git = "https://github.com/agentica-lang/agc-agent", subdir = "monty", tag = "monty-0.0.1" }
 protocol = { git = "https://github.com/agentica-lang/agc-agent", subdir = "protocol", tag = "protocol-0.0.1" }
+shell = { git = "https://github.com/agentica-lang/agc-agent", subdir = "shell", tag = "shell-0.0.1" }
 sse = { git = "https://github.com/agentica-lang/agc-agent", subdir = "sse", tag = "sse-0.0.1" }

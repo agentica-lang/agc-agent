@@ -10,6 +10,8 @@
 ## Only a deny rule can change that. `edit_file` reads the file, so a deny rule of `read_file` denies it too.
 
 import Regex from "std/regex"
+import Shell from "pkg/shell/shell"
+import Sandbox from "sandbox"
 
 enum Verdict
   Allow
@@ -58,12 +60,16 @@ end
 ## so it runs as the words it shows.
 def plain?(command: String) -> Bool = Regex.match?(command, PLAIN)
 
-## `asks` is whether the tool asks when no rule matches. A deny rule wins over an allow rule.
-def decide(rules: Rules, tool: String, target: String, asks: Bool) -> Verdict
+## `asks` is whether the tool asks when no rule matches. A deny rule wins over an allow rule. With `root` (the session
+## folder), a `bash` command that only reads inside it (`Shell.verdict`, its paths resolved by `Sandbox`) runs without
+## asking, unless a deny rule of `read_file` or `bash` exists: the command could read what the rule hides.
+def decide(rules: Rules, tool: String, target: String, asks: Bool, root: Optional[String] = none) -> Verdict
   matchable = tool != "bash" or plain?(target)
   hidden = tool == "edit_file" and read_denied?(rules, target)
   denied = hidden or (matchable and rules.deny.any? { |rule| matches?(rule, tool, target) })
-  allowed = matchable and rules.allow.any? { |rule| matches?(rule, tool, target) }
+  guarded = rules.deny.any? { |rule| rule.tool == "read_file" or rule.tool == "bash" }
+  read_only = tool == "bash" and not guarded and root.map { |folder| read_only?(folder, target) } == some(true)
+  allowed = read_only or (matchable and rules.allow.any? { |rule| matches?(rule, tool, target) })
   if denied
     Verdict.Deny
   elsif git_internals?(tool, target)
@@ -75,6 +81,11 @@ def decide(rules: Rules, tool: String, target: String, asks: Bool) -> Verdict
   else
     Verdict.Allow
   end
+end
+
+## Whether `command` only reads inside `root` (`Shell.verdict`, its paths resolved by `Sandbox`).
+def read_only?(root: String, command: String) -> Bool
+  Shell.verdict(command, ->(path) { Sandbox.resolve(root, path).ok? }) == Shell.Verdict.Safe
 end
 
 ## Whether a deny rule of `read_file` covers the path (relative to the session folder): `glob` and `grep` skip it too.
