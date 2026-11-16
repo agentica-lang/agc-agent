@@ -4,6 +4,9 @@ import Config from "src/config/config"
 import McpTools from "src/ext/mcp"
 import Server from "src/http/server"
 
+## How long the task of the signals waits for one before it waits again.
+SIGNAL_POLL_MS = 3_600_000
+
 def main() -> Void
   case Cli.parse(System.args())
     ok(Cli.Command.Serve) -> serve()
@@ -25,15 +28,18 @@ def serve() -> Void
   end
 end
 
-# A signal that ends a container (SIGTERM, or Ctrl-C) stops the server as `finn server stop --now` does.
+# A signal that ends a container (SIGTERM, or Ctrl-C) stops the server as `finn server stop --now` does; each one asks
+# again, so a second signal cancels the turns of a stop that waits for them.
 def stop_on_signals(server: Server.Server) -> Void
   case System.subscribe([System.Signal.Term, System.Signal.Int])
     ok(signals) ->
       _ = Task.spawn(
         -> {
-          case signals.recv(86_400_000 * 365)
-            ok(_) -> Server.request_stop(server, true)
-            error(_) -> nil
+          while true
+            case signals.recv(SIGNAL_POLL_MS)
+              ok(_) -> Server.request_stop(server, true)
+              error(_) -> nil
+            end
           end
         },
       )

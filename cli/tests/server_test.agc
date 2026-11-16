@@ -23,6 +23,12 @@ def lifecycle(dir: String) -> Result[Void]
   result
 end
 
+def cleaned(dir: String, steps: Fn[String, Result[Void]]) -> Result[Void]
+  result = steps.call(dir)
+  stop_leftover(dir)
+  result
+end
+
 # A server that is left after a failed step goes with the test.
 def stop_leftover(dir: String) -> Void
   case File.read_text("#{dir}/server.json")
@@ -69,7 +75,9 @@ def steps(dir: String, command: List[String]) -> Result[Void]
 end
 
 # A signal that ends a container stops the server cleanly: its file goes and its log says it stopped.
-def test_a_term_signal_stops_the_server_cleanly() -> Result[Void] = Driver.within_dir(&signalled)
+def test_a_term_signal_stops_the_server_cleanly() -> Result[Void]
+  Driver.within_dir(->(dir) { cleaned(dir, &signalled) })
+end
 
 def signalled(dir: String) -> Result[Void]
   command = try Driver.core_command()
@@ -193,7 +201,7 @@ end
 
 # The tail of a log over 1 MiB, a log that is gone, and a log that is rotated when a server starts.
 def test_the_logs_of_a_big_file_show_its_tail_and_a_start_rotates_a_log_over_10_mib() -> Result[Void]
-  Driver.within_dir(&big_log)
+  Driver.within_dir(->(dir) { cleaned(dir, &big_log) })
 end
 
 # A log of `head`, `count` lines of 100 bytes, and `tail`, which is over 1 MiB (the limit of `File.read_text`).
@@ -232,19 +240,57 @@ def big_log(dir: String) -> Result[Void]
 end
 
 # `logs -f` ends by itself when the server goes away.
-def test_following_the_logs_ends_when_the_server_stops() -> Result[Void] = Driver.within_dir(&followed)
+def test_following_the_logs_ends_when_the_server_stops() -> Result[Void]
+  Driver.within_dir(->(dir) { cleaned(dir, &followed) })
+end
 
 def followed(dir: String) -> Result[Void]
   command = try Driver.core_command()
   started = try run(dir, ["start"], command)
   try Test.assert(started.code == 0, "start: #{started.errors}")
   following = try Driver.start_server(dir, ["logs", "-f"])
-  Task.sleep(500)
+  try shows(following, "listening")
   stopped = try run(dir, ["stop"])
   try Test.eq(stopped.code, 0)
   ended = try Driver.finish(following)
-  try Test.eq(ended.code, 0)
-  Test.assert(ended.lines.any? { |line| line.include?("listening") }, "the log was shown: #{ended.lines}")
+  Test.eq(ended.code, 0)
+end
+
+# Reads the output of a client until a line has `word`: it shows the log it follows, so it follows now.
+def shows(cli: Process, word: String) -> Result[Void]
+  while true
+    line = try Process.read_line(cli, 10_000)
+    return ok() if line.include?(word)
+  end
+
+  ok()
+end
+
+# A restart that cannot start a server says whether an old one was stopped.
+def test_a_restart_that_fails_to_start_says_no_server_ran() -> Result[Void] = Driver.within_dir(&failed_restart)
+
+def failed_restart(dir: String) -> Result[Void]
+  result = try run(dir, ["restart"], ["/nonexistent/finn-core"])
+  try Test.eq(result.code, 1)
+  Test.assert(result.errors.include?("no server ran and no new one started"), "the message: #{result.errors}")
+end
+
+# A byte that is not UTF-8 shows as U+FFFD and the rest of the log still shows, in the tail and when it is followed.
+def test_a_byte_that_is_not_utf_8_does_not_hide_the_rest_of_the_log() -> Result[Void] = Driver.within_dir(&bad_byte)
+
+def bad_byte(dir: String) -> Result[Void]
+  path = "#{dir}/server.log"
+  bytes = Bytes.concat(["a\n".bytes, Bytes.from_list([255]).unwrap!, "\nb after bad byte\nc\n".bytes])
+  try File.open(path, "create_private") do |file| File.write_bytes(file, bytes) end
+  shown = try run(dir, ["logs"])
+  try Test.eq(shown.code, 0)
+  try Test.eq(shown.lines, ["a", String.from_code(65533), "b after bad byte", "c"])
+  # A character that a piece of the read ends in the middle of is whole.
+  _ = Path.remove(path)
+  long = "x" + "é" * 40_000 + "\n"
+  try File.open(path, "create_private") do |file| File.write(file, long) end
+  split = try run(dir, ["logs"])
+  Test.eq(split.lines, [long.slice(0, long.length - 1)])
 end
 
 def test_the_server_action_and_its_options_are_parsed() -> Result[Void]
