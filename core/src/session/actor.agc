@@ -171,6 +171,7 @@ struct ShellRun
   command: String
   context: Bool
   task: Task[Void]
+  started_ms: Int
 end
 
 struct State
@@ -476,6 +477,7 @@ def session(state: State) -> Protocol.Session
     effort: state.setup.effort,
     provider: state.setup.provider_name,
     api: state.setup.api,
+    shell_id: state.shell.map { |run| run.id },
   )
 end
 
@@ -1234,15 +1236,19 @@ def run_shell(state: State, request: Protocol.RunShell, reply: Channel[Result[Pr
   inbox: Channel[Msg] = Actor.inbox
   address = inbox.address
   ctx = state.setup.ctx
+  started_ms = Time.monotonic_ms
   task = Task.spawn(
     -> {
-      started = Time.monotonic_ms
       output = Tools.run(ctx, Tools.BASH, input)
-      _ = Actor.cast(address, Msg.ShellDone(id, output, Time.monotonic_ms - started), CALL_MS)
+      done = Msg.ShellDone(id, output, Time.monotonic_ms - started_ms)
+      # A full inbox would leave the session waiting for the command; a session that is gone needs nothing.
+      for _attempt in 1..3
+        break if Actor.cast(address, done, CALL_MS).ok?
+      end
     },
   )
 
-  run = ShellRun(id: id, command: request.command, context: request.context, task: task)
+  run = ShellRun(id: id, command: request.command, context: request.context, task: task, started_ms: started_ms)
   Actor.reply(reply, ok(Protocol.ShellAccepted(shell_id: id)))
   started = Protocol.ShellStarted(shell_id: id, command: request.command, context: request.context)
   emit(state.with(shell: some(run)), Protocol.Event.ShellStarted(started))
@@ -1284,7 +1290,8 @@ end
 def stop_shell(state: State) -> State
   for run in option_list(state.shell)
     Task.cancel(run.task)
-    return shell_done(state, run.id, Tools.Output(text: "stopped by the user", is_error: true), 0, true)
+    stopped = Tools.Output(text: "stopped by the user", is_error: true)
+    return shell_done(state, run.id, stopped, Time.monotonic_ms - run.started_ms, true)
   end
 
   state
@@ -1333,7 +1340,7 @@ def restore(setup: Setup, saved: Store.Saved) -> State
 
   ended_cut = case cut_turn(events)
     some(cut) -> end_cut_turn(cut_state, cut, turn_messages, saved.folded)
-    none -> cut_state
+    none -> ended_shell(cut_state, events)
   end
 
   return ended_cut if not saved.open_user
@@ -1343,6 +1350,33 @@ def restore(setup: Setup, saved: Store.Saved) -> State
   size = some(ended_cut.display.size)
   started = emit(ended_cut, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id, history_size: size)))
   end_cut_turn(started, Cut(turn_id: turn_id, approvals: []), started.history.size, none)
+end
+
+# A command that a restart cut ends as failed, its output not for the model, so the clients stop waiting for it.
+def ended_shell(state: State, events: List[Store.Logged]) -> State
+  cut: Optional[Protocol.ShellStarted] = none
+  for logged in events
+    case logged.event
+      Protocol.Event.ShellStarted(started) -> cut = some(started)
+      Protocol.Event.ShellFinished(_) -> cut = none
+      _ -> nil
+    end
+  end
+
+  for started in option_list(cut)
+    finished = Protocol.ShellFinished(
+      shell_id: started.shell_id,
+      command: started.command,
+      context: false,
+      ok: false,
+      output: "the server stopped while it ran",
+      duration_ms: 0,
+    )
+
+    return emit(state, Protocol.Event.ShellFinished(finished))
+  end
+
+  state
 end
 
 # The number of the turn and a random part: a server that lost the last records of a session never gives a turn the id

@@ -172,6 +172,7 @@ def attach(chat: Chat, session: Protocol.Session, skip_replay: Bool) -> Chat
   fresh = shown.with(
     known: session.history.size,
     turn: running,
+    shell: session.shell_id.some?,
     stopping: false,
     pending: session.pending_approvals,
     yolo: Yolo.attached(shown.yolo, session.turn_id, not skip_replay),
@@ -555,7 +556,7 @@ end
 def resync(chat: Chat) -> Result[Step]
   return error("the server keeps asking to read the session again", kind: "cli.resync") if chat.resyncs >= MAX_RESYNCS
 
-  noted = note(chat.with(shell: false), "[resync: reading the session again]")
+  noted = note(chat, "[resync: reading the session again]")
   session = try Client.session(noted.server, noted.id)
   ok(Step(chat: attach(noted.with(resyncs: chat.resyncs + 1), session, chat.resyncs >= 1)))
 end
@@ -567,8 +568,7 @@ def reconnect(chat: Chat, reason: String) -> Result[Step]
   IO.warn("[the event stream ended: #{reason}; reconnecting]")
   Task.sleep(RECONNECT_MS * reconnects)
   try Client.recheck(chat.server)
-  # A command that was running may have ended unseen with a server that stopped.
-  ok(Step(chat: subscribe(chat.with(reconnects: reconnects, shell: false), chat.last_event_id)))
+  ok(Step(chat: subscribe(chat.with(reconnects: reconnects), chat.last_event_id)))
 end
 
 def added(

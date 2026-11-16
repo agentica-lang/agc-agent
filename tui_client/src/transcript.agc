@@ -84,8 +84,8 @@ def tool_started(entries: List[Entry], started: Protocol.ToolStarted) -> List[En
   end
 end
 
-## A tool call ends: its entry shows how, with its output and diff.
-def tool_finished(entries: List[Entry], done: Protocol.ToolFinished) -> List[Entry]
+## A tool call ends: its entry shows how, with its output and diff, and `aside` after them.
+def tool_finished(entries: List[Entry], done: Protocol.ToolFinished, aside: String = "") -> List[Entry]
   state = Calls.State.Failed
   kind = Kind.ToolFailed
   if done.ok
@@ -108,6 +108,7 @@ def tool_finished(entries: List[Entry], done: Protocol.ToolFinished) -> List[Ent
         output: done.output.unwrap_or(""),
         diff: done.diff.unwrap_or(""),
         duration_ms: done.duration_ms,
+        aside: aside,
       )
   )
 
