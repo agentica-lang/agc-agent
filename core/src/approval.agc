@@ -10,6 +10,7 @@
 ## Only a deny rule can change that. `edit_file` reads the file, so a deny rule of `read_file` denies it too.
 
 import Regex from "std/regex"
+import Shell from "pkg/shell/shell"
 
 enum Verdict
   Allow
@@ -58,12 +59,20 @@ end
 ## so it runs as the words it shows.
 def plain?(command: String) -> Bool = Regex.match?(command, PLAIN)
 
-## `asks` is whether the tool asks when no rule matches. A deny rule wins over an allow rule.
-def decide(rules: Rules, tool: String, target: String, asks: Bool) -> Verdict
+## `asks` is whether the tool asks when no rule matches. A deny rule wins over an allow rule. With `root` (the session
+## folder), a `bash` command that only reads inside it (`Shell.verdict`) runs without asking, unless a deny rule matches
+## one of its commands.
+def decide(rules: Rules, tool: String, target: String, asks: Bool, root: Optional[String] = none) -> Verdict
   matchable = tool != "bash" or plain?(target)
   hidden = tool == "edit_file" and read_denied?(rules, target)
   denied = hidden or (matchable and rules.deny.any? { |rule| matches?(rule, tool, target) })
-  allowed = matchable and rules.allow.any? { |rule| matches?(rule, tool, target) }
+  read_only = (
+    tool == "bash" and
+    root.map { |folder| Shell.verdict(target, folder) == Shell.Verdict.Safe } == some(true)
+  )
+
+  denied = denied or (read_only and commands_denied?(rules, target))
+  allowed = read_only or (matchable and rules.allow.any? { |rule| matches?(rule, tool, target) })
   if denied
     Verdict.Deny
   elsif git_internals?(tool, target)
@@ -106,6 +115,18 @@ WORD = /\A[A-Za-z0-9_]\z/
 PLAIN = /\A[A-Za-z0-9_.\/:=,+@%\- \t]*\z/
 GIT = /\A\.git\.*\z/
 WRITES = ["write_file", "edit_file"]
+
+# Each command of a parsed `bash` command, its words joined by spaces, against the deny rules.
+def commands_denied?(rules: Rules, command: String) -> Bool
+  case Shell.parse(command)
+    ok(script) ->
+      script.pipelines.any? do |pipeline|
+        pipeline.commands.any? { |c| rules.deny.any? { |rule| matches?(rule, "bash", Shell.argv(c).join(" ")) } }
+      end
+
+    error(_) -> false
+  end
+end
 
 def git_internals?(tool: String, target: String) -> Bool
   WRITES.include?(tool) and target.split("/").any? { |name| Regex.match?(name.downcase, GIT) }

@@ -289,7 +289,8 @@ def test_verdicts_follow_the_defaults_and_judge_the_real_path() -> Result[Void]
   try Test.eq(Tools.verdict(s.ctx, "grep", JSON.from({"pattern": "x"})), Approval.Verdict.Allow)
   try Test.eq(Tools.verdict(s.ctx, "write_file", write("a.txt")), Approval.Verdict.Ask)
   try Test.eq(Tools.verdict(s.ctx, "edit_file", edit("a.txt")), Approval.Verdict.Ask)
-  try Test.eq(Tools.verdict(s.ctx, "bash", JSON.from({"command": "ls"})), Approval.Verdict.Ask)
+  try Test.eq(Tools.verdict(s.ctx, "bash", JSON.from({"command": "ls"})), Approval.Verdict.Allow)
+  try Test.eq(Tools.verdict(s.ctx, "bash", JSON.from({"command": "ls > out"})), Approval.Verdict.Ask)
   try Test.eq(Tools.verdict(s.ctx, "nope", JSON.from({"path": "a.txt"})), Approval.Verdict.Deny)
 
   try Test.eq(Tools.verdict(s.ctx, "write_file", write("sub/x.txt")), Approval.Verdict.Allow)

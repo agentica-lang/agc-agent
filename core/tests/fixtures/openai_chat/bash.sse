@@ -2,7 +2,7 @@ data: {"choices":[{"finish_reason":null,"index":0,"delta":{"role":"assistant","c
 
 data: {"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_bash","type":"function","function":{"name":"bash","arguments":"{\"command\": \"c"}}]}}],"id":"chatcmpl-core-2","model":"m","object":"chat.completion.chunk"}
 
-data: {"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"at hello.txt\"}"}}]}}],"id":"chatcmpl-core-2","model":"m","object":"chat.completion.chunk"}
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"index":0,"function":{"arguments":"at hello.txt | tee copy.txt\"}"}}]}}],"id":"chatcmpl-core-2","model":"m","object":"chat.completion.chunk"}
 
 data: {"choices":[{"finish_reason":"tool_calls","index":0,"delta":{}}],"id":"chatcmpl-core-2","model":"m","object":"chat.completion.chunk"}
 
