@@ -3,7 +3,8 @@ import Store from "../src/store"
 import H from "support/harness"
 
 # After a restart the session is listed and drawn as before; a client that saw all but the last events gets just those,
-# and the next turn's ids follow the old ones. The model gets the old history back, tool call included. A line that a
+# one that would miss text deltas (they are not saved) gets `resync`, and the next turn's ids follow the old ones. The
+# model gets the old history back, tool call included. A line that a
 # crash cut is skipped, and the next record starts on a line of its own.
 def test_a_restarted_server_resumes_a_session_with_its_event_ids() -> Result[Void]
   setup = H.Setup(replies: ["write_file.sse", "text.sse", "text.sse"])
@@ -25,11 +26,16 @@ def test_a_restarted_server_resumes_a_session_with_its_event_ids() -> Result[Voi
       after = try H.session(r, id)
       try Test.eq([after.last_event_id, after.history.size], [before.last_event_id, 2])
       try Test.eq(after.history, before.history)
-      tail = a.seen.drop(a.seen.size - 3)
-      b = try H.until(try H.subscribe(r, id, some(before.last_event_id - 3)), Protocol.EventKind.TurnFinished)
+      tail = a.seen.drop(a.seen.size - 2)
+      try Test.eq(H.kinds(tail), ["usage", "turn_finished"])
+      b = try H.until(try H.subscribe(r, id, some(before.last_event_id - 2)), Protocol.EventKind.TurnFinished)
       H.close(b)
       try Test.eq(b.seen.map { |s| s.id }, tail.map { |s| s.id })
       try Test.eq(b.seen.map { |s| s.event }, tail.map { |s| s.event })
+      delta = try a.seen.find { |s| Protocol.event_name(s.event) == "text_delta" }
+      old = try H.until(try H.subscribe(r, id, some(try delta.id.to_i)), Protocol.EventKind.Resync)
+      H.close(old)
+      try Test.eq(H.kinds(old.seen), ["resync"])
       c = try H.subscribe(r, id, some(before.last_event_id))
       sent = try H.send(r, id, "Hello.")
       try Test.eq((try Protocol.decode_message_accepted(sent.text)).turn_id, "turn-2")
@@ -42,7 +48,10 @@ def test_a_restarted_server_resumes_a_session_with_its_event_ids() -> Result[Voi
       try Test.eq(third.map { |m| JSON.encode(JSON.get(m, "role").unwrap_or(JSON.null())) }.join(" "), roles())
       try Test.eq(third.take(4).map { |m| JSON.encode(m) }, second.map { |m| JSON.encode(m) })
       saved = try Store.load(H.session_file(r, id))
-      try Test.eq([saved.skipped, saved.events.size], [1, (try H.session(r, id)).last_event_id])
+      try Test.eq(saved.skipped, 1)
+      try Test.eq(saved.events.map { |l| l.id }.max, some((try H.session(r, id)).last_event_id))
+      try Test.eq(saved.events.select { |l| Protocol.event_name(l.event).end_with?("_delta") }.size, 0)
+      try Test.assert((try File.read_text(H.session_file(r, id))).include?("{\"type\":\"ids\""), "no ids reserved")
       try Test.eq(saved.shown.map { |m| m.text }.select { |t| t == "Hello." }.size, 1)
       Test.eq((try File.stat(H.sessions(r))).mode % 512, 448)
     end
@@ -116,6 +125,33 @@ def test_a_turn_cut_before_it_started_ends_cancelled() -> Result[Void]
       b = try H.until(b.with(seen: []), Protocol.EventKind.TurnFinished)
       H.close(b)
       Test.eq(H.stop_reason(b), "end_turn")
+    end
+  end
+end
+
+# The server stopped while deltas streamed after the last saved event: the file reserved their ids, so the restart
+# gives no event one of them. A client that saw some deltas gets `resync`; one that saw them all gets the end of the
+# cut turn.
+def test_a_restart_after_unsaved_deltas_skips_their_ids() -> Result[Void]
+  setup = H.Setup(replies: ["text.sse", "text.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    _ = try H.send(h, id, "Hello.")
+    last = (try H.idle(h, id)).last_event_id
+    started = "{\"type\":\"event\",\"id\":#{last + 1},\"name\":\"turn_started\",\"data\":{\"turn_id\":\"turn-2\"}}"
+    cut = "{\"type\":\"user\",\"text\":\"two\"}\n#{started}\n{\"type\":\"ids\",\"until\":#{last + 1000}}\n"
+    H.restarted(h, setup, cut) do |r|
+      try Test.eq((try H.session(r, id)).last_event_id, last + 1001)
+      some_seen = try H.until(try H.subscribe(r, id, some(last + 500)), Protocol.EventKind.Resync)
+      H.close(some_seen)
+      all_seen = try H.until(try H.subscribe(r, id, some(last + 1000)), Protocol.EventKind.TurnFinished)
+      try Test.eq(all_seen.seen.map { |s| s.id }, [Protocol.format_event_id(last + 1001)])
+      try Test.eq(H.stop_reason(all_seen), "cancelled")
+      sent = try H.send(r, id, "three")
+      try Test.eq((try Protocol.decode_message_accepted(sent.text)).turn_id, "turn-3")
+      all_seen = try H.until(all_seen.with(seen: []), Protocol.EventKind.TurnFinished)
+      H.close(all_seen)
+      Test.eq(all_seen.seen.first.id, Protocol.format_event_id(last + 1002))
     end
   end
 end

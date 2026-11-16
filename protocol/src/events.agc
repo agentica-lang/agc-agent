@@ -2,7 +2,9 @@
 ## id and `data:` the JSON of the payload.
 ##
 ## An event id is a counter per session: the first event is 1, and each one is the last plus one. The session keeps the
-## counter across a restart, so a `Last-Event-ID` stays valid. A reader ignores a key it does not know.
+## counter across a restart, so a `Last-Event-ID` stays valid; a restart may skip ids. The server does not keep text
+## and thinking deltas across a restart: a `Last-Event-ID` that would need one gets `resync`. A reader ignores a key it
+## does not know.
 
 import Errors from "errors"
 import Kinds from "kinds"

@@ -6,7 +6,9 @@
 ## outside what it keeps gets `resync`.
 ##
 ## Every event and message goes to the session's file before a client sees it, so a session started again from its
-## file keeps its ids. A turn that a restart cut ends then as `cancelled`. When a write fails, the event gets no id:
+## file keeps its ids. Text and thinking deltas are the exception: they are not saved. The first delta after a saved
+## event reserves a block of `RESERVE` ids in the file, so a restart that cuts a run of deltas starts after them. After a restart, a `Last-Event-ID` before a delta that was
+## not saved gets `resync`. A turn that a restart cut ends then as `cancelled`. When a write fails, the event gets no id:
 ## the clients get an `error` without one, the running turn stops, and no turn starts until a write works again.
 
 import Actor from "std/actor"
@@ -21,6 +23,7 @@ import Tools from "tools"
 CALL_MS = 5000
 ## Room in a subscriber's channel past its replay; a client that falls this far behind is dropped.
 LIVE_ROOM = 1024
+RESERVE = 1000
 
 struct Setup
   id: String
@@ -95,6 +98,10 @@ struct State
   context: Int = 0
   ## The model's window: 0 until it is known, -1 when the provider does not say.
   window: Int = 0
+  ## The ids up to this one are saved or reserved in the file.
+  reserved: Int = 0
+  ## Loaded from the file: a client that attaches from before this id would miss deltas that were not saved.
+  lost_below: Int = 0
   ## The turn that a failed write stopped, for a client that attaches from inside it.
   lost: Optional[Lost] = none
 end
@@ -222,7 +229,7 @@ def attach(state: State, last: Optional[Int], reply: Channel[Channel[Bytes]]) ->
   end
 
   replay: List[String] = []
-  if from > state.counter or from < first - 1
+  if from > state.counter or from < first - 1 or from < state.lost_below
     replay = [frame("", Protocol.Event.Resync)]
   else
     replay = lost_after(state, from)
@@ -279,11 +286,35 @@ end
 def emit(state: State, event: Protocol.Event) -> State
   id = state.counter + 1
   logged = Store.Logged(id: id, event: event)
-  case save(state, -> { Store.append_event(state.setup.file, logged) })
+  case save(state, -> { saved_event(state, logged) })
     ok(_) ->
       live = broadcast(state, frame(Protocol.format_event_id(id), event))
-      prune(state.with(counter: id, log: trim(state.log.push(logged), state), subscribers: live, broken: none))
+      reserved = id
+      if delta?(event)
+        reserved = [state.reserved, id + RESERVE - 1].max.unwrap!
+        if id <= state.reserved
+          reserved = state.reserved
+        end
+      end
+
+      log = trim(state.log.push(logged), state)
+      prune(state.with(counter: id, log: log, subscribers: live, broken: none, reserved: reserved))
     error(e) -> broke(state, e)
+  end
+end
+
+# A delta is not saved; one past the saved or reserved ids reserves the next block.
+def saved_event(state: State, logged: Store.Logged) -> Result[Void]
+  return Store.append_event(state.setup.file, logged) if not delta?(logged.event)
+  return ok() if logged.id <= state.reserved
+
+  Store.append_reserved(state.setup.file, logged.id + RESERVE - 1)
+end
+
+def delta?(event: Protocol.Event) -> Bool
+  case event
+    Protocol.Event.TextDelta(_), Protocol.Event.ThinkingDelta(_) -> true
+    _ -> false
   end
 end
 
@@ -575,9 +606,12 @@ end
 
 def restore(setup: Setup, saved: Store.Saved) -> State
   events = saved.events
+  last_saved = events.map { |logged| logged.id }.max.unwrap_or(0)
   state = State(
     setup: setup,
-    counter: events.map { |logged| logged.id }.max.unwrap_or(0),
+    counter: [last_saved, saved.reserved].max.unwrap!,
+    reserved: [last_saved, saved.reserved].max.unwrap!,
+    lost_below: lost_below(events),
     log: events.drop([events.size - setup.keep_events, 0].max.unwrap!),
     history: saved.history,
     display: saved.shown,
@@ -595,9 +629,15 @@ def restore(setup: Setup, saved: Store.Saved) -> State
     turn_messages = turn_messages - 1
   end
 
+  # The deltas of a cut turn after its last saved event are lost too.
+  cut_state = state
+  if cut_turn(events).some? or saved.open_user
+    cut_state = state.with(lost_below: state.counter)
+  end
+
   ended_cut = case cut_turn(events)
-    some(cut) -> end_cut_turn(state, cut, turn_messages)
-    none -> state
+    some(cut) -> end_cut_turn(cut_state, cut, turn_messages)
+    none -> cut_state
   end
 
   return ended_cut if not saved.open_user
@@ -606,6 +646,21 @@ def restore(setup: Setup, saved: Store.Saved) -> State
   turn_id = "turn-#{ended_cut.turns}"
   started = emit(ended_cut, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id)))
   end_cut_turn(started, Cut(turn_id: turn_id, approvals: []), started.history.size)
+end
+
+# The last id that no saved event has, below the last saved one: a delta that was not saved.
+def lost_below(events: List[Store.Logged]) -> Int
+  lost = 0
+  last = 0
+  for logged in events
+    if logged.id > last + 1
+      lost = logged.id - 1
+    end
+
+    last = logged.id
+  end
+
+  lost
 end
 
 def count(events: List[Store.Logged], kind: Protocol.EventKind) -> Int
