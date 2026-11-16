@@ -10,11 +10,12 @@ TEXT_COST = (22.0 * 1.25 + 11.0 * 10.0) / 1_000_000.0
 CACHED_COST = (30.0 * 1.25 + 7.0 * 10.0 + 120.0 * 0.125) / 1_000_000.0
 
 # Each call's usage carries its cost and the turn's and session's so far; the snapshot has the session's, which a
-# restart keeps; the window comes from the catalog, so no `GET /models` is made.
+# restart keeps; the window comes from the catalog, so no `GET /models` is made. The first turn waits for a catalog
+# that takes a second to load.
 def test_a_session_counts_what_its_calls_cost() -> Result[Void]
   within_models do |served, dir|
-    catalog = Catalog.start(Catalog.Options(url: served.url, cache: "#{dir}/models.json"))
-    try Test.assert(Catalog.wait(catalog, 10_000), "the catalog did not load")
+    slow = served.url.replace("/api.json", "/slow.json")
+    catalog = Catalog.start(Catalog.Options(url: slow, cache: "#{dir}/models.json"))
     setup = H.Setup(
       replies: ["text.sse", "text_cached.sse"],
       context_window: 0,
@@ -39,7 +40,44 @@ def test_a_session_counts_what_its_calls_cost() -> Result[Void]
 
     Catalog.stop(catalog)
     try result
-    Test.eq(hits(dir), ["/api.json"])
+    Test.eq(hits(dir), ["/slow.json"])
+  end
+end
+
+# A first turn that the catalog is too slow for has no window from the API (-1); once the catalog has loaded, the next
+# turn asks again: a local server's `/props` first.
+def test_a_window_the_api_did_not_give_is_asked_again() -> Result[Void]
+  within_models do |served, dir|
+    slower = served.url.replace("/api.json", "/slower.json")
+    catalog = Catalog.start(Catalog.Options(url: slower, cache: "#{dir}/models.json"))
+    setup = H.Setup(
+      replies: ["models_none.json", "models_none.json", "text.sse", "props_small.json", "text.sse"],
+      context_window: 0,
+      props: true,
+      model: "gpt-5.1",
+      catalog: some(catalog),
+    )
+
+    result = H.using(setup) do |h|
+      id = try H.new_session(h)
+      a = try H.subscribe(h, id)
+      _ = try H.send(h, id, "Hi.")
+      a = try H.until(a, Protocol.EventKind.TurnFinished)
+      try Test.assert(Catalog.wait(catalog, 10_000), "the catalog did not load")
+      _ = try H.send(h, id, "Again.")
+      a = try H.until(a, Protocol.EventKind.TurnFinished)
+      H.close(a)
+      try Test.eq(usages(a).map { |u| u.cost.some? }, [false, true])
+      paths: List[String] = []
+      for _ in 1..5
+        paths = paths.push((try H.next_request(h)).path)
+      end
+
+      Test.eq(paths, ["/props", "/v1/models", "/v1/chat/completions", "/props", "/v1/chat/completions"])
+    end
+
+    Catalog.stop(catalog)
+    result
   end
 end
 
@@ -134,6 +172,52 @@ def test_a_long_prompt_costs_its_tier() -> Result[Void]
   near([[Catalog.cost(terra, LLM.Usage(input: 250_000))]], [[(250_000.0 * 1.0) / 1_000_000.0]])
 end
 
+# A price that is not a number from 0 to 10000 drops the model's prices (a cost of `1e308` tokens would not encode);
+# a missing cache read costs as input; a tier changes only the prices it gives.
+def test_prices_out_of_range_are_dropped() -> Result[Void]
+  text = <<~JSON
+    {"p": {"models": {
+      "huge": {"cost": {"input": 1e308, "output": 1}},
+      "negative": {"cost": {"input": 1, "output": -2}},
+      "tier": {"cost": {"input": 1, "output": 2, "tiers": [{"input": -1, "tier": {"type": "context", "size": 9}}]}},
+      "plain": {"cost": {"input": 3, "output": 4, "cache_write": 5,
+        "tiers": [{"output": 8, "tier": {"type": "context", "size": 1000}}]}}
+    }}}
+  JSON
+
+  models = try Catalog.parse(text)
+  try Test.eq(
+    models.map { |m| [m.id, m.prices.some?.to_s, m.tiers.size.to_s] },
+    [["huge", "false", "0"], ["negative", "false", "0"], ["plain", "true", "1"], ["tier", "false", "0"]],
+  )
+
+  plain = try models.find { |m| m.id == "plain" }
+  try Test.eq(plain.prices, some(Catalog.Prices(input: 3.0, output: 4.0, cache_read: 3.0, cache_write: 5.0)))
+  Test.eq(plain.tiers[0].prices, Catalog.Prices(input: 3.0, output: 8.0, cache_read: 3.0, cache_write: 5.0))
+end
+
+# The cache file goes through the same checks, and one fetched in the future is stale.
+def test_a_cache_out_of_range_is_checked() -> Result[Void]
+  within_models do |served, dir|
+    cache = "#{dir}/models.json"
+    now = Time.now_ms()
+    bad = <<~JSON
+      {"url": "#{served.url}", "fetched_ms": #{now},
+        "models": [{"provider": "openai", "id": "gpt-5.1", "prices": {"input": -5.0, "output": 1.0, "cache_read": 0.0, "cache_write": 0.0}, "tiers": [],
+          "window": 99000000, "reasoning": false, "tools": false}]}
+    JSON
+
+    try File.write_text(cache, bad)
+    checked = found(Catalog.Options(url: served.url, cache: cache), "openai", "gpt-5.1")
+    try Test.eq(checked.map { |m| [m.prices.some?, m.window.some?] }, some([false, false]))
+    try Test.eq(hits(dir), [])
+    try File.write_text(cache, bad.replace("\"fetched_ms\": #{now}", "\"fetched_ms\": 99999999999999"))
+    future = found(Catalog.Options(url: served.url, cache: cache), "openai", "gpt-5.1")
+    try Test.eq(future.map { |m| m.prices.some? }, some(true))
+    Test.eq(hits(dir), ["/api.json"])
+  end
+end
+
 # A window out of 1000 to 2000000 tokens is a mistake of the data: none.
 def test_an_odd_window_is_left_out() -> Result[Void]
   text = "{\"p\": {\"models\": {\"a\": {\"limit\": {\"context\": 10}}, \"b\": {\"limit\": {\"context\": 9000000}}}}}"
@@ -160,14 +244,15 @@ def within_models(body: Fn[Served, String, Result[Void]]) -> Result[Void]
   result
 end
 
-# `/slow.json` answers after 2 s, and every path fails while the file `down` is there.
+# `/slow.json` answers after 1 s and `/slower.json` after 3 s; every path fails while the file `down` is there.
 def answer(dir: String, json: Bytes, request: HTTP.Request) -> Result[HTTP.Response]
   return ok(HTTP.Response(status: 503, headers: [], body: "".bytes)) if File.stat("#{dir}/down").ok?
 
+  try File.append_text("#{dir}/hits", "#{request.path}\n")
   if request.path == "/slow.json"
-    Task.sleep(2000)
-  else
-    try File.append_text("#{dir}/hits", "#{request.path}\n")
+    Task.sleep(1000)
+  elsif request.path == "/slower.json"
+    Task.sleep(3000)
   end
 
   ok(HTTP.Response(status: 200, headers: [HTTP.Header(name: "Content-Type", value: "application/json")], body: json))

@@ -8,6 +8,7 @@ import CodeMode from "code_mode"
 import Compaction from "compaction"
 import Tools from "tools"
 
+CATALOG_WAIT_MS = 1500
 MAX_ROUNDS = 50
 ## The provider whose models are offered `apply_patch`, as a custom tool.
 RESPONSES = "openai_responses"
@@ -197,6 +198,8 @@ def assistant_text(message: LLM.Message) -> String = message.content.map { |b| t
 
 private
 
+LOCAL_HOSTS = ["http://127.0.0.1:", "http://localhost:", "http://[::1]:", "http://0.0.0.0:"]
+
 EMPTY = LLM.Response(
   message: LLM.Message(role: LLM.Role.Assistant, content: []),
   stop_reason: LLM.StopReason.EndTurn,
@@ -217,9 +220,9 @@ end
 # A local server (llama-server) knows the window it runs with (`/props`): it goes first there; elsewhere the catalog,
 # else the API.
 def windowed(given: Turn) -> Turn
-  return given if given.compaction.window != 0
-
   listed = given.listed.map { |model| model.window.unwrap_or(0) }.unwrap_or(0)
+  return given if given.compaction.window > 0 or (given.compaction.window < 0 and listed == 0)
+
   if listed > 0 and not local?(given.compaction.props_url)
     return given.with(compaction: given.compaction.with(window: known_window(given, ok(listed))))
   end
@@ -253,7 +256,7 @@ def known_window(turn: Turn, asked: Result[Int]) -> Int
   end
 end
 
-def local?(url: String) -> Bool = url.start_with?("http://127.0.0.1:") or url.start_with?("http://localhost:")
+def local?(url: String) -> Bool = LOCAL_HOSTS.any? { |host| url.start_with?(host) }
 
 # Past the part of the window the settings give, the history from the first task to the running turn becomes a
 # summary. A summary that fails is an `error` event, and the turn tries no more; so is a fold after which the next call
@@ -380,8 +383,10 @@ def usage(u: LLM.Usage, listed: Optional[Catalog.Model]) -> Protocol.Usage
   )
 end
 
+# A catalog still loading gets a short wait, so that a first turn has its prices and window.
 def listed_model(turn: Turn) -> Optional[Catalog.Model]
   for catalog in option_list(turn.catalog)
+    _ = Catalog.wait(catalog, CATALOG_WAIT_MS)
     return Catalog.find(catalog, turn.catalog_provider, turn.model)
   end
 

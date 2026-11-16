@@ -3,6 +3,7 @@ import Protocol from "pkg/protocol/protocol"
 import Approval from "../src/approval"
 import McpTools from "../src/mcp_tools"
 import Tools from "../src/tools"
+import Fake from "support/fake_llm"
 import H from "support/harness"
 
 FAKES = ["../mcp/tests/support/fake_server.agc", "mcp/tests/support/fake_server.agc"]
@@ -44,6 +45,27 @@ def test_tools_listed_late_reach_the_sessions() -> Result[Void]
       H.close(a)
       first = try JSON.parse((try H.next_request(h)).body)
       Test.assert(JSON.encode(try JSON.get(first, "tools")).include?("\"mcp__fake__echo\""), "no MCP tool offered")
+    end
+  end
+end
+
+# The tools of a turn are those there were when it started: a tool listed during the turn waits for the next one, so
+# both requests of a turn offer the same tools.
+def test_a_turn_keeps_the_tools_it_started_with() -> Result[Void]
+  within_mcp do |started|
+    calls: Channel[Int] = Channel.new(1)
+    _ = calls.send(0, 1000)
+    late = -> { growing(calls, started.tools) }
+    H.using(H.Setup(replies: ["read_file.sse", "text.sse"], late_tools: some(late))) do |h|
+      id = try H.new_session(h)
+      a = try H.subscribe(h, id)
+      _ = try H.send(h, id, "Read it.")
+      a = try H.until(a, Protocol.EventKind.TurnFinished)
+      H.close(a)
+      first = tool_names(try H.next_request(h))
+      second = tool_names(try H.next_request(h))
+      try Test.eq(second, first)
+      Test.assert(second.size > 0, "no tools offered")
     end
   end
 end
@@ -177,4 +199,17 @@ def existing(paths: List[String]) -> Result[String]
     ok(path) -> ok(path)
     error(_) -> error("none of #{paths.join(", ")} exists")
   end
+end
+
+# The tools listed so far: one more on each call.
+def growing(calls: Channel[Int], tools: List[Tools.Tool]) -> List[Tools.Tool]
+  n = calls.recv(1000).unwrap_or(0)
+  _ = calls.send(n + 1, 1000)
+  (0..n).to_a.map { |i| tools[0].with(name: "#{tools[0].name}#{i}") }
+end
+
+def tool_names(request: Fake.Seen) -> List[String]
+  json = JSON.parse(request.body).unwrap_or(JSON.object({}))
+  listed: List[JSON.Value] = JSON.list(JSON.get(json, "tools").unwrap_or(JSON.array([]))).unwrap_or([])
+  listed.map { |tool| JSON.encode(tool) }
 end

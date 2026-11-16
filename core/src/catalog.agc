@@ -22,6 +22,8 @@ CALL_MS = 5000
 ## The windows taken from the catalog; another value is a mistake of the data.
 MIN_WINDOW = 1000
 MAX_WINDOW = 2_000_000
+## The highest price taken, in USD per million tokens; a model with a price above it, below 0 or not finite has none.
+MAX_PRICE = 10_000.0
 
 ## Prices in USD per million tokens.
 struct Prices
@@ -111,13 +113,18 @@ def cost(model: Model, usage: LLM.Usage) -> Optional[Float]
   end
 
   total = (
-    usage.input.to_f * prices.input +
-    usage.output.to_f * prices.output +
-    usage.cache_read.to_f * prices.cache_read +
-    usage.cache_write.to_f * prices.cache_write
+    (
+      usage.input.to_f * prices.input +
+      usage.output.to_f * prices.output +
+      usage.cache_read.to_f * prices.cache_read +
+      usage.cache_write.to_f * prices.cache_write
+    ) /
+    1_000_000.0
   )
 
-  some(total / 1_000_000.0)
+  return none if not (total >= 0.0 and total < 1.0e300)
+
+  some(total)
 end
 
 ## The models of a models.dev `api.json`.
@@ -213,8 +220,11 @@ def load(state: State) -> State
 end
 
 def loaded_models(options: Options) -> Result[List[Model]]
-  cached = read_cache(options.cache).select { |c| c.url == options.url }
-  fresh = cached.select { |c| Time.now_ms() - c.fetched_ms < options.ttl_ms }
+  cached = read_cache(options.cache)
+    .select { |c| c.url == options.url }
+    .map { |c| c.with(models: c.models.map(&bounded)) }
+
+  fresh = cached.select { |c| c.fetched_ms <= Time.now_ms() and Time.now_ms() - c.fetched_ms < options.ttl_ms }
   return ok(fresh[0].models) if not fresh.empty?
 
   case fetch(options)
@@ -287,63 +297,97 @@ def model(provider: String, id: String, json: JSON.Value) -> Model
     window = int(limit, "context")
   end
 
-  if window.unwrap_or(0) < MIN_WINDOW or window.unwrap_or(0) > MAX_WINDOW
-    window = none
-  end
-
   prices: Optional[Prices] = none
   if fields(cost).has_key?("input") and fields(cost).has_key?("output")
-    prices = some(prices_of(cost))
+    prices = some(prices_of(cost, Prices()))
   end
 
-  Model(
+  model = Model(
     provider: provider,
     id: id,
     prices: prices,
-    tiers: tiers(cost),
+    tiers: tiers(cost, prices.unwrap_or(Prices())),
     window: window,
     reasoning: flag(json, "reasoning"),
     tools: flag(json, "tool_call"),
   )
+
+  bounded(model)
 end
 
-def prices_of(cost: JSON.Value) -> Prices
+# A model as the catalog may give it, from models.dev or the cache file: a window out of range is none, and a price out
+# of range leaves the model with no prices at all.
+def bounded(model: Model) -> Model
+  window = model.window
+  if window.unwrap_or(0) < MIN_WINDOW or window.unwrap_or(0) > MAX_WINDOW
+    window = none
+  end
+
+  all = option_list(model.prices) + model.tiers.map { |t| t.prices }
+  sane = all.all? { |p| [p.input, p.output, p.cache_read, p.cache_write].all? { |v| v >= 0.0 and v <= MAX_PRICE } }
+  return model.with(window: window) if sane
+
+  model.with(window: window, prices: none, tiers: [])
+end
+
+def option_list(value: Optional[Prices]) -> List[Prices]
+  case value
+    some(p) -> [p]
+    none -> []
+  end
+end
+
+# The prices `cost` gives, each missing one from `base`; a missing cache read costs as input.
+def prices_of(cost: JSON.Value, base: Prices) -> Prices
+  input = number(cost, "input").unwrap_or(base.input)
+  cache_read = base.cache_read
+  if fields(cost).has_key?("input")
+    cache_read = input
+  end
+
   Prices(
-    input: number(cost, "input"),
-    output: number(cost, "output"),
-    cache_read: number(cost, "cache_read"),
-    cache_write: number(cost, "cache_write"),
+    input: input,
+    output: number(cost, "output").unwrap_or(base.output),
+    cache_read: number(cost, "cache_read").unwrap_or(cache_read),
+    cache_write: number(cost, "cache_write").unwrap_or(base.cache_write),
   )
 end
 
-# The context tiers, by size; the older `context_over_200k` is a tier above 200000 tokens, when there is no `tiers`
-# (an entry with both gives the same tier twice).
-def tiers(cost: JSON.Value) -> List[Tier]
+# The context tiers, by size, each from the base prices with the fields it gives; the older `context_over_200k` is a
+# tier above 200000 tokens, when there is no context tier (an entry with both gives the same tier twice).
+def tiers(cost: JSON.Value, base: Prices) -> List[Tier]
   out: List[Tier] = []
   listed: List[JSON.Value] = JSON.list(JSON.get(cost, "tiers").unwrap_or(JSON.array([]))).unwrap_or([])
   for tier in listed
     shape = JSON.get(tier, "tier").unwrap_or(JSON.object({}))
     if JSON.string(JSON.get(shape, "type").unwrap_or(JSON.from(""))) == ok("context")
       case int(shape, "size")
-        some(size) -> out = out.push(Tier(above: size, prices: prices_of(tier)))
+        some(size) -> out = out.push(Tier(above: size, prices: prices_of(tier, base)))
         none -> nil
       end
     end
   end
 
   case JSON.get(cost, "context_over_200k")
-    ok(over) if JSON.kind(over) == "object" and listed.empty? ->
-      out = out.push(Tier(above: 200_000, prices: prices_of(over)))
+    ok(over) if JSON.kind(over) == "object" and out.empty? ->
+      out = out.push(Tier(above: 200_000, prices: prices_of(over, base)))
     _ -> nil
   end
 
   out.sort_by { |t| t.above }
 end
 
-def number(json: JSON.Value, key: String) -> Float
+# A price; one out of range (not finite, below 0 or over `MAX_PRICE`) is -1, which `bounded` refuses.
+def number(json: JSON.Value, key: String) -> Optional[Float]
   case JSON.get(json, key)
-    ok(value) -> JSON.float(value).unwrap_or(0.0)
-    error(_) -> 0.0
+    ok(value) ->
+      case JSON.float(value)
+        ok(n) if n >= 0.0 and n <= MAX_PRICE -> some(n)
+        ok(_) -> some(-1.0)
+        error(_) -> none
+      end
+
+    error(_) -> none
   end
 end
 
