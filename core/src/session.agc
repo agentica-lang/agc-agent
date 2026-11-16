@@ -20,6 +20,7 @@ import Agent from "agent"
 import Catalog from "catalog"
 import CodeMode from "code_mode"
 import Compaction from "compaction"
+import Permissions from "permissions"
 import Spec from "spec"
 import Skills from "skills"
 import Store from "store"
@@ -98,7 +99,6 @@ end
 struct Waiting
   request: Protocol.ApprovalRequested
   reply: Channel[Protocol.Decision]
-  key: String
   asked_ms: Int
 end
 
@@ -125,8 +125,8 @@ struct State
   approvals: Int = 0
   ## The approvals answered, so a late answer is told it came late.
   resolved: List[String] = []
-  ## The `tool` and target pairs that `allow_session` allowed.
-  allowed: List[String] = []
+  ## What the answers of the session (`allow_session`, `allow_prefix`, `allow_tool`) and its mode allow.
+  allows: Permissions.Allows
   ## Since when no client is attached.
   alone_since: Optional[Int] = none
   ## Why the last write to the file failed; none once one works. The next write starts on a new line, since the failed
@@ -163,7 +163,7 @@ def start(setup: Setup, saved: Optional[Store.Saved] = none) -> Actor.Ref[State,
   init = -> {
     case saved
       some(s) -> restore(setup, s)
-      none -> State(setup: setup, window: setup.window)
+      none -> State(setup: setup, window: setup.window, allows: Permissions.Allows())
     end
   }
 
@@ -331,6 +331,7 @@ def session(state: State) -> Protocol.Session
     turn_from_event_id: state.turn.map { |t| t.from_event_id },
     pending_approvals: state.pending.map { |w| w.request },
     history: state.display,
+    accept_edits: state.allows.accept_edits,
     cost: state.cost,
     effort: state.setup.effort,
   )
@@ -658,8 +659,7 @@ def wait_approval(address: Address[Msg], turn_id: String, call: Agent.Ask, timeo
 end
 
 def ask(state: State, call: Agent.Ask, reply: Channel[Protocol.Decision]) -> State
-  key = "#{call.tool}\n#{call.target}"
-  if state.allowed.include?(key)
+  if Permissions.allows?(state.allows, state.setup.ctx.rules, call.tool, call.target, state.setup.ctx.root)
     _ = reply.send(Protocol.Decision.Allow, 0)
     return state
   end
@@ -670,9 +670,10 @@ def ask(state: State, call: Agent.Ask, reply: Channel[Protocol.Decision]) -> Sta
     tool: call.tool,
     preview: call.target,
     detail: call.detail,
+    prefix: Permissions.prefix(call.tool, call.target).map { |words| words.join(" ") },
   )
 
-  waiting = Waiting(request: request, reply: reply, key: key, asked_ms: Time.monotonic_ms)
+  waiting = Waiting(request: request, reply: reply, asked_ms: Time.monotonic_ms)
   asked = state.with(pending: state.pending.push(waiting), approvals: state.approvals + 1)
   emit(asked, Protocol.Event.ApprovalRequested(request))
 end
@@ -717,15 +718,13 @@ def resolve(state: State, approval_id: String, decision: Protocol.Decision, sour
   case found
     ok(waiting) ->
       _ = waiting.reply.send(decision, 0)
-      allowed = state.allowed
-      if decision == Protocol.Decision.AllowSession
-        allowed = allowed.push(waiting.key)
-      end
+      asked = waiting.request
+      allows = Permissions.answered(state.allows, Protocol.decision_name(decision), asked.tool, asked.preview)
 
       next_state = state.with(
         pending: state.pending.select { |w| w.request.approval_id != approval_id },
         resolved: state.resolved.push(approval_id),
-        allowed: allowed,
+        allows: allows,
       )
 
       resolved = Protocol.ApprovalResolved(approval_id: approval_id, decision: decision, source: source)
@@ -819,6 +818,7 @@ def busy_reason(state: State) -> String
 end
 
 def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Result[Void]]) -> State
+  allows = state.allows.with(accept_edits: change.accept_edits.unwrap_or(state.allows.accept_edits))
   setup = state.setup.with(model: change.model.unwrap_or(state.setup.model))
   case change.effort
     some(level) if level == Protocol.EFFORT_DEFAULT -> setup = setup.with(effort: none)
@@ -829,7 +829,7 @@ def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Re
   case save(state, -> { Store.append_settings(state.setup.file, setup.model, setup.effort) })
     ok(_) ->
       Actor.reply(reply, ok())
-      state.with(setup: setup, broken: none)
+      state.with(setup: setup, allows: allows, broken: none)
     error(e) ->
       Actor.reply(
         reply,
@@ -962,6 +962,7 @@ def restore(setup: Setup, saved: Store.Saved) -> State
 
   state = State(
     setup: changed,
+    allows: Permissions.Allows(),
     counter: [last_saved, saved.reserved].max.unwrap!,
     reserved: [last_saved, saved.reserved].max.unwrap!,
     lost_below: lost_below(events),

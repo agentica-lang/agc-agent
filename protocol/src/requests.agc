@@ -9,11 +9,15 @@ EFFORTS = ["low", "medium", "high"]
 ## The effort of `UpdateSession` that goes back to the model's own default.
 EFFORT_DEFAULT = "default"
 
-## How a client answers an approval request.
+## How a client answers an approval request. `AllowSession` also allows the same call again in the session,
+## `AllowPrefix` the `bash` commands that start with the request's `prefix` (the same call when it has none), and
+## `AllowTool` every call of the tool; none of them reaches into `.git/`.
 enum Decision
   Allow
   Deny
   AllowSession
+  AllowPrefix
+  AllowTool
 end
 
 ## `POST /v1/sessions`. `model` and `api` (the model API, by the name the server gives it) default to the server's.
@@ -37,6 +41,8 @@ end
 struct UpdateSession
   model: Optional[String] = none
   effort: Optional[String] = none
+  ## The edits of files in the session folder run without asking.
+  accept_edits: Optional[Bool] = none
 end
 
 ## `POST /v1/sessions/ID/compact`: the answer says whether there was history to fold.
@@ -52,6 +58,8 @@ def decision_name(decision: Decision) -> String
     Decision.Allow -> "allow"
     Decision.Deny -> "deny"
     Decision.AllowSession -> "allow_session"
+    Decision.AllowPrefix -> "allow_prefix"
+    Decision.AllowTool -> "allow_tool"
   end
 end
 
@@ -123,6 +131,8 @@ def following(decision: Decision) -> Optional[Decision]
   case decision
     Decision.Allow -> some(Decision.Deny)
     Decision.Deny -> some(Decision.AllowSession)
-    Decision.AllowSession -> none
+    Decision.AllowSession -> some(Decision.AllowPrefix)
+    Decision.AllowPrefix -> some(Decision.AllowTool)
+    Decision.AllowTool -> none
   end
 end

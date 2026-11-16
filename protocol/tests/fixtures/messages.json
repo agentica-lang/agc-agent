@@ -22,6 +22,7 @@
       {"role": "user", "text": "Write hello.txt."},
       {"role": "assistant", "text": "Done."}
     ],
+    "accept_edits": false,
     "cost": 0.42
   },
   "session_mid_turn": {
@@ -33,13 +34,14 @@
     "turn_id": "t2",
     "turn_from_event_id": 50,
     "pending_approvals": [
-      {"approval_id": "a1", "call_id": "call_2", "tool": "bash", "preview": "rm -r b", "detail": ""}
+      {"approval_id": "a1", "call_id": "call_2", "tool": "bash", "preview": "rm -r b", "detail": "", "prefix": "rm"}
     ],
     "history": [
       {"role": "user", "text": "Write hello.txt."},
       {"role": "assistant", "text": "Done."},
       {"role": "user", "text": "Now delete the build folder."}
-    ]
+    ],
+    "accept_edits": true
   },
   "failure": {"kind": "approval.resolved", "message": "the approval was answered already"}
 }

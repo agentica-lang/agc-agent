@@ -70,6 +70,8 @@ struct Session
   turn_from_event_id: Optional[Int]
   pending_approvals: List[Events.ApprovalRequested]
   history: List[Message]
+  ## The edits of files run without asking (`PATCH` with `accept_edits`).
+  accept_edits: Bool = false
   ## What the session cost so far in USD, when the model catalog has its prices.
   cost: Optional[Float] = none
   ## The thinking level of the session's calls; none leaves it to the model.
@@ -129,6 +131,7 @@ def encode_session(reply: Session) -> String
       turn_from_event_id: reply.turn_from_event_id,
       pending_approvals: reply.pending_approvals,
       history: history,
+      accept_edits: some(reply.accept_edits),
       cost: Wire.field(reply.cost),
       effort: reply.effort,
     ),
@@ -155,6 +158,7 @@ def decode_session(text: String) -> Result[Session]
       turn_from_event_id: wire.turn_from_event_id,
       pending_approvals: wire.pending_approvals,
       history: history,
+      accept_edits: wire.accept_edits.unwrap_or(false),
       cost: Wire.optional(wire.cost),
       effort: wire.effort,
     ),
@@ -195,6 +199,7 @@ struct SessionWire
   turn_from_event_id: Optional[Int]
   pending_approvals: List[Events.ApprovalRequested]
   history: List[MessageWire]
+  accept_edits: Optional[Bool] = none
   cost: JSON.Field[Float]
   effort: Optional[String] = none
 end

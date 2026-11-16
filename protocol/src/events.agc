@@ -82,13 +82,15 @@ end
 
 ## `preview` is what the call touches: the path, or the command for `bash`; an `allow_session` answer allows the same
 ## tool on the same `preview`. `detail` is what it would write (the content, or the old and new text of an edit), cut
-## to a few KB; empty when there is nothing more to show.
+## to a few KB; empty when there is nothing more to show. `prefix` is what an `allow_prefix` answer allows for `bash`
+## (`git log`); none when it would allow only the same call.
 struct ApprovalRequested
   approval_id: String
   call_id: String
   tool: String
   preview: String
   detail: String
+  prefix: Optional[String] = none
 end
 
 struct ApprovalResolved

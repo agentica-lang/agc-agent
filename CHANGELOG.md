@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Approval rules come from a config file (`FINN_CONFIG`, else `~/.config/finn/config.json`) and the project's `.finn/config.json` (its allow rules only under `FINN_TRUSTED_DIRS`); an approval may allow a `bash` prefix (`allow_prefix`) or a whole tool (`allow_tool`) for the session, and `PATCH /v1/sessions/ID` with `accept_edits` runs file edits without asking (until the server restarts; the deny rules are checked first, as far as the parser sees a command, and nothing reaches into `.git/`).
 - `finn tui --yolo` allows the tool calls of the turns it starts; the status line shows YOLO all the time, and a turn another client started is still asked.
 - `finn tui` takes pasted text whole (bracketed paste) into the prompt or the `/resume` filter.
 - **Breaking:** `finn --yolo` allows only the tool calls of the turns it starts, as `finn tui --yolo` does; both ask the rest of a turn another client queued a message into (`message_id` in the `202` and in `message_queued`), or whose events a resync did not replay.

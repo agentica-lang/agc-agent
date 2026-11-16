@@ -16,6 +16,7 @@ import Protocol from "pkg/protocol/protocol"
 import Catalog from "catalog"
 import CodeMode from "code_mode"
 import Sandbox from "sandbox"
+import Permissions from "permissions"
 import Session from "session"
 import Skills from "skills"
 import Store from "store"
@@ -39,7 +40,7 @@ KIND_UNKNOWN_API = "core.unknown_api"
 MAX_WAITING = 64
 SYSTEM_PROMPT = <<~TEXT
   You are a coding agent. You work in the session folder with the tools you have: read before you change a file, keep
-  changes small, and say briefly what you did.
+  changes small, and say briefly what you did. To read, use read_file, glob and grep rather than bash.
 TEXT
 
 SSE_HEADERS = [
@@ -418,7 +419,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
   end
 
-  context = try ctx
+  context = try with_project(options, try ctx)
   api = request.api.unwrap_or(options.api)
   if not options.apis.has_key?(api)
     return error("unknown api #{api.inspect}: one of #{options.apis.keys.join(", ")}", kind: Protocol.KIND_INVALID)
@@ -489,12 +490,8 @@ def read(options: Options, listed: Entry) -> Result[Loaded]
     IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
   end
 
-  ok(
-    Loaded(
-      saved: saved,
-      context: try Tools.context(saved.header.cwd, options.env, options.rules, options.tools, options.late_tools),
-    ),
-  )
+  context = try Tools.context(saved.header.cwd, options.env, options.rules, options.tools, options.late_tools)
+  ok(Loaded(saved: saved, context: try with_project(options, context)))
 end
 
 # Starts the session that a load read, and answers the requests that waited for it. A load of a session deleted since
@@ -647,8 +644,12 @@ end
 
 # `AGENTS.md` goes to the model only when it is a regular file inside the folder: a link out of it could be any file.
 def skills_of(options: Options, root: String) -> Skills.Found
-  trusted = options.trusted.any? { |dir| Sandbox.inside?(Path.real(dir).unwrap_or(dir), root) }
-  Skills.discover(root, options.home, trusted)
+  Skills.discover(root, options.home, trusted?(options, root))
+end
+
+# A session folder under a folder of `FINN_TRUSTED_DIRS`, whose own skills and allow rules count.
+def trusted?(options: Options, root: String) -> Bool
+  options.trusted.any? { |dir| Sandbox.inside?(Path.real(dir).unwrap_or(dir), root) }
 end
 
 def with_catalog(system: String, skills: List[Skills.Skill]) -> String
@@ -860,6 +861,14 @@ def option_list[T](value: Optional[T]) -> List[T]
   case value
     some(v) -> [v]
     none -> []
+  end
+end
+
+# The rules of the project file of the session folder join the server's; a broken file is an invalid request.
+def with_project(options: Options, ctx: Tools.Context) -> Result[Tools.Context]
+  case Permissions.with_project(ctx.rules, ctx.root, trusted?(options, ctx.root))
+    ok(rules) -> ok(ctx.with(rules: rules))
+    error(e) -> error(e.message, kind: Protocol.KIND_INVALID)
   end
 end
 
