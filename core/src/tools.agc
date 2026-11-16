@@ -39,7 +39,8 @@ def all() -> List[Spec.Tool]
       name: "read_file",
       description: (
         "Read a text file of the session folder. Lines from `offset` (0 is the first), at most `limit` " +
-        "(5000) and 27000 characters; the answer says where to continue. Over 1 MiB, line ends are not shown."
+        "(5000) and 27000 characters; the answer says where to continue. Over 1 MiB, line ends are not shown, " +
+        "and a line over 1 MiB stops the read, with a note."
       ),
       input_schema: JSON.schema(Files.ReadFileArgs),
       asks: false,

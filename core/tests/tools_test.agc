@@ -366,6 +366,24 @@ def test_read_file_reads_a_range_of_a_file_over_1_mib() -> Result[Void]
   done(s)
 end
 
+def test_read_file_keeps_the_lines_before_a_line_over_1_mib() -> Result[Void]
+  s = try setup()
+  long = "#{s.root}/long.txt"
+  try File.write_text(long, "first\n")
+  for _i in 1..3
+    try File.append_text(long, "#{"y" * 1000000}")
+  end
+
+  try File.append_text(long, "\nafter1\nafter2\n")
+  out = raw(s, "read_file", "{\"path\": \"long.txt\"}")
+  try Test.eq(out.is_error, false)
+  try Test.assert(out.text.start_with?("first\n[line 2 is longer than"), "got: #{out.text}")
+  past = raw(s, "read_file", "{\"path\": \"long.txt\", \"offset\": 2}")
+  try Test.eq(past.is_error, false)
+  try Test.assert(past.text.include?("[line 2 is longer than"), "got: #{past.text}")
+  done(s)
+end
+
 # Whatever the size of the file and the limit, the text stays under the output cap, quickly.
 def test_read_file_never_builds_more_than_the_output_cap() -> Result[Void]
   s = try setup()
@@ -390,7 +408,10 @@ def test_read_file_never_builds_more_than_the_output_cap() -> Result[Void]
 
   try File.write_text("#{s.root}/tiny.txt", "x\n" * 10000)
   tiny = raw(s, "read_file", "{\"path\": \"tiny.txt\", \"limit\": 1000000000}")
-  try Test.eq(tiny.text.split("\n").size, 5000)
+  try Test.assert(tiny.text.include?("[output limited to 5000 lines: continue with offset 5000]"), "no limit note")
+  try Test.eq(tiny.text.split("\n").size, 5001)
+  few = raw(s, "read_file", "{\"path\": \"tiny.txt\", \"offset\": 9000, \"limit\": 1000000000}")
+  try Test.assert(not few.text.include?("continue"), "a note on the last lines")
   try Test.assert(Time.monotonic_ms() - started < 10000, "read_file is slow on a big limit")
   done(s)
 end
