@@ -1,4 +1,3 @@
-import HTTP from "std/http"
 import Catalog from "src/agent/catalog"
 import Cli from "src/config/cli"
 import Config from "src/config/config"
@@ -18,7 +17,9 @@ def serve() -> Void
     ok(server) ->
       puts("Finn Agent core listening on 127.0.0.1:#{server.port}")
       IO.flush()
-      _ = HTTP.wait(server.http)
+      Server.shutdown(server, Server.stop_requested(server))
+      puts("Finn Agent core stopped")
+      IO.flush()
     error(e) -> fail(e.message, "")
   end
 end

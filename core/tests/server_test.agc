@@ -269,6 +269,47 @@ def test_agents_md_is_read_only_inside_the_folder() -> Result[Void]
   end
 end
 
+# A stop that does not cancel waits for the running turn; the sessions are flushed, the server file goes and the port
+# is closed.
+def test_a_stop_waits_for_the_running_turn_and_removes_the_server_file() -> Result[Void]
+  H.using(H.Setup(replies: ["text.sse@hold"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hello.")
+    a = try H.until(a, Protocol.EventKind.TurnStarted)
+    status = try Protocol.decode_server_status((try H.get(h, Protocol.SERVER_PATH)).text)
+    try Test.eq([status.sessions, status.running_turns, status.pid], [1, 1, System.pid])
+    asked = try H.post(h, Protocol.SERVER_STOP_PATH, Protocol.encode_stop_server(Protocol.StopServer(now: false)))
+    try Test.eq(asked.status, 200)
+    try Test.eq(Server.stop_requested(h.server), false)
+    stopping = Task.spawn(-> { Server.shutdown(h.server, false) })
+    H.release(h)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    Task.await(stopping)
+    try Test.eq(H.stop_reason(a), "end_turn")
+    H.close(a)
+    try Test.assert(not File.stat("#{h.state_dir}/server.json").ok?, "server.json is removed")
+    Test.assert(not H.get(h, Protocol.HEALTH_PATH).ok?, "the port is closed")
+  end
+end
+
+def test_a_stop_with_now_cancels_the_running_turn() -> Result[Void]
+  H.using(H.Setup(replies: ["text.sse@hold"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hello.")
+    a = try H.until(a, Protocol.EventKind.TurnStarted)
+    asked = try H.post(h, Protocol.SERVER_STOP_PATH, Protocol.encode_stop_server(Protocol.StopServer(now: true)))
+    try Test.eq(asked.status, 200)
+    try Test.eq(Server.stop_requested(h.server), true)
+    Server.shutdown(h.server, true)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.stop_reason(a), "cancelled")
+    Test.assert(not File.stat("#{h.state_dir}/server.json").ok?, "server.json is removed")
+  end
+end
+
 def test_the_server_keeps_its_state_folder_private_and_runs_once() -> Result[Void]
   H.using(H.Setup(replies: [])) do |h|
     health = Protocol.HEALTH_PATH

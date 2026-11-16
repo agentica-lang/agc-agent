@@ -32,6 +32,13 @@ struct Launch
   server_command: Optional[List[String]] = none
 end
 
+## What runs in the folder: a server of this client's version, one of another version (its pid), or nothing (why).
+enum Found
+  Running(Client.Server)
+  Other(Int)
+  Absent(String)
+end
+
 ## The folder of `server.json`: `--state-dir`, else `FINN_STATE_DIR`, else the user's state folder, with its
 ## symlinks resolved. A symlink that is not yours is refused.
 def state_dir(options: Launch) -> Result[String]
@@ -60,6 +67,23 @@ def connect(options: Launch, dir: String) -> Result[Client.Server]
     Probe.Absent(reason) -> start(options, dir, reason)
   end
 end
+
+## The server of the folder, without starting one. A server that answers badly is an error.
+def find(dir: String) -> Result[Found]
+  if File.stat(dir).ok?
+    try check_owned(dir, "700")
+  end
+
+  case probe(dir)
+    Probe.Alive(server) -> ok(Found.Running(server))
+    Probe.Other(pid) -> ok(Found.Other(pid))
+    Probe.Absent(reason) -> ok(Found.Absent(reason))
+    Probe.Unusable(reason) -> refused(dir, reason)
+  end
+end
+
+## The file the server writes its output to.
+def log_file(dir: String) -> String = file_in(dir, LOG_FILE)
 
 ## Checks again that the server is of this client's version, as a client does before it reads the event stream again.
 ## A server that does not answer is left to the reconnect.
@@ -140,6 +164,8 @@ def probe(dir: String) -> Probe
   return Probe.Absent("#{path} does not exist") if not File.stat(path).ok?
 
   checked = check_owned(path, "600")
+  # A server that stops removes its file at any time: gone since the check is not unusable.
+  return Probe.Absent("#{path} does not exist") if not checked.ok? and not File.stat(path).ok?
   return Probe.Unusable(checked.message) if not checked.ok?
 
   case read_info(path)

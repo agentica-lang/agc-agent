@@ -6,6 +6,7 @@ import Fake from "fake_server"
 READ_MS = 10_000
 EXIT_MS = 15_000
 ENTRIES = ["main.agc", "cli/main.agc"]
+CORES = ["../core/main.agc", "core/main.agc"]
 FAKE_MAINS = ["tests/support/fake_main.agc", "cli/tests/support/fake_main.agc"]
 
 ## A fake server and the state folder that points at it.
@@ -76,8 +77,29 @@ def start(
   Process.spawn_captured(
     program[0],
     program.drop(1) + ["--state-dir", dir] + args,
-    Process.Options(env: {"NO_COLOR": no_color, "FINN_SERVER_COMMAND": ""}, chdir: chdir),
+    Process.Options(env: environment(no_color, dir), chdir: chdir),
   )
+end
+
+## `finn server ACTION` on `dir`; `command` is the server command it starts a server with (none: the action starts none).
+def start_server(dir: String, action: List[String], command: List[String] = []) -> Result[Process]
+  program = try program_words(ENTRIES, "CLI_BYTECODE", true)
+  tail = ["--state-dir", dir]
+  if not command.empty?
+    tail = tail + ["--"] + command
+  end
+
+  Process.spawn_captured(
+    program[0],
+    program.drop(1) + ["server"] + action + tail,
+    Process.Options(env: environment("1", dir)),
+  )
+end
+
+## The words that start the real server: the bytecode `make` compiled once (CORE_BYTECODE), else the source.
+def core_command() -> Result[List[String]]
+  words = try program_words(CORES, "CORE_BYTECODE", true)
+  ok(words + ["serve"])
 end
 
 ## The words that start the fake server program.
@@ -139,6 +161,11 @@ def program_words(paths: List[String], bytecode_env: String, compiled: Bool) -> 
     ok(bytecode) if compiled and bytecode != "" -> ok([binary(), "run", "--", bytecode])
     _ -> ok([binary(), try Path.resolve(try existing(paths))])
   end
+end
+
+# No model catalog is fetched and the data of a real server goes into the state folder.
+def environment(no_color: String, dir: String) -> Map[String, String]
+  {"NO_COLOR": no_color, "FINN_SERVER_COMMAND": "", "FINN_MODELS_URL": "off", "FINN_DATA_DIR": "#{dir}/data"}
 end
 
 def binary() -> String

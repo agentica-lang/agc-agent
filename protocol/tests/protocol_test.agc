@@ -288,6 +288,17 @@ def test_the_tree_and_its_branches_round_trip() -> Result[Void]
   Test.eq(error_kind(Protocol.decode_fork("{\"entri\": 1}")), "protocol.invalid")
 end
 
+def test_the_server_status_and_its_stop_round_trip() -> Result[Void]
+  status = Protocol.ServerStatus(pid: 42, version: "0.0.1", started_s: 1000, sessions: 3, running_turns: 1)
+  try Test.eq(Protocol.decode_server_status(Protocol.encode_server_status(status)), ok(status))
+  stop = Protocol.StopServer(now: true)
+  try Test.eq(Protocol.decode_stop_server(Protocol.encode_stop_server(stop)), ok(stop))
+  try Test.eq(error_kind(Protocol.decode_stop_server("{}")), "protocol.invalid")
+  try Test.eq(error_kind(Protocol.decode_stop_server("{\"later\": true}")), "protocol.invalid")
+  try Test.eq(Protocol.SERVER_PATH, "/v1/server")
+  Test.eq(Protocol.SERVER_STOP_PATH, "/v1/server/stop")
+end
+
 def test_session_settings_round_trip_and_refuse_unknown_levels() -> Result[Void]
   both = Protocol.UpdateSession(model: some("qwen3"), effort: some("high"))
   try Test.eq(Protocol.decode_update_session(Protocol.encode_update_session(both)), ok(both))

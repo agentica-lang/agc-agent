@@ -32,6 +32,12 @@ struct Sessions
   dir: String
 end
 
+## How many sessions the server has and how many of them run a turn now (only a loaded session can).
+struct Activity
+  sessions: Int
+  running_turns: Int
+end
+
 ## The folder of the session files.
 def folder(options: Config.Options) -> String = "#{options.data_dir}/#{SESSIONS_DIR}"
 
@@ -64,10 +70,33 @@ end
 ## The sessions, the last changed first.
 def list(sessions: Sessions) -> Result[List[Protocol.SessionSummary]]
   registry = sessions.registry.address
-  entries: Result[List[Entry]] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
-  read = (try entries).map { |entry| cached(entry) }
+  read = (try entries(sessions)).map { |entry| cached(entry) }
   _ = Actor.cast(registry, Msg.Listed(read), CALL_MS)
   ok(read.map { |found| summary_now(found) }.sort_by { |s| -s.updated_s })
+end
+
+def activity(sessions: Sessions) -> Result[Activity]
+  all = try entries(sessions)
+  running = 0
+  for session in loaded(all)
+    if running_turn?(session)
+      running = running + 1
+    end
+  end
+
+  ok(Activity(sessions: all.size, running_turns: running))
+end
+
+## Stops the running turn of every session: how many ran.
+def cancel_turns(sessions: Sessions) -> Result[Int]
+  stopped = 0
+  for session in loaded(try entries(sessions))
+    if SessionActor.stop(session) == ok(true)
+      stopped = stopped + 1
+    end
+  end
+
+  ok(stopped)
 end
 
 ## Deletes a session and its file, refused while a turn runs.
@@ -625,6 +654,22 @@ def catalog_provider(given: String, provider: LLM.Provider) -> String
   return "anthropic" if provider.name == "anthropic"
 
   "openai"
+end
+
+def entries(sessions: Sessions) -> Result[List[Entry]]
+  Actor.call(sessions.registry.address, CALL_MS) do |reply| Msg.List(reply) end
+end
+
+# The addresses of the sessions that are loaded.
+def loaded(all: List[Entry]) -> List[Address[SessionActor.Msg]]
+  all.flat_map { |entry| option_list(entry.session).map { |session| session.address } }
+end
+
+def running_turn?(session: Address[SessionActor.Msg]) -> Bool
+  case SessionActor.snapshot(session)
+    ok(snapshot) -> snapshot.turn_id.some?
+    error(_) -> false
+  end
 end
 
 def find(sessions: Sessions, id: String) -> Result[Address[SessionActor.Msg]]

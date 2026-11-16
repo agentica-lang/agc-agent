@@ -62,6 +62,11 @@ struct Fork
   entry: Optional[Int] = none
 end
 
+## `POST /v1/server/stop`: the server stops taking connections and goes once its turns end; `now` cancels them first.
+struct StopServer
+  now: Bool = false
+end
+
 ## Every decision, in a fixed order.
 def decisions() -> List[Decision] = Wire.chain(Decision.Allow, &following)
 
@@ -135,6 +140,10 @@ def decode_fork(text: String) -> Result[Fork]
   ok(body)
 end
 
+def encode_stop_server(body: StopServer) -> String = JSON.encode(body)
+
+def decode_stop_server(text: String) -> Result[StopServer] = Wire.decode_strict(text, StopServer.codec)
+
 ## The fields of the requests and the names of their values on the wire, for `Protocol.WIRE`.
 def shape() -> List[String]
   records = [
@@ -145,6 +154,7 @@ def shape() -> List[String]
     Wire.record("Compacted", Compacted.members),
     Wire.record("Branch", Branch.members),
     Wire.record("Fork", Fork.members),
+    Wire.record("StopServer", StopServer.members),
     Wire.record("ApproveWire", ApproveWire.members),
   ]
 

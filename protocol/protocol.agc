@@ -34,6 +34,8 @@ export Kinds.KIND_APPROVAL_RESOLVED
 
 export Routes.HEALTH_PATH
 export Routes.SESSIONS_PATH
+export Routes.SERVER_PATH
+export Routes.SERVER_STOP_PATH
 export Routes.LAST_EVENT_ID_HEADER
 export Routes.session_path
 export Routes.events_path
@@ -53,6 +55,7 @@ export Requests.UpdateSession
 export Requests.Compacted
 export Requests.Branch
 export Requests.Fork
+export Requests.StopServer
 export Requests.EFFORTS
 export Requests.EFFORT_DEFAULT
 export Requests.decisions
@@ -70,6 +73,8 @@ export Requests.encode_compacted
 export Requests.decode_compacted
 export Requests.encode_branch
 export Requests.decode_branch
+export Requests.encode_stop_server
+export Requests.decode_stop_server
 export Requests.encode_fork
 export Requests.decode_fork
 
@@ -85,6 +90,7 @@ export Replies.Session
 export Replies.TreeNode
 export Replies.SessionTree
 export Replies.Branched
+export Replies.ServerStatus
 export Replies.roles
 export Replies.role_name
 export Replies.parse_role
@@ -104,6 +110,8 @@ export Replies.encode_session_tree
 export Replies.decode_session_tree
 export Replies.encode_branched
 export Replies.decode_branched
+export Replies.encode_server_status
+export Replies.decode_server_status
 
 export Errors.Failure
 export Errors.encode_failure

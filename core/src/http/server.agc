@@ -15,6 +15,17 @@ VERSION = "0.0.1"
 SERVER_JSON = "server.json"
 LOCK_FILE = "core.lock"
 MAX_BODY_BYTES = 1_048_576
+## A stop waits this long for the running turns to end, then cancels them.
+DRAIN_MS = 60_000
+DRAIN_POLL_MS = 100
+## Then the connections that are still open (event streams) are closed.
+SHUTDOWN_MS = 5000
+
+## What the routes of the server control share with the task that owns it: a stop request, as `now`, and the start.
+struct Control
+  stopping: Channel[Bool]
+  started_s: Int
+end
 
 struct Server
   http: HTTP.Server
@@ -23,6 +34,7 @@ struct Server
   sessions: Sessions.Sessions
   lock: File.Handle
   state_dir: String
+  control: Control
 end
 
 ## Starts the server in the calling task, which owns it: call it from the task that keeps it.
@@ -47,6 +59,26 @@ def start(options: Config.Options) -> Result[Server]
   started
 end
 
+def new_control() -> Control = Control(stopping: Channel.new(1), started_s: Time.now_ms / 1000)
+
+## Waits for `POST /v1/server/stop`: whether it asks to cancel the running turns.
+def stop_requested(server: Server) -> Bool
+  case server.control.stopping.recv(86_400_000)
+    ok(now) -> now
+    error(_) -> false
+  end
+end
+
+## The stop that a request asked for, from the task that owns the server: no new connection, the turns end (cancelled
+## at once with `now`, else after `DRAIN_MS` at most), the sessions are flushed, and the files of the server go.
+def shutdown(server: Server, now: Bool) -> Void
+  drain = Task.spawn(-> { drained(server.sessions, now) })
+  HTTP.shutdown(server.http, SHUTDOWN_MS)
+  Task.await(drain)
+  _ = Path.remove("#{server.state_dir}/#{SERVER_JSON}")
+  _ = File.close(server.lock)
+end
+
 def stop(server: Server) -> Void
   Bond.stop(server.http)
   _ = Bond.wait(server.http)
@@ -56,13 +88,15 @@ def stop(server: Server) -> Void
 end
 
 ## The routes of the protocol behind the checks, over the sessions: what `start` serves.
-def app(token: String, sessions: Sessions.Sessions) -> Bond.App
+def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.App
   all = Protocol.SESSIONS_PATH
   one = "#{all}/:id"
   (
     Bond.app()
     |> Bond.before(->(conn) { ok(guard(token, conn)) })
     |> Bond.get(Protocol.HEALTH_PATH, &health)
+    |> Bond.get(Protocol.SERVER_PATH, ->(conn) { reply(conn, 200, status(sessions, control)) })
+    |> Bond.post(Protocol.SERVER_STOP_PATH, ->(conn) { reply(conn, 200, request_stop(control, conn)) })
     |> Bond.post(all, ->(conn) { reply(conn, 201, create(sessions, conn)) })
     |> Bond.get(all, ->(conn) { reply(conn, 200, list(sessions)) })
     |> Bond.get(one, ->(conn) { reply(conn, 200, snapshot(sessions, conn)) })
@@ -85,8 +119,9 @@ private
 
 def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handle) -> Result[Server]
   token = OpenSSL.Random.hex(32)
+  control = new_control()
   http = try Bond.start_with(
-    app(token, sessions),
+    app(token, sessions, control),
     "127.0.0.1",
     options.port,
     HTTP.ServerOptions(max_body_bytes: MAX_BODY_BYTES),
@@ -95,7 +130,17 @@ def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handl
   port = Bond.local_port(http)
   case write_server_json(options.state_dir, Protocol.ServerInfo(port: port, token: token, pid: System.pid))
     ok(_) ->
-      ok(Server(http: http, port: port, token: token, sessions: sessions, lock: lock, state_dir: options.state_dir))
+      ok(
+        Server(
+          http: http,
+          port: port,
+          token: token,
+          sessions: sessions,
+          lock: lock,
+          state_dir: options.state_dir,
+          control: control,
+        ),
+      )
     error(e) ->
       Bond.stop(http)
       error(e)
@@ -150,6 +195,50 @@ end
 
 def health(conn: Bond.Conn) -> Result[Bond.Conn]
   reply(conn, 200, ok(Protocol.encode_health(Protocol.Health(version: VERSION, wire: some(Protocol.wire_digest())))))
+end
+
+def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
+  activity = try Sessions.activity(sessions)
+  ok(
+    Protocol.encode_server_status(
+      Protocol.ServerStatus(
+        pid: System.pid,
+        version: VERSION,
+        started_s: control.started_s,
+        sessions: activity.sessions,
+        running_turns: activity.running_turns,
+      ),
+    ),
+  )
+end
+
+# The answer goes out first: the task that owns the server stops it after, without cutting this request.
+def request_stop(control: Control, conn: Bond.Conn) -> Result[String]
+  request = try Protocol.decode_stop_server(try String.from_bytes(conn.body))
+  _ = control.stopping.send(request.now, 0)
+  ok("{}")
+end
+
+def drained(sessions: Sessions.Sessions, now: Bool) -> Void
+  if now
+    _ = Sessions.cancel_turns(sessions)
+  end
+
+  waited = 0
+  while waited < DRAIN_MS and running?(sessions)
+    Task.sleep(DRAIN_POLL_MS)
+    waited = waited + DRAIN_POLL_MS
+  end
+
+  _ = Sessions.cancel_turns(sessions)
+  Sessions.stop(sessions)
+end
+
+def running?(sessions: Sessions.Sessions) -> Bool
+  case Sessions.activity(sessions)
+    ok(activity) -> activity.running_turns > 0
+    error(_) -> false
+  end
 end
 
 def create(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
