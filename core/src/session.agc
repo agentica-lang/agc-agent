@@ -609,7 +609,8 @@ def compact_model(setup: Setup) -> String
 end
 
 def compact(state: State, compaction: Compaction.Compaction) -> State
-  case save(state, -> { Store.append_compaction(state.setup.file, compaction) })
+  answer = state.turn.map { |t| t.texts }.unwrap_or([])
+  case save(state, -> { Store.append_compaction(state.setup.file, compaction, answer) })
     ok(_) -> state.with(history: Compaction.apply(state.history, compaction), broken: none)
     error(e) -> broke(state, e)
   end
@@ -660,7 +661,7 @@ def restore(setup: Setup, saved: Store.Saved) -> State
   end
 
   ended_cut = case cut_turn(events)
-    some(cut) -> end_cut_turn(cut_state, cut, turn_messages)
+    some(cut) -> end_cut_turn(cut_state, cut, turn_messages, saved.folded)
     none -> cut_state
   end
 
@@ -670,7 +671,7 @@ def restore(setup: Setup, saved: Store.Saved) -> State
   turn_id = "turn-#{ended_cut.turns}"
   size = some(ended_cut.display.size)
   started = emit(ended_cut, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id, history_size: size)))
-  end_cut_turn(started, Cut(turn_id: turn_id, approvals: []), started.history.size)
+  end_cut_turn(started, Cut(turn_id: turn_id, approvals: []), started.history.size, none)
 end
 
 # The last id that no saved event has, below the last saved one: a delta that was not saved.
@@ -733,8 +734,8 @@ def cut_turn(events: List[Store.Logged]) -> Optional[Cut]
   cut
 end
 
-# The turn's messages are the first `messages` of the history.
-def end_cut_turn(state: State, cut: Cut, messages: Int) -> State
+# The turn's messages are the first `messages` of the history; `folded` has its answer when it was compacted.
+def end_cut_turn(state: State, cut: Cut, messages: Int, folded: Optional[Store.Folded]) -> State
   out = state
   for approval_id in cut.approvals
     resolved = Protocol.ApprovalResolved(
@@ -747,7 +748,12 @@ def end_cut_turn(state: State, cut: Cut, messages: Int) -> State
   end
 
   history = out.history.take(messages)
-  ended(out, cut.turn_id, answer_texts(history.drop(turn_message(history) + 1)), Protocol.StopReason.Cancelled)
+  texts = case folded
+    some(f) -> f.texts + answer_texts(history.drop(f.at))
+    none -> answer_texts(history.drop(turn_message(history) + 1))
+  end
+
+  ended(out, cut.turn_id, texts, Protocol.StopReason.Cancelled)
 end
 
 def answer_texts(messages: List[LLM.Message]) -> List[String]

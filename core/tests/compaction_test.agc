@@ -145,6 +145,87 @@ def test_the_older_rounds_of_the_running_turn_are_compacted() -> Result[Void]
   end
 end
 
+# A fold that leaves the context past the limit does not fold again in that turn: one summary call, an `error` event,
+# and the turn goes on.
+def test_a_fold_that_does_not_help_is_not_repeated_in_the_turn() -> Result[Void]
+  replies = ["write_file.sse", "bash_echo.sse", "summary.sse", "bash_echo.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, context_window: 120)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt, then echo twice.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.AllowSession)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq([H.stop_reason(a), failures(a.seen).join(",")], ["end_turn", Compaction.KIND_FAILED])
+    bodies: List[JSON.Value] = []
+    for _i in 1..5
+      bodies = bodies.push(try body(h))
+    end
+
+    Test.eq(bodies.select { |b| contents(b).first == Compaction.SYSTEM }.size, 1)
+  end
+end
+
+# A turn that a restart cuts after a fold of its older rounds keeps their text in its cancelled answer, with the text
+# of the round committed after the fold, each once.
+def test_a_cut_turn_keeps_the_text_of_its_folded_rounds() -> Result[Void]
+  replies = ["write_file.sse", "long_text_then_write.sse", "summary.sse", "write_file.sse", "long_text_then_write.sse"]
+  setup = H.Setup(replies: replies, context_window: 120)
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write two files twice.")
+    for _ in 1..3
+      a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
+      _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    end
+
+    a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
+    H.close(a)
+    H.restarted(h, setup, "") do |r|
+      shown = (try H.session(r, id)).history
+      long = (0..11).map { |n| "word#{n} " }.join("")
+      written = ["I will write it.", long, "I will write it."].join("\n\n")
+      Test.eq(shown.map { |m| m.text }, ["Write two files twice.", written])
+    end
+  end
+end
+
+# A turn that folds, then has a round under the limit, folds again when it passes the limit again.
+def test_a_turn_folds_again_after_a_round_under_the_limit() -> Result[Void]
+  replies = [
+    "write_file.sse",
+    "bash_echo.sse",
+    "summary.sse",
+    "bash_echo_small.sse",
+    "read_file.sse",
+    "summary.sse",
+    "text.sse",
+  ]
+
+  H.using(H.Setup(replies: replies, context_window: 120)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt, echo twice, then read.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.AllowSession)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq([H.stop_reason(a), failures(a.seen).join(",")], ["end_turn", ""])
+    bodies: List[JSON.Value] = []
+    for _i in 1..7
+      bodies = bodies.push(try body(h))
+    end
+
+    Test.eq(bodies.select { |b| contents(b).first == Compaction.SYSTEM }.size, 2)
+  end
+end
+
 # When the span takes the task of the running turn, that task goes after the summary, word for word; a later
 # compaction folds the summary again.
 def test_a_span_into_a_later_turn_keeps_its_task_after_the_summary() -> Result[Void]
