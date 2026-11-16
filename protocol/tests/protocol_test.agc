@@ -127,6 +127,14 @@ def test_replies_round_trip() -> Result[Void]
   )
 
   try Test.eq(Protocol.decode_message_accepted(Protocol.encode_message_accepted(accepted)), ok(accepted))
+  try Test.eq(accepted.message_id, none)
+  queued = try decode_fixture(
+    "message_queued_accepted",
+    &Protocol.decode_message_accepted,
+    &Protocol.encode_message_accepted,
+  )
+
+  try Test.eq(queued, Protocol.MessageAccepted(turn_id: "t1", message_id: some("t1.1")))
 
   list = try decode_fixture("session_list", &Protocol.decode_session_list, &Protocol.encode_session_list)
   try Test.eq(list.sessions.size, 1)

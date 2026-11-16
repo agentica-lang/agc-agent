@@ -21,9 +21,11 @@ struct SessionCreated
   id: String
 end
 
-## The `202` answer of `POST /v1/sessions/ID/messages`.
+## The `202` answer of `POST /v1/sessions/ID/messages`. A message queued into the running turn `turn_id` has the
+## `message_id` of its `message_queued`; one that started the turn has none.
 struct MessageAccepted
   turn_id: String
+  message_id: Optional[String] = none
 end
 
 ## `api` is the model API of the session, by the name the server gives it.

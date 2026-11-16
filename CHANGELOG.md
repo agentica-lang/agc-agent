@@ -4,6 +4,7 @@
 
 - `finn tui --yolo` allows the tool calls of the turns it starts; the status line shows YOLO all the time, and a turn another client started is still asked.
 - `finn tui` takes pasted text whole (bracketed paste) into the prompt or the `/resume` filter.
+- **Breaking:** `finn --yolo` allows only the tool calls of the turns it starts, as `finn tui --yolo` does; both ask the rest of a turn another client queued a message into (`message_id` in the `202` and in `message_queued`), or whose events a resync did not replay.
 
 - The repo skeleton: a workspace with the `llm` and `core` packages, and CI.
 - The `sse` package: a Server-Sent Events parser and writer.

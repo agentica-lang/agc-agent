@@ -108,10 +108,12 @@ struct Usage
   context: Int
 end
 
-## A message sent while the turn `turn_id` runs: the turn reads it before its next model call.
+## A message sent while the turn `turn_id` runs: the turn reads it before its next model call. `message_id` is the one
+## the `202` of its sender has.
 struct MessageQueued
   turn_id: String
   text: String
+  message_id: String
 end
 
 struct TurnFinished
