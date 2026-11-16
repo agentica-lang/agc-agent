@@ -1,13 +1,19 @@
 ## What a tool is, and what it needs to run.
 
-import Approval from "../approval/approval"
-
 MAX_OUTPUT_CHARS = 30000
+
+## Whether a call runs, waits for an answer or is refused: the answer of the approval extension.
+enum Verdict
+  Allow
+  Ask
+  Deny
+end
 
 struct Context
   root: String
   env: Fn[String, Result[String]]
-  rules: Approval.Rules
+  ## The paths (relative to `root`) that `glob` and `grep` leave out: those an approval rule hides.
+  hidden: Optional[Fn[String, Bool]] = none
   ## The tools after the base ones (MCP), and those that come later (MCP servers still listing at the start).
   tools: List[Tool] = []
   late: Optional[Fn[List[Tool]]] = none

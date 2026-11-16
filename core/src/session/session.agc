@@ -8,7 +8,7 @@
 import Actor from "std/actor"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
-import Permissions from "../approval/permissions"
+import Extension from "../approval/extension"
 import Config from "../config/config"
 import Skills from "../ext/skills"
 import Sandbox from "../tools/sandbox"
@@ -144,10 +144,16 @@ struct Entry
   listed: Optional[Cached] = none
 end
 
+# The context of a session and its approval extension.
+struct Opened
+  context: Tools.Context
+  approvals: Optional[Extension.Approvals]
+end
+
 ## What the task that loads a session read from its file.
 struct Loaded
   saved: Store.Saved
-  context: Tools.Context
+  opened: Opened
 end
 
 struct Listed
@@ -338,12 +344,13 @@ end
 
 def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]
   options = registry.options
-  ctx = case Tools.context(request.cwd, options.env, options.rules, options.tools, options.late_tools)
+  ctx = case Tools.context(request.cwd, options.env, options.tools, options.late_tools)
     ok(ctx) -> ok(ctx)
     error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
   end
 
-  context = try with_project(options, try ctx)
+  context = try ctx
+  approvals = try approvals_of(options, context.root)
   api = request.api.unwrap_or(options.api)
   if not options.apis.has_key?(api)
     return error("unknown api #{api.inspect}: one of #{options.apis.keys.join(", ")}", kind: Protocol.KIND_INVALID)
@@ -359,7 +366,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   )
 
   file = try Store.create(folder(options), header)
-  entry(options, header, context, file, none)
+  entry(options, header, opened(context, approvals), file, none)
 end
 
 def new_id(count: Int) -> String = "s#{count + 1}-#{OpenSSL.Random.hex(4)}"
@@ -416,8 +423,8 @@ def read(options: Config.Options, listed: Entry) -> Result[Loaded]
     IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
   end
 
-  context = try Tools.context(saved.header.cwd, options.env, options.rules, options.tools, options.late_tools)
-  ok(Loaded(saved: saved, context: try with_project(options, context)))
+  context = try Tools.context(saved.header.cwd, options.env, options.tools, options.late_tools)
+  ok(Loaded(saved: saved, opened: opened(context, try approvals_of(options, context.root))))
 end
 
 # Starts the session that a load read, and answers the requests that waited for it. A load of a session deleted since
@@ -455,13 +462,13 @@ def started(options: Config.Options, listed: Entry, read: Result[Loaded]) -> Res
     try Store.reopen(listed.file)
   end
 
-  entry(options, loaded.saved.header, loaded.context, listed.file, some(loaded.saved))
+  entry(options, loaded.saved.header, loaded.opened, listed.file, some(loaded.saved))
 end
 
 def entry(
   options: Config.Options,
   header: Store.Header,
-  context: Tools.Context,
+  opened: Opened,
   file: String,
   saved: Optional[Store.Saved],
 ) -> Result[Entry]
@@ -469,6 +476,7 @@ def entry(
   return error("unknown API #{name}", kind: KIND_UNKNOWN_API) if not options.apis.has_key?(name)
 
   api = options.apis[name]
+  context = opened.context
   found = skills_of(options, context.root)
   for warning in found.warnings
     IO.warn("skills: #{warning}")
@@ -498,6 +506,7 @@ def entry(
     catalog: options.catalog,
     catalog_provider: catalog_provider(options.models_provider, api.provider),
     take_ms: options.take_ms,
+    approvals: opened.approvals,
   )
 
   ok(
@@ -585,11 +594,28 @@ def option_list[T](value: Optional[T]) -> List[T]
   end
 end
 
-# The rules of the project file of the session folder join the server's; a broken file is an invalid request.
-def with_project(options: Config.Options, ctx: Tools.Context) -> Result[Tools.Context]
-  case Permissions.with_project(ctx.rules, ctx.root, trusted?(options, ctx.root))
-    ok(rules) -> ok(ctx.with(rules: rules))
-    error(e) -> error(e.message, kind: Protocol.KIND_INVALID)
+# The approval extension of a session in `root`, when the server turns it on: the rules of the project file of the
+# folder join the server's; a broken file is an invalid request.
+def approvals_of(options: Config.Options, root: String) -> Result[Optional[Extension.Approvals]]
+  for rules in option_list(options.approvals)
+    case Extension.open(rules, root, trusted?(options, root))
+      ok(approvals) -> return ok(some(approvals))
+      error(e) -> return error(e.message, kind: Protocol.KIND_INVALID)
+    end
+  end
+
+  ok(none)
+end
+
+# A deny rule of `read_file` hides its files from `glob` and `grep` too.
+def opened(context: Tools.Context, approvals: Optional[Extension.Approvals]) -> Opened
+  case approvals
+    some(a) ->
+      Opened(
+        context: context.with(hidden: some(->(path: String) { Extension.hidden?(a, path) })),
+        approvals: approvals,
+      )
+    none -> Opened(context: context, approvals: none)
   end
 end
 

@@ -5,7 +5,6 @@ import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Config from "../src/config/config"
 import Server from "../src/http/server"
-import Tools from "../src/tools/tools"
 import Fake from "../tests/support/fake_llm"
 import H from "../tests/support/harness"
 
@@ -42,7 +41,6 @@ def session(base: String, access: Config.AnthropicAccess) -> Result[Void]
     api: "anthropic",
     model: LLM.ANTHROPIC_CHEAP_MODEL,
     env: ->(_name: String) { error("not set") },
-    rules: Tools.Rules(allow: [], deny: []),
     context_window: some(1_000_000),
   )
 

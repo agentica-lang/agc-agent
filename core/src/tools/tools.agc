@@ -1,7 +1,7 @@
-## The six base tools, and the rules around them: which run without asking, and what a call touches.
+## The six base tools, and what a call touches.
 ##
-## Security model. The tools keep a call inside the session folder and the approval rules decide what asks, but neither
-## is a sandbox:
+## Security model. The tools keep a call inside the session folder and the approval rules (when the approval extension
+## is on) decide what asks, but neither is a sandbox:
 ## - An allow pattern is a convenience. Allowing a program allows every option it takes and every config file it reads:
 ##   `bash(git diff*)` allows `git diff --output=../x`, which writes outside the folder, `bash(git *)` allows
 ##   `git -c alias.x=!cmd x`, which runs `cmd`, and `bash(cat src/*)` allows `cat src/../../outside/secret`. Allow only
@@ -13,7 +13,6 @@
 ##   is used, and bash is the only way to run something in parallel, so the check can race with a swapped link.
 ## - On a case-insensitive filesystem a rule on `.env` may not match `.ENV`.
 
-import Approval from "../approval/approval"
 import Files from "files"
 import Patch from "patch"
 import Sandbox from "sandbox"
@@ -27,22 +26,20 @@ export Spec.Tool
 export Spec.TurnTool
 export Spec.TurnOutput
 export Spec.output
-export Approval.Verdict
-export Approval.Rules
+export Spec.Verdict
 
 PATCH = Patch.NAME
 
 ## The context of a session in `cwd`: the real path of the folder, where bash reads its few environment variables, and
-## the approval rules, and the tools `more` after the base ones. Change the rules with `ctx.with(rules: ...)`.
+## the tools `more` after the base ones.
 def context(
   cwd: String,
   env: Fn[String, Result[String]],
-  rules: Approval.Rules,
   more: List[Spec.Tool] = [],
   late: Optional[Fn[List[Spec.Tool]]] = none,
 ) -> Result[Spec.Context]
   root = try Sandbox.open(cwd)
-  ok(Spec.Context(root: root, env: env, rules: rules, tools: more, late: late))
+  ok(Spec.Context(root: root, env: env, tools: more, late: late))
 end
 
 ## The tools a session offers the model: the base ones, then those of its context.
@@ -129,13 +126,11 @@ def run(ctx: Spec.Context, name: String, input: JSON.Value) -> Spec.Output
   end
 end
 
-## Whether a call runs, waits for an answer or is refused. A call whose input or path is not valid is refused.
-def verdict(ctx: Spec.Context, name: String, input: JSON.Value) -> Approval.Verdict
-  return Patch.verdict(ctx, input) if name == Patch.NAME
-
-  case offered_tool(ctx, name)
-    ok(tool) -> verdict_of(ctx, tool, input)
-    error(_) -> Approval.Verdict.Deny
+## The tool of that name the session offers: one of its context, else a base tool or `apply_patch`.
+def offered_tool(ctx: Spec.Context, name: String) -> Result[Spec.Tool]
+  case (Spec.more_tools(ctx).find { |tool| tool.name == name })
+    ok(tool) -> ok(tool)
+    error(_) -> find(name)
   end
 end
 
@@ -171,13 +166,6 @@ private
 
 DETAIL_CHARS = 4000
 
-def offered_tool(ctx: Spec.Context, name: String) -> Result[Spec.Tool]
-  case (Spec.more_tools(ctx).find { |tool| tool.name == name })
-    ok(tool) -> ok(tool)
-    error(_) -> find(name)
-  end
-end
-
 def cut(text: String) -> String
   return text if text.length <= DETAIL_CHARS
 
@@ -185,13 +173,6 @@ def cut(text: String) -> String
 end
 
 def marked(mark: String, text: String) -> String = text.split("\n").map { |line| "#{mark} #{line}" }.join("\n")
-
-def verdict_of(ctx: Spec.Context, tool: Spec.Tool, input: JSON.Value) -> Approval.Verdict
-  case tool.target(ctx, input)
-    ok(target) -> Approval.decide(ctx.rules, tool.name, target, tool.asks, some(ctx.root))
-    error(_) -> Approval.Verdict.Deny
-  end
-end
 
 def command_target(_ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, Shell.BashArgs.codec)

@@ -6,6 +6,7 @@ struct Setup
   root: String
   outside: String
   ctx: Tools.Context
+  rules: Approval.Rules
 end
 
 def fake_env(name: String) -> Result[String]
@@ -55,9 +56,14 @@ def setup_with(allow: List[String], deny: List[String]) -> Result[Setup]
   try link("#{outside}/new.txt", "#{root}/dangling")
   try link("#{root}/a.txt", "#{root}/inside_link")
   rules = try Approval.parse_rules(allow, deny)
-  ctx = try Tools.context(root, &fake_env, rules)
-  ok(Setup(base: base, root: root, outside: outside, ctx: ctx))
+  ctx = (try Tools.context(root, &fake_env)).with(
+    hidden: some(->(path: String) { Approval.read_denied?(rules, path) }),
+  )
+
+  ok(Setup(base: base, root: root, outside: outside, ctx: ctx, rules: rules))
 end
+
+def verdict(s: Setup, name: String, input: JSON.Value) -> Tools.Verdict = Approval.verdict(s.rules, s.ctx, name, input)
 
 def call(s: Setup, name: String, fields: Map[String, String]) -> Tools.Output
   Tools.run(s.ctx, name, JSON.from(fields))
@@ -221,7 +227,7 @@ def test_bash_timeout_kills_the_whole_process_group() -> Result[Void]
   done(s)
 end
 
-def decide(rules: Approval.Rules, command: String) -> Approval.Verdict = Approval.decide(rules, "bash", command, true)
+def decide(rules: Approval.Rules, command: String) -> Tools.Verdict = Approval.decide(rules, "bash", command, true)
 
 def test_a_bash_rule_matches_only_a_plain_command_and_whole_words() -> Result[Void]
   rules = try Approval.parse_rules(
@@ -229,15 +235,15 @@ def test_a_bash_rule_matches_only_a_plain_command_and_whole_words() -> Result[Vo
     ["bash(git status --evil*)"],
   )
 
-  try Test.eq(decide(rules, "git status"), Approval.Verdict.Allow)
-  try Test.eq(decide(rules, "git status --short"), Approval.Verdict.Allow)
-  try Test.eq(decide(rules, "git status\t-s"), Approval.Verdict.Allow)
-  try Test.eq(decide(rules, "git status --evil"), Approval.Verdict.Deny)
-  try Test.eq(decide(rules, "git log"), Approval.Verdict.Ask)
-  try Test.eq(decide(rules, "ls"), Approval.Verdict.Allow)
+  try Test.eq(decide(rules, "git status"), Tools.Verdict.Allow)
+  try Test.eq(decide(rules, "git status --short"), Tools.Verdict.Allow)
+  try Test.eq(decide(rules, "git status\t-s"), Tools.Verdict.Allow)
+  try Test.eq(decide(rules, "git status --evil"), Tools.Verdict.Deny)
+  try Test.eq(decide(rules, "git log"), Tools.Verdict.Ask)
+  try Test.eq(decide(rules, "ls"), Tools.Verdict.Allow)
   # A `*` after a word does not cross into the next word: `statusx` can be a git alias.
-  try Test.eq(decide(rules, "git statusx"), Approval.Verdict.Ask)
-  try Test.eq(decide(rules, "git status-x"), Approval.Verdict.Ask)
+  try Test.eq(decide(rules, "git statusx"), Tools.Verdict.Ask)
+  try Test.eq(decide(rules, "git status-x"), Tools.Verdict.Ask)
   for command in [
     "git status; rm x",
     "git status && rm x",
@@ -269,17 +275,17 @@ def test_a_bash_rule_matches_only_a_plain_command_and_whole_words() -> Result[Vo
     "exec git status",
     "eval git status",
   ]
-    try Test.eq(decide(rules, command), Approval.Verdict.Ask)
+    try Test.eq(decide(rules, command), Tools.Verdict.Ask)
   end
 
   # A bash prompt expansion turns octal escapes into `$(...)`: it asks, because `$` and `\` are not plain.
   prompt = "git status '\\044(touch pwned\\073 kill -9 \\044\\044)' ${BASH_EXECUTION_STRING@P}"
-  try Test.eq(decide(rules, prompt), Approval.Verdict.Ask)
-  try Test.eq(Approval.decide(rules, "write_file", "src/a.agc", true), Approval.Verdict.Allow)
-  try Test.eq(Approval.decide(rules, "edit_file", "src/a.agc", true), Approval.Verdict.Ask)
+  try Test.eq(decide(rules, prompt), Tools.Verdict.Ask)
+  try Test.eq(Approval.decide(rules, "write_file", "src/a.agc", true), Tools.Verdict.Allow)
+  try Test.eq(Approval.decide(rules, "edit_file", "src/a.agc", true), Tools.Verdict.Ask)
   # A rule allows every argument of the program: this is what the security model says, so the test keeps it true.
   cat = try Approval.parse_rules(["bash(cat src/*)"], [])
-  try Test.eq(decide(cat, "cat src/../../outside/secret"), Approval.Verdict.Allow)
+  try Test.eq(decide(cat, "cat src/../../outside/secret"), Tools.Verdict.Allow)
   try Test.error?(Approval.parse_rule("bash"))
   try Test.error?(Approval.parse_rule("bash()"))
   Test.error?(Approval.parse_rule("(x)"))
@@ -287,14 +293,14 @@ end
 
 def test_a_change_under_git_always_asks() -> Result[Void]
   rules = try Approval.parse_rules(["write_file(*)", "edit_file(*)"], ["write_file(.git/hooks/*)"])
-  try Test.eq(Approval.decide(rules, "write_file", "a.txt", true), Approval.Verdict.Allow)
-  try Test.eq(Approval.decide(rules, "write_file", ".git/config", true), Approval.Verdict.Ask)
-  try Test.eq(Approval.decide(rules, "edit_file", "sub/.git/config", true), Approval.Verdict.Ask)
-  try Test.eq(Approval.decide(rules, "write_file", ".GIT/config", true), Approval.Verdict.Ask)
-  try Test.eq(Approval.decide(rules, "write_file", ".git./config", true), Approval.Verdict.Ask)
-  try Test.eq(Approval.decide(rules, "edit_file", "sub/.Git../hooks/x", true), Approval.Verdict.Ask)
-  try Test.eq(Approval.decide(rules, "write_file", ".git/hooks/pre-commit", true), Approval.Verdict.Deny)
-  Test.eq(Approval.decide(rules, "write_file", ".github/ci.yml", true), Approval.Verdict.Allow)
+  try Test.eq(Approval.decide(rules, "write_file", "a.txt", true), Tools.Verdict.Allow)
+  try Test.eq(Approval.decide(rules, "write_file", ".git/config", true), Tools.Verdict.Ask)
+  try Test.eq(Approval.decide(rules, "edit_file", "sub/.git/config", true), Tools.Verdict.Ask)
+  try Test.eq(Approval.decide(rules, "write_file", ".GIT/config", true), Tools.Verdict.Ask)
+  try Test.eq(Approval.decide(rules, "write_file", ".git./config", true), Tools.Verdict.Ask)
+  try Test.eq(Approval.decide(rules, "edit_file", "sub/.Git../hooks/x", true), Tools.Verdict.Ask)
+  try Test.eq(Approval.decide(rules, "write_file", ".git/hooks/pre-commit", true), Tools.Verdict.Deny)
+  Test.eq(Approval.decide(rules, "write_file", ".github/ci.yml", true), Tools.Verdict.Allow)
 end
 
 def write(path: String) -> JSON.Value = JSON.from({"path": path, "content": ""})
@@ -303,44 +309,38 @@ def edit(path: String) -> JSON.Value = JSON.from({"path": path, "old_string": "a
 
 def test_verdicts_follow_the_defaults_and_judge_the_real_path() -> Result[Void]
   s = try setup_with(["write_file(sub/*)", "bash(git status*)"], [])
-  try Test.eq(Tools.verdict(s.ctx, "read_file", JSON.from({"path": "a.txt"})), Approval.Verdict.Allow)
-  try Test.eq(Tools.verdict(s.ctx, "glob", JSON.from({"pattern": "*"})), Approval.Verdict.Allow)
-  try Test.eq(Tools.verdict(s.ctx, "grep", JSON.from({"pattern": "x"})), Approval.Verdict.Allow)
-  try Test.eq(Tools.verdict(s.ctx, "write_file", write("a.txt")), Approval.Verdict.Ask)
-  try Test.eq(Tools.verdict(s.ctx, "edit_file", edit("a.txt")), Approval.Verdict.Ask)
-  try Test.eq(Tools.verdict(s.ctx, "bash", JSON.from({"command": "ls"})), Approval.Verdict.Allow)
-  try Test.eq(Tools.verdict(s.ctx, "bash", JSON.from({"command": "ls > out"})), Approval.Verdict.Ask)
+  try Test.eq(verdict(s, "read_file", JSON.from({"path": "a.txt"})), Tools.Verdict.Allow)
+  try Test.eq(verdict(s, "glob", JSON.from({"pattern": "*"})), Tools.Verdict.Allow)
+  try Test.eq(verdict(s, "grep", JSON.from({"pattern": "x"})), Tools.Verdict.Allow)
+  try Test.eq(verdict(s, "write_file", write("a.txt")), Tools.Verdict.Ask)
+  try Test.eq(verdict(s, "edit_file", edit("a.txt")), Tools.Verdict.Ask)
+  try Test.eq(verdict(s, "bash", JSON.from({"command": "ls"})), Tools.Verdict.Allow)
+  try Test.eq(verdict(s, "bash", JSON.from({"command": "ls > out"})), Tools.Verdict.Ask)
   # Read-only commands resolve their paths: a symlink out of the folder asks; a deny rule of read_file turns it off.
   for command in ["cat a.txt", "cat inside_link", "grep -n one a.txt sub/b.txt"]
-    try Test.eq(
-      [command, Tools.verdict(s.ctx, "bash", JSON.from({"command": command})).inspect],
-      [command, "Verdict.Allow"],
-    )
+    try Test.eq([command, verdict(s, "bash", JSON.from({"command": command})).inspect], [command, "Verdict.Allow"])
   end
 
   for command in ["cat secret_link", "cat out_dir/secret.txt", "ls out_dir", "cat #{s.outside}/secret.txt"]
-    try Test.eq(
-      [command, Tools.verdict(s.ctx, "bash", JSON.from({"command": command})).inspect],
-      [command, "Verdict.Ask"],
-    )
+    try Test.eq([command, verdict(s, "bash", JSON.from({"command": command})).inspect], [command, "Verdict.Ask"])
   end
 
   guarded = try setup_with([], ["read_file(secret.txt)"])
   for command in ["cat ./secret.txt", "head -n 99 secret.txt", "grep '' secret.txt", "cat -- secret.txt"]
-    try Test.eq(Tools.verdict(guarded.ctx, "bash", JSON.from({"command": command})), Approval.Verdict.Ask)
+    try Test.eq(verdict(guarded, "bash", JSON.from({"command": command})), Tools.Verdict.Ask)
   end
 
   try done(guarded)
-  try Test.eq(Tools.verdict(s.ctx, "nope", JSON.from({"path": "a.txt"})), Approval.Verdict.Deny)
+  try Test.eq(verdict(s, "nope", JSON.from({"path": "a.txt"})), Tools.Verdict.Deny)
 
-  try Test.eq(Tools.verdict(s.ctx, "write_file", write("sub/x.txt")), Approval.Verdict.Allow)
+  try Test.eq(verdict(s, "write_file", write("sub/x.txt")), Tools.Verdict.Allow)
 
-  try Test.eq(Tools.verdict(s.ctx, "write_file", write("sub/../a.txt")), Approval.Verdict.Ask)
+  try Test.eq(verdict(s, "write_file", write("sub/../a.txt")), Tools.Verdict.Ask)
 
-  try Test.eq(Tools.verdict(s.ctx, "write_file", write("inside_link")), Approval.Verdict.Ask)
+  try Test.eq(verdict(s, "write_file", write("inside_link")), Tools.Verdict.Ask)
 
-  try Test.eq(Tools.verdict(s.ctx, "bash", JSON.from({"command": "git status; rm x"})), Approval.Verdict.Ask)
-  try Test.eq(Tools.verdict(s.ctx, "bash", JSON.from({"command": " git status "})), Approval.Verdict.Allow)
+  try Test.eq(verdict(s, "bash", JSON.from({"command": "git status; rm x"})), Tools.Verdict.Ask)
+  try Test.eq(verdict(s, "bash", JSON.from({"command": " git status "})), Tools.Verdict.Allow)
   done(s)
 end
 
@@ -358,20 +358,20 @@ def test_a_call_with_a_bad_target_is_denied_and_fails() -> Result[Void]
     "null",
   ]
     input = JSON.parse(json).unwrap!
-    try Test.eq(Tools.verdict(s.ctx, "write_file", input), Approval.Verdict.Deny)
+    try Test.eq(verdict(s, "write_file", input), Tools.Verdict.Deny)
     try refused(Tools.run(s.ctx, "write_file", input))
   end
 
   for json in ["{}", "{\"command\": null}", "{\"command\": 3}", "{\"command\": \"ls\", \"x\": 1}"]
-    try Test.eq(Tools.verdict(s.ctx, "bash", JSON.parse(json).unwrap!), Approval.Verdict.Deny)
+    try Test.eq(verdict(s, "bash", JSON.parse(json).unwrap!), Tools.Verdict.Deny)
     try refused(Tools.run(s.ctx, "bash", JSON.parse(json).unwrap!))
   end
 
   # A `null` path is not "no path": it is refused, and it cannot dodge a rule by being read as `.`.
   null_path = JSON.parse("{\"pattern\": \"needle\", \"path\": null}").unwrap!
-  try Test.eq(Tools.verdict(s.ctx, "grep", null_path), Approval.Verdict.Deny)
+  try Test.eq(verdict(s, "grep", null_path), Tools.Verdict.Deny)
   try refused(Tools.run(s.ctx, "grep", null_path))
-  try Test.eq(Tools.verdict(s.ctx, "grep", JSON.from({"pattern": "needle"})), Approval.Verdict.Deny)
+  try Test.eq(verdict(s, "grep", JSON.from({"pattern": "needle"})), Tools.Verdict.Deny)
   try refused(raw(s, "read_file", "{\"path\": null}"))
   done(s)
 end
@@ -381,7 +381,7 @@ def test_a_deny_rule_of_read_file_hides_the_file_from_glob_and_grep() -> Result[
   try File.write_text("#{s.root}/.env", "API_KEY=hunter2\nneedle\n")
   try File.write_text("#{s.root}/sub/.env", "needle\n")
   try File.write_text("#{s.root}/k.pem", "needle\n")
-  try Test.eq(Tools.verdict(s.ctx, "read_file", JSON.from({"path": ".env"})), Approval.Verdict.Deny)
+  try Test.eq(verdict(s, "read_file", JSON.from({"path": ".env"})), Tools.Verdict.Deny)
   grep = call(s, "grep", {"pattern": "needle|KEY"})
   try Test.eq(grep.text, "sub/b.txt:1:needle in sub")
   all = call(s, "glob", {"pattern": "**"})
@@ -393,8 +393,8 @@ end
 def test_a_deny_rule_of_read_file_also_denies_edit_file() -> Result[Void]
   s = try setup_with(["edit_file(*)"], ["read_file(.env)"])
   try File.write_text("#{s.root}/.env", "API_KEY=hunter2\n")
-  try Test.eq(Tools.verdict(s.ctx, "edit_file", edit(".env")), Approval.Verdict.Deny)
-  try Test.eq(Tools.verdict(s.ctx, "edit_file", edit("a.txt")), Approval.Verdict.Allow)
+  try Test.eq(verdict(s, "edit_file", edit(".env")), Tools.Verdict.Deny)
+  try Test.eq(verdict(s, "edit_file", edit("a.txt")), Tools.Verdict.Allow)
   done(s)
 end
 

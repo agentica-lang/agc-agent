@@ -37,7 +37,7 @@ def test_a_patch_applies_whole_or_not_at_all() -> Result[Void]
   dir = try fresh()
   try File.write_text("#{dir}/a.py", "def f():\n    x = 1\n    return x\n\ndef g():\n    x = 1\n    return x\n")
   try File.write_text("#{dir}/old.txt", "bye\n")
-  ctx = try Tools.context(dir, ->(_n: String) { error("unset") }, Tools.Rules(allow: [], deny: []))
+  ctx = try Tools.context(dir, ->(_n: String) { error("unset") })
   bad = run(ctx, "*** Begin Patch\n*** Delete File: old.txt\n*** Update File: a.py\n-missing\n*** End Patch")
   try Test.eq(bad.is_error, true)
   try Test.eq(File.read_text("#{dir}/old.txt"), ok("bye\n"))
@@ -214,13 +214,13 @@ end
 def test_each_path_of_a_patch_is_approved_as_an_edit() -> Result[Void]
   dir = try fresh()
   rules = try Approval.parse_rules(["edit_file(*.txt)", "apply_patch(*)"], ["read_file(.env)"])
-  ctx = try Tools.context(dir, ->(_n: String) { error("unset") }, rules)
+  ctx = try plain(dir)
   add = ->(path: String) { input("*** Begin Patch\n*** Add File: #{path}\n+x\n*** End Patch") }
-  try Test.eq(Tools.verdict(ctx, "apply_patch", add.call("a.txt")), Tools.Verdict.Allow)
-  try Test.eq(Tools.verdict(ctx, "apply_patch", add.call(".env")), Tools.Verdict.Deny)
-  try Test.eq(Tools.verdict(ctx, "apply_patch", add.call(".git/config")), Tools.Verdict.Ask)
-  try Test.eq(Tools.verdict(ctx, "apply_patch", add.call("../out.txt")), Tools.Verdict.Deny)
-  asked = Tools.verdict(ctx.with(rules: Tools.Rules(allow: [], deny: [])), "apply_patch", add.call("a.txt"))
+  try Test.eq(Approval.verdict(rules, ctx, "apply_patch", add.call("a.txt")), Tools.Verdict.Allow)
+  try Test.eq(Approval.verdict(rules, ctx, "apply_patch", add.call(".env")), Tools.Verdict.Deny)
+  try Test.eq(Approval.verdict(rules, ctx, "apply_patch", add.call(".git/config")), Tools.Verdict.Ask)
+  try Test.eq(Approval.verdict(rules, ctx, "apply_patch", add.call("../out.txt")), Tools.Verdict.Deny)
+  asked = Approval.verdict(Approval.Rules(allow: [], deny: []), ctx, "apply_patch", add.call("a.txt"))
   _ = Path.remove(dir)
   Test.eq(asked, Tools.Verdict.Ask)
 end
@@ -231,7 +231,7 @@ def test_writes_and_deletes_follow_their_own_rules() -> Result[Void]
   dir = try fresh()
   try File.write_text("#{dir}/a.txt", "one\n")
   edits = try Approval.parse_rules(["edit_file(*)", "write_file(*)"], ["write_file(secret*)", "edit_file(frozen*)"])
-  ctx = try Tools.context(dir, ->(_n: String) { error("unset") }, edits)
+  ctx = try plain(dir)
   patches = [
     "*** Add File: secret.txt\n+x",
     "*** Update File: a.txt\n*** Move to: secret.txt\n-one\n+ONE",
@@ -241,9 +241,13 @@ def test_writes_and_deletes_follow_their_own_rules() -> Result[Void]
     "*** Add File: frozen.txt\n+x",
   ]
 
-  verdicts = patches.map { |p| Tools.verdict(ctx, "apply_patch", input("*** Begin Patch\n#{p}\n*** End Patch")) }
-  patching = ctx.with(rules: try Approval.parse_rules(["apply_patch(*.txt)"], []))
-  removed = Tools.verdict(patching, "apply_patch", input("*** Begin Patch\n*** Delete File: a.txt\n*** End Patch"))
+  verdicts = patches.map { |p|
+    Approval.verdict(edits, ctx, "apply_patch", input("*** Begin Patch\n#{p}\n*** End Patch"))
+  }
+
+  patching = try Approval.parse_rules(["apply_patch(*.txt)"], [])
+  delete = input("*** Begin Patch\n*** Delete File: a.txt\n*** End Patch")
+  removed = Approval.verdict(patching, ctx, "apply_patch", delete)
   _ = Path.remove(dir)
   Test.eq(
     verdicts.push(removed),
@@ -256,9 +260,7 @@ end
 
 def update(path: String, body: String) -> String = "*** Begin Patch\n*** Update File: #{path}\n#{body}\n*** End Patch"
 
-def plain(dir: String) -> Result[Tools.Context]
-  Tools.context(dir, ->(_n: String) { error("unset") }, Tools.Rules(allow: [], deny: []))
-end
+def plain(dir: String) -> Result[Tools.Context] = Tools.context(dir, ->(_n: String) { error("unset") })
 
 def run(ctx: Tools.Context, patch: String) -> Tools.Output = Tools.run(ctx, "apply_patch", input(patch))
 
