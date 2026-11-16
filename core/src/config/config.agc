@@ -41,8 +41,6 @@ DEFAULT_MODEL = "default"
 ## The names `FINN_API` takes: OpenAI chat completions, the OpenAI Responses format, and Anthropic Messages.
 APIS = ["openai", "openai_responses", "anthropic"]
 ANT_MS = 15000
-## The check of a key at a login waits at most this long.
-PROBE_MS = 10_000
 
 struct Options
   state_dir: String
@@ -138,20 +136,25 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   end
 
   auth_path = Auth.path(read)
-  stored = auth_path.map { |path| Auth.load(path, Auth.owner(read)) }.unwrap_or(Auth.Stored())
+  owner = Auth.owner(read)
+  stored = auth_path.map { |path| Auth.load(path, owner) }.unwrap_or(Auth.Stored())
+  server = Server(read: read, base_url: base_url, api_key: api_key, api: api, ant: ant)
+  claude_key = stored.keys.get(Providers.ANTHROPIC).unwrap_or("")
+  # `ant` runs here only: a login or a logout later builds the providers without it.
+  at_start = try anthropic_access(read, api == "anthropic", ant, claude_key)
   rebuild = ->(keys: Map[String, String]) {
-    all_providers(Server(read: read, base_url: base_url, api_key: api_key, api: api, ant: ant), customs, keys)
+    all_providers(server, customs, keys, access_for(server, keys, claude_key, at_start))
   }
 
   providers = try rebuild.call(stored.keys)
   anthropic_url = set(read, "ANTHROPIC_BASE_URL").unwrap_or(LLM.ANTHROPIC_URL)
   login = Logins.Setup(
     path: auth_path,
+    owner: owner,
     stored: stored,
     entries: login_entries(customs, anthropic_url),
     read: read,
     rebuild: rebuild,
-    probe: ->(name: String, key: String) { probe(customs, anthropic_url, name, key) },
     chosen: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
   )
 
@@ -210,9 +213,8 @@ def all_providers(
   server: Server,
   customs: List[Providers.Custom],
   keys: Map[String, String],
+  access: AnthropicAccess,
 ) -> Result[Map[String, Providers.Provider]]
-  stored = keys.get(Providers.ANTHROPIC).unwrap_or("")
-  access = try anthropic_access(server.read, server.api == "anthropic", server.ant, stored)
   providers = builtin(apis(server.base_url, server.api_key, LLM.Options(), access), server.api)
   offered = Providers.offered(customs, server.read, LLM.Options(), keys)
   for name in offered.keys
@@ -220,6 +222,20 @@ def all_providers(
   end
 
   ok(providers)
+end
+
+## The access of `anthropic` with the stored `keys`: the one of the start while its stored key is the same, else one
+## that fetches the token of `ant` only after a 401, so building the providers calls nothing.
+def access_for(
+  server: Server,
+  keys: Map[String, String],
+  at_start_key: String,
+  at_start: AnthropicAccess,
+) -> AnthropicAccess
+  key = keys.get(Providers.ANTHROPIC).unwrap_or("")
+  return at_start if key == at_start_key
+
+  anthropic_access(server.read, false, server.ant, key).unwrap_or(at_start)
 end
 
 ## The providers a key logs in to: `anthropic`, then those of `customs` with a key variable (a later one of a name
@@ -238,17 +254,6 @@ def login_entries(customs: List[Providers.Custom], anthropic_url: String) -> Lis
   end
 
   out
-end
-
-## The provider `name` at its own base URL with `key`, for the check of a login: one try, a short wait.
-def probe(customs: List[Providers.Custom], anthropic_url: String, name: String, key: String) -> Result[LLM.Provider]
-  options = LLM.Options(timeout_ms: PROBE_MS, tries: 1)
-  return ok(LLM.anthropic(anthropic_url, key, options)) if name == Providers.ANTHROPIC
-
-  found = customs.select { |c| c.name == name }
-  return error("no provider #{name}") if found.empty?
-
-  ok(LLM.openai_chat(found[found.size - 1].base_url, key, options))
 end
 
 ## Code mode when `FINN_CODE_MODE` is `1`: the worker is found when the first script runs.

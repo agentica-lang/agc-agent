@@ -124,6 +124,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.get(Protocol.PROVIDERS_PATH, ->(conn) { reply(conn, 200, providers(sessions)) })
     |> Bond.get(Protocol.AUTH_PATH, ->(conn) { reply(conn, 200, logins(sessions)) })
     |> Bond.delete(Protocol.AUTH_PATH, ->(conn) { reply(conn, 200, logout(sessions, none)) })
+    |> Bond.put(Protocol.AUTH_PATH, ->(conn) { reply(conn, 200, skip(sessions)) })
     |> Bond.post(provider, ->(conn) { reply(conn, 200, login(sessions, conn)) })
     |> Bond.delete(provider, ->(conn) { reply(conn, 200, logout(sessions, some(try Bond.param(conn, "provider")))) })
     |> Bond.get(one, ->(conn) { reply(conn, 200, snapshot(sessions, conn)) })
@@ -375,6 +376,11 @@ end
 
 def logout(sessions: Sessions.Sessions, name: Optional[String]) -> Result[String]
   try Logins.logout(try holder(sessions), name)
+  ok("{}")
+end
+
+def skip(sessions: Sessions.Sessions) -> Result[String]
+  try Logins.skip(try holder(sessions))
   ok("{}")
 end
 

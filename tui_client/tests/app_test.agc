@@ -210,9 +210,8 @@ def model_of(width: Int, height: Int) -> App.Model
   App.seed(Client.Server(url: "http://127.0.0.1:1", token: ""), options, Channel.new(1), width, height)
 end
 
-# A coming login cannot be given a key; Esc in the key prompt drops what was typed; under `finn login` the answer
-# to the
-# login ends the app.
+# A coming login cannot be given a key; Esc in the key prompt drops what was typed; under `finn login` the answer to
+# the login ends the app.
 def test_a_login_drops_a_coming_pick_and_a_cancelled_key() -> Result[Void]
   claude = Protocol.LoginStatus(name: "claude", label: "Claude Pro/Max", key_env: "", from: "", coming: true)
   groq = Protocol.LoginStatus(name: "groq", label: "", key_env: "GROQ_API_KEY", from: "", coming: false)

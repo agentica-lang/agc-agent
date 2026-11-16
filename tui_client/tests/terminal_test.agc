@@ -184,7 +184,7 @@ def first_login(rig: Rig) -> Result[Void]
   Test.eq(shown.any? { |row| row.include?("sk-9") }, false)
 end
 
-# Closing the first-start picker stores an empty key file, so the login is offered once.
+# Closing the first-start picker makes an empty key file when there is none (PUT), so the login is offered once.
 def test_closing_the_first_login_stores_no_key() -> Result[Void]
   replies = {"GET #{Protocol.AUTH_PATH}": Protocol.encode_login_list(logins())}
   within(80, 24, &first_closed, replies, some(&App.welcomed))
@@ -195,7 +195,28 @@ def first_closed(rig: Rig) -> Result[Void]
   try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
   try shows(rig, "/login sets up a provider later")
   try Test.eq(rig.requests.recv(2000), ok("GET #{Protocol.AUTH_PATH}"))
-  Test.eq(rig.requests.recv(2000), ok("DELETE #{Protocol.AUTH_PATH}"))
+  Test.eq(rig.requests.recv(2000), ok("PUT #{Protocol.AUTH_PATH}"))
+end
+
+# A key typed in the place of the name, or after it, leaves the screen: an unknown name is not shown again, and a
+# `/login` line with more words is cleared.
+def test_a_key_typed_as_a_login_name_is_not_shown() -> Result[Void]
+  within(80, 24, &misplaced_key, {"GET #{Protocol.AUTH_PATH}": Protocol.encode_login_list(logins())})
+end
+
+def misplaced_key(rig: Rig) -> Result[Void]
+  for line in ["/login sk-abc123", "/login groq sk-def456"]
+    for char in line.split("")
+      try press(rig, TUI.Event.Char(char, TUI.Mods()))
+    end
+
+    try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+  end
+
+  try shows(rig, "no login has that name")
+  rows = try shows(rig, "give the provider alone")
+  try Test.eq(rows.any? { |row| row.include?("sk-abc123") or row.include?("sk-def456") }, false)
+  Test.eq(rig.requests.recv(2000), ok("GET #{Protocol.AUTH_PATH}"))
 end
 
 def logins() -> Protocol.LoginList

@@ -74,7 +74,13 @@ case ${1:-} in
   serve) shift; serve "$@" ;;
   chat) shift; exec "$agentica" "$root/cli/main.agc" "$@" ;;
   tui) shift; exec "$agentica" "$root/tui_client/main.agc" "$@" ;;
-  login) shift; exec "$agentica" "$root/tui_client/main.agc" --login ${1:+--provider "$1"} ;;
-  logout) shift; exec "$agentica" "$root/cli/main.agc" --logout "${1:-all}" ;;
+  login|logout)
+    # A key is never an argument: it is asked for, hidden.
+    [ $# -le 2 ] || { echo "finn $1: give the provider alone; the key is asked for next" >&2; exit 2; }
+    case $1 in
+      login) shift; exec "$agentica" "$root/tui_client/main.agc" --login ${1:+--provider "$1"} ;;
+      *) shift; exec "$agentica" "$root/cli/main.agc" --logout "${1:-all}" ;;
+    esac
+    ;;
   *) exec "$agentica" "$root/cli/main.agc" "$@" ;;
 esac

@@ -28,6 +28,7 @@ export Http.update_session
 export Http.list_logins
 export Http.login
 export Http.logout
+export Http.skip_login
 export Http.compact
 export Http.tree
 export Http.branch

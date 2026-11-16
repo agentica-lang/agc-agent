@@ -228,11 +228,12 @@ end
 ## `finn login`: the login picker on its own, until a login ends or it is closed.
 def login_only(model: Model, provider: Optional[String]) -> Result[Model]
   app = effect(model.with(login_only: true), listen(model.signals))
+  list = try Client.list_logins(app.server)
   for name in option_list(provider)
-    return ok(asking(app, name))
+    return ok(named_login(app, list.providers, name))
   end
 
-  ok(app.with(picker: some(Picker.logins(try Client.list_logins(app.server)))))
+  ok(app.with(picker: some(Picker.logins(list))))
 end
 
 ## The first start offers a login when the server has no key file and no key in the environment.
@@ -575,6 +576,7 @@ def send(app: Model) -> Model
   case Client.parse_command(text)
     some(ok(command)) if not app.moving or local?(command) ->
       return on_command(app.with(prompt: "", scroll: 0), command)
+    some(error(e)) if text.start_with?("/login") -> return noted(app.with(prompt: "", cursor: 0), e.message)
     some(error(e)) -> return noted(app, e.message)
     _ -> nil
   end
@@ -665,20 +667,27 @@ end
 
 def login_command(app: Model, name: Optional[String]) -> Model
   for given in option_list(name)
-    return asking(app, given)
+    return tried(app, named_from_server(app, given))
   end
 
   tried(app, login_picking(app))
+end
+
+def named_from_server(app: Model, name: String) -> Result[Model]
+  ok(named_login(app, (try Client.list_logins(app.server)).providers, name))
 end
 
 def login_picking(app: Model) -> Result[Model]
   ok(app.with(picker: some(Picker.logins(try Client.list_logins(app.server)))))
 end
 
-def login_picked(app: Model, picker: Picker.Picker, name: String) -> Model
-  for login in (picker.logins.select { |l| l.name == name and l.coming })
-    return login_closed(noted(app, "#{login.label}: coming, there is no login for it yet"))
-  end
+def login_picked(app: Model, picker: Picker.Picker, name: String) -> Model = named_login(app, picker.logins, name)
+
+# A name that is no login is not shown again: it may be a key typed in the wrong place.
+def named_login(app: Model, logins: List[Protocol.LoginStatus], name: String) -> Model
+  found = logins.select { |l| l.name == name }
+  return login_closed(noted(app, "no login has that name: /login lists them")) if found.empty?
+  return login_closed(noted(app, "#{found[0].label}: coming, there is no login for it yet")) if found[0].coming
 
   asking(app, name)
 end
@@ -723,7 +732,7 @@ def login_closed(app: Model) -> Model
   return app.with(exit: some(1)) if app.login_only
   return app if not app.first_login
 
-  _ = Client.logout(app.server, none)
+  _ = Client.skip_login(app.server)
   noted(app.with(first_login: false), "/login sets up a provider later")
 end
 

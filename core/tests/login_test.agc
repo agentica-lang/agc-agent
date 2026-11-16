@@ -4,6 +4,9 @@
 
 import Protocol from "pkg/protocol/protocol"
 import Auth from "../src/config/auth"
+import Config from "../src/config/config"
+import Logins from "../src/config/logins"
+import Providers from "../src/config/providers"
 import Fake from "support/fake_llm"
 import H from "support/harness"
 
@@ -30,6 +33,7 @@ def test_a_login_checks_the_key_stores_it_privately_and_offers_the_provider() ->
     try Test.eq(right.status, 200)
     try Test.eq((try Protocol.decode_login_status(right.text)).from, "stored")
     try Test.eq((try File.stat(H.auth_file(h.base))).mode, 384)
+    try Test.eq((try H.call(h, "PUT", Protocol.AUTH_PATH, "", H.auth(h))).status, 200)
     try Test.eq(try Dir.list("#{h.base}/config/finn"), [Auth.FILE])
     try Test.eq((try offered(h)).include?("paid"), true)
     checks = [try H.next_request(h), try H.next_request(h)]
@@ -82,7 +86,8 @@ def test_an_open_key_file_is_refused_and_the_environment_wins() -> Result[Void]
   end
 end
 
-# The check goes to the provider's base URL only: a redirect is not followed with the key, and nothing is stored.
+# The check goes to the provider's base URL only: a redirect is not followed with the key, and nothing is stored. A
+# skipped first login makes the empty key file (and leaves one that is there, as above).
 def test_a_redirect_at_the_check_is_not_followed() -> Result[Void]
   H.using(H.Setup(replies: ["302>/stolen"], logins: ["paid"])) do |h|
     moved = try login(h, "paid", "sk-right")
@@ -93,7 +98,86 @@ def test_a_redirect_at_the_check_is_not_followed() -> Result[Void]
 
     try Test.eq((try H.next_request(h)).path, "/paid/models")
     try Test.error?(h.fake.seen.recv(200))
-    Test.eq(File.stat(H.auth_file(h.base)).ok?, false)
+    try Test.eq(File.stat(H.auth_file(h.base)).ok?, false)
+    try Test.eq((try H.call(h, "PUT", Protocol.AUTH_PATH, "", H.auth(h))).status, 200)
+    Test.eq(File.read_text(H.auth_file(h.base)), ok("{\"keys\":{}}"))
+  end
+end
+
+# The real setup of `Config.from_env_with`: on a server of the Anthropic API whose token comes from `ant`, a login
+# and a
+# logout build the providers without `ant` (which fails or hangs after the start here); each change reads the key
+# file again, so a key another process stored stays; a file opened to others since the start takes no key; Anthropic
+# takes a key too, and its token variable wins over a stored key.
+def test_a_login_on_the_real_setup_never_runs_ant_and_keeps_other_keys() -> Result[Void]
+  fake = try Fake.start([
+    try Fake.json(200, "openai_chat/models_small.json"),
+    try Fake.json(200, "anthropic/models.json"),
+    try Fake.json(200, "openai_chat/models_small.json"),
+  ])
+
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-logins-#{Random.int(0, 999999999)}"
+  try Dir.mkdir("#{dir}/finn")
+  box = "{\"name\": \"box\", \"base_url\": \"#{fake.url}\", \"key_env\": \"BOX_KEY\"}"
+  try File.write_text("#{dir}/finn/config.json", "{\"providers\": [#{box}]}")
+  env = {"FINN_API": "anthropic", "ANTHROPIC_BASE_URL": fake.url, "XDG_CONFIG_HOME": dir}
+  result = on_real_setup(fake, dir, env)
+  try Fake.stop(fake)
+  _ = Path.remove(dir)
+  result
+end
+
+def on_real_setup(fake: Fake.Fake, dir: String, env: Map[String, String]) -> Result[Void]
+  calls: Channel[Int] = Channel.new(1)
+  try calls.send(0, 0)
+  gate: Channel[Bool] = Channel.new(1)
+  ant = -> {
+    count = calls.recv(1000).unwrap_or(0) + 1
+    _ = calls.send(count, 0)
+    return ok("tok") if count == 1
+
+    # A later call would hang, then fail: none comes.
+    _ = gate.recv(6000)
+    error("ant failed")
+  }
+
+  options = try Config.from_env_with(->(n) { from(env, n) }, ant)
+  holder = Logins.start(options.providers, options.login)
+  file = "#{dir}/finn/#{Auth.FILE}"
+  try Logins.login(holder, "box", "sk-box")
+  try Test.eq((try Logins.providers(holder)).has_key?("box"), true)
+  try File.write_text(file, "{\"keys\": {\"box\": \"sk-box\", \"else\": \"sk-else\"}}")
+  try Logins.login(holder, "anthropic", "sk-claude")
+  try Test.eq((try File.read_text(file)).include?("sk-else"), true)
+  try Logins.logout(holder, some("box"))
+  try Test.eq((try Logins.providers(holder)).has_key?("box"), false)
+  try chmod("644", file)
+  try Test.eq(error_kind(Logins.logout(holder, some("anthropic"))), Protocol.KIND_LOGIN_STORAGE)
+  try Test.eq((try File.read_text(file)).include?("sk-claude"), true)
+  try Logins.check_key(Providers.Custom(name: "or", base_url: fake.url, check_path: "/key"), "sk-or")
+  seen = [try Fake.next_request(fake), try Fake.next_request(fake), try Fake.next_request(fake)]
+  try Test.eq(seen.map { |s| s.path }, ["/v1/models", "/v1/models", "/v1/key"])
+  Logins.stop(holder)
+  try Test.eq(calls.recv(1000), ok(1))
+  try calls.send(1, 0)
+  token = try Config.from_env_with(->(n) { from(env.put("ANTHROPIC_AUTH_TOKEN", "t"), n) }, ant)
+  other = Logins.start(token.providers, token.login)
+  listed = Logins.list(other)
+  Logins.stop(other)
+  Test.eq((try listed).providers.select { |p| p.name == "anthropic" }.map { |p| p.from }, ["env"])
+end
+
+def from(env: Map[String, String], name: String) -> Result[String]
+  return ok("/tmp/core-logins-state") if name == "FINN_STATE_DIR"
+  return ok("/tmp/core-logins-data") if name == "FINN_DATA_DIR"
+
+  env.get(name).to_result("not set")
+end
+
+def error_kind(result: Result[Void]) -> String
+  case result
+    ok(_) -> "ok"
+    error(e) -> e.kind
   end
 end
 

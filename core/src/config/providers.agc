@@ -42,6 +42,8 @@ struct Custom
   base_url: String
   key_env: String = ""
   models: List[String] = []
+  ## Where a login checks a key, under `base_url`: a path that answers 401 to a wrong key.
+  check_path: String = "/models"
 end
 
 ## A provider a login will offer, with no flow yet (a subscription): its name and what it is.
@@ -50,12 +52,18 @@ struct Coming
   label: String
 end
 
-## The presets that need a key: name, API, base URL, key variable and models.dev id.
+## The presets that need a key: name, API, base URL, key variable and where a login checks the key.
 def presets() -> List[Custom]
   [
     Custom(name: "openai", api: "openai_responses", base_url: "https://api.openai.com/v1", key_env: "OPENAI_API_KEY"),
     Custom(name: "fireworks", base_url: "https://api.fireworks.ai/inference/v1", key_env: "FIREWORKS_API_KEY"),
-    Custom(name: "openrouter", base_url: "https://openrouter.ai/api/v1", key_env: "OPENROUTER_API_KEY"),
+    # Its model list is public: the key has its own route.
+    Custom(
+      name: "openrouter",
+      base_url: "https://openrouter.ai/api/v1",
+      key_env: "OPENROUTER_API_KEY",
+      check_path: "/key",
+    ),
     Custom(name: "groq", base_url: "https://api.groq.com/openai/v1", key_env: "GROQ_API_KEY"),
     Custom(name: "deepseek", base_url: "https://api.deepseek.com/v1", key_env: "DEEPSEEK_API_KEY"),
   ]

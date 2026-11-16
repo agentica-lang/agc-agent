@@ -110,6 +110,12 @@ def logout(server: Server, provider: Optional[String]) -> Result[Void]
   ok()
 end
 
+## Makes an empty key file on the server when there is none: a first-start login skipped.
+def skip_login(server: Server) -> Result[Void]
+  _ = try call(server, "PUT", Protocol.AUTH_PATH, "")
+  ok()
+end
+
 def update_session(server: Server, id: String, change: Protocol.UpdateSession) -> Result[Void]
   _ = try call(server, "PATCH", Protocol.session_path(id), Protocol.encode_update_session(change))
   ok()

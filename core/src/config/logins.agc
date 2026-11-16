@@ -1,30 +1,35 @@
 ## The logins of the server: the providers it offers now and the keys a login stored (`Auth`). One actor holds them, so
-## a login or a logout changes the providers of every later request. The check of a key, one `GET /models` at the
-## provider's own base URL, runs in the caller's task; the key goes to the file and to the providers, never to a
-## message.
+## a login or a logout changes the providers of every later request. The check of a key, one call at the provider's
+## own base URL, runs in the caller's task; the key goes to the file and to the providers, never to a message. A
+## change reads the file again first (another server may have written it), builds the providers, then writes: the
+## state changes only when both work.
 
 import Actor from "std/actor"
+import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Auth from "auth"
 import Providers from "providers"
 
 CALL_MS = 5000
+## The check of a key at a login waits at most this long.
+CHECK_MS = 10_000
 FROM_ENV = "env"
 FROM_FILE = "stored"
+## A token in this variable wins over a stored key of `anthropic`, as `ANTHROPIC_API_KEY` does.
+ANTHROPIC_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN"
 
 ## What a login needs, from `Config.from_env`.
 struct Setup
-  ## The file of the keys; none without a home folder.
+  ## The file of the keys; none without a home folder. `owner` is the user who may own it.
   path: Optional[String]
+  owner: Optional[Int] = none
   stored: Auth.Stored
   ## The providers a key logs in to: `anthropic`, the presets, and those of the config file with a `key_env`.
   entries: List[Providers.Custom]
   read: Fn[String, Result[String]]
-  ## Every provider of the server with these stored keys.
+  ## Every provider of the server with these stored keys; quick, it calls nothing.
   rebuild: Fn[Map[String, String], Result[Map[String, Providers.Provider]]]
-  ## The provider `name` at its base URL with `key`, for the check.
-  probe: Fn[String, String, Result[LLM.Provider]]
   ## The server's provider was chosen (`FINN_BASE_URL`, `FINN_PROVIDER` or `FINN_API` is set): no login is offered.
   chosen: Bool = false
 end
@@ -77,19 +82,26 @@ def list(holder: Holder) -> Result[Listing]
 end
 
 ## Checks `key` at the provider `name`, then stores it: the provider is offered from now on, unless its variable is
-## set, which wins.
+## set, which wins. An unknown name is not repeated: it may be a key typed in the wrong place.
 def login(holder: Holder, name: String, key: String) -> Result[Status]
   state = try now(holder)
   setup = try usable(state)
   found = setup.entries.select { |entry| entry.name == name }
   if found.empty?
     names = setup.entries.map { |entry| entry.name }.join(", ")
-    return error("no login for #{name}: one of #{names}", kind: Protocol.KIND_INVALID)
+    return error("no login for that provider: one of #{names}", kind: Protocol.KIND_INVALID)
   end
 
   return error("the key is empty", kind: Protocol.KIND_INVALID) if key.strip.empty?
 
-  try checked(found[0], setup.probe.call(name, key))
+  # A key file that cannot take the key is said before the key goes anywhere.
+  for path in (option_list(setup.path).select { |p| File.stat(p).ok? })
+    for why in option_list(Auth.refusal(path, setup.owner))
+      return error(why, kind: Protocol.KIND_LOGIN_STORAGE)
+    end
+  end
+
+  try check_key(found[0], key)
   stored: Result[Result[Status]] = Actor.call(holder.ref.address, CALL_MS) do |reply| Msg.Store(name, key, reply) end
   inner = try stored
   inner
@@ -97,15 +109,35 @@ end
 
 ## Removes the stored key of `name`, or every key (the file stays, empty) when none.
 def logout(holder: Holder, name: Optional[String]) -> Result[Void]
-  state = try now(holder)
-  _ = try usable(state)
-  for one in option_list(name)
-    return error("no key of #{one} is stored", kind: Protocol.KIND_INVALID) if not state.stored.keys.has_key?(one)
-  end
-
   removed: Result[Result[Void]] = Actor.call(holder.ref.address, CALL_MS) do |reply| Msg.Remove(name, reply) end
   inner = try removed
   inner
+end
+
+## Makes an empty key file when there is none, so the first start does not offer a login again; a file that is there
+## stays as it is.
+def skip(holder: Holder) -> Result[Void]
+  skipped: Result[Result[Void]] = Actor.call(holder.ref.address, CALL_MS) do |reply| Msg.Skip(reply) end
+  inner = try skipped
+  inner
+end
+
+## Checks `key` at the provider's own base URL, once, without following a redirect: `GET /models` of Anthropic, else
+## `GET` of its `check_path` with the key as a Bearer token. What the provider said goes back only as its status or
+## kind: a body might quote the request.
+def check_key(entry: Providers.Custom, key: String) -> Result[Void]
+  return anthropic_checked(entry, key) if entry.api == "anthropic"
+
+  client = try HTTP.client(HTTP.ClientOptions(timeout_ms: CHECK_MS))
+  headers = [HTTP.Header(name: "Authorization", value: "Bearer #{key}")]
+  answer = HTTP.request(client, "GET", "#{entry.base_url}#{entry.check_path}", "".bytes, headers)
+  HTTP.close_client(client)
+  case answer
+    ok(response) if response.status >= 200 and response.status < 300 -> ok()
+    ok(response) if [401, 403].include?(response.status) -> rejected("#{entry.name} refused the key")
+    ok(response) -> rejected("#{entry.base_url} did not check the key (HTTP #{response.status})")
+    error(_) -> rejected("#{entry.base_url} cannot be reached")
+  end
 end
 
 private
@@ -121,6 +153,7 @@ enum Msg
   Now(Channel[State])
   Store(String, String, Channel[Result[Status]])
   Remove(Optional[String], Channel[Result[Void]])
+  Skip(Channel[Result[Void]])
 end
 
 def handle(state: State, msg: Msg) -> Actor.Step[State]
@@ -132,56 +165,70 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
       Actor.reply(reply, state)
       Actor.continue(state)
     Msg.Store(name, key, reply) ->
-      case saved(state, state.stored.keys.put(name, key))
-        ok(next) ->
-          setup = next.setup.unwrap!
-          entry = setup.entries.select { |e| e.name == name }[0]
-          Actor.reply(reply, ok(status_of(setup, next.stored, entry)))
-          Actor.continue(next)
-        error(e) ->
-          Actor.reply(reply, error(e))
-          Actor.continue(state)
-      end
-
+      changed = saved(state, ->(keys: Map[String, String]) { ok(keys.put(name, key)) })
+      Actor.reply(reply, status_after(changed, name))
+      Actor.continue(changed.unwrap_or(state))
     Msg.Remove(name, reply) ->
-      keys: Map[String, String] = {}
-      for one in option_list(name)
-        keys = state.stored.keys.delete(one)
-      end
-
-      case saved(state, keys)
-        ok(next) ->
-          Actor.reply(reply, ok())
-          Actor.continue(next)
-        error(e) ->
-          Actor.reply(reply, error(e))
-          Actor.continue(state)
-      end
+      changed = saved(state, ->(keys: Map[String, String]) { removed(keys, name) })
+      Actor.reply(reply, done(changed))
+      Actor.continue(changed.unwrap_or(state))
+    Msg.Skip(reply) ->
+      changed = skipped(state)
+      Actor.reply(reply, done(changed))
+      Actor.continue(changed.unwrap_or(state))
   end
 end
 
-# The file first: a key that cannot be written is not offered.
-def saved(state: State, keys: Map[String, String]) -> Result[State]
-  setup = try usable(state)
-  path = try setup.path.to_result("there is no home folder for #{Auth.FILE}")
-  stored_file = Auth.save(path, keys)
-  case stored_file
-    ok(_) -> nil
-    error(e) -> return error("#{path} cannot be written: #{e.message}", kind: Protocol.KIND_LOGIN_STORAGE)
+def removed(keys: Map[String, String], name: Optional[String]) -> Result[Map[String, String]]
+  for one in option_list(name)
+    return error("no key of that provider is stored", kind: Protocol.KIND_INVALID) if not keys.has_key?(one)
+
+    return ok(keys.delete(one))
   end
 
+  ok({})
+end
+
+def status_after(changed: Result[State], name: String) -> Result[Status]
+  state = try changed
+  setup = state.setup.unwrap!
+  ok(status_of(setup, state.stored, setup.entries.select { |e| e.name == name }[0]))
+end
+
+def done(changed: Result[State]) -> Result[Void]
+  _ = try changed
+  ok()
+end
+
+# The keys of the file now, changed by `change`; the providers are built before the file is written.
+def saved(state: State, change: Fn[Map[String, String], Result[Map[String, String]]]) -> Result[State]
+  setup = try usable(state)
+  path = try setup.path.to_result("there is no home folder for #{Auth.FILE}")
+  now = Auth.load(path, setup.owner)
+  return error(now.refused, kind: Protocol.KIND_LOGIN_STORAGE) if not now.refused.empty?
+
+  keys = try change.call(now.keys)
   providers = try setup.rebuild.call(keys)
-  ok(state.with(providers: providers, stored: Auth.Stored(keys: keys, found: true)))
+  case Auth.save(path, keys, setup.owner)
+    ok(_) -> ok(state.with(providers: providers, stored: Auth.Stored(keys: keys, found: true)))
+    error(e) -> error("#{path} cannot be written: #{e.message}", kind: Protocol.KIND_LOGIN_STORAGE)
+  end
+end
+
+def skipped(state: State) -> Result[State]
+  setup = try usable(state)
+  path = try setup.path.to_result("there is no home folder for #{Auth.FILE}")
+  return ok(state.with(stored: state.stored.with(found: true))) if File.stat(path).ok?
+
+  case Auth.save(path, {}, setup.owner)
+    ok(_) -> ok(state.with(stored: state.stored.with(found: true)))
+    error(e) -> error("#{path} cannot be written: #{e.message}", kind: Protocol.KIND_LOGIN_STORAGE)
+  end
 end
 
 def now(holder: Holder) -> Result[State] = Actor.call(holder.ref.address, CALL_MS) do |reply| Msg.Now(reply) end
 
-def usable(state: State) -> Result[Setup]
-  setup = try state.setup.to_result("this server has no login")
-  return error(state.stored.refused, kind: Protocol.KIND_LOGIN_STORAGE) if not state.stored.refused.empty?
-
-  ok(setup)
-end
+def usable(state: State) -> Result[Setup] = state.setup.to_result("this server has no login")
 
 def status_of(setup: Setup, stored: Auth.Stored, entry: Providers.Custom) -> Status
   from = ""
@@ -189,22 +236,28 @@ def status_of(setup: Setup, stored: Auth.Stored, entry: Providers.Custom) -> Sta
     from = FROM_FILE
   end
 
-  if not setup.read.call(entry.key_env).unwrap_or("").empty?
+  if (env_names(entry).any? { |name| not setup.read.call(name).unwrap_or("").empty? })
     from = FROM_ENV
   end
 
   Status(name: entry.name, key_env: entry.key_env, from: from)
 end
 
-# What the provider said goes back only as its kind: a body might quote the request.
-def checked(entry: Providers.Custom, probe: Result[LLM.Provider]) -> Result[Void]
-  provider = try probe
-  case LLM.models(provider)
+def env_names(entry: Providers.Custom) -> List[String]
+  return [entry.key_env, ANTHROPIC_TOKEN_ENV] if entry.name == Providers.ANTHROPIC
+
+  [entry.key_env]
+end
+
+def anthropic_checked(entry: Providers.Custom, key: String) -> Result[Void]
+  case LLM.models(LLM.anthropic(entry.base_url, key, LLM.Options(timeout_ms: CHECK_MS, tries: 1)))
     ok(_) -> ok()
-    error(e) if e.kind == "llm.auth" -> error("#{entry.name} refused the key", kind: Protocol.KIND_LOGIN_REJECTED)
-    error(e) -> error("#{entry.base_url} did not answer the check (#{e.kind})", kind: Protocol.KIND_LOGIN_REJECTED)
+    error(e) if e.kind == "llm.auth" -> rejected("#{entry.name} refused the key")
+    error(e) -> rejected("#{entry.base_url} did not check the key (#{e.kind})")
   end
 end
+
+def rejected(message: String) -> Result[Void] = error(message, kind: Protocol.KIND_LOGIN_REJECTED)
 
 def option_list[T](value: Optional[T]) -> List[T]
   case value

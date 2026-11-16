@@ -38,17 +38,10 @@ end
 
 ## The keys of the file at `path`, none when it is missing; `owner` is the user who may own it.
 def load(path: String, owner: Optional[Int]) -> Stored
-  stat = File.stat(path)
-  return Stored() if not stat.ok?
+  return Stored() if not File.stat(path).ok?
 
-  info = stat.unwrap!
-
-  if info.mode % 64 != 0
-    return Stored(found: true, refused: "#{path} may be read by others: its keys are not used (chmod 600 #{path})")
-  end
-
-  if (owner.map { |id| id != info.user_id } == some(true))
-    return Stored(found: true, refused: "#{path} belongs to another user: its keys are not used")
+  for why in option_list(refusal(path, owner))
+    return Stored(found: true, refused: why)
   end
 
   # A JSON error may quote the file: only its place is said.
@@ -59,10 +52,17 @@ def load(path: String, owner: Optional[Int]) -> Stored
 end
 
 ## Writes `keys` to `path`, readable only by its user from the start. A new file is made private under another name in
-## the same folder, then renamed; an existing one is replaced in one step and keeps its mode (0600, or it was refused).
-def save(path: String, keys: Map[String, String]) -> Result[Void]
+## the same folder, then renamed; an existing one is checked again (its mode may have changed since it was read) and
+## replaced in one step, keeping its mode.
+def save(path: String, keys: Map[String, String], owner: Optional[Int]) -> Result[Void]
   text = JSON.encode(JSON.object({"keys": JSON.from(keys)}))
-  return File.replace(path, text.bytes) if File.stat(path).ok?
+  if File.stat(path).ok?
+    for why in option_list(refusal(path, owner))
+      return error(why)
+    end
+
+    return File.replace(path, text.bytes)
+  end
 
   parts = path.split("/")
   dir = parts.take(parts.size - 1).join("/")
@@ -76,10 +76,31 @@ def save(path: String, keys: Map[String, String]) -> Result[Void]
   moved
 end
 
+## Why the keys of the file at `path`, which is there, are not used: others may read it, or another user owns it.
+def refusal(path: String, owner: Optional[Int]) -> Optional[String]
+  stat = File.stat(path)
+  return some("#{path} cannot be read: its keys are not used") if not stat.ok?
+
+  info = stat.unwrap!
+  return some("#{path} may be read by others: its keys are not used (chmod 600 #{path})") if info.mode % 64 != 0
+  if (owner.map { |id| id != info.user_id } == some(true))
+    return some("#{path} belongs to another user: its keys are not used")
+  end
+
+  none
+end
+
 private
 
 struct AuthFile
   keys: Optional[Map[String, String]] = none
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
 end
 
 def decoded(path: String) -> Result[AuthFile] = JSON.decode(try File.read_text(path), AuthFile)

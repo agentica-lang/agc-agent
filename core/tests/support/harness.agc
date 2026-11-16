@@ -182,7 +182,6 @@ def login_setup(setup: Setup, fake: Fake.Fake, base: String) -> Optional[Logins.
   return none if setup.logins.empty?
 
   path = auth_file(base)
-  root = fake_root(fake)
   some(
     Logins.Setup(
       path: some(path),
@@ -190,7 +189,6 @@ def login_setup(setup: Setup, fake: Fake.Fake, base: String) -> Optional[Logins.
       entries: login_customs(setup, fake),
       read: &fake_env,
       rebuild: ->(keys: Map[String, String]) { ok(providers(setup, fake, keys)) },
-      probe: ->(name: String, key: String) { ok(LLM.openai_chat("#{root}/#{name}", key, LLM.Options(tries: 1))) },
     ),
   )
 end

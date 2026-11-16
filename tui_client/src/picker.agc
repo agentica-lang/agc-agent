@@ -1,6 +1,7 @@
 ## The picker of `/resume`, `/tree`, `/fork`, `/model` and `/login`: the sessions newest first, one row each with its
 ## id, folder, model, last change and first message; the messages of the session's tree, a branch a step in; the
-## `provider/model` pairs; or the providers a login sets up. Up and Down (or the wheel) move, typing filters, Enter picks, Esc closes. Pure.
+## `provider/model` pairs; or the providers a login sets up. Up and Down (or the wheel) move, typing filters, Enter
+## picks, Esc closes. Pure.
 
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"

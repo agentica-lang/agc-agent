@@ -32,7 +32,8 @@ def fork_path(session_id: String) -> String = "#{session_path(session_id)}/fork"
 
 def shell_path(session_id: String) -> String = "#{session_path(session_id)}/shell"
 
-## A login to a provider (`POST`), or its logout (`DELETE`).
+## A login to a provider (`POST`), or its logout (`DELETE`). `AUTH_PATH` lists the logins (`GET`), removes every
+## stored key (`DELETE`), or makes an empty key file when there is none (`PUT`: a first-start login skipped).
 def auth_path(provider: String) -> String = "#{AUTH_PATH}/#{provider}"
 
 ## The paths and the header, for `Protocol.wire_shape`.

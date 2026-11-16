@@ -5,7 +5,8 @@ import {Kind, Opt, Parsed} from "std/option_parser"
 VERSION = "0.0.1"
 # The options of a client that take the next word.
 VALUE_OPTIONS = [
-  "--state-dir", "--server-command", "--session", "--cwd", "--model", "--api", "--prompt", "-p", "--delete",
+  "--state-dir", "--server-command", "--session", "--cwd", "--model", "--api", "--provider", "--prompt", "-p",
+  "--delete", "--logout",
 ]
 
 ## The options of a run. `none` takes the default: the state folder from the environment, a new session in the current
