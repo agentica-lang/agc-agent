@@ -1,5 +1,6 @@
 import HTTP from "std/http"
 import Protocol from "pkg/protocol/protocol"
+import Config from "../src/config/config"
 import Server from "../src/http/server"
 import H from "support/harness"
 
@@ -276,7 +277,7 @@ def test_requests_need_the_token_a_local_host_and_no_foreign_origin() -> Result[
     try Test.eq((try File.stat("#{h.state_dir}/server.json")).mode % 512, 384)
     try Test.eq((try File.stat(h.state_dir)).mode % 512, 448)
     second = Server.start(
-      Server.Options(
+      Config.Options(
         state_dir: h.state_dir,
         data_dir: h.data_dir,
         apis: h.apis,
@@ -292,7 +293,7 @@ def test_requests_need_the_token_a_local_host_and_no_foreign_origin() -> Result[
     try Dir.mkdir("#{open_data}/sessions")
     try Test.eq(try H.run("chmod", ["700", open_data]), 0)
     try Test.eq(try H.run("chmod", ["755", "#{open_data}/sessions"]), 0)
-    options = Server.Options(
+    options = Config.Options(
       state_dir: "#{h.base}/other-state",
       data_dir: open_data,
       apis: h.apis,
@@ -314,7 +315,7 @@ def foreign_owner(h: H.Harness) -> Result[Void]
   return ok() if not root.ok? or not mine.ok?
   return ok() if root.unwrap!.user_id == mine.unwrap!.user_id or root.unwrap!.mode % 64 != 0
 
-  options = Server.Options(
+  options = Config.Options(
     state_dir: "/root",
     data_dir: "#{h.base}/data",
     apis: h.apis,

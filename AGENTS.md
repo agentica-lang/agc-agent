@@ -19,8 +19,8 @@ shell/               a conservative parser of bash commands and the read-only ch
                      shell.agc is its public module; tests/test_bash_peer.py checks it against real bash
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point
-core/src/            one folder per domain: config/ (settings, CLI), http/ (the server), session/
-                     (sessions, their store), agent/ (the loop, compaction, the model catalog),
+core/src/            one folder per domain: config/ (settings, CLI), http/ (the routes), session/
+                     (the registry, one session's actor, its store and prompt), agent/ (the loop, compaction, the model catalog),
                      tools/ (the tools and their sandbox), ext/ (MCP, skills), approval/ (rules,
                      session allows); core/tests stay flat
 client/              what every client shares: finding or starting the server, the HTTP calls, the event reader;
@@ -102,8 +102,9 @@ A package is added by the phase that needs it, never as an empty folder.
   - Inside `core/src`, a folder imports only these others (`make coupling`
     checks them): `tools` imports `approval` (until #121), `approval` and
     `ext` import `tools`, `agent` imports `tools` and `approval`, `session`
-    imports `agent`, `tools`, `ext`, `approval` and `config`; `http` and
-    `config` get their rules in #125's second PR.
+    imports `agent`, `tools`, `ext`, `approval` and `config`; `config` imports
+    `tools`, `approval` and `agent` (the model catalog); `http` imports
+    `session` and `config`, and no folder imports `http`.
   - Each package has one `VERSION` constant in its public module, equal to its
     tag (`llm-0.0.1` is `VERSION = "0.0.1"`). A release goes in this order: tag
     the dependency (`llm-X`), then a PR that bumps the dependent's entry and

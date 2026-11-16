@@ -1,124 +1,38 @@
 ## The HTTP API of the agent on 127.0.0.1: the routes of the protocol, the event stream of each session, and the
-## checks in front of them (`Host`, `Origin`, the Bearer token).
+## checks in front of them (`Host`, `Origin`, the Bearer token). The sessions are `Sessions`.
 ##
 ## The state folder (0700) holds `server.json` (0600, `Protocol.ServerInfo`) for the clients and `core.lock`, which
 ## the running server holds locked so that a second one does not start. A client holds `server.lock` while it starts
 ## a server, so the server takes another file.
-##
-## The sessions live in `sessions/` of the data folder (0700), one file each (`Store`). At start the server reads only
-## the first line of each file, for the list; a session is loaded from its file on its first request, in a task of its
-## own, so a big file never holds up the requests of other sessions.
 
-import Actor from "std/actor"
 import HTTP from "std/http"
-import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
-import Catalog from "../agent/catalog"
-import CodeMode from "../tools/code_mode"
-import Sandbox from "../tools/sandbox"
-import Permissions from "../approval/permissions"
-import Session from "../session/session"
-import Skills from "../ext/skills"
-import Store from "../session/store"
-import Tools from "../tools/tools"
+import Config from "../config/config"
+import Sessions from "../session/session"
 
-## The model of a session on an OpenAI API of a server whose own API has its own model (Anthropic).
-DEFAULT_MODEL = "default"
 VERSION = "0.0.1"
 SERVER_JSON = "server.json"
-SESSIONS_DIR = "sessions"
 LOCK_FILE = "core.lock"
 MAX_BODY_BYTES = 1_048_576
-MAX_INSTRUCTIONS_BYTES = 65_536
-MAX_READ_BYTES = 1_048_576
-CALL_MS = 5000
-## A request for a session that is not loaded yet waits for its load.
-LOAD_MS = 60_000
-## A session whose file names a model API this server does not have; its 503 says so.
-KIND_UNKNOWN_API = "core.unknown_api"
-## The requests that may wait for one load; past them a request answers 503.
-MAX_WAITING = 64
-SYSTEM_PROMPT = <<~TEXT
-  You are a coding agent. You work in the session folder with the tools you have: read before you change a file, keep
-  changes small, and say briefly what you did. To read, use read_file, glob and grep rather than bash.
-TEXT
-
 SSE_HEADERS = [
   HTTP.Header(name: "Content-Type", value: "text/event-stream"),
   HTTP.Header(name: "Cache-Control", value: "no-cache"),
 ]
 
-## A model API a session can use: its provider, and the fields every request to it carries.
-struct ModelApi
-  provider: LLM.Provider
-  extra: Map[String, JSON.Value] = {}
-  ## The model of a session that picks this API without a model, when it is not the server's API; empty for the
-  ## server's model.
-  model: String = ""
-  ## Ask for the prompt cache (Anthropic).
-  cache: Bool = false
-  ## A local server whose `/props` may give the window (llama-server), and which may get `FINN_API_KEY` there.
-  local: Bool = true
-  ## A provider with a fresh token, after a 401 (the token of `ant`).
-  refresh: Optional[Fn[Result[LLM.Provider]]] = none
-end
-
-struct Options
-  state_dir: String
-  data_dir: String
-  ## The model APIs by name (`Config.apis`), and the one of a session that names none.
-  apis: Map[String, ModelApi]
-  api: String
-  model: String
-  env: Fn[String, Result[String]]
-  rules: Tools.Rules
-  ## The tools of the MCP servers, and those of the servers that list them after the start.
-  tools: List[Tools.Tool] = []
-  late_tools: Optional[Fn[List[Tools.Tool]]] = none
-  port: Int = 0
-  keep_events: Int = 1000
-  approval_timeout_ms: Int = 90000
-  ## The model's window in tokens; none asks the provider (`GET /models`).
-  context_window: Optional[Int] = none
-  ## The model that writes the summary of a compaction; empty is the session's model.
-  compact_model: String = ""
-  ## llama-server's `/props`, asked for the window before `GET /models`; empty for another API.
-  props_url: String = ""
-  ## The key `/props` takes, as the provider's.
-  api_key: String = ""
-  ## Runs in the task that loads a session, with its id, before the file is read: a seam for the tests.
-  before_load: Optional[Fn[String, Void]] = none
-  ## Runs in that task once what it read is on its way to the registry: a seam for the tests.
-  after_load: Optional[Fn[String, Void]] = none
-  ## Code mode: the model may also call the tools from a Python script (`run_script`).
-  code_mode: Optional[CodeMode.Settings] = none
-  ## The models.dev catalog (`main.agc` starts it from `models_url`), for the cost of the calls and the window.
-  catalog: Optional[Catalog.Catalog] = none
-  models_url: String = Catalog.URL
-  ## The provider of the model in the catalog; empty is `anthropic` for that API and `openai` for the others.
-  models_provider: String = ""
-  ## How long a turn waits for the messages queued for it (tests shorten it).
-  take_ms: Int = 5000
-  ## The home folder, whose skills every session has; empty for none.
-  home: String = ""
-  ## The folders whose sessions load the skills of their own folder: a project's skills are its instructions.
-  trusted: List[String] = []
-end
-
 struct Server
   http: HTTP.Server
   port: Int
   token: String
-  registry: Actor.Ref[Registry, Msg]
+  sessions: Sessions.Sessions
   lock: File.Handle
   state_dir: String
 end
 
 ## Starts the server in the calling task, which owns it: call it from the task that keeps it.
-def start(options: Options) -> Result[Server]
+def start(options: Config.Options) -> Result[Server]
   try private_folder(options.state_dir)
   try private_folder(options.data_dir)
-  try private_folder(sessions_dir(options))
+  try private_folder(Sessions.folder(options))
   lock = try File.open("#{options.state_dir}/#{LOCK_FILE}", "append")
   locked = File.try_lock(lock, 1000)
   if locked != ok(true)
@@ -126,16 +40,10 @@ def start(options: Options) -> Result[Server]
     return error("a server already runs for #{options.state_dir}")
   end
 
-  init = -> {
-    inbox: Channel[Msg] = Actor.inbox()
-    Registry(options: options, sessions: load_sessions(options), address: inbox.address)
-  }
-
-  behaviour = Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate))
-  registry = Actor.start(behaviour)
-  started = serve(options, registry, lock)
+  sessions = Sessions.start(options)
+  started = serve(options, sessions, lock)
   if not started.ok?
-    _ = Actor.stop(registry, CALL_MS)
+    Sessions.stop(sessions)
     _ = File.close(lock)
   end
 
@@ -145,89 +53,26 @@ end
 def stop(server: Server) -> Void
   HTTP.close_server(server.http)
   _ = HTTP.wait(server.http)
-  _ = Actor.stop(server.registry, CALL_MS)
+  Sessions.stop(server.sessions)
   _ = Path.remove("#{server.state_dir}/#{SERVER_JSON}")
   _ = File.close(server.lock)
 end
 
 private
 
-TITLE_CHARS = 200
-
-struct Entry
-  summary: Protocol.SessionSummary
-  header: Store.Header
-  file: String
-  ## None until the session is first used.
-  session: Optional[Actor.Ref[Session.State, Session.Msg]]
-  ## The requests that wait while the session loads; a load runs while it is not empty.
-  waiting: List[Channel[Result[Address[Session.Msg]]]] = []
-  listed: Optional[Cached] = none
-end
-
-## What the task that loads a session read from its file.
-struct Loaded
-  saved: Store.Saved
-  context: Tools.Context
-end
-
-struct Listed
-  file: String
-  header: Store.Header
-end
-
-struct Registry
-  options: Options
-  sessions: List[Entry] = []
-  address: Address[Msg]
-end
-
-## A load to run in its own task; it tells `registry` what it read.
-struct Load
-  options: Options
-  entry: Entry
-  registry: Address[Msg]
-end
-
-## What `Find` gives: the session, or the channel that gets it once it loads.
-enum Found
-  Ready(Address[Session.Msg])
-  Loading(Channel[Result[Address[Session.Msg]]])
-end
-
-enum Msg
-  Create(Protocol.NewSession, Channel[Result[String]])
-  Find(String, Channel[Result[Found]])
-  Delete(String, Channel[Result[Void]])
-  List(Channel[List[Entry]])
-  Load(String, Result[Loaded])
-  ## What a list read of session files, kept for the next list.
-  Listed(List[Cached])
-end
-
-## What a list read of one session file, valid while its size and time of change stay.
-struct Cached
-  id: String
-  summary: Protocol.SessionSummary
-  size: Int
-  modified_s: Int
-  listing: Store.Listing
-end
-
-def serve(options: Options, registry: Actor.Ref[Registry, Msg], lock: File.Handle) -> Result[Server]
+def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handle) -> Result[Server]
   token = OpenSSL.Random.hex(32)
-  address = registry.address
   http = try HTTP.serve(
     "127.0.0.1",
     options.port,
-    ->(request, body) { route(token, address, request, body) },
+    ->(request, body) { route(token, sessions, request, body) },
     HTTP.ServerOptions(max_body_bytes: MAX_BODY_BYTES),
   )
 
   port = HTTP.local_port(http)
   case write_server_json(options.state_dir, Protocol.ServerInfo(port: port, token: token, pid: System.pid))
     ok(_) ->
-      ok(Server(http: http, port: port, token: token, registry: registry, lock: lock, state_dir: options.state_dir))
+      ok(Server(http: http, port: port, token: token, sessions: sessions, lock: lock, state_dir: options.state_dir))
     error(e) ->
       HTTP.close_server(http)
       error(e)
@@ -237,7 +82,7 @@ end
 def private_folder(given: String) -> Result[Void]
   path = try Path.resolve(given)
   if not File.stat(path).ok?
-    try Dir.mkdir(Sandbox.parent(path))
+    try Dir.mkdir(parent(path))
     try Dir.mkdir_private(path)
   end
 
@@ -250,6 +95,13 @@ def private_folder(given: String) -> Result[Void]
   end
 
   ok()
+end
+
+def parent(path: String) -> String
+  parts = path.split("/")
+  return "/" if parts.size <= 2
+
+  parts.take(parts.size - 1).join("/")
 end
 
 # The user id of this process, from the owner of its /proc entry or of the home folder; none where neither is there.
@@ -273,417 +125,12 @@ def write_server_json(dir: String, info: Protocol.ServerInfo) -> Result[Void]
   written
 end
 
-def terminate(registry: Registry) -> Void
-  for entry in registry.sessions
-    for session in option_list(entry.session)
-      _ = Actor.stop(session, CALL_MS)
-    end
-  end
-end
-
-def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
-  case msg
-    Msg.Create(request, reply) ->
-      case open_session(registry, request)
-        ok(entry) ->
-          Actor.reply(reply, ok(entry.summary.id))
-          Actor.continue(registry.with(sessions: registry.sessions.push(entry)))
-        error(e) ->
-          Actor.reply(reply, error(e))
-          Actor.continue(registry)
-      end
-
-    Msg.Find(id, reply) ->
-      found = registry.sessions.select { |entry| entry.summary.id == id }
-      if found.empty?
-        Actor.reply(reply, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
-        return Actor.continue(registry)
-      end
-
-      listed = found[0]
-      for session in option_list(listed.session)
-        Actor.reply(reply, ok(Found.Ready(session.address)))
-        return Actor.continue(registry)
-      end
-
-      if listed.waiting.size >= MAX_WAITING
-        message = "session #{id} is loading for too many requests"
-        Actor.reply(reply, error(message, kind: Protocol.KIND_SESSION_UNAVAILABLE))
-        return Actor.continue(registry)
-      end
-
-      if listed.waiting.empty?
-        _ = Task.spawn(&load, Load(options: registry.options, entry: listed, registry: registry.address))
-      end
-
-      loaded: Channel[Result[Address[Session.Msg]]] = Channel.new(1)
-      Actor.reply(reply, ok(Found.Loading(loaded)))
-      waiting = listed.with(waiting: listed.waiting.push(loaded))
-      Actor.continue(registry.with(sessions: registry.sessions.map { |e| replaced(e, waiting) }))
-
-    Msg.Load(id, read) -> Actor.continue(registered(registry, id, read))
-
-    Msg.Delete(id, reply) ->
-      found = registry.sessions.select { |entry| entry.summary.id == id }
-      if found.empty?
-        Actor.reply(reply, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
-        return Actor.continue(registry)
-      end
-
-      case ended(found[0])
-        ok(entry) ->
-          removed = remove_file(entry.file)
-          if removed.ok?
-            _ = Path.remove(Store.settings_file(entry.file))
-          end
-
-          Actor.reply(reply, removed)
-          sessions = registry.sessions.map { |e| replaced(e, entry) }
-          if removed.ok?
-            # What a load still running reads finds no entry, and is dropped.
-            for waiting in entry.waiting
-              Actor.reply(waiting, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
-            end
-
-            sessions = sessions.select { |e| e.summary.id != id }
-          end
-
-          Actor.continue(registry.with(sessions: sessions))
-        error(e) ->
-          Actor.reply(reply, error(e))
-          Actor.continue(registry)
-      end
-
-    Msg.Listed(read) ->
-      sessions = registry.sessions.map { |entry| with_listed(entry, read) }
-
-      Actor.continue(registry.with(sessions: sessions))
-    Msg.List(reply) ->
-      Actor.reply(reply, registry.sessions)
-      Actor.continue(registry)
-  end
-end
-
-def with_listed(entry: Entry, read: List[Cached]) -> Entry
-  fresh = read.select { |c| c.id == entry.summary.id }
-  return entry if fresh.empty?
-
-  entry.with(listed: some(fresh[0]))
-end
-
-# The listing of a session file, read again only when its size or time of change moved. A file that cannot be read
-# keeps what its header said.
-def cached(entry: Entry) -> Cached
-  size = 0
-  modified = 0
-  case File.stat(entry.file)
-    ok(info) ->
-      size = info.size_bytes
-      modified = info.modified_seconds
-    error(_) -> nil
-  end
-
-  for old in option_list(entry.listed)
-    return old.with(summary: entry.summary) if old.size == size and old.modified_s == modified
-  end
-
-  listing = Store.listing(entry.file).unwrap_or(Store.Listing())
-  Cached(id: entry.summary.id, summary: entry.summary, size: size, modified_s: modified, listing: listing)
-end
-
-# A session with its model now (a `PATCH` changes it after the header), when it last changed and its first message
-# without control characters.
-def summary_now(found: Cached) -> Protocol.SessionSummary
-  title = found.listing.title
-  cut = title.slice(0, [title.length, TITLE_CHARS].min.unwrap!)
-  found.summary.with(
-    model: found.listing.model.unwrap_or(found.summary.model),
-    updated_s: found.modified_s,
-    title: cut.split("").map { |c| printable(c) }.join(""),
-  )
-end
-
-def printable(c: String) -> String
-  code = c.code
-  return " " if code < 0x20 or (code >= 0x7f and code < 0xa0)
-
-  c
-end
-
-def sessions_dir(options: Options) -> String = "#{options.data_dir}/#{SESSIONS_DIR}"
-
-def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]
-  options = registry.options
-  ctx = case Tools.context(request.cwd, options.env, options.rules, options.tools, options.late_tools)
-    ok(ctx) -> ok(ctx)
-    error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
-  end
-
-  context = try with_project(options, try ctx)
-  api = request.api.unwrap_or(options.api)
-  if not options.apis.has_key?(api)
-    return error("unknown api #{api.inspect}: one of #{options.apis.keys.join(", ")}", kind: Protocol.KIND_INVALID)
-  end
-
-  header = Store.Header(
-    id: "s#{registry.sessions.size + 1}-#{OpenSSL.Random.hex(4)}",
-    cwd: context.root,
-    model: request.model.unwrap_or(default_model(options, api)),
-    created_ms: Time.now_ms,
-    system: some(with_catalog(system_prompt(context.root), skills_of(options, context.root).skills)),
-    api: some(api),
-  )
-
-  file = try Store.create(sessions_dir(options), header)
-  entry(options, header, context, file, none)
-end
-
-# The entry with its session ended, refused while a turn runs; it loads again on its next use.
-def ended(listed: Entry) -> Result[Entry]
-  for session in option_list(listed.session)
-    try Session.end_session(session.address)
-    _ = Task.await(session.task, CALL_MS)
-  end
-
-  ok(listed.with(session: none))
-end
-
-def remove_file(file: String) -> Result[Void]
-  info = try File.lstat(file)
-  return error("#{file}: not a regular file") if info.kind != "file"
-
-  Path.remove(file)
-end
-
-def replaced(entry: Entry, by: Entry) -> Entry
-  return by if entry.summary.id == by.summary.id
-
-  entry
-end
-
-# The load always reports, even when it crashes, so the requests that wait for it get an answer.
-def load(job: Load) -> Void
-  reading = Task.spawn do read(job.options, job.entry) end
-  loaded = Msg.Load(job.entry.summary.id, Task.await(reading))
-  while true
-    case Actor.cast(job.registry, loaded, CALL_MS)
-      error(e) if e.kind == "channel.timeout" -> next
-      _ -> break
-    end
-  end
-
-  for hook in option_list(job.options.after_load)
-    hook.call(job.entry.summary.id)
-  end
-end
-
-def read(options: Options, listed: Entry) -> Result[Loaded]
-  for hook in option_list(options.before_load)
-    hook.call(listed.summary.id)
-  end
-
-  info = try File.lstat(listed.file)
-  return error("not a regular file") if info.kind != "file"
-
-  saved = try Store.load(listed.file)
-  if saved.skipped > 0
-    IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
-  end
-
-  context = try Tools.context(saved.header.cwd, options.env, options.rules, options.tools, options.late_tools)
-  ok(Loaded(saved: saved, context: try with_project(options, context)))
-end
-
-# Starts the session that a load read, and answers the requests that waited for it. A load of a session deleted since
-# it began is dropped.
-def registered(registry: Registry, id: String, read: Result[Loaded]) -> Registry
-  found = registry.sessions.select { |entry| entry.summary.id == id and not entry.waiting.empty? }
-  return registry if found.empty?
-
-  listed = found[0]
-  case started(registry.options, listed, read)
-    ok(entry) ->
-      for waiting in listed.waiting
-        Actor.reply(waiting, entry.session.map { |session| session.address }.to_result("not started"))
-      end
-
-      registry.with(sessions: registry.sessions.map { |e| replaced(e, entry) })
-    error(e) ->
-      IO.warn("session #{id} cannot be loaded now: #{e.message}")
-      message = "session #{id} cannot be loaded now"
-      if e.kind == KIND_UNKNOWN_API
-        message = "#{message}: #{e.message}"
-      end
-
-      for waiting in listed.waiting
-        Actor.reply(waiting, error(message, kind: Protocol.KIND_SESSION_UNAVAILABLE))
-      end
-
-      registry.with(sessions: registry.sessions.map { |other| replaced(other, listed.with(waiting: [])) })
-  end
-end
-
-def started(options: Options, listed: Entry, read: Result[Loaded]) -> Result[Entry]
-  loaded = try read
-  if loaded.saved.open_end
-    try Store.reopen(listed.file)
-  end
-
-  entry(options, loaded.saved.header, loaded.context, listed.file, some(loaded.saved))
-end
-
-def entry(
-  options: Options,
-  header: Store.Header,
-  context: Tools.Context,
-  file: String,
-  saved: Optional[Store.Saved],
-) -> Result[Entry]
-  name = header.api.unwrap_or(options.api)
-  return error("unknown API #{name}", kind: KIND_UNKNOWN_API) if not options.apis.has_key?(name)
-
-  api = options.apis[name]
-  found = skills_of(options, context.root)
-  for warning in found.warnings
-    IO.warn("skills: #{warning}")
-  end
-
-  system = header.system.unwrap_or(system_prompt(context.root))
-  skills = Skills.restrict(found.skills, system)
-  setup = Session.Setup(
-    id: header.id,
-    cwd: context.root,
-    model: header.model,
-    provider: api.provider,
-    system: system,
-    ctx: context.with(read_roots: skills.map { |skill| skill.dir }),
-    skills: skills,
-    keep_events: options.keep_events,
-    approval_timeout_ms: options.approval_timeout_ms,
-    file: file,
-    window: options.context_window.unwrap_or(0),
-    compact_model: own(options, name, options.compact_model),
-    props_url: if_local(api, options.props_url),
-    api_key: if_local(api, options.api_key),
-    extra: api.extra,
-    cache: api.cache,
-    refresh: api.refresh,
-    code_mode: options.code_mode,
-    catalog: options.catalog,
-    catalog_provider: catalog_provider(options.models_provider, api.provider),
-    take_ms: options.take_ms,
-  )
-
-  ok(
-    Entry(
-      summary: summary_of(options, header),
-      header: header,
-      file: file,
-      session: some(Session.start(setup, saved)),
-    ),
-  )
-end
-
-# A session on another API than the server's takes that API's model, when it names one; on an OpenAI API of a server
-# whose API has its own model, `default`.
-def default_model(options: Options, api: String) -> String
-  return options.model if api == options.api
-  return options.apis[api].model if options.apis[api].model != ""
-  return DEFAULT_MODEL if options.apis[options.api].model != ""
-
-  options.model
-end
-
-# `FINN_COMPACT_MODEL` is a model of the server's API.
-def own(options: Options, api: String, value: String) -> String
-  return "" if api != options.api
-
-  value
-end
-
-def if_local(api: ModelApi, url: String) -> String
-  return "" if not api.local
-
-  url
-end
-
-def summary_of(options: Options, header: Store.Header) -> Protocol.SessionSummary
-  Protocol.SessionSummary(id: header.id, cwd: header.cwd, model: header.model, api: header.api.unwrap_or(options.api))
-end
-
-# In the order they were made, not loaded yet. A file whose first line is not a session is left out, with a warning.
-def load_sessions(options: Options) -> List[Entry]
-  dir = sessions_dir(options)
-  names: List[String] = []
-  case Dir.list(dir)
-    ok(found) -> names = found.select { |name| name.end_with?(Store.EXTENSION) }
-    error(e) -> IO.warn("sessions not listed: #{e.message}")
-  end
-
-  listed: List[Listed] = []
-  for name in names
-    file = "#{dir}/#{name}"
-    case listed_session(file)
-      ok(header) -> listed = listed.push(Listed(file: file, header: header))
-      error(e) -> IO.warn("session #{name} not listed: #{e.message}")
-    end
-  end
-
-  sorted = listed.sort_by { |one| one.header.id }.sort_by { |one| one.header.created_ms }
-  sorted.map { |one|
-    Entry(summary: summary_of(options, one.header), header: one.header, file: one.file, session: none)
-  }
-end
-
-def listed_session(file: String) -> Result[Store.Header]
-  info = try File.lstat(file)
-  return error("not a regular file") if info.kind != "file"
-
-  Store.header(file)
-end
-
-# `AGENTS.md` goes to the model only when it is a regular file inside the folder: a link out of it could be any file.
-def skills_of(options: Options, root: String) -> Skills.Found
-  Skills.discover(root, options.home, trusted?(options, root))
-end
-
-# A session folder under a folder of `FINN_TRUSTED_DIRS`, whose own skills and allow rules count.
-def trusted?(options: Options, root: String) -> Bool
-  options.trusted.any? { |dir| Sandbox.inside?(Path.real(dir).unwrap_or(dir), root) }
-end
-
-def with_catalog(system: String, skills: List[Skills.Skill]) -> String
-  catalog = Skills.catalog(skills)
-  return system if catalog == ""
-
-  "#{system}\n#{catalog}"
-end
-
-def system_prompt(root: String) -> String
-  case project_instructions(root)
-    ok(text) -> "#{SYSTEM_PROMPT}\n# AGENTS.md of the session folder\n\n#{text}"
-    error(_) -> SYSTEM_PROMPT
-  end
-end
-
-def project_instructions(root: String) -> Result[String]
-  path = try Sandbox.resolve(root, "AGENTS.md")
-  info = try File.stat(path)
-  return error("not a regular file") if info.kind != "file"
-  return error("larger than #{MAX_READ_BYTES} bytes") if info.size_bytes > MAX_READ_BYTES
-
-  text = try File.read_text(path)
-  return ok(text) if text.bytesize <= MAX_INSTRUCTIONS_BYTES
-
-  kept = text.slice(0, MAX_INSTRUCTIONS_BYTES)
-  if kept.bytesize > MAX_INSTRUCTIONS_BYTES
-    kept = text.slice(0, MAX_INSTRUCTIONS_BYTES / 4)
-  end
-
-  ok("#{kept}\n[AGENTS.md cut: it has #{info.size_bytes} bytes]")
-end
-
-def route(token: String, registry: Address[Msg], request: HTTP.Request, body: HTTP.RequestBody) -> Result[HTTP.Answer]
+def route(
+  token: String,
+  sessions: Sessions.Sessions,
+  request: HTTP.Request,
+  body: HTTP.RequestBody,
+) -> Result[HTTP.Answer]
   for refusal in option_list(refused(token, request))
     return ok(HTTP.Answer.Whole(refusal))
   end
@@ -699,16 +146,16 @@ def route(token: String, registry: Address[Msg], request: HTTP.Request, body: HT
 
   # The parts after /v1/sessions: an id, then a sub-resource.
   parts = request.path.slice(prefix.length, request.path.length - prefix.length).split("/").drop(1)
-  return events(registry, request, parts[0]) if request.method == "GET" and parts.size == 2 and parts[1] == "events"
+  return events(sessions, request, parts[0]) if request.method == "GET" and parts.size == 2 and parts[1] == "events"
 
   case HTTP.read_all(body, MAX_BODY_BYTES)
-    ok(bytes) -> ok(HTTP.Answer.Whole(answered(registry, request.method, parts, bytes)))
+    ok(bytes) -> ok(HTTP.Answer.Whole(answered(sessions, request.method, parts, bytes)))
     error(e) -> ok(HTTP.body_refusal(e.message))
   end
 end
 
-def answered(registry: Address[Msg], method: String, parts: List[String], bytes: Bytes) -> HTTP.Response
-  case answer(registry, method, parts, bytes)
+def answered(sessions: Sessions.Sessions, method: String, parts: List[String], bytes: Bytes) -> HTTP.Response
+  case answer(sessions, method, parts, bytes)
     ok(response) -> response
     error(e) -> failure(e)
   end
@@ -745,52 +192,41 @@ def local_host?(host: String) -> Bool
   ["127.0.0.1", "localhost"].include?(name) and host.split(":").size <= 2
 end
 
-def answer(registry: Address[Msg], method: String, parts: List[String], bytes: Bytes) -> Result[HTTP.Response]
+def answer(sessions: Sessions.Sessions, method: String, parts: List[String], bytes: Bytes) -> Result[HTTP.Response]
   text = try String.from_bytes(bytes)
   case "#{method} #{parts.size}"
     "POST 0" ->
       request = try Protocol.decode_new_session(text)
-      created: Result[Result[String]] = Actor.call(registry, CALL_MS) do |reply| Msg.Create(request, reply) end
-      id = try try created
+      id = try Sessions.create(sessions, request)
       response(201, Protocol.encode_session_created(Protocol.SessionCreated(id: id)))
-    "GET 0" ->
-      entries: Result[List[Entry]] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
-      read = (try entries).map { |entry| cached(entry) }
-      _ = Actor.cast(registry, Msg.Listed(read), CALL_MS)
-      sessions = read.map { |found| summary_now(found) }
-
-      response(
-        200,
-        Protocol.encode_session_list(Protocol.SessionList(sessions: sessions.sort_by { |s| -s.updated_s })),
-      )
+    "GET 0" -> response(200, Protocol.encode_session_list(Protocol.SessionList(sessions: try Sessions.list(sessions))))
     "DELETE 1" ->
-      deleted: Result[Result[Void]] = Actor.call(registry, CALL_MS) do |reply| Msg.Delete(parts[0], reply) end
-      try try deleted
+      try Sessions.delete(sessions, parts[0])
       response(200, "{}")
-    "GET 1" -> response(200, Protocol.encode_session(try Session.snapshot(try find(registry, parts[0]))))
+    "GET 1" -> response(200, Protocol.encode_session(try Sessions.snapshot(sessions, parts[0])))
     "POST 2" if parts[1] == "messages" ->
       message = try Protocol.decode_send_message(text)
-      accepted = try Session.send(try find(registry, parts[0]), message.text)
+      accepted = try Sessions.send(sessions, parts[0], message.text)
       response(202, Protocol.encode_message_accepted(accepted))
     "PATCH 1" ->
       change = try Protocol.decode_update_session(text)
-      try Session.update(try find(registry, parts[0]), change)
+      try Sessions.update(sessions, parts[0], change)
       response(200, "{}")
     "POST 2" if parts[1] == "compact" ->
-      compacted = try Session.compact_now(try find(registry, parts[0]))
+      compacted = try Sessions.compact(sessions, parts[0])
       response(200, Protocol.encode_compacted(Protocol.Compacted(compacted: compacted)))
     "POST 2" if parts[1] == "stop" ->
-      _ = try Session.stop(try find(registry, parts[0]))
+      _ = try Sessions.stop_turn(sessions, parts[0])
       response(200, "{}")
     "POST 3" if parts[1] == "approvals" ->
       approve = try Protocol.decode_approve(text)
-      try Session.answer(try find(registry, parts[0]), parts[2], approve.decision)
+      try Sessions.answer(sessions, parts[0], parts[2], approve.decision)
       response(200, "{}")
     _ -> ok(no_route(method, "#{Protocol.SESSIONS_PATH}/#{parts.join("/")}"))
   end
 end
 
-def events(registry: Address[Msg], request: HTTP.Request, id: String) -> Result[HTTP.Answer]
+def events(sessions: Sessions.Sessions, request: HTTP.Request, id: String) -> Result[HTTP.Answer]
   last: Optional[Int] = none
   for text in HTTP.header_values(request.headers, Protocol.LAST_EVENT_ID_HEADER.downcase)
     case Protocol.parse_event_id(text)
@@ -799,25 +235,9 @@ def events(registry: Address[Msg], request: HTTP.Request, id: String) -> Result[
     end
   end
 
-  case subscribe(registry, id, last)
+  case Sessions.subscribe(sessions, id, last)
     ok(out) -> ok(HTTP.Answer.Stream(HTTP.StreamResponse(status: 200, headers: SSE_HEADERS, body: out)))
     error(e) -> ok(HTTP.Answer.Whole(failure(e)))
-  end
-end
-
-def subscribe(registry: Address[Msg], id: String, last: Optional[Int]) -> Result[Channel[Bytes]]
-  Session.subscribe(try find(registry, id), last)
-end
-
-def find(registry: Address[Msg], id: String) -> Result[Address[Session.Msg]]
-  found: Result[Result[Found]] = Actor.call(registry, CALL_MS) do |reply| Msg.Find(id, reply) end
-  case try try found
-    Found.Ready(address) -> ok(address)
-    Found.Loading(loaded) ->
-      case loaded.recv(LOAD_MS)
-        ok(address) -> address
-        error(_) -> error("session #{id} is still loading", kind: Protocol.KIND_SESSION_UNAVAILABLE)
-      end
   end
 end
 
@@ -862,19 +282,4 @@ def option_list[T](value: Optional[T]) -> List[T]
     some(v) -> [v]
     none -> []
   end
-end
-
-# The rules of the project file of the session folder join the server's; a broken file is an invalid request.
-def with_project(options: Options, ctx: Tools.Context) -> Result[Tools.Context]
-  case Permissions.with_project(ctx.rules, ctx.root, trusted?(options, ctx.root))
-    ok(rules) -> ok(ctx.with(rules: rules))
-    error(e) -> error(e.message, kind: Protocol.KIND_INVALID)
-  end
-end
-
-def catalog_provider(given: String, provider: LLM.Provider) -> String
-  return given if not given.empty?
-  return "anthropic" if provider.name == "anthropic"
-
-  "openai"
 end

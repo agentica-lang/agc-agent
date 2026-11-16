@@ -21,17 +21,75 @@ import Monty from "pkg/monty/monty"
 import Catalog from "../agent/catalog"
 import CodeMode from "../tools/code_mode"
 import Permissions from "../approval/permissions"
-import Server from "../http/server"
+import Tools from "../tools/tools"
 
 STATE_DIR_ENV = "FINN_STATE_DIR"
 DATA_DIR_ENV = "FINN_DATA_DIR"
 PREFIX = "FINN_"
 OLD_PREFIX = "AGC_AGENT_"
 DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
-DEFAULT_MODEL = Server.DEFAULT_MODEL
+## The model of a session on an OpenAI API of a server whose own API has its own model (Anthropic).
+DEFAULT_MODEL = "default"
 ## The names `FINN_API` takes: OpenAI chat completions, the OpenAI Responses format, and Anthropic Messages.
 APIS = ["openai", "openai_responses", "anthropic"]
 ANT_MS = 15000
+
+## A model API a session can use: its provider, and the fields every request to it carries.
+struct ModelApi
+  provider: LLM.Provider
+  extra: Map[String, JSON.Value] = {}
+  ## The model of a session that picks this API without a model, when it is not the server's API; empty for the
+  ## server's model.
+  model: String = ""
+  ## Ask for the prompt cache (Anthropic).
+  cache: Bool = false
+  ## A local server whose `/props` may give the window (llama-server), and which may get `FINN_API_KEY` there.
+  local: Bool = true
+  ## A provider with a fresh token, after a 401 (the token of `ant`).
+  refresh: Optional[Fn[Result[LLM.Provider]]] = none
+end
+
+struct Options
+  state_dir: String
+  data_dir: String
+  ## The model APIs by name (`Config.apis`), and the one of a session that names none.
+  apis: Map[String, ModelApi]
+  api: String
+  model: String
+  env: Fn[String, Result[String]]
+  rules: Tools.Rules
+  ## The tools of the MCP servers, and those of the servers that list them after the start.
+  tools: List[Tools.Tool] = []
+  late_tools: Optional[Fn[List[Tools.Tool]]] = none
+  port: Int = 0
+  keep_events: Int = 1000
+  approval_timeout_ms: Int = 90000
+  ## The model's window in tokens; none asks the provider (`GET /models`).
+  context_window: Optional[Int] = none
+  ## The model that writes the summary of a compaction; empty is the session's model.
+  compact_model: String = ""
+  ## llama-server's `/props`, asked for the window before `GET /models`; empty for another API.
+  props_url: String = ""
+  ## The key `/props` takes, as the provider's.
+  api_key: String = ""
+  ## Runs in the task that loads a session, with its id, before the file is read: a seam for the tests.
+  before_load: Optional[Fn[String, Void]] = none
+  ## Runs in that task once what it read is on its way to the registry: a seam for the tests.
+  after_load: Optional[Fn[String, Void]] = none
+  ## Code mode: the model may also call the tools from a Python script (`run_script`).
+  code_mode: Optional[CodeMode.Settings] = none
+  ## The models.dev catalog (`main.agc` starts it from `models_url`), for the cost of the calls and the window.
+  catalog: Optional[Catalog.Catalog] = none
+  models_url: String = Catalog.URL
+  ## The provider of the model in the catalog; empty is `anthropic` for that API and `openai` for the others.
+  models_provider: String = ""
+  ## How long a turn waits for the messages queued for it (tests shorten it).
+  take_ms: Int = 5000
+  ## The home folder, whose skills every session has; empty for none.
+  home: String = ""
+  ## The folders whose sessions load the skills of their own folder: a project's skills are its instructions.
+  trusted: List[String] = []
+end
 
 ## Where the `anthropic` API is and how a request proves who sends it: an API key, else an OAuth token.
 struct AnthropicAccess
@@ -44,10 +102,10 @@ struct AnthropicAccess
   ant: Optional[Fn[Result[String]]] = none
 end
 
-def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options] = from_env_with(read, &ant_token)
+def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_with(read, &ant_token)
 
 ## `ant` gives the OAuth token of `ant auth login` when no variable has a credential and `FINN_API` is `anthropic`.
-def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> Result[Server.Options]
+def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> Result[Options]
   base_url = set(read, "FINN_BASE_URL").unwrap_or(DEFAULT_BASE_URL)
   api_key = set(read, "FINN_API_KEY").unwrap_or("")
   api = set(read, "FINN_API").unwrap_or(APIS[0])
@@ -60,7 +118,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   end
 
   ok(
-    Server.Options(
+    Options(
       state_dir: try state_dir(read),
       data_dir: try data_dir(read),
       apis: apis(base_url, api_key, LLM.Options(), access),
@@ -111,7 +169,7 @@ def apis(
   api_key: String,
   options: LLM.Options = LLM.Options(),
   anthropic: AnthropicAccess = AnthropicAccess(),
-) -> Map[String, Server.ModelApi]
+) -> Map[String, ModelApi]
   stateless = {"store": JSON.from(false), "include": JSON.from(["reasoning.encrypted_content"])}
   access = anthropic
   if access.inherit
@@ -126,15 +184,9 @@ def apis(
   end
 
   {
-    "openai": Server.ModelApi(provider: LLM.openai_chat(base_url, api_key, options)),
-    "openai_responses": Server.ModelApi(provider: LLM.openai_responses(base_url, api_key, options), extra: stateless),
-    "anthropic": Server.ModelApi(
-      provider: claude,
-      model: LLM.ANTHROPIC_MODEL,
-      cache: true,
-      local: false,
-      refresh: refresh,
-    ),
+    "openai": ModelApi(provider: LLM.openai_chat(base_url, api_key, options)),
+    "openai_responses": ModelApi(provider: LLM.openai_responses(base_url, api_key, options), extra: stateless),
+    "anthropic": ModelApi(provider: claude, model: LLM.ANTHROPIC_MODEL, cache: true, local: false, refresh: refresh),
   }
 end
 
