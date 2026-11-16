@@ -52,12 +52,29 @@ jobs:
           path: ~/.cache/agentica/pkg
           key: packages-${{ hashFiles('**/agentica.lock') }}
 
+      # The compile cache of each package (_build/, 75 MB for core) is named by the hash of the sources, so a stale file
+      # is never used; the last cache of the job and the Agentica version is the start of the next one.
+      - name: Cache the compiled packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            */_build
+            !*/_build/bin
+          key: build-${{ env.AGENTICA_VERSION }}-${{ matrix.name }}-${{ hashFiles('**/*.agc', '!**/deps/**', '!**/_build/**') }}
+          restore-keys: |
+            build-${{ env.AGENTICA_VERSION }}-${{ matrix.name }}-
+
       - run: agentica --version
 
       # make check uses rg for the coupling rules of the packages.
       - run: command -v rg || { sudo apt-get update && sudo apt-get install -y ripgrep; }
 
       - run: ${{ matrix.run }}
+
+      # The cache is saved after the last step: entries that are over a week old are dropped first, so it does not only
+      # grow (a file that is still used is compiled again and is new).
+      - name: Prune the compile caches
+        run: find . -path '*/_build/*' -not -path './*/deps/*' -type f -mtime +7 -delete
 
   # The llm tests against a real llama-server with Qwen2.5-0.5B on the runner's CPU. llama.cpp and the model are cached
   # by the hash of their fetch scripts, which check the sha256 of a download and skip one they already have.

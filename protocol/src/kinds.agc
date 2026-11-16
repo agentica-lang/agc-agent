@@ -33,6 +33,9 @@ KIND_APPROVAL_NOT_FOUND = "approval.not_found"
 ## turn stopped (`409`). The `approval_resolved` event tells who answered.
 KIND_APPROVAL_RESOLVED = "approval.resolved"
 
+## A shell command that a deny rule of the config refuses (`403`).
+KIND_SHELL_DENIED = "shell.denied"
+
 ## The kinds, for `Protocol.wire_shape`.
 def shape() -> List[String]
   [
@@ -47,5 +50,6 @@ def shape() -> List[String]
     KIND_SESSION_UNAVAILABLE,
     KIND_APPROVAL_NOT_FOUND,
     KIND_APPROVAL_RESOLVED,
+    KIND_SHELL_DENIED,
   ]
 end

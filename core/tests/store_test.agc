@@ -109,7 +109,33 @@ def test_a_branch_replays_its_own_records() -> Result[Void]
   result
 end
 
+# A tree read while the last line has no newline yet leaves it out; the read after it is written whole has it, as a
+# whole read does. A node keeps the first line of its answer.
+def test_a_tree_read_leaves_a_line_still_being_written() -> Result[Void]
+  dir = try temp_dir()
+  result = partial_line(dir)
+  _ = Path.remove(dir)
+  result
+end
+
 private
+
+def partial_line(dir: String) -> Result[Void]
+  path = "#{dir}/s1-0123.jsonl"
+  try File.write_text(path, try File.read_text(LINEAR))
+  known = try Store.entries(path)
+  try File.append_text(path, "{\"type\":\"user\",\"te")
+  partial = try Store.entries(path, some(known))
+  try Test.eq([partial.lines, partial.size], [known.lines, known.size])
+  try Test.eq(Store.tree(partial), Store.tree(known))
+  try File.append_text(path, "xt\":\"Late.\"}\n")
+  try Store.append_answer(path, "first line\nsecond line")
+  whole = try Store.entries(path, some(partial))
+  nodes = Store.tree(whole).nodes
+  try Test.eq(nodes.map { |n| n.text }, ["Hi", "Again.", "Late."])
+  try Test.eq(nodes.last.answer, "first line")
+  Test.eq(Store.tree(whole), Store.tree(try Store.entries(path)))
+end
 
 def branches(dir: String) -> Result[Void]
   path = "#{dir}/s1-0123.jsonl"

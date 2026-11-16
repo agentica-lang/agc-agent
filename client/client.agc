@@ -25,6 +25,7 @@ export Http.compact
 export Http.tree
 export Http.branch
 export Http.fork
+export Http.shell
 export Http.open_events
 
 export Discovery.Launch
@@ -43,6 +44,7 @@ export Commands.Command
 export Commands.HELP
 export Commands.KIND_COMMAND
 export Commands.parse_command
+export Commands.parse_shell
 export Commands.printable
 export Commands.listing
 export Commands.pick

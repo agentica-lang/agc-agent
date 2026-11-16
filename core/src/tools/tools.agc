@@ -29,6 +29,7 @@ export Spec.output
 export Spec.Verdict
 
 PATCH = Patch.NAME
+BASH = "bash"
 
 ## The context of a session in `cwd`: the real path of the folder, where bash reads its few environment variables, and
 ## the tools `more` after the base ones.
@@ -94,7 +95,7 @@ def all() -> List[Spec.Tool]
       target: &Search.grep_target,
     ),
     Spec.Tool(
-      name: "bash",
+      name: BASH,
       description: "Run a command with bash in the session folder. It has no input. `timeout_ms` is at most 600000.",
       input_schema: JSON.schema(Shell.BashArgs),
       asks: true,

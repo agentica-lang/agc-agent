@@ -26,6 +26,8 @@ def branch_path(session_id: String) -> String = "#{session_path(session_id)}/bra
 
 def fork_path(session_id: String) -> String = "#{session_path(session_id)}/fork"
 
+def shell_path(session_id: String) -> String = "#{session_path(session_id)}/shell"
+
 ## The paths and the header, for `Protocol.wire_shape`.
 def shape() -> List[String]
   [
@@ -40,5 +42,6 @@ def shape() -> List[String]
     tree_path("ID"),
     branch_path("ID"),
     fork_path("ID"),
+    shell_path("ID"),
   ]
 end

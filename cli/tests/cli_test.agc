@@ -207,6 +207,34 @@ def stopped(rig: Driver.Rig) -> Result[Void]
   Test.eq(done.code, 0)
 end
 
+# `!cmd` and `!!cmd` go to the shell route: the output is printed, and a refusal is shown.
+def test_a_bang_line_runs_a_shell_command() -> Result[Void]
+  busy = Protocol.Failure(kind: Protocol.KIND_SESSION_BUSY, message: "a turn is running")
+  replies = [
+    Fake.Reply(status: 202, body: "{\"shell_id\": \"sh1\"}", push: ["shell.sse"]),
+    Fake.Reply(status: 409, body: Protocol.encode_failure(busy)),
+  ]
+
+  running = Fake.Route(method: "POST", path: Protocol.shell_path("s1"), replies: replies)
+  Driver.within([Routes.created(), Routes.held_events(), running]) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN)
+    try Driver.say(cli, "!echo one")
+    shown = try Driver.read_until(cli, "[shell ok] (5 ms)")
+    try Test.eq(shown.drop(shown.size - 3), ["[shell] echo one", "one", "[shell ok] (5 ms)"])
+    try Driver.say(cli, "!! ls")
+    try Driver.read_until(cli, "[not run] a turn is running")
+    _ = try Driver.finish(cli)
+    sent = [try Fake.request(rig.fake, "POST", Protocol.shell_path("s1"))]
+    sent = sent.push(try Fake.request(rig.fake, "POST", Protocol.shell_path("s1")))
+    expected = [
+      Protocol.RunShell(command: "echo one", context: true),
+      Protocol.RunShell(command: "ls", context: false),
+    ]
+
+    Test.eq(sent.map { |seen| Protocol.decode_run_shell(seen.body) }, expected.map { |r| ok(r) })
+  end
+end
+
 # A line typed while a turn runs is sent, and shown as queued.
 def test_a_line_sent_during_a_turn_is_queued() -> Result[Void]
   replies = [

@@ -18,6 +18,8 @@ struct Panel
   focused: Bool = false
   ## When the asked approval last changed, in monotonic ms.
   shown_at: Int = 0
+  ## How long after a change no key answers.
+  guard_ms: Int = GUARD_MS
   ## The approval whose answer is being sent.
   answering: Optional[String] = none
 end
@@ -51,7 +53,7 @@ end
 ## The answer a key gives, none when the key does not answer now. `shown` says whether the panel has rows on the
 ## screen.
 def decision(panel: Panel, event: TUI.Event, now: Int, shown: Bool) -> Optional[Protocol.Decision]
-  return none if not shown or panel.pending.empty? or panel.answering.some? or now - panel.shown_at < GUARD_MS
+  return none if not shown or panel.pending.empty? or panel.answering.some? or now - panel.shown_at < panel.guard_ms
 
   case event
     TUI.Event.Key(TUI.Key.Ctrl(c), _) -> shortcut(c)

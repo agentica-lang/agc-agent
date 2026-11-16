@@ -80,7 +80,8 @@ end
 
 ## A user message of `SessionTree`. `id` is its entry: a branch from it goes back before the message. `last` is the
 ## entry that ends its turn: a branch from there goes on after the turn. `parent` is the message before it on its
-## branch, none for a first one; `active` marks the messages of the branch the session is on.
+## branch, none for a first one; `active` marks the messages of the branch the session is on. `answer` is the start of
+## the turn's answer, its first line cut to 200 characters.
 struct TreeNode
   id: Int
   parent: Optional[Int] = none
@@ -100,6 +101,11 @@ end
 struct Branched
   id: String
   text: String = ""
+end
+
+## The `202` answer of `POST /v1/sessions/ID/shell`: the id of its `shell_started` and `shell_finished`.
+struct ShellAccepted
+  shell_id: String
 end
 
 ## `server.json` in the state folder, which only its user can read: where the server listens and its Bearer token.
@@ -148,6 +154,10 @@ def decode_session_tree(text: String) -> Result[SessionTree] = Wire.decode(text,
 def encode_branched(reply: Branched) -> String = JSON.encode(reply)
 
 def decode_branched(text: String) -> Result[Branched] = Wire.decode(text, Branched.codec)
+
+def encode_shell_accepted(reply: ShellAccepted) -> String = JSON.encode(reply)
+
+def decode_shell_accepted(text: String) -> Result[ShellAccepted] = Wire.decode(text, ShellAccepted.codec)
 
 ## It trusts its input: it does not check what `decode_session` checks about `turn_id`, `turn_from_event_id` and
 ## `last_event_id`, so the server must build a consistent `Session`.
@@ -211,6 +221,7 @@ def shape() -> List[String]
     Wire.record("TreeNode", TreeNode.members),
     Wire.record("SessionTree", SessionTree.members),
     Wire.record("Branched", Branched.members),
+    Wire.record("ShellAccepted", ShellAccepted.members),
     Wire.record("MessageWire", MessageWire.members),
     Wire.record("SessionWire", SessionWire.members),
   ]
