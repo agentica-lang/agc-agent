@@ -177,6 +177,27 @@ def test_the_compact_model_is_for_the_server_api_only() -> Result[Void]
   end
 end
 
+# After a move from Anthropic to a provider of the Responses API, no thinking block of Anthropic is sent.
+def test_a_move_from_anthropic_leaves_the_thinking_behind() -> Result[Void]
+  replies = ["thinking_tool_use.sse", "text.sse", "openai_responses/text.sse"]
+  H.using(H.Setup(api: "anthropic", replies: replies, providers: ["other:openai_responses"])) do |h|
+    try File.write_text("#{h.work}/README.md", "# Readme\n")
+    id = try H.new_session(h)
+    _ = try H.send(h, id, "Read the README.")
+    _ = try H.idle(h, id)
+    change = Protocol.encode_update_session(Protocol.UpdateSession(provider: some("other"), model: some("m1")))
+    try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), change, H.auth(h))).status, 200)
+    _ = try H.send(h, id, "Thanks.")
+    _ = try H.idle(h, id)
+    _ = try H.next_request(h)
+    _ = try H.next_request(h)
+    third = try H.next_request(h)
+    try Test.eq(third.path, "/other/responses")
+    input = try JSON.list(try JSON.get(try JSON.parse(third.body), "input"))
+    Test.eq(input.map { |i| text(i, "type") }.uniq.sort, ["function_call", "function_call_output", "message"])
+  end
+end
+
 def messages_of(h: H.Harness) -> Result[List[JSON.Value]]
   JSON.list(try JSON.get(try JSON.parse((try H.next_request(h)).body), "messages"))
 end

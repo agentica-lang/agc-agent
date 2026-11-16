@@ -88,7 +88,13 @@ end
 
 def test_requests_round_trip() -> Result[Void]
   new_session = try decode_fixture("new_session", &Protocol.decode_new_session, &Protocol.encode_new_session)
-  expected = Protocol.NewSession(cwd: "/home/ana/project", model: some("qwen2.5-0.5b"), api: some("openai_responses"))
+  expected = Protocol.NewSession(
+    cwd: "/home/ana/project",
+    model: some("qwen2.5-0.5b"),
+    api: some("openai_responses"),
+    provider: some("fireworks"),
+  )
+
   try Test.eq(new_session, expected)
   try Test.eq(Protocol.decode_new_session(Protocol.encode_new_session(new_session)), ok(new_session))
 
@@ -139,6 +145,8 @@ def test_replies_round_trip() -> Result[Void]
   list = try decode_fixture("session_list", &Protocol.decode_session_list, &Protocol.encode_session_list)
   try Test.eq(list.sessions.size, 1)
   try Test.eq(Protocol.decode_session_list(Protocol.encode_session_list(list)), ok(list))
+  providers = try decode_fixture("provider_list", &Protocol.decode_provider_list, &Protocol.encode_provider_list)
+  try Test.eq(providers.providers.map { |p| p.name }, ["local", "fireworks"])
 
   failure = try decode_fixture("failure", &Protocol.decode_failure, &Protocol.encode_failure)
   try Test.eq(failure.kind, Protocol.KIND_APPROVAL_RESOLVED)
@@ -318,7 +326,7 @@ def test_a_shell_command_round_trips() -> Result[Void]
 end
 
 def test_session_settings_round_trip_and_refuse_unknown_levels() -> Result[Void]
-  both = Protocol.UpdateSession(model: some("qwen3"), effort: some("high"))
+  both = Protocol.UpdateSession(provider: some("fireworks"), model: some("qwen3"), effort: some("high"))
   try Test.eq(Protocol.decode_update_session(Protocol.encode_update_session(both)), ok(both))
   try Test.eq(Protocol.decode_update_session("{\"effort\": \"low\"}"), ok(Protocol.UpdateSession(effort: some("low"))))
   try Test.eq(Protocol.decode_update_session("{}"), ok(Protocol.UpdateSession()))

@@ -414,8 +414,8 @@ def test_the_server_keeps_its_state_folder_private_and_runs_once() -> Result[Voi
       Config.Options(
         state_dir: h.state_dir,
         data_dir: h.data_dir,
-        apis: h.apis,
-        api: "openai",
+        providers: h.providers,
+        provider: h.provider,
         model: "m",
         env: &H.fake_env,
       ),
@@ -429,8 +429,8 @@ def test_the_server_keeps_its_state_folder_private_and_runs_once() -> Result[Voi
     options = Config.Options(
       state_dir: "#{h.base}/other-state",
       data_dir: open_data,
-      apis: h.apis,
-      api: "openai",
+      providers: h.providers,
+      provider: h.provider,
       model: "m",
       env: &H.fake_env,
     )
@@ -450,8 +450,8 @@ def foreign_owner(h: H.Harness) -> Result[Void]
   options = Config.Options(
     state_dir: "/root",
     data_dir: "#{h.base}/data",
-    apis: h.apis,
-    api: "openai",
+    providers: h.providers,
+    provider: h.provider,
     model: "m",
     env: &H.fake_env,
   )

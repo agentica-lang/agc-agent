@@ -87,6 +87,10 @@ def list_sessions(server: Server) -> Result[Protocol.SessionList]
   Protocol.decode_session_list(try call(server, "GET", Protocol.SESSIONS_PATH, ""))
 end
 
+def list_providers(server: Server) -> Result[Protocol.ProviderList]
+  Protocol.decode_provider_list(try call(server, "GET", Protocol.PROVIDERS_PATH, ""))
+end
+
 def update_session(server: Server, id: String, change: Protocol.UpdateSession) -> Result[Void]
   _ = try call(server, "PATCH", Protocol.session_path(id), Protocol.encode_update_session(change))
   ok()

@@ -37,8 +37,8 @@ def session(base: String, access: Config.AnthropicAccess) -> Result[Void]
   options = Config.Options(
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
-    apis: {"anthropic": claude},
-    api: "anthropic",
+    providers: {"anthropic": Config.Provider(apis: {"anthropic": claude}, api: "anthropic")},
+    provider: "anthropic",
     model: LLM.ANTHROPIC_CHEAP_MODEL,
     env: ->(_name: String) { error("not set") },
     context_window: some(1_000_000),
@@ -55,7 +55,8 @@ def session(base: String, access: Config.AnthropicAccess) -> Result[Void]
     data_dir: options.data_dir,
     url: "http://127.0.0.1:#{server.port}",
     token: server.token,
-    apis: options.apis,
+    providers: options.providers,
+    provider: options.provider,
   )
 
   result = turns(h)

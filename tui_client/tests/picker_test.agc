@@ -37,6 +37,22 @@ def test_rows_keep_the_selected_session_in_sight() -> Result[Void]
   )
 end
 
+# The model picker lists every provider/model pair, starts on the one in use and gives the pair picked.
+def test_the_model_picker_offers_each_provider_and_model() -> Result[Void]
+  list = Protocol.ProviderList(
+    provider: "local",
+    providers: [
+      Protocol.ProviderInfo(name: "fireworks", api: "openai", models: ["a", "b"]),
+      Protocol.ProviderInfo(name: "local", api: "openai", models: ["q"]),
+    ],
+  )
+
+  picker = Picker.models(list, "fireworks/b")
+  try Test.eq(Picker.shown(picker).map { |c| c.key }, ["fireworks/a", "fireworks/b", "local/q"])
+  try Test.eq(Picker.key(picker, key(TUI.Key.Enter)), Picker.Step.Pick("fireworks/b"))
+  Test.eq(Picker.rows(picker, 80, 6, 0).map { |row| row.text }.first, "pick a model (3 of 3)")
+end
+
 private
 
 def summary(id: String, title: String) -> Protocol.SessionSummary

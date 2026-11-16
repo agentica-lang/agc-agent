@@ -34,6 +34,21 @@ MAX_QUEUED_BYTES = 1_048_576
 LIVE_ROOM = 1024
 RESERVE = 1000
 
+## What a session takes from its provider and model API, by their names; `model` is the provider's default.
+struct Endpoint
+  name: String
+  api: String
+  model: String
+  provider: LLM.Provider
+  extra: Map[String, JSON.Value] = {}
+  cache: Bool = false
+  refresh: Optional[Fn[Result[LLM.Provider]]] = none
+  props_url: String = ""
+  api_key: String = ""
+  compact_model: String = ""
+  catalog_provider: String = ""
+end
+
 struct Setup
   id: String
   cwd: String
@@ -64,6 +79,14 @@ struct Setup
   skills: List[Skills.Skill] = []
   ## The thinking level of the calls; none leaves it to the model.
   effort: Optional[String] = none
+  ## The provider and model API by name, and the endpoint of a provider (with the API now) for a `PATCH`.
+  provider_name: String = ""
+  api: String = ""
+  endpoint: Optional[Fn[String, String, Result[Endpoint]]] = none
+  ## The provider of the thinking saved before providers, which names none: the session's first, as `provider/api`.
+  origin: String = ""
+  ## Why a turn cannot start (the provider is not offered now); empty when it can.
+  refused: String = ""
   ## The approval extension, with what the session's answers and mode allowed so far; none runs every call.
   approvals: Optional[Extension.Approvals] = none
 end
@@ -243,6 +266,24 @@ def update(address: Address[Msg], change: Protocol.UpdateSession) -> Result[Void
   updated: Result[Result[Void]] = Actor.call(address, CALL_MS) do |reply| Msg.Update(change, reply) end
   try try updated
   ok()
+end
+
+## `setup` on `endpoint`, with its default model.
+def switched(setup: Setup, endpoint: Endpoint) -> Setup
+  setup.with(
+    provider_name: endpoint.name,
+    refused: "",
+    api: endpoint.api,
+    model: endpoint.model,
+    provider: endpoint.provider,
+    extra: endpoint.extra,
+    cache: endpoint.cache,
+    refresh: endpoint.refresh,
+    props_url: endpoint.props_url,
+    api_key: endpoint.api_key,
+    compact_model: endpoint.compact_model,
+    catalog_provider: endpoint.catalog_provider,
+  )
 end
 
 ## Folds the history into a summary now, as a turn past the limit would; false when there is nothing to fold.
@@ -430,6 +471,8 @@ def session(state: State) -> Protocol.Session
     accept_edits: state.setup.approvals.map { |a| Extension.accept_edits?(a) }.unwrap_or(false),
     cost: state.cost,
     effort: state.setup.effort,
+    provider: state.setup.provider_name,
+    api: state.setup.api,
   )
 end
 
@@ -610,6 +653,11 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     return state
   end
 
+  if not state.setup.refused.empty?
+    Actor.reply(reply, error(state.setup.refused, kind: Protocol.KIND_SESSION_UNAVAILABLE))
+    return state
+  end
+
   for running in option_list(state.turn)
     if state.queued.size >= MAX_QUEUED or (state.queued + [typed]).join("\n\n").bytesize > MAX_QUEUED_BYTES
       message = "a turn is running and its queue is full (#{MAX_QUEUED} messages, #{MAX_QUEUED_BYTES} bytes)"
@@ -665,6 +713,8 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     cache: setup.cache,
     refresh: setup.refresh,
     stripped: state.stripped,
+    source: "#{setup.provider_name}/#{setup.api}",
+    origin: setup.origin,
     compaction: Compaction.Settings(
       window: state.window,
       model: compact_model(setup),
@@ -928,7 +978,17 @@ def busy_reason(state: State) -> String
 end
 
 def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Result[Void]]) -> State
-  setup = state.setup.with(model: change.model.unwrap_or(state.setup.model))
+  setup = state.setup
+  for name in option_list(change.provider)
+    case resolve_endpoint(setup, name)
+      ok(endpoint) -> setup = switched(setup, endpoint)
+      error(e) ->
+        Actor.reply(reply, error(e.message, kind: Protocol.KIND_INVALID))
+        return state
+    end
+  end
+
+  setup = setup.with(model: change.model.unwrap_or(setup.model))
   for on in option_list(change.accept_edits)
     setup = setup.with(approvals: setup.approvals.map { |a| Extension.with_accept_edits(a, on) })
   end
@@ -939,7 +999,7 @@ def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Re
     none -> nil
   end
 
-  case save(state, -> { Store.append_settings(state.setup.file, setup.model, setup.effort) })
+  case save(state, -> { Store.append_settings(state.setup.file, choice(setup)) })
     ok(_) ->
       Actor.reply(reply, ok())
       state.with(setup: setup, broken: none)
@@ -950,6 +1010,17 @@ def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Re
       )
 
       state.with(broken: some(e.message))
+  end
+end
+
+def choice(setup: Setup) -> Store.Choice
+  Store.Choice(model: setup.model, effort: setup.effort, provider: setup.provider_name, api: setup.api)
+end
+
+def resolve_endpoint(setup: Setup, name: String) -> Result[Endpoint]
+  case setup.endpoint
+    some(endpoint) -> endpoint.call(name, setup.api)
+    none -> error("this session cannot change its provider")
   end
 end
 
@@ -1132,7 +1203,7 @@ def copied(state: State, entry: Optional[Int], to: Copying) -> Result[Copied]
 
   point = try Store.point(try Store.entries(state.setup.file, state.entries), entry)
   file = try Store.copy(state.setup.file, to.dir, to.header, point.leaf)
-  settings = Store.append_settings(file, state.setup.model, state.setup.effort)
+  settings = Store.append_settings(file, choice(state.setup))
   if not settings.ok?
     _ = Path.remove(file)
   end

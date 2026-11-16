@@ -119,6 +119,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.post(Protocol.SERVER_STOP_PATH, ->(conn) { reply(conn, 200, stop_route(control, conn)) })
     |> Bond.post(all, ->(conn) { reply(conn, 201, create(sessions, conn)) })
     |> Bond.get(all, ->(conn) { reply(conn, 200, list(sessions)) })
+    |> Bond.get(Protocol.PROVIDERS_PATH, ->(conn) { reply(conn, 200, providers(sessions)) })
     |> Bond.get(one, ->(conn) { reply(conn, 200, snapshot(sessions, conn)) })
     |> Bond.patch(one, ->(conn) { reply(conn, 200, update(sessions, conn)) })
     |> Bond.delete(one, ->(conn) { reply(conn, 200, delete(sessions, conn)) })
@@ -341,6 +342,10 @@ end
 def stop_turn(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   _ = try Sessions.stop_turn(sessions, try Bond.param(conn, "id"))
   ok("{}")
+end
+
+def providers(sessions: Sessions.Sessions) -> Result[String]
+  ok(Protocol.encode_provider_list(Sessions.providers(sessions)))
 end
 
 def approve(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]

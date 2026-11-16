@@ -25,13 +25,15 @@ usage: finn [chat] [options]      talk to the agent in this folder (starts the s
                                   (stop waits for the running turns, --now cancels them; finn server --help)
        finn --version | --help
 
-chat options: --api NAME, --model NAME (of a new session), --session ID, --thinking, --yolo (allow every call), ...
+chat options: --provider NAME, --api NAME, --model NAME (of a new session), --session ID, --thinking, --yolo, ...
   (finn chat --help lists them all)
 in chat and tui: /new, /resume, /model, /thinking, /compact, /stop, /help, /quit
 one-shot: approvals are denied unless --yolo; exit 0 when the turn ends normally (also after a denied call),
   130 when it is cancelled, 1 otherwise (a failed or busy send, an empty task); the server keeps running after it
 serve options (each overrides its environment variable):
   --api NAME       model API: openai (chat completions) or openai_responses (default: FINN_API, else openai)
+  --provider NAME  provider of new sessions: local, anthropic, a preset with its key set, or one of the config file
+                   (default: FINN_PROVIDER)
   --model NAME     default model of new sessions (default: FINN_MODEL)
   --base-url URL   where the model API is (default: FINN_BASE_URL, else http://127.0.0.1:8080/v1)
   (finn serve --help tells the rest: folders, keys, compaction)
@@ -47,6 +49,8 @@ serve() {
   while [ $# -gt 0 ]; do
     case $1 in
       --api) value "$@"; export FINN_API="$2"; shift 2 ;;
+      --provider) value "$@"; export FINN_PROVIDER="$2"; shift 2 ;;
+      --provider=*) export FINN_PROVIDER="${1#*=}"; shift ;;
       --model) value "$@"; export FINN_MODEL="$2"; shift 2 ;;
       --base-url) value "$@"; export FINN_BASE_URL="$2"; shift 2 ;;
       --api=*) export FINN_API="${1#*=}"; shift ;;
