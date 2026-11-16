@@ -6,7 +6,7 @@ import TUI from "pkg/tui/tui"
 import Layout from "panel"
 import Width from "width"
 
-KEYS = "↑↓ move · Enter resume · Esc close · type to filter"
+KEYS = ["↑↓ move", "Enter resume", "Esc close", "type to filter"]
 
 struct Picker
   sessions: List[Protocol.SessionSummary]
@@ -55,7 +55,7 @@ def rows(picker: Picker, width: Int, room: Int, now_s: Int) -> List[Layout.Row]
     window(found, picker.selected, left).map { |i| row(found[i], i == picker.selected, width, now_s) }
   }
 
-  Layout.fit(head, KEYS, body, width, room)
+  Layout.fit(head, KEYS.map { |label| Layout.Key(label: label) }, body, width, room)
 end
 
 ## How long ago `then_s` was, in the largest unit: "now", "5m", "3h", "2d".
