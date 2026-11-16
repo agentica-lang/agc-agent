@@ -33,7 +33,7 @@ def read_file(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   limit = args.limit.unwrap_or(DEFAULT_LINES)
   return error("offset and limit must not be negative") if offset < 0 or limit < 0
 
-  path = try Sandbox.resolve(ctx.root, args.path)
+  path = try readable(ctx, args.path)
   info = try File.stat(path)
   return error("not a file: #{args.path}") if info.kind != "file"
 
@@ -74,7 +74,23 @@ end
 ## The path of each call, relative to the session folder, for the approval rules and the preview.
 def read_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, ReadFileArgs.codec)
-  relative_path(ctx, args.path)
+  path = try readable(ctx, args.path)
+  return ok(path) if not Sandbox.inside?(ctx.root, path)
+
+  ok(Sandbox.relative(ctx.root, path))
+end
+
+## The path `read_file` reads: in the session folder, or in a folder of `read_roots` when it is absolute.
+def readable(ctx: Spec.Context, path: String) -> Result[String]
+  inside = Sandbox.resolve(ctx.root, path)
+  return inside if inside.ok? or not path.start_with?("/")
+
+  for root in ctx.read_roots
+    found = Sandbox.resolve(root, path)
+    return found if found.ok?
+  end
+
+  inside
 end
 
 def write_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]

@@ -15,12 +15,13 @@ DENIED_BY_RULE = "denied by a rule of the config"
 DENIED_BY_USER = "the user denied this call"
 
 ## How a turn reaches its session. `approve` waits for the answer; `commit` gets the history after each finished
-## round, so a stopped turn keeps no unfinished tool call. `compacted` gets a compaction of the history it committed,
+## round, so a stopped turn keeps no unfinished tool call, with the marks the round's tools of extensions made.
+## `compacted` gets a compaction of the history it committed,
 ## and `window` the model's window once the turn asked the provider for it (-1 when it does not say).
 struct Link
   emit: Fn[Protocol.Event, Void]
   approve: Fn[Ask, Protocol.Decision]
-  commit: Fn[List[LLM.Message], Void]
+  commit: Fn[List[LLM.Message], List[String], Void]
   compacted: Fn[Compaction.Compaction, Void]
   window: Fn[Int, Void]
 end
@@ -53,6 +54,18 @@ struct Turn
   code_mode: Optional[CodeMode.Settings] = none
   ## The thinking level of the calls; none leaves it to the model.
   effort: Optional[String] = none
+  ## The tools of extensions, after the base tools.
+  turn_tools: List[Tools.TurnTool] = []
+  ## The names the session's extensions noted so far (the skills it loaded).
+  marks: List[String] = []
+  ## What a compaction puts after its summary, from the marks and the messages it keeps.
+  on_fold: Optional[Fn[List[String], List[LLM.Message], String]] = none
+end
+
+# A tool call's result block and the mark its tool made.
+struct Ran
+  block: LLM.Block
+  mark: Optional[String]
 end
 
 struct Outcome
@@ -63,8 +76,9 @@ end
 def run(given: Turn) -> Outcome
   turn = given.with(compaction: given.compaction.with(window: known_window(given)))
   messages = turn.history.push(LLM.Message(role: LLM.Role.User, content: [text_block(turn.text)]))
-  turn.link.commit.call(messages)
-  folded = compacted(turn, turn.last_context, Folded(messages: messages, on: true))
+  turn.link.commit.call(messages, [])
+  marks = turn.marks
+  folded = compacted(turn, turn.last_context, Folded(messages: messages, on: true), marks)
   messages = folded.messages
   last_round = ""
   same = 0
@@ -80,16 +94,24 @@ def run(given: Turn) -> Outcome
 
     if response.stop_reason != LLM.StopReason.ToolUse
       messages = messages.push(without_calls(response.message))
-      turn.link.commit.call(messages)
+      turn.link.commit.call(messages, [])
       return Outcome(history: messages, reason: stop_reason(response.stop_reason))
     end
 
     calls = tool_calls(response.message)
-    results = calls.map { |call| run_call(turn, call) }
+    results: List[LLM.Block] = []
+    made: List[String] = []
+    for call in calls
+      ran = run_call(turn, call, marks + made)
+      results = results.push(ran.block)
+      made = made + option_list(ran.mark)
+    end
+
+    marks = marks + made
     messages = messages + [response.message, LLM.Message(role: LLM.Role.User, content: results)]
-    turn.link.commit.call(messages)
+    turn.link.commit.call(messages, made)
     context = response.usage.input + response.usage.cache_read + response.usage.cache_write
-    folded = compacted(turn, context, folded.with(messages: messages))
+    folded = compacted(turn, context, folded.with(messages: messages), marks)
     messages = folded.messages
     this_round = JSON.encode(JSON.from([calls.map { |c| "#{c.name} #{c.arguments}" }, results.map { |r| text_of(r) }]))
     same = same_count(this_round, last_round, same)
@@ -141,7 +163,7 @@ end
 # Past the part of the window the settings give, the history from the first task to the running turn becomes a
 # summary. A summary that fails is an `error` event, and the turn tries no more; so is a fold after which the next call
 # is still past the limit, so that every round does not fold again.
-def compacted(turn: Turn, context: Int, folded: Folded) -> Folded
+def compacted(turn: Turn, context: Int, folded: Folded, marks: List[String]) -> Folded
   return folded if not folded.on
 
   due = Compaction.due?(turn.compaction, context)
@@ -155,7 +177,13 @@ def compacted(turn: Turn, context: Int, folded: Folded) -> Folded
 
   for span in option_list(Compaction.span(folded.messages))
     case Compaction.summarize(turn.provider, turn.compaction, folded.messages, span)
-      ok(compaction) ->
+      ok(summary) ->
+        compaction = summary
+        for on_fold in option_list(turn.on_fold)
+          extra = on_fold.call(marks, Compaction.staying(folded.messages, summary))
+          compaction = summary.with(summary: "#{summary.summary}#{extra}")
+        end
+
         turn.link.compacted.call(compaction)
         return folded.with(messages: Compaction.apply(folded.messages, compaction), just: true)
       error(e) ->
@@ -216,16 +244,27 @@ end
 
 def offered(turn: Turn) -> List[Tools.Tool]
   base = Tools.offered(turn.ctx)
+  extras = turn.turn_tools.map { |t| t.tool }
   for _settings in option_list(turn.code_mode)
-    return base.push(CodeMode.spec(base))
+    return base.push(CodeMode.spec(base)) + extras
   end
 
-  base
+  base + extras
 end
 
-def run_call(turn: Turn, call: LLM.ToolCall) -> LLM.Block
-  output = noticed_run(turn, with_input(call))
-  LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: output.text, is_error: output.is_error))
+def turn_tool(turn: Turn, name: String) -> Optional[Tools.TurnTool]
+  case (turn.turn_tools.find { |t| t.tool.name == name })
+    ok(found) -> some(found)
+    error(_) -> none
+  end
+end
+
+# `marks` are the session's so far, which a tool of an extension reads.
+def run_call(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Ran
+  ran = noticed_run(turn, with_input(call), marks)
+  output = ran.output
+  block = LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: output.text, is_error: output.is_error))
+  Ran(block: block, mark: ran.mark)
 end
 
 # A custom tool's call has its text as `input`, the field its tool reads.
@@ -236,14 +275,15 @@ def with_input(call: LLM.ToolCall) -> LLM.ToolCall
 end
 
 # Runs the call between its `tool_started` and `tool_finished` events.
-def noticed_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
+def noticed_run(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Tools.TurnOutput
   summary = target(turn, call).unwrap_or(call.name)
   turn.link.emit.call(
     Protocol.Event.ToolStarted(Protocol.ToolStarted(call_id: call.id, name: call.name, summary: summary)),
   )
 
   started = Time.monotonic_ms
-  output = checked_run(turn, call)
+  ran = checked_run(turn, call, marks)
+  output = ran.output
   finished = Protocol.ToolFinished(
     call_id: call.id,
     ok: not output.is_error,
@@ -252,20 +292,31 @@ def noticed_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
   )
 
   turn.link.emit.call(Protocol.Event.ToolFinished(finished))
-  output
+  ran
 end
 
 def target(turn: Turn, call: LLM.ToolCall) -> Result[String]
   return CodeMode.target(turn.ctx, call.input) if call.name == CodeMode.NAME and turn.code_mode.some?
+  for extra in option_list(turn_tool(turn, call.name))
+    return extra.tool.target.call(turn.ctx, call.input)
+  end
 
   Tools.target(turn.ctx, call.name, call.input)
 end
 
-def checked_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
+def checked_run(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Tools.TurnOutput
   for problem in option_list(call.input_error)
-    return Tools.Output(text: problem, is_error: true)
+    return Tools.TurnOutput(output: Tools.Output(text: problem, is_error: true))
   end
 
+  for extra in option_list(turn_tool(turn, call.name))
+    return extra.run.call(call.input, marks)
+  end
+
+  Tools.TurnOutput(output: base_run(turn, call))
+end
+
+def base_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
   if call.name == Tools.PATCH and (turn.provider.name != RESPONSES or call.kind != LLM.ToolKind.Custom)
     return Tools.Output(text: "unknown tool: #{call.name}", is_error: true)
   end
@@ -283,7 +334,7 @@ def checked_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
   end
 
   case Tools.target(turn.ctx, call.name, call.input)
-    ok(target) -> approved_run(turn, call, target)
+    ok(found) -> approved_run(turn, call, found)
     error(e) -> Tools.Output(text: e.message, is_error: true)
   end
 end
@@ -305,7 +356,7 @@ end
 def nested(turn: Turn, script: LLM.ToolCall, name: String, input: JSON.Value) -> CodeMode.Reply
   id = "#{script.id}.#{Random.int(0, 999_999_999)}"
   call = LLM.ToolCall(id: id, name: name, arguments: JSON.encode(input), input: input)
-  output = noticed_run(turn, call)
+  output = noticed_run(turn, call, []).output
   return CodeMode.Reply.Done(output.text) if not output.is_error
   return CodeMode.Reply.Denied(output.text) if [DENIED_BY_RULE, DENIED_BY_USER].include?(output.text)
 

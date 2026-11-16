@@ -10,6 +10,8 @@ struct Context
   rules: Approval.Rules
   ## The tools after the base ones (MCP).
   tools: List[Tool] = []
+  ## Folders outside `root` that `read_file` reads too: those of the session's skills.
+  read_roots: List[String] = []
 end
 
 struct Output
@@ -24,6 +26,18 @@ struct Tool
   asks: Bool
   run: Fn[Context, JSON.Value, Result[String]]
   target: Fn[Context, JSON.Value, Result[String]]
+end
+
+## A tool of an extension (skills now): the agent runs it with the session's marks, the names the extension noted so
+## far, and keeps the mark it answers with.
+struct TurnTool
+  tool: Tool
+  run: Fn[JSON.Value, List[String], TurnOutput]
+end
+
+struct TurnOutput
+  output: Output
+  mark: Optional[String] = none
 end
 
 ## The input of a call as the record `codec` reads. It is strict: a key the record has not is an error, and so is a
