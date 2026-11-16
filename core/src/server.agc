@@ -58,6 +58,8 @@ struct Options
   props_url: String = ""
   ## The key `/props` takes, as the provider's.
   api_key: String = ""
+  ## Runs in the task that loads a session, with its id, before the file is read: a seam for the tests.
+  before_load: Optional[Fn[String, Void]] = none
 end
 
 struct Server
@@ -348,13 +350,17 @@ def load(job: Load) -> Void
   loaded = Msg.Load(job.entry.summary.id, Task.await(reading))
   while true
     case Actor.cast(job.registry, loaded, CALL_MS)
-      error(e) if e.message.include?("timeout") -> next
+      error(e) if e.kind == "channel.timeout" -> next
       _ -> break
     end
   end
 end
 
 def read(options: Options, listed: Entry) -> Result[Loaded]
+  for hook in option_list(options.before_load)
+    hook.call(listed.summary.id)
+  end
+
   info = try File.lstat(listed.file)
   return error("not a regular file") if info.kind != "file"
 
@@ -381,10 +387,9 @@ def registered(registry: Registry, id: String, read: Result[Loaded]) -> Registry
 
       registry.with(sessions: registry.sessions.map { |e| replaced(e, entry) })
     error(e) ->
-      message = "session #{id} cannot be loaded now: #{e.message}"
-      IO.warn(message)
+      IO.warn("session #{id} cannot be loaded now: #{e.message}")
       for waiting in listed.waiting
-        Actor.reply(waiting, error(message, kind: Protocol.KIND_SESSION_UNAVAILABLE))
+        Actor.reply(waiting, error("session #{id} cannot be loaded now", kind: Protocol.KIND_SESSION_UNAVAILABLE))
       end
 
       registry.with(sessions: registry.sessions.map { |other| replaced(other, listed.with(waiting: [])) })

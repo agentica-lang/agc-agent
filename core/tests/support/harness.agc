@@ -50,6 +50,7 @@ struct Setup
   compact_model: String = ""
   ## The server asks the fake's `/props` for the window first.
   props: Bool = false
+  before_load: Optional[Fn[String, Void]] = none
 end
 
 def fake_env(name: String) -> Result[String]
@@ -102,6 +103,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     context_window: window(setup.context_window),
     compact_model: setup.compact_model,
     props_url: props_url(setup, fake),
+    before_load: setup.before_load,
   )
 
   server = try Server.start(options)
