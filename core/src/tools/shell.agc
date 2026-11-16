@@ -4,7 +4,7 @@
 ## limits to know:
 ## - `env -i` keeps the server's keys out of the command's own environment, not out of reach: the server is the parent
 ##   of the command, and `/proc/$PPID/environ` of a process of the same user shows the environment it started with.
-## - A timeout and a stop kill the process group. A command that leaves it (`setsid`, `nohup ... &`) outlives them.
+## - A timeout and a stop kill the process group. A command that leaves it (`setsid`) outlives them.
 ## - The files a call reaches are checked before they are used, not as they are used: a command that runs in parallel
 ##   can swap a folder for a link between the check and the use.
 

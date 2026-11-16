@@ -267,7 +267,7 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
     Protocol.Event.ApprovalRequested(request) -> shown.with(pending: added(shown.pending, request))
     Protocol.Event.ApprovalResolved(resolved) -> forgotten(shown, resolved.approval_id)
     Protocol.Event.MessageQueued(queued) -> shown.with(yolo: Yolo.steered(shown.yolo, queued))
-    Protocol.Event.ShellFinished(_) -> shown.with(shell: false)
+    Protocol.Event.ShellFinished(_) -> shown.with(shell: false, stopping: false)
     _ -> shown
   end
 
@@ -502,9 +502,15 @@ end
 
 def stop(chat: Chat) -> Result[Step]
   case Client.stop(chat.server, chat.id)
-    ok(_) -> ok(Step(chat: note(chat, "[stopping the turn: Ctrl+C again leaves]").with(stopping: true)))
+    ok(_) -> ok(Step(chat: note(chat, "[stopping the #{stopped(chat)}: Ctrl+C again leaves]").with(stopping: true)))
     error(e) -> ok(Step(chat: note(chat, "[error] the stop was not sent: #{e.message}").with(stopping: true)))
   end
+end
+
+def stopped(chat: Chat) -> String
+  return "command" if chat.shell and not chat.turn
+
+  "turn"
 end
 
 def on_interrupt(chat: Chat) -> Result[Step]
@@ -549,7 +555,7 @@ end
 def resync(chat: Chat) -> Result[Step]
   return error("the server keeps asking to read the session again", kind: "cli.resync") if chat.resyncs >= MAX_RESYNCS
 
-  noted = note(chat, "[resync: reading the session again]")
+  noted = note(chat.with(shell: false), "[resync: reading the session again]")
   session = try Client.session(noted.server, noted.id)
   ok(Step(chat: attach(noted.with(resyncs: chat.resyncs + 1), session, chat.resyncs >= 1)))
 end
@@ -561,7 +567,8 @@ def reconnect(chat: Chat, reason: String) -> Result[Step]
   IO.warn("[the event stream ended: #{reason}; reconnecting]")
   Task.sleep(RECONNECT_MS * reconnects)
   try Client.recheck(chat.server)
-  ok(Step(chat: subscribe(chat.with(reconnects: reconnects), chat.last_event_id)))
+  # A command that was running may have ended unseen with a server that stopped.
+  ok(Step(chat: subscribe(chat.with(reconnects: reconnects, shell: false), chat.last_event_id)))
 end
 
 def added(

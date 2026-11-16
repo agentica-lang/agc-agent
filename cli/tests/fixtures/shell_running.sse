@@ -1,0 +1,4 @@
+id: 3
+event: shell_started
+data: {"shell_id":"sh2","command":"sleep 9","context":true}
+
