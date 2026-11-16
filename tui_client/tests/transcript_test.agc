@@ -51,6 +51,7 @@ def test_the_prompt_shows_its_last_rows_with_a_lead() -> Result[Void]
   try Test.eq(Prompt.rows("", 20), ["> "])
   try Test.eq(Prompt.rows("1\n2\n3\n4\n5\n6\n7", 20).size, Prompt.MAX_ROWS)
   try Test.eq(Prompt.view("1\n2\n3", 5, 20, 3).rows, ["  2", "  3"])
+  try Test.eq(Prompt.view("a" * 25, 25, 12, 24).rows, ["> aaaaaaaaaa", "  aaaaaaaaaa", "  aaaaa"])
   numbers = (1..20).map { |n| n.to_s }.join("\n")
   middle = Prompt.view(numbers, 4, 20, 24)
   try Test.eq([middle.rows, [middle.cursor_y.to_s]], [["  3", "  4", "  5", "  6", "  7", "  8"], ["0"]])
