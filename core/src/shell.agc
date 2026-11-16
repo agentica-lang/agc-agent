@@ -8,12 +8,16 @@
 ## - The files a call reaches are checked before they are used, not as they are used: a command that runs in parallel
 ##   can swap a folder for a link between the check and the use.
 
+import Approval from "approval"
 import Spec from "spec"
 
 DEFAULT_TIMEOUT_MS = 120000
 MAX_TIMEOUT_MS = 600000
 KEPT_ENV = ["PATH", "HOME", "USER", "LOGNAME", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", "TZ", "SHELL"]
 DEFAULT_PATH = "/usr/local/bin:/usr/bin:/bin"
+## The PATH of a read-only command, which may run without asking: a `.` or an empty entry of the user's would find a
+## program of the folder first.
+READ_ONLY_PATH = "/usr/bin:/bin"
 
 struct BashArgs
   command: String
@@ -26,7 +30,12 @@ def bash(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   return error("timeout_ms must be from 1 to #{MAX_TIMEOUT_MS}") if timeout_ms < 1 or timeout_ms > MAX_TIMEOUT_MS
 
   options = Process.Options(chdir: ctx.root, pgroup: true, timeout_ms: timeout_ms)
-  words = ["-i"] + environment(ctx.env) + ["bash", "-c", args.command]
+  env = environment(ctx.env)
+  if Approval.read_only?(ctx.root, args.command)
+    env = env.select { |word| not word.start_with?("PATH=") }.push("PATH=#{READ_ONLY_PATH}")
+  end
+
+  words = ["-i"] + env + ["bash", "-c", args.command]
   process = try Process.spawn_captured("/usr/bin/env", words, options)
   _ = Process.close_stdin(process, 1000)
   result = finish(process, timeout_ms)

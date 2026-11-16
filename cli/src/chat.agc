@@ -26,7 +26,7 @@ def run(server: Client.Server, options: Args.Options, style: Render.Style) -> Re
   end
 
   inbox: Channel[Inbox.Input] = Channel.new(INBOX_CAPACITY)
-  chat = Chat(server: server, id: "", style: style, inbox: inbox, yolo: options.yolo)
+  chat = Chat(server: server, id: "", style: style, inbox: inbox, options: options, yolo: options.yolo)
   for prompt in option_list(options.prompt)
     task = prompt
     if prompt == "-"
@@ -57,6 +57,8 @@ struct Chat
   id: String
   style: Render.Style
   inbox: Channel[Inbox.Input]
+  ## What `/new` makes a session with.
+  options: Args.Options
   stream: Optional[Task[Void]] = none
   generation: Int = 0
   last_event_id: Int = 0
@@ -78,6 +80,8 @@ struct Chat
   resyncs: Int = 0
   ## Every approval of this run is allowed without asking.
   yolo: Bool = false
+  ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
+  new_model: Optional[String] = none
   ## The approvals that were pending when the client attached: `--yolo` leaves them to be asked.
   inherited: List[String] = []
   ## One task from the command line: the exit code is the status of its turn.
@@ -211,6 +215,7 @@ def handle(chat: Chat, input: Inbox.Input) -> Result[Step]
     Inbox.Input.Eof -> settled(prompted(chat.with(eof: true)))
     Inbox.Input.Interrupt -> on_interrupt(chat)
     Inbox.Input.Terminate -> ok(Step(chat: chat, exit: some(EXIT_TERMINATED)))
+    Inbox.Input.Note(text) -> settled(prompted(note(chat, text)))
     Inbox.Input.Stream(generation, item) -> on_stream(chat, generation, item)
   end
 end
@@ -240,8 +245,11 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
   changed = case event
     Protocol.Event.TurnStarted(started) ->
       shown.with(turn: true, stopping: false, known: started.history_size.unwrap_or(shown.known))
+    Protocol.Event.Error(_) if not repeated and shown.new_model.some? ->
+      note(shown.with(new_model: none), "[warning] #{Client.model_warning(shown.new_model.unwrap!)}")
     Protocol.Event.TurnFinished(finished) ->
       shown.with(
+        new_model: none,
         turn: false,
         stopping: false,
         known: finished.history_size.unwrap_or(shown.known),
@@ -257,26 +265,27 @@ end
 
 def on_line(chat: Chat, raw: String) -> Result[Step]
   text = raw.strip
-  return ok(Step(chat: chat, exit: some(0))) if text == "/quit"
+  case Client.parse_command(text)
+    some(ok(command)) -> return on_command(chat, command)
+    some(error(e)) -> return ok(Step(chat: note(chat, "[error] #{e.message}")))
+    _ -> nil
+  end
 
   return answered(chat, text) if chat.asked
 
-  return stop(chat) if text == "/stop" and chat.turn
-
-  return ok(Step(chat: note(chat, "[a turn is running: Ctrl+C or /stop stops it]"))) if chat.turn
   return ok(Step(chat: chat)) if text == ""
 
   send(chat, text)
 end
 
-# A one-shot run that cannot send its task fails, also on a session where another turn runs.
+# A line sent while a turn runs is queued: the turn reads it before its next model call. A one-shot run that cannot
+# send its task fails.
 def send(chat: Chat, text: String) -> Result[Step]
   case Client.send_message(chat.server, chat.id, text)
     ok(_) -> ok(Step(chat: chat.with(turn: true)))
     error(e) if e.kind == Protocol.KIND_SESSION_BUSY and chat.once ->
-      ok(Step(chat: note(chat, "[error] a turn is already running in this session"), exit: some(EXIT_FAILED)))
-    error(e) if e.kind == Protocol.KIND_SESSION_BUSY ->
-      ok(Step(chat: note(chat, "[a turn is already running]").with(turn: true)))
+      ok(Step(chat: note(chat, "[error] #{e.message}"), exit: some(EXIT_FAILED)))
+    error(e) if e.kind == Protocol.KIND_SESSION_BUSY -> ok(Step(chat: note(chat, "[not sent] #{e.message}")))
     error(e) if chat.once -> ok(Step(chat: note(chat, "[error] #{e.message}"), exit: some(EXIT_FAILED)))
     error(e) -> ok(Step(chat: note(chat, "[error] #{e.message}")))
   end
@@ -298,6 +307,117 @@ def answer_head(chat: Chat, decision: Protocol.Decision) -> Chat
     error(e) if e.kind == Protocol.KIND_APPROVAL_RESOLVED or e.kind == Protocol.KIND_APPROVAL_NOT_FOUND ->
       forgotten(note(chat, "[approval #{request.approval_id}] already answered"), request.approval_id)
     error(e) -> note(chat, "[error] the answer was not sent: #{e.message}")
+  end
+end
+
+def on_command(chat: Chat, command: Client.Command) -> Result[Step]
+  case command
+    Client.Command.Quit -> ok(Step(chat: chat, exit: some(0)))
+    Client.Command.Stop -> stop_command(chat)
+    Client.Command.Help -> said(chat, Client.HELP.join("\n"))
+    Client.Command.Cost -> said(chat, "[/cost comes with the model catalog]")
+    Client.Command.New -> switch_command(chat, none)
+    Client.Command.Resume(choice) -> resume_command(chat, choice)
+    Client.Command.Model(model) -> setting_command(chat, "model", model, Protocol.UpdateSession(model: model))
+    Client.Command.Thinking(level) -> setting_command(chat, "thinking", level, Protocol.UpdateSession(effort: level))
+    Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
+  end
+end
+
+def stop_command(chat: Chat) -> Result[Step]
+  return stop(chat) if chat.turn
+
+  said(chat, "[no turn is running]")
+end
+
+def resume_command(chat: Chat, choice: Optional[String]) -> Result[Step]
+  return tried(chat, listed(chat)) if choice.none?
+
+  switch_command(chat, choice)
+end
+
+# A new session (no choice), or the session `/resume` chose.
+def switch_command(chat: Chat, choice: Optional[String]) -> Result[Step]
+  return said(chat, "[a turn is running: /stop it first]") if chat.turn
+
+  case choice
+    some(picked) -> tried(chat, switched(chat, picked))
+    none -> tried(chat, create(fresh(chat), chat.options))
+  end
+end
+
+def setting_command(chat: Chat, name: String, value: Optional[String], change: Protocol.UpdateSession) -> Result[Step]
+  case value
+    some(text) -> tried(chat, changed(chat, change, "[#{name} #{text} from the next turn]"))
+    none -> tried(chat, shown_setting(chat, name))
+  end
+end
+
+def said(chat: Chat, text: String) -> Result[Step] = ok(Step(chat: note(chat, text)))
+
+# A command that failed says why; the session goes on.
+def tried(chat: Chat, result: Result[Chat]) -> Result[Step]
+  case result
+    ok(next_chat) -> ok(Step(chat: next_chat))
+    error(e) -> said(chat, "[error] #{e.message}")
+  end
+end
+
+# The state of no session yet, with the stream that `subscribe` replaces.
+def fresh(chat: Chat) -> Chat
+  Chat(
+    server: chat.server,
+    id: "",
+    style: chat.style,
+    inbox: chat.inbox,
+    options: chat.options,
+    yolo: chat.yolo,
+    stream: chat.stream,
+    generation: chat.generation,
+  )
+end
+
+def listed(chat: Chat) -> Result[Chat]
+  lines = Client.listing(try Client.list_sessions(chat.server))
+  return ok(note(chat, "[no sessions]")) if lines.empty?
+
+  ok(note(chat, lines.join("\n")))
+end
+
+def switched(chat: Chat, choice: String) -> Result[Chat]
+  id = try Client.pick(try Client.list_sessions(chat.server), choice)
+  resume(fresh(chat).with(id: id), id)
+end
+
+def shown_setting(chat: Chat, name: String) -> Result[Chat]
+  session = try Client.session(chat.server, chat.id)
+  return ok(note(chat, "[model #{session.model}]")) if name == "model"
+
+  ok(note(chat, "[thinking #{session.effort.unwrap_or("as the model's default")}]"))
+end
+
+def changed(chat: Chat, change: Protocol.UpdateSession, done: String) -> Result[Chat]
+  try Client.update_session(chat.server, chat.id, change)
+  shown = note(chat, done)
+  return ok(shown) if change.model.none?
+
+  ok(shown.with(new_model: change.model))
+end
+
+# The summary takes as long as a turn: a task asks for it and puts the outcome on the inbox.
+def compact_command(chat: Chat) -> Chat
+  server = chat.server
+  id = chat.id
+  inbox = chat.inbox
+  _ = Task.spawn(-> { _ = inbox.send(Inbox.Input.Note(compacted(server, id)), SEND_MS) })
+  chat
+end
+
+def compacted(server: Client.Server, id: String) -> String
+  case Client.compact(server, id)
+    ok(folded) if folded -> "[compacted]"
+    ok(_) -> "[nothing to compact yet]"
+    error(e) -> "[error] #{e.message}"
   end
 end
 

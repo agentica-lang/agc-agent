@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Approval rules come from a config file (`FINN_CONFIG`, else `~/.config/finn/config.json`) and the project's `.finn/config.json` (its allow rules only under `FINN_TRUSTED_DIRS`); an approval may allow a `bash` prefix (`allow_prefix`) or a whole tool (`allow_tool`) for the session, and `PATCH /v1/sessions/ID` with `accept_edits` runs file edits without asking.
+- `finn tui --yolo` allows the tool calls of the turns it starts; the status line shows YOLO all the time, and a turn another client started is still asked.
+- `finn tui` takes pasted text whole (bracketed paste) into the prompt or the `/resume` filter.
+- `finn chat` and `finn tui` refuse a running server of another version (its wire records differ) and say how to stop it, instead of failing on its replies.
+
 - The repo skeleton: a workspace with the `llm` and `core` packages, and CI.
 - The `sse` package: a Server-Sent Events parser and writer.
 - The `protocol` package: the records of the commands and events between the server and its clients, with JSON codecs.
@@ -37,8 +42,20 @@
 - The `tui_client` package: a full-screen client on agentica-tui with a scrolling transcript of the streamed answer, a multiline prompt (Enter sends, Ctrl+J adds a line) and Esc to stop the turn.
 - The `client` package: what the cli and the TUI share (finding or starting the server, the HTTP calls, the event reader).
 - `tui_client`: the answer is drawn as markdown (headings, lists, code blocks, bold), and Ctrl+T (or `--thinking` at the start) shows or hides the model's thinking.
+- `finn tui` starts the TUI. It shows each tool call as it runs and ends, and asks each approval in a panel with the call's detail: Ctrl+Y allows, Ctrl+N denies, and Tab then y, n or a (allow that tool on that exact target for the session), so typing or pasting never answers.
 - Code mode (`FINN_CODE_MODE=1`): `run_script` runs a Python script in pydantic's Monty sandbox that calls the tools as functions, each call approved as a direct one; the pinned worker is fetched on first use with its sha256 checked (`FINN_MONTY` names another). The `monty` package drives it.
 - The `anthropic` provider (the Anthropic Messages API: adaptive thinking sent back with its signature, cache breakpoints on the system prompt or tools and the conversation, the models list), with an API key or an OAuth token; the llama smoke tests run it too, and `make smoke-anthropic` makes a few real calls.
 - MCP servers on stdio (`FINN_MCP_CONFIG`, the `mcp` package): their tools are `mcp__SERVER__TOOL`, ask like the other tools, and a server that crashed or hung gives an error result and starts again on the next call. A server gets a short environment plus the `env` of its config, and a stop ends what it started.
 - `finn -p TASK` runs one task (`-p -` reads it from stdin): the answer on stdout, the rest on stderr; it exits 0 when the turn ends normally, 130 when cancelled, 1 otherwise, and denies approvals; `--yolo` allows the tool calls of the run, in one-shot and in chat.
-- A `bash` command that only reads inside the session folder (`ls`, `cat`, `grep`, `rg`, `sed -n`, `git log`, ... in pipelines and lists, checked by the new `shell` package's parser) runs without asking; deny rules still win.
+- A `bash` command that only reads inside the session folder (`ls`, `cat`, `grep`, `rg`, `sed -n`, `find`, ... with the options of an allow-list, in pipelines and lists, its paths resolved, no unquoted glob; checked by the new `shell` package) runs without asking and with PATH `/usr/bin:/bin`, unless a deny rule of `read_file` or `bash` exists.
+- Core on Anthropic (`FINN_API=anthropic` or a session's `--api anthropic`): `ANTHROPIC_API_KEY`, else `ANTHROPIC_AUTH_TOKEN`, else the token of `ant auth login` (fetched again after a 401); the prompt cache is asked for, thinking blocks go back with their signatures, the history folds only between turns and drops the thinking of the kept messages; `make live-anthropic-core`.
+- Agent Skills: `SKILL.md` folders under `.finn/skills`, `.agents/skills` and `.claude/skills` of the home folder, and of the session folder when it is under `FINN_TRUSTED_DIRS`; a catalog in the system prompt, the `activate_skill` tool, `/name` in a message, and compaction keeps loaded skills.
+- Session commands in `finn chat` and `finn tui`: `/new`, `/resume` (lists the sessions; `/resume N` or an id switches), `/model`, `/thinking low|medium|high`, `/compact`, `/stop`, `/help`, `/quit`.
+- `finn tui`: character widths follow glibc's wcwidth, as the terminal library draws them (emoji, flags, combining marks; a ZWJ sequence takes the columns of each emoji), and long code lines wrap instead of being cut.
+- `finn tui` takes the mouse: a click on a key of the approval panel answers as that key, a click on a tool call or a thinking block opens or closes it, and a click in the prompt moves the cursor (also Left, Right, Home and End); Shift+drag still selects text.
+- `core serve`: `PATCH /v1/sessions/ID` changes a session's model and thinking level (kept in its file), and `POST /v1/sessions/ID/compact` folds the history into a summary on demand; the session snapshot has `effort`.
+- Session commands in `finn chat` and `finn tui`: `/new`, `/resume` (a picker in the TUI, a numbered list in chat; `/resume N` or an id switches), `/model`, `/thinking low|medium|high|default`, `/compact`, `/stop`, `/help`, `/quit`. Any other `/name` goes to the agent as a message.
+- `core serve`: `PATCH /v1/sessions/ID` changes a session's model and thinking level (kept in its file), and `POST /v1/sessions/ID/compact` folds the history into a summary on demand; the session snapshot has `effort`, and the session list has the current model, the last change and the first message, newest first.
+- `apply_patch` (the Codex patch format) for models on `openai_responses`, as a custom tool with its grammar; each path it touches is approved as an `edit_file`, and a patch applies whole or not at all.
+- `apply_patch` rollback: a failed step puts back every file it can and names the ones it could not, removes the folders the patch made, and gives a deleted file back with its mode (deletes run last); the search of a patch takes at most 2,000,000 line comparisons in total, and a patch has at most 1000 changes.
+- Steering: a message sent while a turn runs is queued (`202`, a `message_queued` event) and read before the turn's next model call; one that comes after the last read starts the next turn, and a stopped turn drops its queue with an `error` event. `finn chat` and `finn tui` show it as queued.

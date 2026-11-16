@@ -25,3 +25,10 @@ The fake LLM of the server tests streams these, in the order a test gives.
   with `n_ctx` 120. `summary_empty.sse` is a summary of blanks, and
   `summary_length.sse` one cut by `finish_reason: "length"`.
   `not_found.json` and `bad_request.json` are error bodies (404 and 400).
+- `activate_skill.sse` and `activate_deploy.sse` are written by hand in the
+  shape of `read_file.sse`: one `activate_skill` call, of `release` and of
+  `deploy`. `read_skill_file.sse` and `read_relative.sse` are `read_file` calls
+  of a skill's file, by its absolute path (`@BASE@` is the test's folder) and
+  relative to the skill.
+- `apply_patch.sse` is written by hand in the shape of `write_file.sse`: an
+  `apply_patch` call as a function, which only the Responses API is offered.

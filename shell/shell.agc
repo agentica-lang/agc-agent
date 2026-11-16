@@ -3,7 +3,8 @@
 ##
 ## `parse` gives the pipelines of simple commands (words without their quotes, and redirections), or an error for
 ## anything outside a small part of bash (expansions, subshells, here-documents, ...). `read_only?` tells `Safe` only
-## for commands that read inside the session folder; anything it cannot tell is `Unknown`.
+## for commands of an allow-list, with only the options it lists, whose paths resolve inside the session folder;
+## anything it cannot tell is `Unknown`. The caller resolves the paths (`inside`), so this package does no I/O.
 
 import Parse from "src/parse"
 import ReadOnly from "src/read_only"
@@ -23,13 +24,16 @@ def parse(text: String) -> Result[Parse.Script] = Parse.parse(text)
 ## The words of a simple command, without their quotes.
 def argv(command: Parse.Command) -> List[String] = Parse.argv(command)
 
-## Whether `script` only reads, inside `root` (the session folder, an absolute path).
-def read_only?(script: Parse.Script, root: String) -> ReadOnly.Verdict = ReadOnly.read_only?(script, root)
+## Whether `script` only reads inside the session folder; `inside` tells whether a path as written (relative to the
+## folder, or absolute) resolves inside it, through its symlinks.
+def read_only?(script: Parse.Script, inside: Fn[String, Bool]) -> ReadOnly.Verdict
+  ReadOnly.read_only?(script, inside)
+end
 
 ## The verdict of a command as text: `Unknown` when it does not parse.
-def verdict(text: String, root: String) -> ReadOnly.Verdict
+def verdict(text: String, inside: Fn[String, Bool]) -> ReadOnly.Verdict
   case parse(text)
-    ok(script) -> read_only?(script, root)
+    ok(script) -> read_only?(script, inside)
     error(e) -> ReadOnly.Verdict.Unknown(e.message)
   end
 end

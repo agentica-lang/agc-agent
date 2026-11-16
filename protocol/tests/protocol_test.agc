@@ -107,12 +107,7 @@ def test_requests_round_trip() -> Result[Void]
 
   approve = try decode_fixture("approve", &Protocol.decode_approve, &Protocol.encode_approve)
   try Test.eq(approve, Protocol.Approve(decision: Protocol.Decision.Allow))
-  try Test.eq(Protocol.decode_approve(Protocol.encode_approve(approve)), ok(approve))
-
-  update = try decode_fixture("session_update", &Protocol.decode_session_update, &Protocol.encode_session_update)
-  try Test.eq(update, Protocol.SessionUpdate(accept_edits: some(true)))
-  try Test.eq(Protocol.decode_session_update("{}"), ok(Protocol.SessionUpdate()))
-  Test.eq(error_kind(Protocol.decode_session_update("{\"accept\": true}")), "protocol.invalid")
+  Test.eq(Protocol.decode_approve(Protocol.encode_approve(approve)), ok(approve))
 end
 
 def test_replies_round_trip() -> Result[Void]
@@ -260,5 +255,24 @@ end
 def test_routes() -> Result[Void]
   try Test.eq(Protocol.approval_path("s1", "a1"), "/v1/sessions/s1/approvals/a1")
   try Test.eq(Protocol.events_path("s1"), "/v1/sessions/s1/events")
+  try Test.eq(Protocol.compact_path("s1"), "/v1/sessions/s1/compact")
   Test.eq(Protocol.stop_path("s1"), "/v1/sessions/s1/stop")
+end
+
+def test_session_settings_round_trip_and_refuse_unknown_levels() -> Result[Void]
+  both = Protocol.UpdateSession(model: some("qwen3"), effort: some("high"))
+  try Test.eq(Protocol.decode_update_session(Protocol.encode_update_session(both)), ok(both))
+  try Test.eq(Protocol.decode_update_session("{\"effort\": \"low\"}"), ok(Protocol.UpdateSession(effort: some("low"))))
+  try Test.eq(Protocol.decode_update_session("{}"), ok(Protocol.UpdateSession()))
+  edits = Protocol.UpdateSession(accept_edits: some(true))
+  try Test.eq(Protocol.decode_update_session(Protocol.encode_update_session(edits)), ok(edits))
+  try Test.eq(error_kind(Protocol.decode_update_session("{\"effort\": \"max\"}")), "protocol.unknown")
+  try Test.eq(error_kind(Protocol.decode_update_session("{\"model\": \"\"}")), "protocol.invalid")
+  try Test.eq(error_kind(Protocol.decode_update_session("{\"modle\": \"m\"}")), "protocol.invalid")
+  compacted = Protocol.Compacted(compacted: true)
+  try Test.eq(Protocol.decode_compacted(Protocol.encode_compacted(compacted)), ok(compacted))
+  idle = try decode_fixture("session", &Protocol.decode_session, &Protocol.encode_session)
+  try Test.eq(idle.effort, none)
+  thinking = idle.with(effort: some("medium"))
+  Test.eq(Protocol.decode_session(Protocol.encode_session(thinking)), ok(thinking))
 end

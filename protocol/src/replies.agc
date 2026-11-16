@@ -11,9 +11,10 @@ enum Role
   Assistant
 end
 
-## `GET /v1/health`.
+## `GET /v1/health`. `wire` is the `Protocol.wire_digest` of the server, none from a server older than it.
 struct Health
   version: String
+  wire: Optional[String] = none
 end
 
 ## The answer of `POST /v1/sessions`.
@@ -27,11 +28,15 @@ struct MessageAccepted
 end
 
 ## `api` is the model API of the session, by the name the server gives it.
+## `model` is the one the session uses now, `updated_s` when its file last changed (Unix seconds), and `title` its first
+## user message ("" before one).
 struct SessionSummary
   id: String
   cwd: String
   model: String
   api: String
+  updated_s: Int = 0
+  title: String = ""
 end
 
 ## The answer of `GET /v1/sessions`.
@@ -65,6 +70,8 @@ struct Session
   history: List[Message]
   ## The edits of files run without asking (`PATCH` with `accept_edits`).
   accept_edits: Bool = false
+  ## The thinking level of the session's calls; none leaves it to the model.
+  effort: Optional[String] = none
 end
 
 ## `server.json` in the state folder, which only its user can read: where the server listens and its Bearer token.
@@ -121,6 +128,7 @@ def encode_session(reply: Session) -> String
       pending_approvals: reply.pending_approvals,
       history: history,
       accept_edits: some(reply.accept_edits),
+      effort: reply.effort,
     ),
   )
 end
@@ -146,8 +154,27 @@ def decode_session(text: String) -> Result[Session]
       pending_approvals: wire.pending_approvals,
       history: history,
       accept_edits: wire.accept_edits.unwrap_or(false),
+      effort: wire.effort,
     ),
   )
+end
+
+## The fields of the replies and the names of their values on the wire, for `Protocol.WIRE`.
+def shape() -> List[String]
+  records = [
+    Health.members,
+    SessionCreated.members,
+    MessageAccepted.members,
+    SessionSummary.members,
+    SessionList.members,
+    Message.members,
+    Session.members,
+    ServerInfo.members,
+    MessageWire.members,
+    SessionWire.members,
+  ]
+
+  Wire.fields(records) + roles().map(&role_name)
 end
 
 private
@@ -167,6 +194,7 @@ struct SessionWire
   pending_approvals: List[Events.ApprovalRequested]
   history: List[MessageWire]
   accept_edits: Optional[Bool] = none
+  effort: Optional[String] = none
 end
 
 def check_turn(wire: SessionWire) -> Result[Void]

@@ -5,3 +5,5 @@
   `encrypted_content`, the text "I will write it.", then a `write_file` call whose arguments come in two pieces;
   usage with cached tokens.
 - `summary.sse`: written by hand, the summary a compaction asks for (the text of `openai_chat/summary.sse`).
+- `apply_patch.sse`: written by hand in the shape of `custom_tool_call.sse` of `llm`: an `apply_patch` custom tool
+  call, its input in two pieces, that updates `notes.txt` and adds `hello.txt`.

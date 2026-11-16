@@ -14,6 +14,7 @@
   {"name": "approval_resolved", "data": {"approval_id": "a4", "decision": "allow", "source": "rule"}},
   {"name": "approval_resolved", "data": {"approval_id": "a5", "decision": "allow_prefix", "source": "client"}},
   {"name": "approval_resolved", "data": {"approval_id": "a6", "decision": "allow_tool", "source": "client"}},
+  {"name": "message_queued", "data": {"turn_id": "t1", "text": "also update the README"}},
   {"name": "usage", "data": {"input": 1200, "output": 85, "cache_read": 1000, "cache_write": 0, "context": 1285}},
   {"name": "turn_finished", "data": {"turn_id": "t1", "stop_reason": "end_turn", "history_size": 4}},
   {"name": "turn_finished", "data": {"turn_id": "t2", "stop_reason": "max_tokens"}},

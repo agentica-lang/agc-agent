@@ -1,7 +1,13 @@
 ## The bodies the clients send. A decoder here refuses a key it does not know and an empty required string; the replies
 ## and events do not (see `Wire`).
 
+import Kinds from "kinds"
 import Wire from "wire"
+
+## The thinking levels a session takes (`effort`), lowest first.
+EFFORTS = ["low", "medium", "high"]
+## The effort of `UpdateSession` that goes back to the model's own default.
+EFFORT_DEFAULT = "default"
 
 ## How a client answers an approval request. `AllowSession` also allows the same call again in the session,
 ## `AllowPrefix` the `bash` commands that start with the request's `prefix` (the same call when it has none), and
@@ -31,10 +37,17 @@ struct Approve
   decision: Decision
 end
 
-## `PATCH /v1/sessions/ID`: the settings to change; a missing one stays. `accept_edits` runs the edits of files in the
-## session folder without asking.
-struct SessionUpdate
+## `PATCH /v1/sessions/ID`: what to change from the next turn on; a field left out stays.
+struct UpdateSession
+  model: Optional[String] = none
+  effort: Optional[String] = none
+  ## The edits of files in the session folder run without asking.
   accept_edits: Optional[Bool] = none
+end
+
+## `POST /v1/sessions/ID/compact`: the answer says whether there was history to fold.
+struct Compacted
+  compacted: Bool
 end
 
 ## Every decision, in a fixed order.
@@ -77,9 +90,36 @@ def decode_approve(text: String) -> Result[Approve]
   ok(Approve(decision: try parse_decision(wire.decision)))
 end
 
-def encode_session_update(body: SessionUpdate) -> String = JSON.encode(body)
+def encode_update_session(body: UpdateSession) -> String = JSON.encode(body)
 
-def decode_session_update(text: String) -> Result[SessionUpdate] = Wire.decode_strict(text, SessionUpdate.codec)
+def decode_update_session(text: String) -> Result[UpdateSession]
+  body = try Wire.decode_strict(text, UpdateSession.codec)
+  try Wire.non_empty_if_present("model", body.model)
+  for effort in Wire.option_list(body.effort)
+    known = EFFORTS.include?(effort) or effort == EFFORT_DEFAULT
+    return error("unknown effort: #{effort}", kind: Kinds.KIND_UNKNOWN) if not known
+  end
+
+  ok(body)
+end
+
+def encode_compacted(body: Compacted) -> String = JSON.encode(body)
+
+def decode_compacted(text: String) -> Result[Compacted] = Wire.decode(text, Compacted.codec)
+
+## The fields of the requests and the names of their values on the wire, for `Protocol.WIRE`.
+def shape() -> List[String]
+  records = [
+    NewSession.members,
+    SendMessage.members,
+    Approve.members,
+    UpdateSession.members,
+    Compacted.members,
+    ApproveWire.members,
+  ]
+
+  Wire.fields(records) + decisions().map(&decision_name)
+end
 
 private
 

@@ -2,8 +2,8 @@
 ##
 ## Rules: the user's config file (`FINN_CONFIG`, else `$XDG_CONFIG_HOME/finn/config.json`, else
 ## `~/.config/finn/config.json`), `{"allow": [...], "deny": [...]}` in the syntax of `Approval`; and the project file
-## `.finn/config.json` of the session folder, whose deny rules always count and whose allow rules count only in a folder
-## of `FINN_TRUSTED_DIRS` (`:` between folders), since anyone who writes the project can write them.
+## `.finn/config.json` of the session folder, whose deny rules always count and whose allow rules count only in a
+## folder of `FINN_TRUSTED_DIRS` (`:` between folders), since anyone who writes the project can write them.
 ##
 ## A session allows more by its answers: the same call (`allow_session`), the same command prefix for `bash`
 ## (`allow_prefix`: `git log`, `npm test`), or the whole tool (`allow_tool`); and in the accept-edits mode the edits of
@@ -11,9 +11,9 @@
 
 import Shell from "pkg/shell/shell"
 import Approval from "approval"
+import Sandbox from "sandbox"
 
 CONFIG_ENV = "FINN_CONFIG"
-TRUSTED_ENV = "FINN_TRUSTED_DIRS"
 PROJECT_FILE = ".finn/config.json"
 ## The tools whose calls the accept-edits mode runs.
 EDITS = ["write_file", "edit_file", "apply_patch"]
@@ -37,27 +37,21 @@ def user_rules(read: Fn[String, Result[String]]) -> Result[Approval.Rules]
   case read.call(CONFIG_ENV)
     ok(path) if not path.empty? -> rules_of(path)
     _ ->
-      path = try default_config(read)
-      return ok(no_rules()) if not File.stat(path).ok?
-
-      rules_of(path)
+      case default_config(read)
+        some(path) if File.stat(path).ok? -> rules_of(path)
+        _ -> ok(no_rules())
+      end
   end
 end
 
-## The trusted folders of `FINN_TRUSTED_DIRS`.
-def trusted(read: Fn[String, Result[String]]) -> List[String]
-  read.call(TRUSTED_ENV).unwrap_or("").split(":").select { |dir| not dir.empty? }.map { |dir| trimmed(dir) }
-end
-
-## `rules` with those of the project file of `root` (a real path): its deny rules, and its allow rules when `root` is in
-## a trusted folder.
-def with_project(rules: Approval.Rules, root: String, trusted: List[String]) -> Result[Approval.Rules]
+## `rules` with those of the project file of `root`: its deny rules, and its allow rules when `root` is `trusted`.
+def with_project(rules: Approval.Rules, root: String, trusted: Bool) -> Result[Approval.Rules]
   path = "#{root}/#{PROJECT_FILE}"
   return ok(rules) if not File.stat(path).ok?
 
   project = try rules_of(path)
   allow = rules.allow
-  if (trusted.any? { |dir| root == dir or root.start_with?("#{dir}/") })
+  if trusted
     allow = allow + project.allow
   end
 
@@ -114,16 +108,15 @@ def key(tool: String, target: String) -> String = "#{tool}\n#{target}"
 
 def no_rules() -> Approval.Rules = Approval.Rules(allow: [], deny: [])
 
-def trimmed(dir: String) -> String
-  return dir if dir == "/" or not dir.end_with?("/")
-
-  dir.slice(0, dir.length - 1)
-end
-
-def default_config(read: Fn[String, Result[String]]) -> Result[String]
+# None without a home folder.
+def default_config(read: Fn[String, Result[String]]) -> Optional[String]
   case read.call("XDG_CONFIG_HOME")
-    ok(base) if not base.empty? -> ok("#{base}/finn/config.json")
-    _ -> ok("#{try read.call("HOME")}/.config/finn/config.json")
+    ok(base) if not base.empty? -> some("#{base}/finn/config.json")
+    _ ->
+      case read.call("HOME")
+        ok(home) if not home.empty? -> some("#{home}/.config/finn/config.json")
+        _ -> none
+      end
   end
 end
 
@@ -159,7 +152,7 @@ end
 
 def command_allowed?(prefixes: List[List[String]], command: Shell.Command, root: String) -> Bool
   alone = Shell.Script(pipelines: [Shell.Pipeline(commands: [command])])
-  return true if Shell.read_only?(alone, root) == Shell.Verdict.Safe
+  return true if Shell.read_only?(alone, ->(path) { Sandbox.resolve(root, path).ok? }) == Shell.Verdict.Safe
 
   writes = command.redirects.any? do |r|
     case r

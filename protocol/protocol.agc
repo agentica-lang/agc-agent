@@ -26,6 +26,7 @@ export Kinds.KIND_UNAUTHORIZED
 export Kinds.KIND_FORBIDDEN
 export Kinds.KIND_SESSION_NOT_FOUND
 export Kinds.KIND_SESSION_BUSY
+export Kinds.KIND_QUEUE_DROPPED
 export Kinds.KIND_SESSION_STORAGE
 export Kinds.KIND_SESSION_UNAVAILABLE
 export Kinds.KIND_APPROVAL_NOT_FOUND
@@ -39,14 +40,16 @@ export Routes.events_path
 export Routes.messages_path
 export Routes.approval_path
 export Routes.stop_path
+export Routes.compact_path
 
 export Requests.Decision
 export Requests.NewSession
 export Requests.SendMessage
 export Requests.Approve
-export Requests.SessionUpdate
-export Requests.encode_session_update
-export Requests.decode_session_update
+export Requests.UpdateSession
+export Requests.Compacted
+export Requests.EFFORTS
+export Requests.EFFORT_DEFAULT
 export Requests.decisions
 export Requests.decision_name
 export Requests.parse_decision
@@ -56,6 +59,10 @@ export Requests.encode_send_message
 export Requests.decode_send_message
 export Requests.encode_approve
 export Requests.decode_approve
+export Requests.encode_update_session
+export Requests.decode_update_session
+export Requests.encode_compacted
+export Requests.decode_compacted
 
 export Replies.Role
 export Replies.Health
@@ -99,6 +106,7 @@ export Events.ApprovalRequested
 export Events.ApprovalResolved
 export Events.Usage
 export Events.TurnFinished
+export Events.MessageQueued
 export Events.event_kinds
 export Events.event_kind
 export Events.kind_name
@@ -114,3 +122,10 @@ export Events.encode_event
 export Events.decode_event
 export Events.format_event_id
 export Events.parse_event_id
+
+## A digest of every field and value name on the wire. A client and a server from different code have different ones
+## when a record changed, so a client can tell that the server it reached is of another version.
+def wire_digest() -> String
+  shape = Events.shape() + Replies.shape() + Requests.shape()
+  OpenSSL.Digest.sha256_hexdigest(shape.join(";").bytes)
+end

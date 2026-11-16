@@ -1,22 +1,27 @@
-## Whether a parsed command only reads. Each simple command is checked by its name, its options and its arguments.
+## Whether a parsed command only reads inside the session folder. It is an allow-list: each command in `spec` with
+## the options it lists (short ones by letter, long ones by their exact full name, never a GNU abbreviation; an option
+## whose value is optional only as `--name=value`), and each path it names checked by `inside`, which the caller gives
+## (it resolves symlinks). A glob anywhere is `Unknown`: the names it gives are not checked. Anything else is `Unknown`
+## too.
 
 import Parse from "parse"
 
 enum Verdict
   ## It only reads, inside the session folder.
   Safe
-  ## It cannot be told: a command not known, an option or a path it does not check. Ask.
+  ## It cannot be told: a command, an option or a path it does not check. Ask.
   Unknown(String)
   ## It writes a file or runs a program.
   Writes(String)
 end
 
-def read_only?(script: Parse.Script, root: String) -> Verdict
+## `inside` tells whether a path as written (relative to the session folder, or absolute) resolves inside it.
+def read_only?(script: Parse.Script, inside: Fn[String, Bool]) -> Verdict
   for pipeline in script.pipelines
     return Verdict.Unknown("a command in the background") if pipeline.join == some(Parse.Join.Background)
 
     for command in pipeline.commands
-      verdict = command_verdict(command, root)
+      verdict = command_verdict(command, inside)
       return verdict if verdict != Verdict.Safe
     end
   end
@@ -27,186 +32,243 @@ end
 private
 
 NULL = "/dev/null"
-SAFE = [
-  "ls", "cat", "head", "tail", "wc", "grep", "rg", "find", "sed", "awk", "sort", "uniq", "cut", "tr", "diff", "file",
-  "stat", "pwd", "echo", "which", "git", "cd",
+## Programs that run what they are given.
+RUNNERS = [
+  "xargs", "env", "sh", "bash", "zsh", "dash", "eval", "exec", "sudo", "doas", "time", "nohup", "timeout", "nice",
+  "command", "builtin", "source", ".", "awk", "gawk", "perl", "python", "python3", "node", "ruby",
 ]
 
-## Programs that run what they are given: never safe, whatever follows.
-RUNNERS = ["xargs", "env", "sh", "bash", "zsh", "eval", "exec", "sudo", "time", "nohup", "timeout", "nice", "command"]
-GIT_SAFE = ["status", "log", "diff", "show", "branch", "rev-parse"]
-## Commands whose options cannot write or run anything, so a glob that expands to `-x` names is harmless.
-GLOB_ANYWHERE = ["ls", "cat", "head", "tail", "wc", "stat", "echo", "grep", "cut", "tr"]
-FIND_WRITES = ["-exec", "-execdir", "-ok", "-okdir", "-delete", "-fprint", "-fprint0", "-fprintf", "-fls"]
-SED_FLAGS = "nEsuz"
-SED_WRITES = "wWerR"
-AWK_WRITES = [">", "|", "system", "getline", "@", "close", "fflush"]
-GIT_WRITES = ["--output", "--ext-diff", "--textconv", "--exec", "--paginate"]
-GIT_BRANCH_OPTIONS = ["-a", "-r", "-v", "-vv", "--all", "--remotes", "--list", "--show-current", "--verbose"]
+## The commands that read standard input for the operand `-`; elsewhere `-` is a file name.
+STDIN = ["cat", "head", "tail", "wc", "grep", "sed", "sort", "uniq", "cut"]
 
-def command_verdict(command: Parse.Command, root: String) -> Verdict
+FIND_TESTS = ["-name", "-iname", "-path", "-ipath", "-type", "-maxdepth", "-mindepth", "-size", "-mtime", "-mmin"]
+FIND_FLAGS = ["-print", "-print0", "-empty", "-not", "-o", "-a", "-or", "-and", "-prune", "!", "(", ")"]
+
+## How a command reads its words: `flags` and `values` are short options (a value option takes the rest of its word
+## or the next one), `long` and `long_values` exact long names (a long value in its own word or after `=`), `long_eq`
+## long names whose value is optional, so only `--name=value` is read; `patterns` is how many leading arguments are not paths
+## (a pattern, a script), and `paths` whether the others are.
+struct Spec
+  flags: String = ""
+  values: String = ""
+  long: List[String] = []
+  long_values: List[String] = []
+  long_eq: List[String] = []
+  patterns: Int = 0
+  paths: Bool = true
+  ## `-5` means `-n 5`.
+  counts: Bool = false
+end
+
+struct Args
+  positionals: List[Parse.Word] = []
+  shorts: String = ""
+  longs: List[String] = []
+  ## The positionals from this index came after `--`.
+  ended_at: Int = -1
+end
+
+def spec(name: String) -> Optional[Spec]
+  case name
+    "ls" -> some(Spec(flags: "aAlhrtSdF1sinpgGo", long: ["--all", "--almost-all", "--human-readable", "--reverse"]))
+    "cat" -> some(Spec(flags: "nbsAvET", long: ["--number"]))
+    "head" -> some(Spec(flags: "qv", values: "nc", long_values: ["--lines", "--bytes"], counts: true))
+    "tail" -> some(Spec(flags: "qv", values: "nc", long_values: ["--lines", "--bytes"], counts: true))
+    "wc" -> some(Spec(flags: "lwcmL", long: ["--lines", "--words", "--bytes", "--chars"]))
+    "grep" ->
+      some(
+        Spec(
+          flags: "inrvwxclLoHhqsEFPzZ",
+          values: "eABCm",
+          long: ["--ignore-case", "--line-number", "--recursive", "--invert-match", "--count"],
+          long_values: ["--include", "--exclude", "--exclude-dir", "--max-count", "--regexp"],
+          long_eq: ["--color", "--colour"],
+          patterns: 1,
+        ),
+      )
+    "rg" ->
+      some(
+        Spec(
+          flags: "inNwvlcFoHIuS",
+          values: "gteABCm",
+          long: ["--files", "--hidden", "--no-ignore", "--fixed-strings", "--ignore-case", "--line-number", "--count"],
+          long_values: ["--glob", "--type", "--max-count", "--regexp"],
+          patterns: 1,
+        ),
+      )
+    "sed" -> some(Spec(flags: "nEsuz", patterns: 1))
+    "sort" -> some(Spec(flags: "bdfgiMhnRrsuVc", values: "kt"))
+    "uniq" -> some(Spec(flags: "cdiuDz", values: "fsw"))
+    "cut" -> some(Spec(flags: "s", values: "dfcb"))
+    "tr" -> some(Spec(flags: "dsc", paths: false))
+    "file" -> some(Spec(flags: "bi", long: ["--brief", "--mime-type"]))
+    "stat" -> some(Spec(flags: "Lt", values: "c"))
+    "pwd" -> some(Spec(paths: false))
+    "which" -> some(Spec(flags: "a", paths: false))
+    _ -> none
+  end
+end
+
+def command_verdict(command: Parse.Command, inside: Fn[String, Bool]) -> Verdict
   for redirect in command.redirects
-    verdict = redirect_verdict(redirect, root)
+    verdict = redirect_verdict(redirect, inside)
     return verdict if verdict != Verdict.Safe
+  end
+
+  for word in command.words
+    return Verdict.Unknown("the glob #{word.text} gives names that are not checked") if word.glob
   end
 
   name = command.words[0]
-  args = Parse.argv(command).drop(1)
   return Verdict.Writes("#{name.text} runs other programs") if RUNNERS.include?(name.text)
-  return Verdict.Unknown("#{name.text} is not a known read-only command") if name.glob or not SAFE.include?(name.text)
+  return find(command.words.drop(1), inside) if name.text == "find"
+  return Verdict.Safe if name.text == "echo"
 
-  for word in command.words.drop(1)
-    verdict = glob_verdict(name.text, word)
-    return verdict if verdict != Verdict.Safe
+  case spec(name.text)
+    some(s) -> checked(name.text, s, command.words.drop(1), inside)
+    none -> Verdict.Unknown("#{name.text} is not a known read-only command")
   end
-
-  return git(args, root) if name.text == "git"
-
-  skipped = pattern_at(name.text, args)
-  for i in 0...args.size
-    if i != skipped and not inside?(args[i], root)
-      return Verdict.Unknown("#{args[i].inspect} may name a path outside the session folder")
-    end
-  end
-
-  options(name.text, args)
 end
 
-# The index of the script of sed or awk, or the pattern of grep or rg, which is no path; -1 for the others, or when
-# an option (`-e`, `-f`) moves the pattern.
-def pattern_at(name: String, args: List[String]) -> Int
-  return -1 if not ["sed", "awk", "grep", "rg"].include?(name)
-
-  moved = args.any? do |word|
-    word.start_with?("--file") or word.start_with?("--regexp") or short?(word, "e") or short?(word, "f")
-  end
-
-  return -1 if moved and name != "awk"
-
-  for i in 0...args.size
-    after_f = name == "awk" and i > 0 and args[i - 1] == "-F"
-    return i if not args[i].start_with?("-") and not after_f
-  end
-
-  -1
-end
-
-def redirect_verdict(redirect: Parse.Redirect, root: String) -> Verdict
+def redirect_verdict(redirect: Parse.Redirect, inside: Fn[String, Bool]) -> Verdict
   case redirect
     Parse.Redirect.ErrToOut -> Verdict.Safe
     Parse.Redirect.Out(_, path, _) if path == NULL -> Verdict.Safe
     Parse.Redirect.Out(_, path, _) -> Verdict.Writes("it writes #{path}")
-    Parse.Redirect.In(path) if inside?(path, root) -> Verdict.Safe
-    Parse.Redirect.In(path) -> Verdict.Unknown("it reads #{path}")
+    Parse.Redirect.In(path) -> path_verdict(Parse.Word(text: path), false, inside)
   end
 end
 
-# A glob may expand to any name of the folder, `-delete` too, unless it starts with plain text other than `-`; `.*`
-# may give `..`.
-def glob_verdict(name: String, word: Parse.Word) -> Verdict
-  return Verdict.Safe if not word.glob
-  return Verdict.Unknown("the glob #{word.text} may reach a parent folder") if dot_glob?(word.text)
-  return Verdict.Safe if GLOB_ANYWHERE.include?(name)
-  return Verdict.Safe if not "*?[-".include?(word.text.slice(0, 1))
+def checked(name: String, s: Spec, words: List[Parse.Word], inside: Fn[String, Bool]) -> Verdict
+  parsed = parsed_args(s, words)
+  return Verdict.Unknown("#{name}: #{parsed.message}") if not parsed.ok?
 
-  Verdict.Unknown("the glob #{word.text} may expand to an option of #{name}")
-end
+  args = parsed.unwrap!
 
-def dot_glob?(text: String) -> Bool
-  text.split("/").any? { |part| part.start_with?(".") and "*?[".split("").any? { |c| part.include?(c) } }
-end
-
-# A path inside `root`: relative and without `..`, or absolute below `root`; `/dev/null`; an option word with no `/`.
-def inside?(word: String, root: String) -> Bool
-  return true if word == NULL
-  return false if (word.split("/").any? { |part| part == ".." or part.end_with?("=..") })
-  return false if word.include?("/..") or word.start_with?("..")
-  return false if word.start_with?("~")
-
-  return word == root or word.start_with?("#{root}/") if word.start_with?("/")
-
-  not (word.start_with?("-") and word.include?("/"))
-end
-
-def options(name: String, args: List[String]) -> Verdict
-  case name
-    "cd" if args.size != 1 or args[0].start_with?("-") -> Verdict.Unknown("cd without one folder")
-    "find" if (args.any? { |word| FIND_WRITES.include?(word) }) -> Verdict.Writes("find runs or deletes")
-    "sed" -> sed(args)
-    "awk" -> awk(args)
-    "sort" if (args.any? { |word| word.start_with?("--output") or word.start_with?("--compress") or short?(word, "o") }) ->
-      Verdict.Writes("sort -o writes a file")
-    "uniq" if ((args.select { |word| not word.start_with?("-") }).size > 1) ->
-      Verdict.Writes("uniq writes its second file")
-    "rg" if (args.any? { |word| word.start_with?("--pre") or word == "--search-zip" or short?(word, "z") }) ->
-      Verdict.Writes("rg runs a preprocessor")
-    "file" if (args.any? { |word| word == "--compile" or short?(word, "C") }) -> Verdict.Writes("file -C writes")
-    _ -> Verdict.Safe
-  end
-end
-
-# A short option word (`-ro`) with the letter `letter`.
-def short?(word: String, letter: String) -> Bool
-  word.start_with?("-") and not word.start_with?("--") and word.include?(letter)
-end
-
-# `sed -n SCRIPT FILE...`: options only of `SED_FLAGS` with `n` among them (no `-i`, `-e`, `-f`), and a script with
-# none of the commands that write, run or read a file.
-def sed(args: List[String]) -> Verdict
-  options = args.select { |word| word.start_with?("-") }
-  others = args.select { |word| not word.start_with?("-") }
-  return Verdict.Unknown("sed without -n") if (not options.any? { |word| word.include?("n") })
-  if (not options.all? { |word| word.length > 1 and only?(word.slice(1, word.length - 1), SED_FLAGS) })
-    return Verdict.Unknown("a sed option other than -n, -E, -s, -u, -z")
+  patterns = s.patterns
+  if args.shorts.include?("e") or args.longs.include?("--regexp") or args.longs.include?("--files")
+    patterns = 0
   end
 
-  return Verdict.Unknown("sed without a script") if others.empty?
-  return Verdict.Writes("the sed script may write, run or read a file") if writes?(others[0], SED_WRITES.split(""))
+  if name == "sed"
+    return Verdict.Unknown("sed without -n") if not args.shorts.include?("n")
+    return Verdict.Unknown("sed without a script") if args.positionals.empty?
+
+    script = args.positionals[0].text
+    if ("wWerR".split("").any? { |c| script.include?(c) })
+      return Verdict.Writes("the sed script may write, run or read a file")
+    end
+  end
+
+  return Verdict.Writes("uniq writes its second file") if name == "uniq" and args.positionals.size > 1
+
+  for i in 0...args.positionals.size
+    if s.paths and i >= patterns
+      verdict = path_verdict(args.positionals[i], STDIN.include?(name), inside)
+      return verdict if verdict != Verdict.Safe
+    end
+  end
 
   Verdict.Safe
 end
 
-# `awk [-F SEP] SCRIPT FILE...`: a script with no output redirection, pipe, `system` or `getline`.
-def awk(args: List[String]) -> Verdict
-  rest = args
-  if not rest.empty? and rest[0] == "-F"
-    rest = rest.drop(2)
-  elsif not rest.empty? and rest[0].start_with?("-F")
-    rest = rest.drop(1)
+# The options and the arguments of `words`, or an error for an option `s` does not list.
+def parsed_args(s: Spec, words: List[Parse.Word]) -> Result[Args]
+  args = Args()
+  i = 0
+  while i < words.size
+    word = words[i]
+    text = word.text
+    i = i + 1
+    if args.ended_at >= 0 or text == "-" or not text.start_with?("-")
+      args = args.with(positionals: args.positionals.push(word))
+    elsif text == "--"
+      args = args.with(ended_at: args.positionals.size)
+    elsif text.start_with?("--")
+      name = text.split("=")[0]
+      if s.long.include?(text)
+        args = args.with(longs: args.longs.push(text))
+      elsif s.long_eq.include?(name) and text.include?("=")
+        args = args.with(longs: args.longs.push(name))
+      elsif s.long_values.include?(name)
+        args = args.with(longs: args.longs.push(name))
+        if not text.include?("=")
+          return error("#{name} without its value") if i >= words.size
+
+          i = i + 1
+        end
+      else
+        return error("the option #{name} is not known")
+      end
+    elsif s.counts and only?(text.slice(1, text.length - 1), "0123456789")
+      args = args.with(shorts: "#{args.shorts}n")
+    else
+      args = try shorts(s, args, text)
+      if value_last?(s, text)
+        return error("#{text} without its value") if i >= words.size
+
+        i = i + 1
+      end
+    end
   end
 
-  return Verdict.Unknown("an awk option other than -F") if rest.empty? or rest[0].start_with?("-")
-  return Verdict.Writes("the awk script may write or run") if writes?(rest[0], AWK_WRITES)
+  ok(args)
+end
+
+# The short options of `text` (`-rn`, `-A3`): flags, then at most one value option, which takes the rest.
+def shorts(s: Spec, args: Args, text: String) -> Result[Args]
+  out = args
+  for c in text.slice(1, text.length - 1).split("")
+    return error("the option -#{c} is not known") if not s.flags.include?(c) and not s.values.include?(c)
+
+    out = out.with(shorts: "#{out.shorts}#{c}")
+    return ok(out) if s.values.include?(c)
+  end
+
+  ok(out)
+end
+
+# The first value option of `text` is its last letter, so its value is the next word.
+def value_last?(s: Spec, text: String) -> Bool
+  letters = text.slice(1, text.length - 1).split("")
+  case (letters.find_index { |c| s.values.include?(c) })
+    some(at) -> at == letters.size - 1
+    none -> false
+  end
+end
+
+# A path inside the folder. `-` is standard input only where `stdin` says so, else a name like any other.
+def path_verdict(word: Parse.Word, stdin: Bool, inside: Fn[String, Bool]) -> Verdict
+  return Verdict.Safe if word.text == NULL or (stdin and word.text == "-")
+  return Verdict.Unknown("#{word.text.inspect} is outside the session folder") if not inside.call(word.text)
 
   Verdict.Safe
 end
 
-def writes?(script: String, parts: List[String]) -> Bool = parts.any? { |part| script.include?(part) }
+def only?(text: String, allowed: String) -> Bool = not text.empty? and text.split("").all? { |c| allowed.include?(c) }
 
-def only?(text: String, allowed: String) -> Bool = text.split("").all? { |c| allowed.include?(c) }
+# `find [PATH...] [EXPRESSION]`: start paths inside the folder, then only the tests and actions above (no `-exec`,
+# `-delete`, `-fprint`, `-L`, `-newer`).
+def find(words: List[Parse.Word], inside: Fn[String, Bool]) -> Verdict
+  i = 0
+  while i < words.size and not words[i].text.start_with?("-") and not ["!", "(", ")"].include?(words[i].text)
+    verdict = path_verdict(words[i], false, inside)
+    return verdict if verdict != Verdict.Safe
 
-# A safe subcommand right after `git` (so no `-c` or `-C` before it), and no option that writes a file or runs a
-# program; `--no-index` reads any file.
-def git(args: List[String], root: String) -> Verdict
-  return Verdict.Unknown("git without a known read-only subcommand first") if args.empty?
-  return Verdict.Unknown("git #{args[0]} is not a known read-only subcommand") if not GIT_SAFE.include?(args[0])
-
-  rest = args.drop(1)
-  for word in rest
-    if (GIT_WRITES.any? { |option| word == option or word.start_with?("#{option}=") })
-      return Verdict.Writes("git #{word} writes or runs")
-    end
-
-    return Verdict.Unknown("git --no-index reads any file") if word.start_with?("--no-index")
-    if word.start_with?("/") and not word.start_with?("#{root}/")
-      return Verdict.Unknown("#{word.inspect} is outside the session folder")
-    end
-
-    return Verdict.Unknown("#{word.inspect} may name a path outside") if word.start_with?("-") and word.include?("/")
+    i = i + 1
   end
 
-  if (args[0] == "branch" and not rest.all? { |word| GIT_BRANCH_OPTIONS.include?(word) })
-    return Verdict.Writes("git branch with a name or option may change branches")
+  while i < words.size
+    text = words[i].text
+    if FIND_TESTS.include?(text)
+      return Verdict.Unknown("find #{text} without its value") if i + 1 >= words.size
+
+      i = i + 2
+    elsif FIND_FLAGS.include?(text)
+      i = i + 1
+    else
+      return Verdict.Unknown("find #{text} is not a known read-only test")
+    end
   end
 
   Verdict.Safe

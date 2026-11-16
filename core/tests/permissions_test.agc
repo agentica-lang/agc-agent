@@ -4,7 +4,8 @@ import Config from "../src/config"
 import Permissions from "../src/permissions"
 import H from "support/harness"
 
-# `allow_prefix` allows the next `git add`, `allow_tool` every bash call after it; the request says the prefix.
+# `allow_prefix` allows the next `git add`, `allow_tool` every bash call after it; the request says the prefix, and
+# after the first answer only the `cat | tee`, which writes, asks.
 def test_session_answers_allow_a_prefix_or_the_whole_tool() -> Result[Void]
   replies = ["git_add_a.sse", "git_add_b.sse", "bash.sse", "bash_echo.sse", "text.sse"]
   H.using(H.Setup(replies: replies)) do |h|
@@ -21,8 +22,8 @@ def test_session_answers_allow_a_prefix_or_the_whole_tool() -> Result[Void]
     _ = try H.approve(h, id, cat.approval_id, Protocol.Decision.AllowTool)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
-    try Test.eq(H.kinds(a.seen).select { |k| k == "approval_requested" }.size, 0)
-    Test.eq(H.kinds(a.seen).select { |k| k == "tool_finished" }.size, 3)
+    try Test.eq(H.kinds(a.seen).select { |k| k == "approval_requested" }.size, 1)
+    Test.eq(H.kinds(a.seen).select { |k| k == "tool_finished" }.size, 4)
   end
 end
 
@@ -32,7 +33,7 @@ def test_accept_edits_runs_writes_without_asking() -> Result[Void]
     id = try H.new_session(h)
     patched = try H.call(h, "PATCH", Protocol.session_path(id), "{\"accept_edits\": true}", H.auth(h))
     try Test.eq(patched.status, 200)
-    try Test.eq((try Protocol.decode_session(patched.text)).accept_edits, true)
+    try Test.eq((try H.session(h, id)).accept_edits, true)
     bad = try H.call(h, "PATCH", Protocol.session_path(id), "{\"accept\": true}", H.auth(h))
     try Test.eq(bad.status, 400)
     a = try H.subscribe(h, id)
@@ -59,8 +60,8 @@ def test_a_project_file_denies_anywhere_and_allows_only_when_trusted() -> Result
     try Test.eq(H.kinds(a.seen).select { |k| k == "approval_requested" }.size, 0)
 
     base = Approval.Rules(allow: [], deny: [])
-    untrusted = try Permissions.with_project(base, h.work, ["/elsewhere"])
-    trusted = try Permissions.with_project(base, h.work, [h.base])
+    untrusted = try Permissions.with_project(base, h.work, false)
+    trusted = try Permissions.with_project(base, h.work, true)
     try Test.eq([untrusted.allow.size, untrusted.deny.size], [0, 1])
     Test.eq([trusted.allow.size, trusted.deny.size], [1, 1])
   end

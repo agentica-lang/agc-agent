@@ -5,12 +5,13 @@
 ## more text, so `git status*` matches `git status --short` and not `git statusx`. A rule is a convenience and not a
 ## sandbox: see the security model of `Tools`.
 ##
-## A change to a path under `.git/` (`write_file`, `edit_file`) always asks, because `.git/config` and the hooks run
+## A change to a path under `.git/` (`write_file`, `edit_file`, `apply_patch`) always asks, because `.git/config` and the hooks run
 ## programs (`core.fsmonitor`, aliases) the next time git runs; the name is compared without case and trailing dots.
 ## Only a deny rule can change that. `edit_file` reads the file, so a deny rule of `read_file` denies it too.
 
 import Regex from "std/regex"
 import Shell from "pkg/shell/shell"
+import Sandbox from "sandbox"
 
 enum Verdict
   Allow
@@ -60,18 +61,14 @@ end
 def plain?(command: String) -> Bool = Regex.match?(command, PLAIN)
 
 ## `asks` is whether the tool asks when no rule matches. A deny rule wins over an allow rule. With `root` (the session
-## folder), a `bash` command that only reads inside it (`Shell.verdict`) runs without asking, unless a deny rule matches
-## one of its commands.
+## folder), a `bash` command that only reads inside it (`Shell.verdict`, its paths resolved by `Sandbox`) runs without
+## asking, unless a deny rule of `read_file` or `bash` exists: the command could read what the rule hides.
 def decide(rules: Rules, tool: String, target: String, asks: Bool, root: Optional[String] = none) -> Verdict
   matchable = tool != "bash" or plain?(target)
   hidden = tool == "edit_file" and read_denied?(rules, target)
   denied = hidden or (matchable and rules.deny.any? { |rule| matches?(rule, tool, target) })
-  read_only = (
-    tool == "bash" and
-    root.map { |folder| Shell.verdict(target, folder) == Shell.Verdict.Safe } == some(true)
-  )
-
-  denied = denied or (read_only and commands_denied?(rules, target))
+  guarded = rules.deny.any? { |rule| rule.tool == "read_file" or rule.tool == "bash" }
+  read_only = tool == "bash" and not guarded and root.map { |folder| read_only?(folder, target) } == some(true)
   allowed = read_only or (matchable and rules.allow.any? { |rule| matches?(rule, tool, target) })
   if denied
     Verdict.Deny
@@ -89,6 +86,11 @@ end
 ## A change under `.git/`, which always asks unless a deny rule refuses it.
 def protected?(tool: String, target: String) -> Bool
   WRITES.include?(tool) and target.split("/").any? { |name| Regex.match?(name.downcase, GIT) }
+end
+
+## Whether `command` only reads inside `root` (`Shell.verdict`, its paths resolved by `Sandbox`).
+def read_only?(root: String, command: String) -> Bool
+  Shell.verdict(command, ->(path) { Sandbox.resolve(root, path).ok? }) == Shell.Verdict.Safe
 end
 
 ## Whether a deny rule of `read_file` covers the path (relative to the session folder): `glob` and `grep` skip it too.
@@ -120,18 +122,6 @@ WORD = /\A[A-Za-z0-9_]\z/
 PLAIN = /\A[A-Za-z0-9_.\/:=,+@%\- \t]*\z/
 GIT = /\A\.git\.*\z/
 WRITES = ["write_file", "edit_file", "apply_patch"]
-
-# Each command of a parsed `bash` command, its words joined by spaces, against the deny rules.
-def commands_denied?(rules: Rules, command: String) -> Bool
-  case Shell.parse(command)
-    ok(script) ->
-      script.pipelines.any? do |pipeline|
-        pipeline.commands.any? { |c| rules.deny.any? { |rule| matches?(rule, "bash", Shell.argv(c).join(" ")) } }
-      end
-
-    error(_) -> false
-  end
-end
 
 def matches?(rule: Rule, tool: String, target: String) -> Bool
   return false if rule.tool != tool
