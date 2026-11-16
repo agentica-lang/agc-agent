@@ -273,7 +273,14 @@ def test_requests_need_the_token_a_local_host_and_no_foreign_origin() -> Result[
     try Test.eq((try File.stat("#{h.state_dir}/server.json")).mode % 512, 384)
     try Test.eq((try File.stat(h.state_dir)).mode % 512, 448)
     second = Server.start(
-      Server.Options(state_dir: h.state_dir, provider: h.provider, model: "m", env: &H.fake_env, rules: H.no_rules()),
+      Server.Options(
+        state_dir: h.state_dir,
+        data_dir: h.data_dir,
+        provider: h.provider,
+        model: "m",
+        env: &H.fake_env,
+        rules: H.no_rules(),
+      ),
     )
 
     Test.error?(second)

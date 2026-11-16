@@ -4,6 +4,9 @@
 ## The state folder (0700) holds `server.json` (0600, `Protocol.ServerInfo`) for the clients and `core.lock`, which
 ## the running server holds locked so that a second one does not start. A client holds `server.lock` while it starts
 ## a server, so the server takes another file.
+##
+## The sessions live in `sessions/` of the data folder (0700), one file each (`Store`); the server starts them all
+## again from there.
 
 import Actor from "std/actor"
 import HTTP from "std/http"
@@ -11,10 +14,12 @@ import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Sandbox from "sandbox"
 import Session from "session"
+import Store from "store"
 import Tools from "tools"
 
 VERSION = "0.0.1"
 SERVER_JSON = "server.json"
+SESSIONS_DIR = "sessions"
 LOCK_FILE = "core.lock"
 MAX_BODY_BYTES = 1_048_576
 MAX_INSTRUCTIONS_BYTES = 65_536
@@ -32,6 +37,7 @@ SSE_HEADERS = [
 
 struct Options
   state_dir: String
+  data_dir: String
   provider: LLM.Provider
   model: String
   env: Fn[String, Result[String]]
@@ -52,7 +58,9 @@ end
 
 ## Starts the server in the calling task, which owns it: call it from the task that keeps it.
 def start(options: Options) -> Result[Server]
-  try state_folder(options.state_dir)
+  try private_folder(options.state_dir)
+  try private_folder(options.data_dir)
+  try private_folder(sessions_dir(options))
   lock = try File.open("#{options.state_dir}/#{LOCK_FILE}", "append")
   locked = File.try_lock(lock, 1000)
   if locked != ok(true)
@@ -60,7 +68,8 @@ def start(options: Options) -> Result[Server]
     return error("a server already runs for #{options.state_dir}")
   end
 
-  behaviour = Actor.Behaviour(init: -> { Registry(options: options) }, handle: &handle, terminate: some(&terminate))
+  init = -> { Registry(options: options, sessions: load_sessions(options)) }
+  behaviour = Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate))
   registry = Actor.start(behaviour)
   started = serve(options, registry, lock)
   if not started.ok?
@@ -117,7 +126,7 @@ def serve(options: Options, registry: Actor.Ref[Registry, Msg], lock: File.Handl
   end
 end
 
-def state_folder(given: String) -> Result[Void]
+def private_folder(given: String) -> Result[Void]
   path = try Path.resolve(given)
   if not File.stat(path).ok?
     try Dir.mkdir(Sandbox.parent(path))
@@ -173,6 +182,8 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
   end
 end
 
+def sessions_dir(options: Options) -> String = "#{options.data_dir}/#{SESSIONS_DIR}"
+
 def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]
   options = registry.options
   ctx = case Tools.context(request.cwd, options.env, options.rules)
@@ -181,21 +192,64 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   end
 
   context = try ctx
-  id = "s#{registry.sessions.size + 1}-#{OpenSSL.Random.hex(4)}"
-  model = request.model.unwrap_or(options.model)
-  setup = Session.Setup(
-    id: id,
+  header = Store.Header(
+    id: "s#{registry.sessions.size + 1}-#{OpenSSL.Random.hex(4)}",
     cwd: context.root,
-    model: model,
+    model: request.model.unwrap_or(options.model),
+  )
+
+  file = try Store.create(sessions_dir(options), header)
+  ok(entry(options, header, context, file, none))
+end
+
+def entry(
+  options: Options,
+  header: Store.Header,
+  context: Tools.Context,
+  file: String,
+  saved: Optional[Store.Saved],
+) -> Entry
+  setup = Session.Setup(
+    id: header.id,
+    cwd: context.root,
+    model: header.model,
     provider: options.provider,
     system: system_prompt(context.root),
     ctx: context,
     keep_events: options.keep_events,
     approval_timeout_ms: options.approval_timeout_ms,
+    file: file,
   )
 
-  summary = Protocol.SessionSummary(id: id, cwd: context.root, model: model)
-  ok(Entry(summary: summary, session: Session.start(setup)))
+  summary = Protocol.SessionSummary(id: header.id, cwd: context.root, model: header.model)
+  Entry(summary: summary, session: Session.start(setup, saved))
+end
+
+# A session whose file or folder cannot be read is left out, with a warning.
+def load_sessions(options: Options) -> List[Entry]
+  dir = sessions_dir(options)
+  names: List[String] = []
+  case Dir.list(dir)
+    ok(found) -> names = found.select { |name| name.end_with?(Store.EXTENSION) }
+    error(e) -> IO.warn("sessions not loaded: #{e.message}")
+  end
+
+  entries: List[Entry] = []
+  for name in names
+    case load_session(options, "#{dir}/#{name}")
+      ok(loaded) -> entries = entries.push(loaded)
+      error(e) -> IO.warn("session #{name} not loaded: #{e.message}")
+    end
+  end
+
+  entries
+end
+
+def load_session(options: Options, file: String) -> Result[Entry]
+  saved = try Store.load(file)
+  context = try Tools.context(saved.header.cwd, options.env, options.rules)
+  try Store.reopen(file)
+  ok(entry(options, saved.header, context, file, some(saved)))
 end
 
 # `AGENTS.md` goes to the model only when it is a regular file inside the folder: a link out of it could be any file.
