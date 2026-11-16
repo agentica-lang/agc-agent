@@ -40,6 +40,8 @@ struct Chat
   replay_until: Int = 0
   ## The highest event id already printed, so a replay after a resync prints nothing twice.
   shown_id: Int = 0
+  ## The size of the session's history the client has seen, so a resync prints only the rest.
+  known: Int = 0
   turn: Bool = false
   stopping: Bool = false
   pending: List[Protocol.ApprovalRequested] = []
@@ -104,23 +106,31 @@ end
 def resume(chat: Chat, id: String) -> Result[Chat]
   session = try Client.session(chat.server, id)
   print_line("[session #{id}]")
-  if not session.history.empty?
-    print_line(Render.history(session.history))
-  end
-
   ok(attach(chat, session, false))
 end
 
-# Subscribes to what the snapshot of the session says. While a turn runs, the replay from the start of the turn gives
-# the whole turn; `skip_replay` reads only what comes next, for a server that no longer has that start.
+# Prints the history the client has not shown yet, then subscribes to what the snapshot of the session says. While a
+# turn runs, the replay from the start of the turn gives the whole turn; `skip_replay` reads only what comes next, for
+# a server that no longer has that start.
 def attach(chat: Chat, session: Protocol.Session, skip_replay: Bool) -> Chat
+  missed = session.history.drop(chat.known)
+  if not missed.empty?
+    print_line(Render.history(missed))
+  end
+
   running = session.turn_id.some?
+  shown = chat
+  if chat.turn and not running
+    shown = note(chat, "[the turn ended while the stream was away]")
+  end
+
   from = session.last_event_id
   if running and not skip_replay
     from = session.turn_from_event_id.unwrap_or(session.last_event_id)
   end
 
-  fresh = chat.with(
+  fresh = shown.with(
+    known: session.history.size,
     turn: running,
     stopping: false,
     pending: session.pending_approvals,
@@ -195,8 +205,10 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
   end
 
   changed = case event
-    Protocol.Event.TurnStarted(_) -> shown.with(turn: true, stopping: false)
-    Protocol.Event.TurnFinished(_) -> shown.with(turn: false, stopping: false)
+    Protocol.Event.TurnStarted(started) ->
+      shown.with(turn: true, stopping: false, known: started.history_size.unwrap_or(shown.known))
+    Protocol.Event.TurnFinished(finished) ->
+      shown.with(turn: false, stopping: false, known: finished.history_size.unwrap_or(shown.known))
     Protocol.Event.ApprovalRequested(request) -> shown.with(pending: added(shown.pending, request))
     Protocol.Event.ApprovalResolved(resolved) -> forgotten(shown, resolved.approval_id)
     _ -> shown

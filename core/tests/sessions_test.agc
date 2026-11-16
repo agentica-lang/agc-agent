@@ -118,12 +118,16 @@ def test_a_turn_cut_before_it_started_ends_cancelled() -> Result[Void]
       try Test.eq(after.history.map { |m| m.text }.drop(2), ["two"])
       b = try H.until(try H.subscribe(r, id, some(before.last_event_id)), Protocol.EventKind.TurnFinished)
       try Test.eq(H.kinds(b.seen), ["turn_started", "turn_finished"])
-      try Test.eq(b.seen[0].event, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: "turn-2")))
+      started = Protocol.TurnStarted(turn_id: "turn-2", history_size: some(3))
+      try Test.eq(b.seen[0].event, Protocol.Event.TurnStarted(started))
       try Test.eq(H.stop_reason(b), "cancelled")
+      try Test.eq(history_size(b.seen.last), some(3))
       sent = try H.send(r, id, "three")
       try Test.eq((try Protocol.decode_message_accepted(sent.text)).turn_id, "turn-3")
       b = try H.until(b.with(seen: []), Protocol.EventKind.TurnFinished)
       H.close(b)
+      try Test.eq(history_size(b.seen[0]), some(4))
+      try Test.eq(history_size(b.seen.last), some((try H.session(r, id)).history.size))
       Test.eq(H.stop_reason(b), "end_turn")
     end
   end
@@ -324,4 +328,12 @@ end
 
 def roles() -> String
   ["system", "user", "assistant", "tool", "assistant", "user"].map { |r| JSON.encode(r) }.join(" ")
+end
+
+def history_size(seen: H.Seen) -> Optional[Int]
+  case seen.event
+    Protocol.Event.TurnStarted(started) -> started.history_size
+    Protocol.Event.TurnFinished(finished) -> finished.history_size
+    _ -> none
+  end
 end

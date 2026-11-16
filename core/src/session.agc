@@ -364,7 +364,12 @@ def broke(state: State, e: Error) -> State
         _ = waiting.reply.send(Protocol.Decision.Deny, 0)
       end
 
-      cancelled = Protocol.TurnFinished(turn_id: turn.id, stop_reason: Protocol.StopReason.Cancelled)
+      cancelled = Protocol.TurnFinished(
+        turn_id: turn.id,
+        stop_reason: Protocol.StopReason.Cancelled,
+        history_size: some(out.display.size),
+      )
+
       end_frame = frame("", Protocol.Event.TurnFinished(cancelled))
       lost = Lost(to: out.counter, frames: [error_frame, end_frame])
       out.with(turn: none, pending: [], subscribers: broadcast(out, end_frame), lost: some(lost))
@@ -445,7 +450,10 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
   )
 
   Actor.reply(reply, ok(turn_id))
-  emit(started, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id)))
+  emit(
+    started,
+    Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id, history_size: some(started.display.size))),
+  )
 end
 
 def run_turn(job: Job) -> Void
@@ -590,7 +598,8 @@ def ended(state: State, turn_id: String, first_message: Int, reason: Protocol.St
     end
   end
 
-  emit(shown, Protocol.Event.TurnFinished(Protocol.TurnFinished(turn_id: turn_id, stop_reason: reason)))
+  finished = Protocol.TurnFinished(turn_id: turn_id, stop_reason: reason, history_size: some(shown.display.size))
+  emit(shown, Protocol.Event.TurnFinished(finished))
 end
 
 def compact_model(setup: Setup) -> String
@@ -661,7 +670,8 @@ def restore(setup: Setup, saved: Store.Saved) -> State
 
   # The server stopped between the user message of a turn and its `turn_started`.
   turn_id = "turn-#{ended_cut.turns}"
-  started = emit(ended_cut, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id)))
+  size = some(ended_cut.display.size)
+  started = emit(ended_cut, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id, history_size: size)))
   end_cut_turn(started, Cut(turn_id: turn_id, approvals: []), started.history.size)
 end
 

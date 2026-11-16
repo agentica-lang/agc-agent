@@ -11,7 +11,7 @@ LAST_EVENT_ID = Protocol.LAST_EVENT_ID_HEADER
 def test_resync_reads_the_session_again_and_drops_the_old_stream() -> Result[Void]
   routes = [
     Routes.session([Fake.Reply(session: "session_resync_a.json"), Fake.Reply(session: "session_resync_b.json")]),
-    Routes.events([Fake.Reply(fixture: "resync.sse"), Fake.Reply(hold: true)]),
+    Routes.events([Fake.Reply(fixture: "turn_then_resync.sse"), Fake.Reply(hold: true)]),
   ]
 
   Driver.within(routes, &resynced)
@@ -23,8 +23,10 @@ def resynced(rig: Driver.Rig) -> Result[Void]
   try Fake.push(rig.fake, "after_resync.sse")
   rest = try Driver.read_until(cli, "caught up")
   done = try Driver.finish(cli)
-  try Test.eq(lines, ["[session s1]", "user: hello", "assistant: hi", "[resync: reading the session again]"])
-  try Test.eq(rest, ["caught up"])
+  shown = ["[session s1]", "user: hello", "assistant: hi", "on it", "[turn finished] end_turn"]
+  try Test.eq(lines, shown.push("[resync: reading the session again]"))
+  # The turn the stream showed is not printed again; the one it missed is.
+  try Test.eq(rest, ["user: and then", "assistant: done", "caught up"])
   try Test.eq(try last_ids(rig), [["7"], ["12"]])
   Test.eq(done.code, 0)
 end
@@ -137,6 +139,63 @@ def printed_once(rig: Driver.Rig) -> Result[Void]
 
   try Test.eq(lines, expected)
   try Test.eq(rest, ["[tool ok] exit 0 (950 ms)", "All pass.", "[turn finished] end_turn"])
+  Test.eq(done.code, 0)
+end
+
+def test_a_turn_stopped_after_text_adds_no_answer_to_the_history() -> Result[Void]
+  stopped("turn_cancelled_resync.sse", "[turn finished] cancelled")
+end
+
+def test_a_turn_failed_after_text_adds_no_answer_to_the_history() -> Result[Void]
+  stopped("turn_failed_resync.sse", "[turn finished] error")
+end
+
+def stopped(fixture: String, finished: String) -> Result[Void]
+  routes = [
+    Routes.session([Fake.Reply(session: "session_resync_a.json"), Fake.Reply(session: "session_after_stop.json")]),
+    Routes.events([Fake.Reply(fixture: fixture), Fake.Reply(hold: true)]),
+  ]
+
+  Driver.within(routes) do |rig|
+    cli = try Driver.start(rig.dir, ["--session", "s1"])
+    lines = try Driver.read_until(cli, "assistant: done")
+    done = try Driver.finish(cli)
+    try Test.eq(
+      lines.drop(lines.size - 4),
+      [finished, "[resync: reading the session again]", "user: next", "assistant: done"],
+    )
+
+    Test.eq(done.code, 0)
+  end
+end
+
+def test_a_turn_cut_by_a_restart_shows_its_end_after_the_resync() -> Result[Void]
+  routes = [
+    Routes.session([Fake.Reply(session: "session_running.json"), Fake.Reply(session: "session_cut.json")]),
+    Routes.events([Fake.Reply(fixture: "turn_running_resync.sse"), Fake.Reply(hold: true)]),
+  ]
+
+  Driver.within(routes, &cut_turn_ended)
+end
+
+def cut_turn_ended(rig: Driver.Rig) -> Result[Void]
+  cli = try Driver.start(rig.dir, ["--session", "s1"])
+  lines = try Driver.read_until(cli, "[the turn ended")
+  first = try Fake.request(rig.fake, "GET", Protocol.events_path("s1"))
+  second = try Fake.request(rig.fake, "GET", Protocol.events_path("s1"))
+  done = try Driver.finish(cli)
+  expected = [
+    "[session s1]",
+    "user: run the tests",
+    "Running the tests.",
+    "[tool] bash make test",
+    "[resync: reading the session again]",
+    "assistant: Running the tests.",
+    "[the turn ended while the stream was away]",
+  ]
+
+  try Test.eq(lines, expected)
+  try Test.eq([first, second].map { |request| Driver.header(request, LAST_EVENT_ID) }, [["4"], ["12"]])
   Test.eq(done.code, 0)
 end
 

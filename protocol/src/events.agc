@@ -50,8 +50,12 @@ enum StopReason
   Other(String)
 end
 
+## `history_size` in `turn_started` and `turn_finished` is the size of the session's `history` once the event happened
+## (the user message is in it at the start, the answer, if any, at the end); none in an event of an older server. A
+## client that reads the session again after a `resync` prints the history from there.
 struct TurnStarted
   turn_id: String
+  history_size: Optional[Int] = none
 end
 
 struct TextDelta
@@ -106,6 +110,7 @@ end
 struct TurnFinished
   turn_id: String
   stop_reason: StopReason
+  history_size: Optional[Int] = none
 end
 
 ## `Resync` says the `Last-Event-ID` is unknown or too old: read the session again.
@@ -204,7 +209,8 @@ def event_name(event: Event) -> String = kind_name(event_kind(event))
 ## The SSE `data:` of an event.
 def encode_event(event: Event) -> String
   case event
-    Event.TurnStarted(data) -> JSON.encode(data)
+    Event.TurnStarted(data) ->
+      JSON.encode(TurnStartedWire(turn_id: data.turn_id, history_size: field(data.history_size)))
     Event.TextDelta(data) -> JSON.encode(data)
     Event.ThinkingDelta(data) -> JSON.encode(data)
     Event.ToolStarted(data) -> JSON.encode(data)
@@ -220,7 +226,13 @@ def encode_event(event: Event) -> String
       )
     Event.Usage(data) -> JSON.encode(data)
     Event.TurnFinished(data) ->
-      JSON.encode(TurnFinishedWire(turn_id: data.turn_id, stop_reason: stop_reason_name(data.stop_reason)))
+      wire = TurnFinishedWire(
+        turn_id: data.turn_id,
+        stop_reason: stop_reason_name(data.stop_reason),
+        history_size: field(data.history_size),
+      )
+
+      JSON.encode(wire)
     Event.Error(data) -> Errors.encode_failure(data)
     Event.Resync -> "{}"
   end
@@ -230,7 +242,7 @@ end
 ## wrong type, a negative count or duration) is `protocol.invalid`.
 def decode_event(name: String, data: String) -> Result[Event]
   case try parse_kind(name)
-    EventKind.TurnStarted -> ok(Event.TurnStarted(try Wire.decode(data, TurnStarted.codec)))
+    EventKind.TurnStarted -> decode_turn_started(data)
     EventKind.TextDelta -> ok(Event.TextDelta(try Wire.decode(data, TextDelta.codec)))
     EventKind.ThinkingDelta -> ok(Event.ThinkingDelta(try Wire.decode(data, ThinkingDelta.codec)))
     EventKind.ToolStarted -> ok(Event.ToolStarted(try Wire.decode(data, ToolStarted.codec)))
@@ -263,9 +275,15 @@ struct ResolvedWire
   source: String
 end
 
+struct TurnStartedWire
+  turn_id: String
+  history_size: JSON.Field[Int]
+end
+
 struct TurnFinishedWire
   turn_id: String
   stop_reason: String
+  history_size: JSON.Field[Int]
 end
 
 def following_kind(kind: EventKind) -> Optional[EventKind]
@@ -327,9 +345,37 @@ def decode_resolved(data: String) -> Result[Event]
   ok(Event.ApprovalResolved(ApprovalResolved(approval_id: wire.approval_id, decision: decision, source: source)))
 end
 
+def decode_turn_started(data: String) -> Result[Event]
+  wire = try Wire.decode(data, TurnStartedWire.codec)
+  ok(Event.TurnStarted(TurnStarted(turn_id: wire.turn_id, history_size: try history_size(wire.history_size))))
+end
+
 def decode_turn_finished(data: String) -> Result[Event]
   wire = try Wire.decode(data, TurnFinishedWire.codec)
-  ok(Event.TurnFinished(TurnFinished(turn_id: wire.turn_id, stop_reason: parse_stop_reason(wire.stop_reason))))
+  finished = TurnFinished(
+    turn_id: wire.turn_id,
+    stop_reason: parse_stop_reason(wire.stop_reason),
+    history_size: try history_size(wire.history_size),
+  )
+
+  ok(Event.TurnFinished(finished))
+end
+
+# An event of an older server has no `history_size`.
+def field(size: Optional[Int]) -> JSON.Field[Int]
+  case size
+    some(n) -> JSON.Field.Value(n)
+    none -> JSON.Field.Absent
+  end
+end
+
+def history_size(size: JSON.Field[Int]) -> Result[Optional[Int]]
+  case size
+    JSON.Field.Value(n) ->
+      try Wire.non_negative("history_size", n)
+      ok(some(n))
+    _ -> ok(none)
+  end
 end
 
 def decode_resync(data: String) -> Result[Event]
