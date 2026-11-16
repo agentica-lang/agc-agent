@@ -39,5 +39,8 @@ bin/agc serve --api openai_responses  # the same on /v1/responses
 bin/agc --version
 ```
 
+The flags of `agc serve` (`--api`, `--model`, `--base-url`) override their environment variables (`AGC_AGENT_API`,
+`AGC_AGENT_MODEL`, `AGC_AGENT_BASE_URL`); `agc serve --help` lists them all.
+
 Development: `make test` and `make smoke-llama` (the second fetches llama.cpp and a 0.5B model, about 500 MB, into
 `.tools/`).
