@@ -1,0 +1,8 @@
+id: 1
+event: shell_started
+data: {"shell_id":"sh1","command":"echo one","context":true}
+
+id: 2
+event: shell_finished
+data: {"shell_id":"sh1","command":"echo one","context":true,"ok":true,"output":"one\n","duration_ms":5}
+

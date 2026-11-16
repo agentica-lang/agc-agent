@@ -107,6 +107,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.get("#{one}/tree", ->(conn) { reply(conn, 200, tree(sessions, conn)) })
     |> Bond.post("#{one}/branch", ->(conn) { reply(conn, 200, branch(sessions, conn)) })
     |> Bond.post("#{one}/fork", ->(conn) { reply(conn, 201, fork(sessions, conn)) })
+    |> Bond.post("#{one}/shell", ->(conn) { reply(conn, 202, shell(sessions, conn)) })
     |> Bond.post("#{one}/stop", ->(conn) { reply(conn, 200, stop_turn(sessions, conn)) })
     |> Bond.post("#{one}/approvals/:approval", ->(conn) { reply(conn, 200, approve(sessions, conn)) })
     |> Bond.get("#{one}/events", ->(conn) { events(sessions, conn) })
@@ -291,6 +292,11 @@ def fork(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   ok(Protocol.encode_branched(try Sessions.fork(sessions, try Bond.param(conn, "id"), request.entry)))
 end
 
+def shell(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  request = try Protocol.decode_run_shell(try String.from_bytes(conn.body))
+  ok(Protocol.encode_shell_accepted(try Sessions.shell(sessions, try Bond.param(conn, "id"), request)))
+end
+
 def stop_turn(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   _ = try Sessions.stop_turn(sessions, try Bond.param(conn, "id"))
   ok("{}")
@@ -375,6 +381,7 @@ end
 
 def status_of(kind: String) -> Int
   return 400 if [Protocol.KIND_INVALID, Protocol.KIND_UNKNOWN].include?(kind)
+  return 403 if kind == Protocol.KIND_SHELL_DENIED
   return 404 if [Protocol.KIND_SESSION_NOT_FOUND, Protocol.KIND_APPROVAL_NOT_FOUND].include?(kind)
   return 409 if [Protocol.KIND_SESSION_BUSY, Protocol.KIND_APPROVAL_RESOLVED].include?(kind)
   return 503 if kind == Protocol.KIND_SESSION_UNAVAILABLE

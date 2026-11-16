@@ -67,6 +67,13 @@ struct StopServer
   now: Bool = false
 end
 
+## `POST /v1/sessions/ID/shell`: runs `command` in the session folder as the `bash` tool would, while no turn runs.
+## With `context`, its output goes to the model before the next message.
+struct RunShell
+  command: String
+  context: Bool
+end
+
 ## Every decision, in a fixed order.
 def decisions() -> List[Decision] = Wire.chain(Decision.Allow, &following)
 
@@ -144,6 +151,14 @@ def encode_stop_server(body: StopServer) -> String = JSON.encode(body)
 
 def decode_stop_server(text: String) -> Result[StopServer] = Wire.decode_strict(text, StopServer.codec)
 
+def encode_run_shell(body: RunShell) -> String = JSON.encode(body)
+
+def decode_run_shell(text: String) -> Result[RunShell]
+  body = try Wire.decode_strict(text, RunShell.codec)
+  try Wire.non_empty("command", body.command)
+  ok(body)
+end
+
 ## The fields of the requests and the names of their values on the wire, for `Protocol.WIRE`.
 def shape() -> List[String]
   records = [
@@ -155,6 +170,7 @@ def shape() -> List[String]
     Wire.record("Branch", Branch.members),
     Wire.record("Fork", Fork.members),
     Wire.record("StopServer", StopServer.members),
+    Wire.record("RunShell", RunShell.members),
     Wire.record("ApproveWire", ApproveWire.members),
   ]
 

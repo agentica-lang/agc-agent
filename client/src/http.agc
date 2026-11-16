@@ -110,6 +110,11 @@ def fork(server: Server, id: String, entry: Optional[Int]) -> Result[Protocol.Br
   Protocol.decode_branched(try call(server, "POST", Protocol.fork_path(id), body))
 end
 
+## Runs a command in the session folder; its output comes in `shell_finished`.
+def shell(server: Server, id: String, request: Protocol.RunShell) -> Result[Protocol.ShellAccepted]
+  Protocol.decode_shell_accepted(try call(server, "POST", Protocol.shell_path(id), Protocol.encode_run_shell(request)))
+end
+
 def stop(server: Server, id: String) -> Result[Void]
   _ = try call(server, "POST", Protocol.stop_path(id), "")
   ok()

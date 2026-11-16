@@ -267,6 +267,7 @@ def test_routes() -> Result[Void]
   try Test.eq(Protocol.tree_path("s1"), "/v1/sessions/s1/tree")
   try Test.eq(Protocol.branch_path("s1"), "/v1/sessions/s1/branch")
   try Test.eq(Protocol.fork_path("s1"), "/v1/sessions/s1/fork")
+  try Test.eq(Protocol.shell_path("s1"), "/v1/sessions/s1/shell")
   Test.eq(Protocol.stop_path("s1"), "/v1/sessions/s1/stop")
 end
 
@@ -297,6 +298,15 @@ def test_the_server_status_and_its_stop_round_trip() -> Result[Void]
   try Test.eq(error_kind(Protocol.decode_stop_server("{\"later\": true}")), "protocol.invalid")
   try Test.eq(Protocol.SERVER_PATH, "/v1/server")
   Test.eq(Protocol.SERVER_STOP_PATH, "/v1/server/stop")
+end
+
+def test_a_shell_command_round_trips() -> Result[Void]
+  run = Protocol.RunShell(command: "ls", context: false)
+  try Test.eq(Protocol.decode_run_shell(Protocol.encode_run_shell(run)), ok(run))
+  try Test.eq(error_kind(Protocol.decode_run_shell("{\"command\": \"ls\"}")), "protocol.invalid")
+  try Test.eq(error_kind(Protocol.decode_run_shell("{\"command\": \"\", \"context\": true}")), "protocol.invalid")
+  accepted = Protocol.ShellAccepted(shell_id: "sh1")
+  Test.eq(Protocol.decode_shell_accepted(Protocol.encode_shell_accepted(accepted)), ok(accepted))
 end
 
 def test_session_settings_round_trip_and_refuse_unknown_levels() -> Result[Void]
