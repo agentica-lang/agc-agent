@@ -6,6 +6,8 @@ export AGENTICA
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
 PACKAGES = sse llm mcp protocol monty shell client core cli tui_client
+# How many files, packages or checks run at once.
+JOBS ?= 4
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
 LEAVES = llm mcp sse protocol monty shell
 SERVER_AND_CLIENTS = core|client|cli|tui_client|web_client
@@ -32,18 +34,22 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 
 # $(call tests,PACKAGE,FOLDER): runs the .agc tests of FOLDER; a run that passes no test fails, so tests that are no
 # longer found never pass in silence.
-tests = out=$$(cd $(1) && $(AGENTICA) test $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
+tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(JOBS) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check unit smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
+.PHONY: install check coupling fmt-check unit unit-package smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
 install:
 	cd core && $(AGENTICA) install
 	cd tui_client && $(AGENTICA) install
 
+# Each file of a package is checked by itself (that is what `check .` does, one after the other), JOBS at a time.
 check: coupling install
-	for pkg in $(PACKAGES); do (cd $$pkg && $(AGENTICA) check .) || exit 1; done
+	for pkg in $(PACKAGES); do \
+	  (cd $$pkg && find . -name '*.agc' -not -path './deps/*' -not -path './_build/*' | sort \
+	    | xargs -P $(JOBS) -n 2 $(AGENTICA) check) || exit 1; \
+	done
 
 coupling:
 	@$(call none,$(LEAVES) depend on the server or a client,$(foreach p,$(LEAVES),-g '$(p)/**') \
@@ -61,10 +67,19 @@ coupling:
 	@$(call none,core/src/http imports a file of session but session.agc,-g 'core/src/http/**' '^import \w+ from "\.\./session/(?!session")' -P .)
 
 fmt-check:
-	for pkg in $(PACKAGES); do (cd $$pkg && $(AGENTICA) fmt --check .) || exit 1; done
+	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} sh -c 'cd {} && $(AGENTICA) fmt --check .'
 
+# The packages run at once, and the files of each (`agentica test --jobs`).
 unit:
-	for pkg in $(PACKAGES); do $(call tests,$$pkg,tests); done
+	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} $(MAKE) --no-print-directory unit-package PACKAGE={}
+
+# The cli tests run the client and the fake server from bytecode compiled once, not from source in every process.
+unit-package:
+	@if [ "$(PACKAGE)" = cli ]; then mkdir -p cli/_build/bin && \
+	  $(AGENTICA) compile cli/main.agc -o cli/_build/bin/cli.agcb >/dev/null && \
+	  $(AGENTICA) compile cli/tests/support/fake_main.agc -o cli/_build/bin/fake.agcb >/dev/null; fi; \
+	if [ "$(PACKAGE)" = cli ]; then export CLI_BYTECODE='$(CURDIR)/cli/_build/bin/cli.agcb' FAKE_BYTECODE='$(CURDIR)/cli/_build/bin/fake.agcb'; fi; \
+	$(call tests,$(PACKAGE),tests)
 
 # The entry points run, with their packages read from the workspace; bin/finn also from another folder, through a
 # relative symlink to the bin folder and one to the script (in .tools/, gitignored).
@@ -79,9 +94,10 @@ smoke: install
 	  '$(CURDIR)/.tools/smoke/finn' --version | grep -qx 'Finn Agent cli [0-9.]*'
 	out=$$('$(CURDIR)/bin/finn' tui --version) && echo "$$out" | grep -qx 'Finn Agent tui [0-9.]*'
 
-# The TUI client under a pseudo-terminal, against the server against a fake model (Python, standard library only).
+# The TUI client under a pseudo-terminal, against the server against a fake model (Python, standard library only). The
+# client and the core are compiled once, and the tests run JOBS at a time, one process each.
 pty: install
-	python3 -m unittest tui_client/tests/test_pty.py -v
+	JOBS=$(JOBS) python3 tui_client/tests/run_pty.py
 
 # The bash parser of `shell` against real bash (Python standard library only).
 peer:

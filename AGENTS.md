@@ -47,7 +47,8 @@ A package is added by the phase that needs it, never as an empty folder.
 - `make test AGENTICA=...`: `check` (first `coupling`: the package rules
   below, with `rg`), `unit` (`agentica test tests` in each package; a package
   that passes no test fails), `smoke` (runs `core/main.agc`), `pty`
-  (`tui_client/tests/test_pty.py`) and `peer` (`shell/tests/test_bash_peer.py`),
+  (`tui_client/tests/run_pty.py`: one process per test of `test_pty.py`, the
+  client and the core compiled once) and `peer` (`shell/tests/test_bash_peer.py`),
   both Python standard library only. `install`
   fetches bond into `core/deps/` and agentica-tui into `tui_client/deps/` (gitignored); `check`,
   `smoke` and `pty` run it first.
@@ -122,6 +123,17 @@ A package is added by the phase that needs it, never as an empty folder.
   recorded SSE and JSON go in `<pkg>/tests/fixtures/`. Few tests, high value.
   Every `.agc` test run shows how many tests passed, and a run that passes
   none fails.
+- Fast tests: `make test` stays near a minute and no test file passes 5 s
+  (`agentica test --timing`). Order of preference: a unit or functional test
+  with fixtures, an app test with a fake (`tui_client/tests/app_test.agc`),
+  then a child process on pipes (`cli`), and a pty only for what the terminal
+  does (raw mode, resize, mouse, paste, drawing, signals). No `Task.sleep` or
+  `time.sleep` to wait for something: wait on the event (a channel the test
+  closes, `HTTP.wait`, a line of output; the fake model holds a reply with
+  `name@hold` and `H.release`). A timeout that a test needs shorter is an
+  option of the code (`catalog_wait_ms`). A sleep that is the behavior under
+  test (a timeout, a guard time) is as short as it can be, and a slow test
+  says why in a comment.
 - Changes that need the agentica, packages or agentica-tui repos are
   follow-up issues there, not work here.
 - Every user-visible change adds a line under `## [Unreleased]` of

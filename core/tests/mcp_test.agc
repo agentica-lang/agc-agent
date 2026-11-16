@@ -133,7 +133,7 @@ end
 # Slow servers list their tools at the same time and after the start: their tools come as they are listed.
 def test_slow_servers_list_their_tools_in_the_background() -> Result[Void]
   within_dir do |dir|
-    slow = JSON.object({"FAKE_MCP_SLOW_MS": JSON.from("3000")})
+    slow = JSON.object({"FAKE_MCP_SLOW_MS": JSON.from("800")})
     try write_config(dir, {"one": try fake_server(slow), "two": try fake_server(slow)})
     began = Time.monotonic_ms()
     board = McpTools.background(try McpTools.servers(->(n) { config_env(dir, n) }, dir), ->(_w: String) { nil })
@@ -143,7 +143,7 @@ def test_slow_servers_list_their_tools_in_the_background() -> Result[Void]
     McpTools.stop(started)
     try Test.eq(at_start.size, 0)
     try Test.eq(started.tools.size, 18)
-    Test.assert(took < 5000, "the listings took #{took} ms: one after the other")
+    Test.assert(took < 1500, "the listings took #{took} ms: one after the other")
   end
 end
 

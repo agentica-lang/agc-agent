@@ -23,8 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - name: fmt-check and check
-            run: make fmt-check check
+          - name: check core
+            run: make fmt-check check PACKAGES=core
+          - name: check packages
+            run: make fmt-check check PACKAGES="sse llm mcp protocol monty shell client cli tui_client"
           - name: unit core
             run: make install unit PACKAGES=core
           - name: unit packages

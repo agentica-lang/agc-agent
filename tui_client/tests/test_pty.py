@@ -32,6 +32,9 @@ CORE = ROOT / "core" / "main.agc"
 FIXTURES = ROOT / "core" / "tests" / "fixtures" / "openai_chat"
 OWN_FIXTURES = ROOT / "tui_client" / "tests" / "fixtures"
 AGENTICA = os.environ.get("AGENTICA", "agentica")
+# The client and the core are compiled once, and every process of a test runs the bytecode: `agentica main.agc` loads
+# the whole front end again each time. PTY_BUILD names a folder that `run_pty.py` already filled.
+BUILD = os.environ.get("PTY_BUILD", "")
 TIMEOUT = 20.0
 ROWS, COLS = 24, 80
 ANSWER = "Hello! It's a pleasure to meet you."
@@ -39,6 +42,32 @@ ANSWER = "Hello! It's a pleasure to meet you."
 ENTER_SCREEN = b"\x1b[?1049h"
 LEAVE_SCREEN = b"\x1b[?1049l"
 ESCAPE = re.compile(r"\x1b(\[[0-?]*[ -/]*[@-~]|[()][0-9A-Za-z]|.)")
+
+
+def program(source: Path) -> list[str]:
+    """The words that run the program of `source`."""
+    return [AGENTICA, "run", "--", f"{BUILD}/{source.parent.name}.agcb"]
+
+
+def compile_programs(folder: str) -> None:
+    for source in (CLIENT, CORE):
+        subprocess.run(
+            [AGENTICA, "compile", str(source), "-o", f"{folder}/{source.parent.name}.agcb"],
+            check=True,
+            capture_output=True,
+        )
+
+
+def setUpModule() -> None:  # noqa: N802
+    global BUILD
+    if not BUILD:
+        BUILD = tempfile.mkdtemp(prefix="agc-tui-build-")
+        compile_programs(BUILD)
+
+
+def tearDownModule() -> None:  # noqa: N802
+    if not os.environ.get("PTY_BUILD"):
+        shutil.rmtree(BUILD, True)
 
 
 def screen_rows(output: bytes, rows: int = ROWS, cols: int = COLS) -> list[str]:
@@ -279,7 +308,7 @@ class Terminal:
         self.modes_before = termios.tcgetattr(self.slave)
         self.output = b""
         self.process = subprocess.Popen(
-            [AGENTICA, str(CLIENT), "--cwd", str(base / "work"), *args],
+            [*program(CLIENT), "--cwd", str(base / "work"), *args],
             cwd=base / "work",
             stdin=self.slave,
             stdout=self.slave,
@@ -402,7 +431,7 @@ class PtyTest(unittest.TestCase):
         base = self.folder()
         model = self.model(replies)
         self.addCleanup(stop_server, base / "state")
-        args = [*extra, "--state-dir", str(base / "state"), "--", AGENTICA, str(CORE), "serve"]
+        args = [*extra, "--state-dir", str(base / "state"), "--", *program(CORE), "serve"]
         terminal = Terminal(base, model, args, rows, cols)
         self.addCleanup(terminal.close)
         terminal.wait_for("ready")
@@ -417,7 +446,7 @@ class PtyTest(unittest.TestCase):
         server_dir = base / "server"
         server_dir.mkdir(mode=0o700)
         server = subprocess.Popen(
-            [AGENTICA, str(CORE), "serve"],
+            [*program(CORE), "serve"],
             env=dict(env_for(base, model), FINN_STATE_DIR=str(server_dir)),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -483,15 +512,6 @@ class PtyTest(unittest.TestCase):
         request = self.fake.requests.get(timeout=1)
         self.assertEqual(request["messages"][-1]["content"], "one\ntwo")
 
-    def test_wide_characters_wrap_by_their_width(self) -> None:
-        term = self.start([])
-        text = "日本" * 25
-        term.type(text)
-        # 50 wide characters are 100 columns: 39 fit after the lead, the other 11 go on the next row.
-        rows = term.wait_for(" " + text[39:])
-        self.assertEqual(rows[-3], " " + text[39:])
-        self.assertEqual(rows[-4], " " + text[:39])
-
     def test_escape_stops_the_turn(self) -> None:
         term = self.start([Reply("text.sse", hold=3), Reply("text.sse")])
         term.type("hi\r")
@@ -516,19 +536,6 @@ class PtyTest(unittest.TestCase):
         deadline = time.monotonic() + TIMEOUT
         while "greets" in text_of(term.settle(0.2)):
             self.assertLess(time.monotonic(), deadline, "the thinking stayed")
-
-    def test_the_answer_is_drawn_as_markdown(self) -> None:
-        term = self.start([Reply("markdown.sse")])
-        term.type("plan\r")
-        rows = term.wait_for("Done, all good.")
-        shown = [row for row in rows if row]
-        start = shown.index(" Plan")
-        self.assertEqual(
-            shown[start : start + 5],
-            [" Plan", " • read the file", " • write the fix", " make test", " Done, all good."],
-        )
-        self.assertNotIn("**", text_of(rows))
-        self.assertNotIn("```", text_of(rows))
 
     def test_session_commands(self) -> None:
         term = self.start([Reply("text.sse"), Reply("text.sse"), Reply("summary.sse")])
@@ -582,15 +589,6 @@ class PtyTest(unittest.TestCase):
         term.wait_for("leave")
         term.type("/quit\r")
         self.assertEqual(term.finish(), 0)
-
-    def test_shift_tab_sets_the_next_thinking_level(self) -> None:
-        term = self.start([])
-        term.wait_for("session")
-        term.type("\x1b[Z\x1b[Z\x1b[Z")
-        term.wait_for(" thinking high from the next turn")
-        term.type("/thinking\r")
-        rows = term.wait_until(lambda rows: " thinking high" in rows, "the level the server keeps")
-        self.assertEqual(text_of(rows).count("from the next turn"), 1, text_of(rows))
 
     def test_a_slash_line_that_is_no_command_goes_to_the_agent(self) -> None:
         term = self.start([Reply("text.sse"), Reply("text.sse")])

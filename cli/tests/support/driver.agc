@@ -62,21 +62,26 @@ def within_dir(body: Fn[String, Result[Void]]) -> Result[Void]
   cleaned
 end
 
-## The client on `dir`, with `NO_COLOR` set to `no_color` ("" turns the colors on), run from the folder `chdir`.
-def start(dir: String, args: List[String], no_color: String = "1", chdir: String = ".") -> Result[Process]
-  entry = try Path.resolve(try existing(ENTRIES))
+## The client on `dir`, with `NO_COLOR` set to `no_color` ("" turns the colors on), run from the folder `chdir`. It runs
+## the bytecode that `make` compiled once (CLI_BYTECODE) unless `compiled` is false: a client finds the core by the path of
+## its source.
+def start(
+  dir: String,
+  args: List[String],
+  no_color: String = "1",
+  chdir: String = ".",
+  compiled: Bool = true,
+) -> Result[Process]
+  program = try program_words(ENTRIES, "CLI_BYTECODE", compiled)
   Process.spawn_captured(
-    binary(),
-    [entry, "--state-dir", dir] + args,
+    program[0],
+    program.drop(1) + ["--state-dir", dir] + args,
     Process.Options(env: {"NO_COLOR": no_color, "FINN_SERVER_COMMAND": ""}, chdir: chdir),
   )
 end
 
 ## The words that start the fake server program.
-def fake_command() -> Result[List[String]]
-  main = try existing(FAKE_MAINS)
-  ok([binary(), main])
-end
+def fake_command() -> Result[List[String]] = program_words(FAKE_MAINS, "FAKE_BYTECODE", true)
 
 def say(cli: Process, text: String) -> Result[Void] = Process.send(cli, "#{text}\n", READ_MS)
 
@@ -126,6 +131,14 @@ private
 def clean_up(rig: Rig) -> Result[Void]
   try Fake.stop(rig.fake)
   Path.remove(rig.dir)
+end
+
+# The source of the first of `paths` that exists, or the bytecode named by the environment variable `bytecode_env`.
+def program_words(paths: List[String], bytecode_env: String, compiled: Bool) -> Result[List[String]]
+  case System.env(bytecode_env)
+    ok(bytecode) if compiled and bytecode != "" -> ok([binary(), "run", "--", bytecode])
+    _ -> ok([binary(), try Path.resolve(try existing(paths))])
+  end
 end
 
 def binary() -> String
