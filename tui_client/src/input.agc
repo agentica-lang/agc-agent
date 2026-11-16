@@ -112,12 +112,18 @@ def completed(text: String, cursor: Int, mention: Mention, value: String) -> Str
   end
 end
 
-## The rows of a list in `room` rows, the selected one marked and always among them.
-def rows(found: List[Choice], selected: Int, width: Int, room: Int) -> List[Layout.Row]
+## The first of `size` choices that `room` rows show: `top` moved only as far as the selected one needs to be among
+## them, and no further than the end allows.
+def window(top: Int, selected: Int, room: Int, size: Int) -> Int
+  shown = [[top, selected].min.unwrap!, selected - room + 1].max.unwrap!
+  [[shown, size - room].min.unwrap!, 0].max.unwrap!
+end
+
+## The rows of a list in `room` rows from choice `top`, the selected one marked.
+def rows(found: List[Choice], selected: Int, top: Int, width: Int, room: Int) -> List[Layout.Row]
   return [Layout.Row(text: " no file matches")].take(room) if found.empty?
 
-  first = [selected - room + 1, 0].max.unwrap!
-  (first...[first + room, found.size].min.unwrap!).to_a.map do |i|
+  (top...[top + room, found.size].min.unwrap!).to_a.map do |i|
     look = Layout.Look.Plain
     if i == selected
       look = Layout.Look.Selected

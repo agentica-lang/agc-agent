@@ -3,6 +3,7 @@ import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import App from "../src/app"
+import Approvals from "../src/approvals"
 import Args from "../src/args"
 import Picker from "../src/picker"
 
@@ -359,6 +360,48 @@ def test_a_resync_with_no_turn_sends_the_follow_ups() -> Result[Void]
   Test.eq([moved.prompt, moved.follow_ups.size.to_s, moved.outbox.size.to_s], ["Two.\nlater", "0", "0"])
 end
 
+# A resync into a session whose snapshot names a running command waits for it; its end, a cut one with no duration,
+# clears it.
+def test_a_command_running_on_attach_waits_for_its_end() -> Result[Void]
+  session = Protocol.Session(
+    id: "s1",
+    cwd: ".",
+    model: "m",
+    last_event_id: 9,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+    shell_id: some("sh1"),
+  )
+
+  handler = ->(_request: HTTP.Request, _body: HTTP.RequestBody) {
+    ok(HTTP.Answer.Whole(HTTP.Response(status: 200, headers: [], body: Protocol.encode_session(session).bytes)))
+  }
+
+  http = try HTTP.serve("127.0.0.1", 0, handler)
+  server = Client.Server(url: "http://127.0.0.1:#{HTTP.local_port(http)}", token: "t")
+  model = model_of(40, 8).with(server: server, id: "s1", generation: 1)
+  resynced = App.update(model, App.Msg.Stream(1, [Client.Item.Event(some(3), Protocol.Event.Resync)])).model
+  Task.await(resynced.stream.unwrap!)
+  HTTP.close_server(http)
+  _ = HTTP.wait(http)
+  try Test.eq([resynced.shell, App.subscriptions(resynced).size == 2], [true, true])
+  cut = Protocol.ShellFinished(
+    shell_id: "sh1",
+    command: "make",
+    context: false,
+    ok: false,
+    output: "the server stopped while it ran",
+    duration_ms: 0,
+  )
+
+  item = Client.Item.Event(some(10), Protocol.Event.ShellFinished(cut))
+  ended = App.update(resynced, App.Msg.Stream(resynced.generation, [item])).model
+  shown = rows(ended)
+  Test.eq([ended.shell, shown.include?("$ make"), shown.any? { |row| row.include?("Took") }], [false, true, false])
+end
+
 # Up on an empty prompt goes back through the prompts sent, Down comes forward to an empty prompt; a large paste is
 # one token that the send puts back.
 def test_up_recalls_prompts_and_a_large_paste_is_one_token() -> Result[Void]
@@ -448,8 +491,17 @@ def test_slash_lists_the_commands_and_tab_completes_one() -> Result[Void]
   try Test.eq(App.update(escaped, enter()).model.outbox, ["/c"])
   # The cursor inside the word, or a word after which more is typed, shows no list; at the end of the word the whole
   # word is replaced.
-  inside = App.update(model_of(80, 20).with(id: "s1", prompt: "/resume", cursor: 3), enter()).model
-  try Test.eq([inside.prompt, inside.entries.last.text.start_with?("error:").to_s], ["", "true"])
+  # With the cursor inside the word, Enter runs the line as it does at the word's end.
+  inside = App.update(model_of(80, 20).with(id: "s1", prompt: "/resume", cursor: 3), enter())
+  at_end = App.update(model_of(80, 20).with(id: "s1", prompt: "/resume", cursor: 7), enter())
+  try Test.eq(
+    [inside.model.prompt, inside.model.entries.map { |entry| entry.text }.join("\n"), inside.cmds.size.to_s],
+    [at_end.model.prompt, at_end.model.entries.map { |entry| entry.text }.join("\n"), at_end.cmds.size.to_s],
+  )
+
+  # In a prompt of more lines, Enter completes the first word and keeps the rest.
+  lines = App.update(model_of(80, 20).with(id: "s1", prompt: "/c\nfoo", cursor: 2), enter())
+  try Test.eq([lines.model.prompt, lines.model.outbox.size.to_s, lines.cmds.size.to_s], ["/clone\nfoo", "0", "0"])
   middle = App.update(model_of(80, 20).with(id: "s1", prompt: "/mo foo", cursor: 3), tab()).model
   try Test.eq(middle.prompt, "/model foo")
   inside_rows = rows(model_of(80, 20).with(prompt: "/resume", cursor: 3))
@@ -466,17 +518,54 @@ def test_slash_lists_the_commands_and_tab_completes_one() -> Result[Void]
   Test.eq(App.update(unknown, enter()).model.outbox, ["/zz"])
 end
 
-# On a small screen the list shows the rows it has room for and keeps the selected one among them.
+# On a small screen the list shows the rows it has room for: Down scrolls it to keep the selected one in view, Up moves
+# the mark within it, and a resize keeps the selected one in view too.
 def test_the_command_list_follows_the_selection_on_a_small_screen() -> Result[Void]
   model = App.update(model_of(80, 7).with(id: "s1"), key_char("/")).model
   for _ in 0...20
-    model = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))).model
+    model = App.update(model, down()).model
   end
 
   try Test.assert(rows(model).any? { |row| row.start_with?("/quit") }, "the selected row shows: #{rows(model)}")
+  up_once = App.update(model, up()).model
+  try Test.eq(
+    [rows(up_once).join("\n"), up_once.mention_selected.to_s],
+    [rows(model).join("\n"), (model.mention_selected - 1).to_s],
+  )
+
+  wide = App.update(model_of(80, 20).with(id: "s1"), key_char("/")).model
+  for _ in 0...20
+    wide = App.update(wide, down()).model
+  end
+
+  resized = App.update(wide, App.Msg.Key(TUI.Event.Resize(80, 7))).model
+  try Test.assert(rows(resized).any? { |row| row.start_with?("/quit") }, "the selected row shows: #{rows(resized)}")
   tiny = App.update(model_of(80, 4).with(id: "s1"), key_char("/")).model
-  try Test.eq(App.update(tiny, App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))).model.mention_selected, 0)
+  try Test.eq(App.update(tiny, down()).model.mention_selected, 0)
   Test.eq(App.update(tiny, enter()).model.outbox, ["/"])
+end
+
+# A pending approval takes the panel: the list is hidden and Tab goes to the approval. While a turn runs, Esc closes
+# the list first and stops the turn the second time.
+def test_the_command_list_gives_way_to_an_approval_and_to_esc() -> Result[Void]
+  request = Protocol.ApprovalRequested(
+    approval_id: "a1",
+    call_id: "c1",
+    tool: "write_file",
+    preview: "x.txt",
+    detail: "",
+  )
+
+  panel = Approvals.requested(Approvals.Panel(), request, 0)
+  asked = model_of(80, 20).with(id: "s1", turn: true, prompt: "/m", cursor: 2, approvals: panel)
+
+  try Test.assert(not rows(asked).any? { |row| row.start_with?("/model [") }, "no list: #{rows(asked)}")
+  tabbed = App.update(asked, tab()).model
+  try Test.eq([tabbed.prompt, tabbed.approvals.focused.to_s], ["/m", "true"])
+  running = model_of(80, 20).with(id: "s1", turn: true, prompt: "/m", cursor: 2)
+  closed = App.update(running, escape()).model
+  try Test.eq([closed.stopping.to_s, rows(closed).any? { |row| row.start_with?("/model [") }.to_s], ["false", "false"])
+  Test.eq(App.update(closed, escape()).model.stopping, true)
 end
 
 def model_of(width: Int, height: Int) -> App.Model
@@ -537,6 +626,8 @@ def tab() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))
 def escape() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
 
 def backspace() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Backspace, TUI.Mods()))
+
+def down() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))
 
 def up() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Up, TUI.Mods()))
 

@@ -226,10 +226,13 @@ def test_a_bang_line_runs_a_shell_command() -> Result[Void]
     try Driver.say(cli, "!sleep 9")
     try Driver.read_until(cli, "[shell] sleep 9")
     try Driver.say(cli, "/stop")
-    stopped = try Driver.read_until(cli, "[shell failed] (0 ms)")
+    stopped = try Driver.read_until(cli, "[shell failed, not for the model] (0 ms)")
     try Test.eq(
       stopped,
-      ["[stopping the command: Ctrl+C again leaves]", "stopped by the user", "[shell failed] (0 ms)"],
+      [
+        "[stopping the command: Ctrl+C again leaves]", "stopped by the user",
+        "[shell failed, not for the model] (0 ms)",
+      ],
     )
 
     try Driver.say(cli, "!! ls")
@@ -247,6 +250,27 @@ def test_a_bang_line_runs_a_shell_command() -> Result[Void]
     ]
 
     Test.eq(sent.map { |seen| Protocol.decode_run_shell(seen.body) }, expected.map { |r| ok(r) })
+  end
+end
+
+# A session whose snapshot names a running command waits for it: `/stop` stops the command, and its end clears it.
+def test_a_command_running_on_attach_is_stopped_and_ends() -> Result[Void]
+  running = idle("s1", []).with(shell_id: some("sh2"))
+  routes = [
+    Routes.session([Fake.Reply(body: Protocol.encode_session(running))]),
+    Routes.held_events(),
+    Routes.stopping(Fake.Reply(push: ["shell_stopped.sse"])),
+  ]
+
+  Driver.within(routes) do |rig|
+    cli = try Driver.start(rig.dir, ["--session", "s1"])
+    try Driver.read_until(cli, "[session s1]")
+    try Driver.say(cli, "/stop")
+    try Driver.read_until(cli, "[stopping the command: Ctrl+C again leaves]")
+    try Driver.read_until(cli, "[shell failed, not for the model] (0 ms)")
+    try Driver.say(cli, "/stop")
+    try Driver.read_until(cli, "[no turn is running]")
+    Test.eq((try Driver.finish(cli)).code, 0)
   end
 end
 

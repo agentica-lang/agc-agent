@@ -138,6 +138,10 @@ def shell_finished(finished: Protocol.ShellFinished) -> String
     state = "failed"
   end
 
+  if not finished.context
+    state = "#{state}, not for the model"
+  end
+
   lines.push("[shell #{state}] (#{finished.duration_ms} ms)").join("\n")
 end
 
