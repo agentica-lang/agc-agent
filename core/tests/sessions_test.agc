@@ -896,6 +896,27 @@ def test_a_shell_command_runs_and_its_output_reaches_the_next_turn() -> Result[V
   end
 end
 
+# A running command is in the session's snapshot; one that a restart cut ends as failed, its output not for the model.
+def test_a_command_cut_by_a_restart_ends() -> Result[Void]
+  setup = H.Setup(replies: [])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try shell(h, id, "sleep 30", true)
+    a = try H.until(a, Protocol.EventKind.ShellStarted)
+    H.close(a)
+    running = try H.session(h, id)
+    try Test.assert(running.shell_id.some?, "the snapshot names the command")
+    H.restarted(h, setup, "") do |r|
+      b = try H.until(try H.subscribe(r, id, some(running.last_event_id)), Protocol.EventKind.ShellFinished)
+      H.close(b)
+      cut = try finished(b)
+      try Test.eq([cut.ok, cut.context, cut.output == "the server stopped while it ran"], [false, false, true])
+      Test.eq((try H.session(r, id)).shell_id, none)
+    end
+  end
+end
+
 private
 
 WAIT_MS = 20_000

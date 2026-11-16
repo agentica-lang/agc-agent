@@ -159,6 +159,8 @@ def test_sessions_round_trip_idle_and_mid_turn() -> Result[Void]
   try Test.eq(idle.turn_from_event_id, none)
   try Test.eq(idle.pending_approvals.size, 0)
   try Test.eq(Protocol.decode_session(Protocol.encode_session(idle)), ok(idle))
+  shell = idle.with(shell_id: some("shell-1"))
+  try Test.eq(Protocol.decode_session(Protocol.encode_session(shell)), ok(shell))
 
   running = try decode_fixture("session_mid_turn", &Protocol.decode_session, &Protocol.encode_session)
   try Test.eq(running.turn_id, some("t2"))

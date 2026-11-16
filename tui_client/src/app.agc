@@ -421,7 +421,7 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
     files: none,
     reading_files: false,
     turn: session.turn_id.some?,
-    shell: false,
+    shell: session.shell_id.some?,
     effort: wanted_level(app, session.effort),
     confirmed: session.effort,
     stopping: false,
@@ -571,6 +571,7 @@ def follow_up(app: Model) -> Model
   text = app.prompt.strip
   # A command runs now, as with Enter: it is no message for the model.
   return send(app) if text == "" or (not app.turn and app.outbox.empty?) or Client.parse_command(text).some?
+  return noted(app, "a ! command runs between turns: send it once the turn ends") if Client.parse_shell(text).some?
 
   whole = expanded(app, text)
   waiting = app.with(prompt: "", cursor: 0, recall: none, follow_ups: app.follow_ups.push(whole), pastes: [])
@@ -763,10 +764,13 @@ def shell_send(app: Model, request: Protocol.RunShell) -> Model
   effect(app, TUI.Cmd.Run(-> { Msg.ShellSent(request.command, Client.shell(server, id, request)) }))
 end
 
-# Its `shell_started` and `shell_finished` draw the command; a refusal goes back to an empty prompt.
+# Its `shell_started` and `shell_finished` draw the command; a refusal goes back to an empty prompt, and one that may
+# have run (a timeout) stays only in the note, so it does not run twice.
 def shell_reply(app: Model, command: String, result: Result[Protocol.ShellAccepted]) -> Model
   case result
     ok(_) -> app
+    error(e) if e.kind == Client.KIND_TIMEOUT ->
+      noted(app, "the command may have run (#{e.message}): #{Client.printable(command)}")
     error(e) ->
       failed = noted(app, "the command did not run: #{e.message}: #{Client.printable(command)}")
       return failed if app.prompt != ""
@@ -1126,15 +1130,23 @@ def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
       tool = Protocol.ToolStarted(call_id: started.shell_id, name: Calls.BASH, summary: started.command)
       shown.with(shell: true, entries: Transcript.tool_started(shown.entries, tool))
     Protocol.Event.ShellFinished(done) ->
+      # Started again in place, so a command whose start was not seen still draws as one.
+      start = Protocol.ToolStarted(call_id: done.shell_id, name: Calls.BASH, summary: done.command)
       tool = Protocol.ToolFinished(
         call_id: done.shell_id,
         ok: done.ok,
-        summary: done.command,
+        summary: "",
         duration_ms: done.duration_ms,
         output: some(done.output),
       )
 
-      shown.with(shell: false, stopping: false, entries: Transcript.tool_finished(shown.entries, tool))
+      aside = ""
+      if not done.context
+        aside = "not sent to the model"
+      end
+
+      entries = Transcript.tool_finished(Transcript.tool_started(shown.entries, start), tool, aside)
+      shown.with(shell: false, stopping: false, entries: entries)
     Protocol.Event.Error(failure) ->
       failed = noted(shown, "error: #{failure.kind}: #{failure.message}")
       case shown.new_model
@@ -1191,8 +1203,7 @@ def reconnect(app: Model, reason: String) -> Model
     },
   )
 
-  # A command that was running may have ended unseen with a server that stopped.
-  effect(app.with(reconnects: reconnects, shell: false), back)
+  effect(app.with(reconnects: reconnects), back)
 end
 
 def framed(app: Model) -> Screen.Frame
