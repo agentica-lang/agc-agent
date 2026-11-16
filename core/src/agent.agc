@@ -223,7 +223,7 @@ def usage(u: LLM.Usage) -> Protocol.Usage
 end
 
 def offered(turn: Turn) -> List[Tools.Tool]
-  base = Tools.all()
+  base = Tools.offered(turn.ctx)
   extras = turn.turn_tools.map { |t| t.tool }
   for _settings in option_list(turn.code_mode)
     return base.push(CodeMode.spec(base)) + extras
@@ -292,7 +292,7 @@ end
 def base_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
   if call.name == CodeMode.NAME
     for settings in option_list(turn.code_mode)
-      names = Tools.all().map { |tool| tool.name }
+      names = Tools.offered(turn.ctx).map { |tool| tool.name }
       return CodeMode.run(
         settings,
         call.input,

@@ -1,15 +1,17 @@
 AGENTICA ?= agentica
+# A path is made absolute: the recipes run it from the package folders.
+override AGENTICA := $(if $(findstring /,$(AGENTICA)),$(abspath $(AGENTICA)),$(AGENTICA))
 # The tests of the clients start the client with the same binary.
 export AGENTICA
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
-PACKAGES = sse llm protocol monty client core cli tui_client
+PACKAGES = sse llm mcp protocol monty client core cli tui_client
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
-LEAVES = llm sse protocol monty
+LEAVES = llm mcp sse protocol monty
 SERVER_AND_CLIENTS = core|client|cli|tui_client|web_client
 # A client, and `client` (the code every client shares), reach the server only through the protocol: they never
 # depend on these (or on another client).
-NOT_FOR_CLIENTS = core|llm|monty|cli|tui_client|web_client
+NOT_FOR_CLIENTS = core|llm|mcp|monty|cli|tui_client|web_client
 
 # A fake key in the environment of every recipe: the bash test of core checks that the tool does not pass it on.
 export AGC_TEST_SECRET = sk-test-secret-must-not-reach-bash
@@ -99,4 +101,5 @@ smoke-anthropic:
 	  if [ -z "$$ANTHROPIC_AUTH_TOKEN" ]; then echo "smoke-anthropic: ant is not logged in, skipped"; exit 0; fi; \
 	  export ANTHROPIC_AUTH_TOKEN; \
 	fi; \
-	$(call tests,llm,live/anthropic_test.agc)
+	mkdir -p llm/_build; export ANTHROPIC_LIVE_REPORT='$(CURDIR)/llm/_build/anthropic-live.txt'; \
+	rm -f "$$ANTHROPIC_LIVE_REPORT"; $(call tests,llm,live/anthropic_test.agc); cat "$$ANTHROPIC_LIVE_REPORT"

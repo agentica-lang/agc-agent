@@ -1,6 +1,7 @@
 ## What the transcript holds and the lines it draws in a given width. Pure.
 
 import Protocol from "pkg/protocol/protocol"
+import Markdown from "markdown"
 import Width from "width"
 
 enum Kind
@@ -18,7 +19,7 @@ end
 ## One drawn row of the transcript.
 struct Line
   kind: Kind
-  text: String
+  spans: List[Markdown.Span]
 end
 
 def from_history(messages: List[Protocol.Message]) -> List[Entry]
@@ -43,12 +44,15 @@ end
 
 def note(entries: List[Entry], text: String) -> List[Entry] = entries.push(Entry(kind: Kind.Notice, text: text))
 
-## The entries as rows of at most `width` characters, an empty row between two entries.
-def lines(entries: List[Entry], width: Int) -> List[Line]
+## The entries as rows of at most `width` columns, an empty row between two entries; the answers as markdown, and the
+## thinking only when `thinking`.
+def lines(entries: List[Entry], width: Int, thinking: Bool) -> List[Line]
   rows: List[Line] = []
   for entry in entries
+    next if entry.kind == Kind.Thinking and not thinking
+
     if not rows.empty?
-      rows = rows.push(Line(kind: entry.kind, text: ""))
+      rows = rows.push(Line(kind: entry.kind, spans: []))
     end
 
     rows = rows + entry_lines(entry, width)
@@ -70,6 +74,10 @@ end
 private
 
 def entry_lines(entry: Entry, width: Int) -> List[Line]
+  if entry.kind == Kind.Assistant
+    return Markdown.rows(entry.text, width).map { |spans| Line(kind: entry.kind, spans: spans) }
+  end
+
   prefix = case entry.kind
     Kind.User -> "> "
     Kind.Notice -> "· "
@@ -77,8 +85,8 @@ def entry_lines(entry: Entry, width: Int) -> List[Line]
   end
 
   rows = wrap(entry.text, width - prefix.length)
-  rest = rows.drop(1).map { |row| Line(kind: entry.kind, text: " " * prefix.length + row) }
-  [Line(kind: entry.kind, text: prefix + rows[0])] + rest
+  led = [prefix + rows[0]] + rows.drop(1).map { |row| " " * prefix.length + row }
+  led.map { |row| Line(kind: entry.kind, spans: [Markdown.Span(text: row, look: Markdown.Look.Plain)]) }
 end
 
 def wrap_paragraph(paragraph: String, width: Int) -> List[String]

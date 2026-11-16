@@ -8,6 +8,8 @@ struct Context
   root: String
   env: Fn[String, Result[String]]
   rules: Approval.Rules
+  ## The tools after the base ones (MCP).
+  tools: List[Tool] = []
   ## Folders outside `root` that `read_file` reads too: those of the session's skills.
   read_roots: List[String] = []
 end

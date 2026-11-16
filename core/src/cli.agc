@@ -20,9 +20,13 @@ USAGE = <<~TEXT
   running turn is kept whole. FINN_CODE_MODE=1 adds run_script: the model calls the tools from a Python script in
   pydantic's Monty sandbox, each call approved as a direct one; the worker is FINN_MONTY (a Monty 1.6.0 binary you
   trust: its hash is not checked), else the pinned Monty 1.6.0 fetched from PyPI (sha256 checked) on first use into
-  $XDG_CACHE_HOME/finn, else ~/.cache/finn (a folder open to others is refused). Skills (SKILL.md folders under .finn/skills, .agents/skills and .claude/skills) come from
-  the home folder, and from the session folder only when it is under a folder of FINN_TRUSTED_DIRS (separated by :);
-  the model loads one with activate_skill, the user with /name in a message.
+  $XDG_CACHE_HOME/finn, else ~/.cache/finn (a folder open to others is refused). FINN_MCP_CONFIG names a JSON
+  file of MCP servers on stdio ({"mcpServers": {NAME: {"command", "args", "env"}}}): their tools are
+  mcp__NAME__TOOL and ask before each call. A server gets the short environment of bash plus its "env", which is
+  passed on as given (put the keys it needs there). Skills (SKILL.md folders under
+  .finn/skills, .agents/skills and .claude/skills) come from the home folder, and from the session folder only when it
+  is under a folder of FINN_TRUSTED_DIRS (separated by :); the model loads one with activate_skill, the user with
+  /name in a message.
 TEXT
 
 enum Command

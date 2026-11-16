@@ -30,6 +30,7 @@ ROOT = Path(__file__).resolve().parents[2]
 CLIENT = ROOT / "tui_client" / "main.agc"
 CORE = ROOT / "core" / "main.agc"
 FIXTURES = ROOT / "core" / "tests" / "fixtures" / "openai_chat"
+OWN_FIXTURES = ROOT / "tui_client" / "tests" / "fixtures"
 AGENTICA = os.environ.get("AGENTICA", "agentica")
 TIMEOUT = 20.0
 ROWS, COLS = 24, 80
@@ -85,7 +86,8 @@ class Reply:
     `release` is set (or the test ends, when it never is)."""
 
     def __init__(self, fixture: str, hold: int | None = None, pause: float = 0.02) -> None:
-        events = (FIXTURES / fixture).read_text().split("\n\n")
+        path = OWN_FIXTURES / fixture if (OWN_FIXTURES / fixture).exists() else FIXTURES / fixture
+        events = path.read_text().split("\n\n")
         self.events = [event + "\n\n" for event in events if event.strip()]
         self.hold = hold
         self.pause = pause
@@ -428,6 +430,33 @@ class PtyTest(unittest.TestCase):
         term.wait_for("ready")
         term.type("again\r")
         term.wait_for(ANSWER)
+
+    def test_ctrl_t_shows_and_hides_the_thinking(self) -> None:
+        term = self.start([Reply("thinking.sse")])
+        term.type("hi\r")
+        term.wait_for("Hi there.")
+        term.wait_for("ready")
+        self.assertNotIn("greets", text_of(term.settle()))
+        term.type("\x14")
+        rows = term.wait_for("The user greets me. I greet back.")
+        self.assertLess(text_of(rows).index("greets"), text_of(rows).index("Hi there."))
+        term.type("\x14")
+        deadline = time.monotonic() + TIMEOUT
+        while "greets" in text_of(term.settle(0.2)):
+            self.assertLess(time.monotonic(), deadline, "the thinking stayed")
+
+    def test_the_answer_is_drawn_as_markdown(self) -> None:
+        term = self.start([Reply("markdown.sse")])
+        term.type("plan\r")
+        rows = term.wait_for("Done, all good.")
+        shown = [row for row in rows if row]
+        start = shown.index("Plan")
+        self.assertEqual(
+            shown[start : start + 5],
+            ["Plan", "• read the file", "• write the fix", "make test", "Done, all good."],
+        )
+        self.assertNotIn("**", text_of(rows))
+        self.assertNotIn("```", text_of(rows))
 
     def test_an_approval_request_is_noted(self) -> None:
         term = self.start([Reply("write_file.sse")])
