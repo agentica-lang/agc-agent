@@ -8,6 +8,11 @@
 ## those of the home folder always, those of a session folder only under a folder of `FINN_TRUSTED_DIRS` (separated by
 ## `:`). The names of before Finn still work: `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no
 ## `finn` folder is there.
+##
+## The `anthropic` API is at `ANTHROPIC_BASE_URL` (else Anthropic's), with `ANTHROPIC_API_KEY`, else
+## `ANTHROPIC_AUTH_TOKEN`, else the token that `ant auth print-credentials --access-token` prints: at start when
+## `FINN_API` is `anthropic`, else at a session's first call, and again after a 401. Its default model is Claude Opus
+## 5.5. A credential is never logged.
 
 import LLM from "pkg/llm/llm"
 import Monty from "pkg/monty/monty"
@@ -20,23 +25,44 @@ DATA_DIR_ENV = "FINN_DATA_DIR"
 PREFIX = "FINN_"
 OLD_PREFIX = "AGC_AGENT_"
 DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
-DEFAULT_MODEL = "default"
-## The names `FINN_API` takes: OpenAI chat completions, and the OpenAI Responses format.
-APIS = ["openai", "openai_responses"]
+DEFAULT_MODEL = Server.DEFAULT_MODEL
+## The names `FINN_API` takes: OpenAI chat completions, the OpenAI Responses format, and Anthropic Messages.
+APIS = ["openai", "openai_responses", "anthropic"]
+ANT_MS = 15000
 
-def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
+## Where the `anthropic` API is and how a request proves who sends it: an API key, else an OAuth token.
+struct AnthropicAccess
+  url: String = ""
+  api_key: String = ""
+  auth_token: String = ""
+  ## With no key and no token, use the OpenAI ones (`base_url`, `api_key`): for a local server that serves both.
+  inherit: Bool = true
+  ## Fetches the token of `ant` again after a 401 (an expired token), or first when no variable has a credential.
+  ant: Optional[Fn[Result[String]]] = none
+end
+
+def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options] = from_env_with(read, &ant_token)
+
+## `ant` gives the OAuth token of `ant auth login` when no variable has a credential and `FINN_API` is `anthropic`.
+def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> Result[Server.Options]
   base_url = set(read, "FINN_BASE_URL").unwrap_or(DEFAULT_BASE_URL)
   api_key = set(read, "FINN_API_KEY").unwrap_or("")
   api = set(read, "FINN_API").unwrap_or(APIS[0])
   return error("FINN_API must be one of #{APIS.join(", ")}, not #{api.inspect}") if not APIS.include?(api)
 
+  access = try anthropic_access(read, api == "anthropic", ant)
+  model = DEFAULT_MODEL
+  if api == "anthropic"
+    model = LLM.ANTHROPIC_MODEL
+  end
+
   ok(
     Server.Options(
       state_dir: try state_dir(read),
       data_dir: try data_dir(read),
-      apis: apis(base_url, api_key),
+      apis: apis(base_url, api_key, LLM.Options(), access),
       api: api,
-      model: set(read, "FINN_MODEL").unwrap_or(DEFAULT_MODEL),
+      model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,
       rules: Tools.Rules(allow: [], deny: []),
       context_window: try context_window(read),
@@ -71,14 +97,83 @@ def worker_command(binary: Optional[String], cache: String) -> Result[List[Strin
   ok(Monty.command(try Monty.binary(cache, wheel)))
 end
 
-## Every model API at `base_url`, by its `FINN_API` name. On the Responses format the API keeps nothing
-## (`store: false`): the session file has the history, and the reasoning comes back in its encrypted content.
-def apis(base_url: String, api_key: String, options: LLM.Options = LLM.Options()) -> Map[String, Server.ModelApi]
+## Every model API by its `FINN_API` name: the OpenAI ones at `base_url`, Anthropic as `anthropic` says (at
+## `base_url` with `api_key` when it inherits them, as in tests). On the Responses format the API keeps nothing (`store: false`): the
+## session file has the history, and the reasoning comes back in its encrypted content. On Anthropic the prompt cache
+## is asked for: the system prompt and the tools, and the conversation so far.
+def apis(
+  base_url: String,
+  api_key: String,
+  options: LLM.Options = LLM.Options(),
+  anthropic: AnthropicAccess = AnthropicAccess(),
+) -> Map[String, Server.ModelApi]
   stateless = {"store": JSON.from(false), "include": JSON.from(["reasoning.encrypted_content"])}
+  access = anthropic
+  if access.inherit
+    access = access.with(url: base_url, api_key: api_key)
+  end
+
+  claude = LLM.anthropic(access.url, access.api_key, options, access.auth_token)
+  refresh: Optional[Fn[Result[LLM.Provider]]] = none
+  for ant in option_list(access.ant)
+    url = access.url
+    refresh = some(-> { ok(LLM.anthropic(url, "", options, try ant.call())) })
+  end
+
   {
     "openai": Server.ModelApi(provider: LLM.openai_chat(base_url, api_key, options)),
     "openai_responses": Server.ModelApi(provider: LLM.openai_responses(base_url, api_key, options), extra: stateless),
+    "anthropic": Server.ModelApi(
+      provider: claude,
+      model: LLM.ANTHROPIC_MODEL,
+      cache: true,
+      local: false,
+      refresh: refresh,
+    ),
   }
+end
+
+## The token of `ant auth login`, from `ant auth print-credentials --access-token`. Its output is never shown: a
+## failure says only how `ant` ended.
+def ant_token() -> Result[String] = ant_token_with("ant")
+
+## `ant_token` with `program` in place of `ant`.
+def ant_token_with(program: String) -> Result[String]
+  failed = "ant auth print-credentials failed: run ant auth login"
+  process = try Process.spawn_captured(program, ["auth", "print-credentials", "--access-token"])
+  out = Process.output(process, ANT_MS)
+  code = Process.wait(process, 5000)
+  Process.close(process)
+  return error(failed) if not out.ok? or code != ok(0)
+
+  text = out.unwrap!.stdout.strip
+  return error(failed) if text.empty?
+
+  ok(text)
+end
+
+def anthropic_access(
+  read: Fn[String, Result[String]],
+  default: Bool,
+  ant: Fn[Result[String]],
+) -> Result[AnthropicAccess]
+  url = read.call("ANTHROPIC_BASE_URL").unwrap_or("")
+  if url == ""
+    url = LLM.ANTHROPIC_URL
+  end
+
+  key = read.call("ANTHROPIC_API_KEY").unwrap_or("")
+  return ok(AnthropicAccess(url: url, api_key: key, inherit: false)) if key != ""
+
+  token = read.call("ANTHROPIC_AUTH_TOKEN").unwrap_or("")
+  return ok(AnthropicAccess(url: url, auth_token: token, inherit: false)) if token != ""
+  # A session that picks Anthropic on a server of another API fetches the token at its first call (a 401).
+  return ok(AnthropicAccess(url: url, inherit: false, ant: some(ant))) if not default
+
+  case ant.call()
+    ok(found) -> ok(AnthropicAccess(url: url, auth_token: found, inherit: false, ant: some(ant)))
+    error(e) -> error("FINN_API is anthropic and there is no credential: set ANTHROPIC_API_KEY, or #{e.message}")
+  end
 end
 
 def state_dir(read: Fn[String, Result[String]]) -> Result[String]

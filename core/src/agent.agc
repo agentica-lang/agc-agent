@@ -24,6 +24,16 @@ struct Link
   commit: Fn[List[LLM.Message], List[String], Void]
   compacted: Fn[Compaction.Compaction, Void]
   window: Fn[Int, Void]
+  ## The turn sends no thinking blocks from now until a fold (Anthropic, past the limit inside a tool round).
+  stripped: Fn[Void]
+  ## A provider with a fresh token, for the session's later calls.
+  renewed: Fn[LLM.Provider, Void]
+end
+
+## A call made again once with a fresh token after a 401; `fresh` is the provider that made it.
+struct Renewal[T]
+  result: Result[T]
+  fresh: Optional[LLM.Provider] = none
 end
 
 ## A call that waits for an approval. `allow_session` allows the same `tool` on the same `target` again.
@@ -45,6 +55,12 @@ struct Turn
   link: Link
   ## Fields of every request in the format of the API.
   extra: Map[String, JSON.Value] = {}
+  ## Ask the provider for its prompt cache: the system prompt and the tools, and the conversation so far.
+  cache: Bool = false
+  ## A provider with a fresh token, after a 401 (the token of `ant`).
+  refresh: Optional[Fn[Result[LLM.Provider]]] = none
+  ## The session sends no thinking blocks until its next fold.
+  stripped: Bool = false
   ## `window` 0 asks the provider for it.
   compaction: Compaction.Settings
   ## The context of the session's last call.
@@ -74,16 +90,33 @@ struct Outcome
 end
 
 def run(given: Turn) -> Outcome
-  turn = given.with(compaction: given.compaction.with(window: known_window(given)))
+  turn = windowed(given)
   messages = turn.history.push(LLM.Message(role: LLM.Role.User, content: [text_block(turn.text)]))
   turn.link.commit.call(messages, [])
   marks = turn.marks
   folded = compacted(turn, turn.last_context, Folded(messages: messages, on: true), marks)
+  turn = renewed(turn, folded.fresh)
+  folded = folded.with(fresh: none)
   messages = folded.messages
+  stripped = turn.stripped and not folded.just
   last_round = ""
   same = 0
   for _round in 1..turn.max_rounds
-    called = call_model(turn, messages)
+    asked = messages
+    if stripped
+      asked = Compaction.without_thinking(messages)
+    end
+
+    current = turn
+    renewal = with_token(
+      turn.provider,
+      turn.refresh,
+      ->(p: LLM.Provider) { call_model(current.with(provider: p), asked) },
+    )
+
+    turn = renewed(turn, renewal.fresh)
+    called = renewal.result
+
     response = called.unwrap_or(EMPTY)
     case called
       ok(_) -> nil
@@ -111,8 +144,18 @@ def run(given: Turn) -> Outcome
     messages = messages + [response.message, LLM.Message(role: LLM.Role.User, content: results)]
     turn.link.commit.call(messages, made)
     context = response.usage.input + response.usage.cache_read + response.usage.cache_write
-    folded = compacted(turn, context, folded.with(messages: messages), marks)
-    messages = folded.messages
+    if turn.provider.name == Compaction.ANTHROPIC
+      if not stripped and past_limit(turn, context)
+        stripped = true
+        turn.link.stripped.call()
+      end
+    else
+      folded = compacted(turn, context, folded.with(messages: messages), marks)
+      turn = renewed(turn, folded.fresh)
+      folded = folded.with(fresh: none)
+      messages = folded.messages
+    end
+
     this_round = JSON.encode(JSON.from([calls.map { |c| "#{c.name} #{c.arguments}" }, results.map { |r| text_of(r) }]))
     same = same_count(this_round, last_round, same)
     last_round = this_round
@@ -123,6 +166,25 @@ def run(given: Turn) -> Outcome
 end
 
 def text_block(text: String) -> LLM.Block = LLM.Block.Text(LLM.TextPart(text: text))
+
+## `call` with `provider`; after a 401, once more with the provider `refresh` gives (a fresh token).
+def with_token[T](
+  provider: LLM.Provider,
+  refresh: Optional[Fn[Result[LLM.Provider]]],
+  call: Fn[LLM.Provider, Result[T]],
+) -> Renewal[T]
+  first = call.call(provider)
+  return Renewal(result: first) if not unauthorized?(first)
+
+  for fetch in option_list(refresh)
+    case fetch.call()
+      ok(fresh) -> return Renewal(result: call.call(fresh), fresh: some(fresh))
+      error(e) -> IO.warn("the token was not fetched again: #{e.message}")
+    end
+  end
+
+  Renewal(result: first)
+end
 
 ## The text of the model's blocks, for the history a client draws.
 def assistant_text(message: LLM.Message) -> String = message.content.map { |b| text_of(b) }.join("")
@@ -141,13 +203,26 @@ struct Folded
   on: Bool
   # A fold happened and no call measured the context since.
   just: Bool = false
+  # The provider of a fresh token, when the summary got one.
+  fresh: Optional[LLM.Provider] = none
 end
 
 # The session keeps a window once the API answered; after a failed request a later turn asks again.
-def known_window(turn: Turn) -> Int
-  return turn.compaction.window if turn.compaction.window != 0
+def windowed(given: Turn) -> Turn
+  return given if given.compaction.window != 0
 
-  case Compaction.window(turn.provider, turn.model, turn.compaction)
+  renewal = with_token(
+    given.provider,
+    given.refresh,
+    ->(p: LLM.Provider) { Compaction.window(p, given.model, given.compaction) },
+  )
+
+  turn = renewed(given, renewal.fresh)
+  turn.with(compaction: turn.compaction.with(window: known_window(turn, renewal.result)))
+end
+
+def known_window(turn: Turn, asked: Result[Int]) -> Int
+  case asked
     ok(tokens) ->
       turn.link.window.call(tokens)
       if tokens < 0
@@ -176,7 +251,14 @@ def compacted(turn: Turn, context: Int, folded: Folded, marks: List[String]) -> 
   end
 
   for span in option_list(Compaction.span(folded.messages))
-    case Compaction.summarize(turn.provider, turn.compaction, folded.messages, span)
+    renewal = with_token(
+      turn.provider,
+      turn.refresh,
+      ->(p: LLM.Provider) { Compaction.summarize(p, turn.compaction, folded.messages, span) },
+    )
+
+    fresh = folded.with(fresh: renewal.fresh)
+    case renewal.result
       ok(summary) ->
         compaction = summary
         for on_fold in option_list(turn.on_fold)
@@ -185,15 +267,44 @@ def compacted(turn: Turn, context: Int, folded: Folded, marks: List[String]) -> 
         end
 
         turn.link.compacted.call(compaction)
-        return folded.with(messages: Compaction.apply(folded.messages, compaction), just: true)
+        return fresh.with(messages: Compaction.apply(folded.messages, compaction), just: true)
       error(e) ->
         message = "the history was not compacted: #{e.message}"
         turn.link.emit.call(Protocol.Event.Error(Protocol.Failure(kind: Compaction.KIND_FAILED, message: message)))
-        return folded.with(on: false)
+        return fresh.with(on: false)
     end
   end
 
   folded
+end
+
+# Anthropic folds only between turns: a fold inside a tool round would change the history its thinking blocks are bound
+# to. Past the limit inside a round, the rest of the turn sends no thinking blocks, once said in the log.
+def past_limit(turn: Turn, context: Int) -> Bool
+  return false if not Compaction.due?(turn.compaction, context)
+
+  IO.warn(
+    "turn #{turn.id}: the context is past the limit inside a tool round; the turn goes on without thinking blocks",
+  )
+
+  true
+end
+
+# The turn and the session go on with a provider of a fresh token.
+def renewed(turn: Turn, fresh: Optional[LLM.Provider]) -> Turn
+  for provider in option_list(fresh)
+    turn.link.renewed.call(provider)
+    return turn.with(provider: provider)
+  end
+
+  turn
+end
+
+def unauthorized?[T](result: Result[T]) -> Bool
+  case result
+    error(e) -> e.code == some(401)
+    ok(_) -> false
+  end
 end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
@@ -212,6 +323,7 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
     messages: messages,
     tools: tools,
     extra: turn.extra,
+    cache: turn.cache,
     effort: turn.effort,
   )
 

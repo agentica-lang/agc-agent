@@ -49,6 +49,8 @@ struct Saved
   reserved: Int = 0
   ## The answer of the last turn so far at its last compaction, which may have folded part of it.
   folded: Optional[Folded] = none
+  ## A `stripped` record and no compaction after it.
+  stripped: Bool = false
   ## The names that extensions noted in the session (the skills it loaded), in order.
   marks: List[String] = []
   ## The model and the thinking level of the last `settings` record: what the session changed since its header.
@@ -131,9 +133,13 @@ def append_compaction(path: String, compaction: Compaction.Compaction, answer: L
       "to": JSON.from(compaction.to),
       "summary": JSON.from(compaction.summary),
       "answer": JSON.from(answer),
+      "strip_thinking": JSON.from(compaction.strip_thinking),
     },
   )
 end
+
+## From now until the next compaction the session's Anthropic requests go without thinking blocks.
+def append_stripped(path: String) -> Result[Void] = append(path, {"type": JSON.from("stripped")})
 
 ## The model and thinking level the session uses from now on, also in the file beside it (0600, replaced whole). The
 ## record goes first: the session restores from it, and the side file only feeds the list of the sessions, so a side
@@ -347,6 +353,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
         from: try JSON.int(try JSON.get(json, "from")),
         to: try JSON.int(try JSON.get(json, "to")),
         summary: try field(json, "summary"),
+        strip_thinking: JSON.bool(JSON.get(json, "strip_thinking").unwrap_or(JSON.from(false))).unwrap_or(false),
       )
 
       return error("a compaction outside the history") if compaction.to > saved.history.size
@@ -358,7 +365,8 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
         folded = some(Folded(texts: texts, at: history.size))
       end
 
-      ok(saved.with(history: history, folded: folded))
+      ok(saved.with(history: history, folded: folded, stripped: false))
+    "stripped" -> ok(saved.with(stripped: true))
     "ids" -> ok(saved.with(reserved: try JSON.int(try JSON.get(json, "until"))))
     "settings" ->
       effort = optional_string(json, "effort")
