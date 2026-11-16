@@ -119,19 +119,13 @@ def hit(frame: Frame, x: Int, y: Int) -> Hit
 end
 
 def style(kind: Transcript.Kind, look: Markdown.Look, colors: Theme.TranscriptColors) -> TUI.Style
-  case kind
-    Transcript.Kind.User -> colors.user
-    Transcript.Kind.Notice -> colors.notice
-    Transcript.Kind.Tool -> colors.tool
-    Transcript.Kind.ToolFailed -> colors.tool_failed
-    Transcript.Kind.Thinking -> colors.thinking
-    Transcript.Kind.Assistant ->
-      case look
-        Markdown.Look.Plain -> colors.assistant
-        Markdown.Look.Bold -> colors.bold
-        Markdown.Look.Heading -> colors.heading
-        Markdown.Look.Code -> colors.code
-      end
+  case look
+    Markdown.Look.Title -> colors.tool
+    Markdown.Look.Arg -> arg_style(kind, colors)
+    Markdown.Look.Muted -> colors.output
+    Markdown.Look.Removed -> colors.removed
+    Markdown.Look.Added -> colors.added
+    _ -> text_style(kind, look, colors)
   end
 end
 
@@ -171,6 +165,32 @@ end
 
 def panel_row(row: Layout.Row, colors: Theme.PanelColors) -> TUI.Node
   TUI.line([TUI.span(row.text, panel_style(row.look, colors))])
+end
+
+# The argument of a tool call, tinted by how the call went.
+def arg_style(kind: Transcript.Kind, colors: Theme.TranscriptColors) -> TUI.Style
+  case kind
+    Transcript.Kind.ToolFailed -> colors.arg_failed
+    Transcript.Kind.Tool -> colors.arg_done
+    _ -> colors.arg_running
+  end
+end
+
+def text_style(kind: Transcript.Kind, look: Markdown.Look, colors: Theme.TranscriptColors) -> TUI.Style
+  case kind
+    Transcript.Kind.User -> colors.user
+    Transcript.Kind.Notice -> colors.notice
+    Transcript.Kind.Thinking -> colors.thinking
+    Transcript.Kind.Assistant ->
+      case look
+        Markdown.Look.Bold -> colors.bold
+        Markdown.Look.Heading -> colors.heading
+        Markdown.Look.Code -> colors.code
+        _ -> colors.assistant
+      end
+
+    _ -> colors.tool
+  end
 end
 
 def transcript_row(line: Transcript.Line, colors: Theme.TranscriptColors) -> TUI.Node

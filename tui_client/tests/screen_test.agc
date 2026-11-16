@@ -17,7 +17,7 @@ def test_the_frame_draws_and_hits_the_same_regions() -> Result[Void]
     level: some("high"),
   )
 
-  frame = Screen.frame(20, 8, Transcript.lines(entries, 20, false), 0, parts)
+  frame = Screen.frame(20, 8, Transcript.lines(entries, 20, Transcript.Folds()), 0, parts)
   try Test.eq(rows(frame), ["two", "", "three", "── ⠋ Working ───────", "hi", "─" * 20, "Tab", "ready"])
   hits = (0...8).to_a.map { |y| Screen.hit(frame, 1, y) }
   try Test.eq(
@@ -58,7 +58,7 @@ def test_the_theme_colors_each_region() -> Result[Void]
   frame = Screen.frame(
     10,
     6,
-    Transcript.lines(Transcript.note([], "hi"), 10, false),
+    Transcript.lines(Transcript.note([], "hi"), 10, Transcript.Folds()),
     0,
     parts_of(Prompt.view("", 0, 10, 6)),
   )

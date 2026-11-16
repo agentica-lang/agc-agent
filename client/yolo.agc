@@ -40,7 +40,8 @@ end
 
 ## A `message_queued`: one this client did not send ends `--yolo` for the rest of that turn.
 def steered(yolo: Yolo, event: Protocol.MessageQueued) -> Yolo
-  return yolo if not yolo.own.include?(event.turn_id) or yolo.sent.include?(event.message_id)
+  mine = event.message_id.map { |id| yolo.sent.include?(id) }.unwrap_or(false)
+  return yolo if not yolo.own.include?(event.turn_id) or mine
 
   yolo.with(steered: yolo.steered.push(event.turn_id))
 end

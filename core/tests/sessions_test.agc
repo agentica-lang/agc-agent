@@ -75,7 +75,7 @@ def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Re
     message_id = "#{accepted.turn_id}.1"
     try Test.eq(accepted.message_id, some(message_id))
     a = try H.until(a, Protocol.EventKind.MessageQueued)
-    event = Protocol.MessageQueued(turn_id: accepted.turn_id, text: "Also say hi.", message_id: message_id)
+    event = Protocol.MessageQueued(turn_id: accepted.turn_id, text: "Also say hi.", message_id: some(message_id))
     try Test.eq(a.seen.last.event, Protocol.Event.MessageQueued(event))
     _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
     a = try H.until(a, Protocol.EventKind.TurnFinished)

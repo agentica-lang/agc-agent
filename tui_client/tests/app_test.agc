@@ -46,7 +46,9 @@ def test_a_message_is_sent_by_a_command_and_the_stream_waits_for_its_reply() -> 
   try Test.eq([replied.model.turn, replied.model.held.empty?], [true, true])
   try Test.eq(replied.cmds.size, 1)
   failed = App.update(sending.model, App.Msg.Sent(0, "hi", error("down", kind: "client.unreachable")))
-  try Test.eq(failed.model.prompt, "hi")
+  try Test.eq([failed.model.prompt, failed.model.entries.last.text], ["", "error: the message was not sent: down: hi"])
+  late = App.update(sending.model, App.Msg.Sent(0, "hi", error("slow", kind: Client.KIND_TIMEOUT)))
+  try Test.eq(late.model.entries.last.text, "error: the message may not have been sent (slow): hi")
   stale = App.update(sending.model.with(opened: 1), App.Msg.Sent(0, "hi", ok(Protocol.MessageAccepted(turn_id: "t1"))))
   Test.eq(stale.model.entries.size, 0)
 end
@@ -110,6 +112,41 @@ def test_a_turn_spins_in_the_rule() -> Result[Void]
   try Test.eq(App.subscriptions(turn).size, 2)
   spun = App.update(turn, App.Msg.Spin).model
   Test.eq(rows(spun)[2].slice(0, 12), "── ⠙ Working")
+end
+
+# Ctrl+O shows or folds the output of every tool call, and says so.
+def test_ctrl_o_folds_every_tool_output() -> Result[Void]
+  shown = App.update(model_of(40, 8), App.Msg.Key(TUI.Event.Key(TUI.Key.Ctrl("o"), TUI.Mods()))).model
+  try Test.eq([shown.tools, shown.entries.last.text == "tool output: shown"], [true, true])
+  Test.eq(App.update(shown, App.Msg.Key(TUI.Event.Key(TUI.Key.Ctrl("o"), TUI.Mods()))).model.tools, false)
+end
+
+# Esc before the reply of a message that went into another client's turn stops that turn; a level reply after /new
+# is dropped.
+def test_an_early_stop_reaches_a_turn_of_another_client() -> Result[Void]
+  model = model_of(30, 8).with(id: "s1", outbox: ["hi"], stop_wanted: true)
+  queued = App.update(
+    model,
+    App.Msg.Sent(0, "hi", ok(Protocol.MessageAccepted(turn_id: "t9", message_id: some("t9.1")))),
+  )
+
+  try Test.eq([queued.model.stopping, queued.model.stop_wanted], [true, false])
+  try Test.eq(queued.cmds.size, 1)
+  stray = App.update(model_of(30, 8), App.Msg.Leveled(ok()))
+  Test.eq([stray.model.entries.size, stray.cmds.size], [0, 0])
+end
+
+# The server is checked again before the stream is read again: a newer version ends the client, else a new stream.
+def test_a_recheck_reads_the_stream_again_or_ends_the_client() -> Result[Void]
+  model = model_of(30, 8).with(id: "s1", generation: 3, last_event_id: 7)
+  failed = App.update(model, App.Msg.Rechecked(3, error("another version", kind: "client.version")))
+  try Test.eq([failed.model.failure, some("#{failed.cmds.size}")], [some("another version"), some("1")])
+  try Test.eq(App.update(model, App.Msg.Rechecked(2, ok())).model.generation, 3)
+  again = App.update(model, App.Msg.Rechecked(3, ok())).model
+  try Test.eq([again.generation, again.last_event_id], [4, 7])
+  # The new reader finds no server and ends.
+  Task.await(again.stream.unwrap!)
+  ok()
 end
 
 def test_ctrl_c_and_a_signal_quit_with_their_codes() -> Result[Void]

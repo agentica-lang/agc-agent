@@ -13,6 +13,7 @@
 ##   is used, and bash is the only way to run something in parallel, so the check can race with a swapped link.
 ## - On a case-insensitive filesystem a rule on `.env` may not match `.ENV`.
 
+import Diff from "diff"
 import Files from "files"
 import Patch from "patch"
 import Sandbox from "sandbox"
@@ -162,9 +163,57 @@ def detail(name: String, input: JSON.Value) -> String
   end
 end
 
+## What a call of `edit_file` or `write_file` would change, as numbered lines, read before it runs; none for the other
+## tools or a call it cannot read.
+def change(ctx: Spec.Context, name: String, input: JSON.Value) -> Optional[String]
+  case name
+    "edit_file" ->
+      case Spec.args(input, Files.EditFileArgs.codec)
+        ok(args) -> nonempty(Diff.edit(text_of(ctx, args.path), args.old_string, args.new_string))
+        error(_) -> none
+      end
+
+    "write_file" ->
+      case Spec.args(input, Files.WriteFileArgs.codec)
+        ok(args) -> nonempty(Diff.written(args.content))
+        error(_) -> none
+      end
+
+    _ -> none
+  end
+end
+
+## The first lines of a result for the clients, none when it has one line at most (its summary shows it).
+def shown_output(text: String) -> Optional[String]
+  lines = text.strip.split("\n")
+  return none if lines.size <= 1
+
+  shown = lines.take(OUTPUT_LINES)
+  if lines.size > OUTPUT_LINES
+    shown = shown.push("... #{lines.size - OUTPUT_LINES} more lines")
+  end
+
+  some(cut(shown.join("\n")))
+end
+
 private
 
 DETAIL_CHARS = 4000
+OUTPUT_LINES = 40
+
+# The text of a file in the session folder, "" when it cannot be read.
+def text_of(ctx: Spec.Context, path: String) -> String
+  case Sandbox.resolve(ctx.root, path)
+    ok(found) -> File.read_text(found).unwrap_or("")
+    error(_) -> ""
+  end
+end
+
+def nonempty(text: String) -> Optional[String]
+  return none if text == ""
+
+  some(text)
+end
 
 def cut(text: String) -> String
   return text if text.length <= DETAIL_CHARS

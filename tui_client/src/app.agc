@@ -28,7 +28,8 @@ MAX_RECONNECTS = 3
 MAX_RESYNCS = 2
 SCROLL_STEP = 3
 YOLO_WARNING = "--yolo: the tool calls of turns sent from here run without asking"
-HINTS = "Enter send · ^J newline · ⇧Tab thinking level · ^T show thinking · Esc stop · PgUp/PgDn · ^C quit"
+## The key hints of the status line, most needed first: those that do not fit are left out.
+HINTS = ["Enter send", "Esc stop", "^C quit", "^J newline", "⇧Tab level", "^T thinking", "^O tools", "PgUp/PgDn"]
 SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 SPIN_MS = 80
 ## The thinking levels Shift+Tab goes through, none for the model's default.
@@ -75,6 +76,8 @@ struct Model
   yolo: Yolo.Yolo
   ## The thinking of the model is drawn.
   thinking: Bool = false
+  ## The output of the tool calls is shown whole.
+  tools: Bool = false
   ## The thinking level the rules show, none for the model's default; the server's own is `confirmed`.
   effort: Optional[String] = none
   confirmed: Optional[String] = none
@@ -184,7 +187,7 @@ def update(model: Model, msg: Msg) -> TUI.Step[Model, Msg]
   app = handled(model.with(now: Time.monotonic_ms, clock_s: Time.now_ms / 1000), msg)
   # The answer that streams changes on every delta: it is cut again when the stream rests.
   if not stream?(msg)
-    app = app.with(entries: Transcript.wrapped(app.entries, app.width, app.thinking))
+    app = app.with(entries: Transcript.wrapped(app.entries, app.width, folds(app)))
   end
 
   cmds = app.effects
@@ -344,7 +347,7 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
     opened: app.opened + 1,
     entries: Transcript.from_history(session.history),
     turn: session.turn_id.some?,
-    effort: session.effort,
+    effort: wanted_level(app, session.effort),
     confirmed: session.effort,
     stopping: false,
     shown_id: from,
@@ -401,7 +404,11 @@ def on_key(app: Model, event: TUI.Event) -> Model
     TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(exit: some(0))
     TUI.Event.Key(TUI.Key.Enter, _) -> send(app)
     TUI.Event.Key(TUI.Key.Ctrl("t"), _) ->
-      app.with(thinking: not app.thinking, entries: Transcript.unfold_thinking(app.entries))
+      shown = app.with(thinking: not app.thinking, entries: Transcript.unfold_thinking(app.entries))
+      noted(shown, "thinking blocks: #{shown_name(shown.thinking)}")
+    TUI.Event.Key(TUI.Key.Ctrl("o"), _) ->
+      shown = app.with(tools: not app.tools, entries: Transcript.unfold_tools(app.entries))
+      noted(shown, "tool output: #{shown_name(shown.tools)}")
     TUI.Event.Key(TUI.Key.Ctrl("j"), _) -> typed(app, "\n")
     TUI.Event.Key(TUI.Key.Backspace, _) ->
       at = cursor(app)
@@ -440,7 +447,7 @@ def clicked(app: Model, x: Int, y: Int) -> Model = clicked_on(app, framed(app), 
 
 def clicked_on(app: Model, frame: Screen.Frame, x: Int, y: Int) -> Model
   case Screen.hit(frame, x, y)
-    Screen.Hit.Entry(index) -> app.with(entries: Transcript.toggle(app.entries, index, app.thinking))
+    Screen.Hit.Entry(index) -> app.with(entries: Transcript.toggle(app.entries, index, folds(app)))
     Screen.Hit.Key(event) -> on_key(app, event)
     Screen.Hit.Prompt(column, row) ->
       app.with(cursor: Prompt.index_at(app.prompt, cursor(app), frame.width, frame.height, column, row))
@@ -508,18 +515,22 @@ end
 # back to an empty prompt.
 def sent_reply(app: Model, text: String, result: Result[Protocol.MessageAccepted]) -> Model
   case result
-    ok(accepted) if accepted.message_id.some? -> app.with(yolo: Yolo.accepted(app.yolo, accepted))
+    ok(accepted) if accepted.message_id.some? ->
+      queued = app.with(yolo: Yolo.accepted(app.yolo, accepted))
+      return queued if not app.stop_wanted
+
+      # The message went into a turn that runs (another client's): that is the turn Esc asked to stop.
+      stop(queued.with(turn: true, stop_wanted: false))
     ok(accepted) ->
       entries = Transcript.add(app.entries, Transcript.Kind.User, text)
       started = app.with(entries: entries, turn: true, stopping: false, yolo: Yolo.accepted(app.yolo, accepted))
       return started if not app.stop_wanted
 
       stop(started.with(stop_wanted: false))
-    error(e) ->
-      failed = noted(app, "error: the message was not sent: #{e.message}: #{Client.printable(text)}")
-      return failed if app.prompt != ""
-
-      failed.with(prompt: text, cursor: text.length)
+    # The text stays in the note: put back in the prompt, it would take the keys typed after it.
+    error(e) if e.kind == Client.KIND_TIMEOUT ->
+      noted(app, "error: the message may not have been sent (#{e.message}): #{Client.printable(text)}")
+    error(e) -> noted(app, "error: the message was not sent: #{e.message}: #{Client.printable(text)}")
   end
 end
 
@@ -572,6 +583,7 @@ end
 def fresh(app: Model) -> Model
   seed(app.server, app.options, app.signals, app.width, app.height).with(
     thinking: app.thinking,
+    tools: app.tools,
     theme: app.theme,
     stream: app.stream,
     feed: app.feed,
@@ -724,10 +736,8 @@ def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
     Protocol.Event.ApprovalResolved(done) ->
       decided = "approval #{done.approval_id}: #{Protocol.decision_name(done.decision)}"
       noted(resolved(shown, done.approval_id), "#{decided} (#{Protocol.source_name(done.source)})")
-    Protocol.Event.ToolStarted(tool) ->
-      text = "⚙ #{tool.name} #{tool.summary}"
-      shown.with(entries: Transcript.tool(shown.entries, tool.call_id, Transcript.Kind.Tool, text))
-    Protocol.Event.ToolFinished(tool) -> shown.with(entries: tool_finished(shown.entries, tool))
+    Protocol.Event.ToolStarted(tool) -> shown.with(entries: Transcript.tool_started(shown.entries, tool))
+    Protocol.Event.ToolFinished(tool) -> shown.with(entries: Transcript.tool_finished(shown.entries, tool))
     Protocol.Event.Error(failure) ->
       failed = noted(shown, "error: #{failure.kind}: #{failure.message}")
       case shown.new_model
@@ -742,11 +752,12 @@ def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
   end
 end
 
-def tool_finished(entries: List[Transcript.Entry], tool: Protocol.ToolFinished) -> List[Transcript.Entry]
-  timing = "#{tool.summary} (#{tool.duration_ms} ms)"
-  return Transcript.tool(entries, tool.call_id, Transcript.Kind.Tool, "✓ #{timing}") if tool.ok
+def folds(app: Model) -> Transcript.Folds = Transcript.Folds(thinking: app.thinking, tools: app.tools)
 
-  Transcript.tool(entries, tool.call_id, Transcript.Kind.ToolFailed, "✗ #{timing}")
+def shown_name(shown: Bool) -> String
+  return "shown" if shown
+
+  "folded"
 end
 
 def finished(app: Model, reason: Protocol.StopReason) -> Model
@@ -797,7 +808,7 @@ def framed(app: Model) -> Screen.Frame
   Screen.frame(
     app.width,
     app.height,
-    Transcript.tail(app.entries, app.width, app.thinking, app.height + app.scroll),
+    Transcript.tail(app.entries, app.width, folds(app), app.height + app.scroll),
     app.scroll,
     parts,
   )
@@ -855,6 +866,9 @@ end
 # A level wanted while the change was on its way goes next; the note comes once the level settles, and a failure
 # with nothing newer wanted goes back to the server's level.
 def level_reply(app: Model, result: Result[Void]) -> Model
+  # A reply after /new or a switch belongs to the session before.
+  return app if app.level_sending.none?
+
   sent = app.level_sending.unwrap_or("")
   done = app.with(level_sending: none)
   if result.ok?
@@ -867,6 +881,13 @@ def level_reply(app: Model, result: Result[Void]) -> Model
     ok(_) -> noted(done, "thinking #{sent} from the next turn")
     error(e) -> noted(done.with(effort: done.confirmed), "error: the thinking level was not set: #{e.message}")
   end
+end
+
+# A level wanted while its change is on its way stays across a new read of the session.
+def wanted_level(app: Model, server: Optional[String]) -> Optional[String]
+  return app.effort if app.level_sending.some?
+
+  server
 end
 
 def level_of(effort: String) -> Optional[String]
@@ -892,6 +913,17 @@ def status(app: Model, width: Int) -> String
     parts = parts.push("approval waiting")
   end
 
-  text = " #{(parts + [HINTS]).join(" · ")}"
+  text = " #{parts.join(" · ")}"
+  for hint in HINTS
+    more = "#{text} · #{hint}"
+    if text == " "
+      more = " #{hint}"
+    end
+
+    break if Width.text(more) > width
+
+    text = more
+  end
+
   text + " " * [width - Width.text(text), 0].max.unwrap!
 end

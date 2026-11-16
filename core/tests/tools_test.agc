@@ -1,4 +1,5 @@
 import Approval from "../src/approval/approval"
+import Diff from "../src/tools/diff"
 import Tools from "../src/tools/tools"
 
 struct Setup
@@ -503,4 +504,17 @@ def test_wildcards() -> Result[Void]
   try Test.assert(not Approval.wildcard?("ab*ba", "aba"), "no overlap")
   try Test.assert(Approval.wildcard?("abc", "abc"), "exact")
   Test.assert(not Approval.wildcard?("abc", "abcd"), "exact is whole")
+end
+
+# An edit shows its lines numbered, two lines of context around them and `...` for the lines skipped.
+def test_an_edit_is_shown_as_numbered_lines() -> Result[Void]
+  text = "a\nb\nc\nd\ne\nf\ng\n"
+  try Test.eq(
+    Diff.edit(text, "d", "D\nD2").split("\n"),
+    ["...", "  2 b", "  3 c", "- 4 d", "+ 4 D", "+ 5 D2", "  6 e", "  7 f", "..."],
+  )
+
+  try Test.eq(Diff.edit("one\ntwo", "one", "1"), "- 1 one\n+ 1 1\n  2 two")
+  try Test.eq(Diff.edit("x", "y", "z"), "")
+  Test.eq(Diff.written("a\nb"), "+ 1 a\n+ 2 b")
 end
