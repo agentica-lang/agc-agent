@@ -78,8 +78,10 @@ unit:
 unit-package:
 	@if [ "$(PACKAGE)" = cli ]; then mkdir -p cli/_build/bin && \
 	  $(AGENTICA) compile cli/main.agc -o cli/_build/bin/cli.agcb >/dev/null && \
-	  $(AGENTICA) compile cli/tests/support/fake_main.agc -o cli/_build/bin/fake.agcb >/dev/null; fi; \
-	if [ "$(PACKAGE)" = cli ]; then export CLI_BYTECODE='$(CURDIR)/cli/_build/bin/cli.agcb' FAKE_BYTECODE='$(CURDIR)/cli/_build/bin/fake.agcb'; fi; \
+	  $(AGENTICA) compile cli/tests/support/fake_main.agc -o cli/_build/bin/fake.agcb >/dev/null && \
+	  $(AGENTICA) compile core/main.agc -o cli/_build/bin/core.agcb >/dev/null; fi; \
+	if [ "$(PACKAGE)" = cli ]; then export CLI_BYTECODE='$(CURDIR)/cli/_build/bin/cli.agcb' \
+	  FAKE_BYTECODE='$(CURDIR)/cli/_build/bin/fake.agcb' CORE_BYTECODE='$(CURDIR)/cli/_build/bin/core.agcb'; fi; \
 	$(call tests,$(PACKAGE),tests)
 
 # The entry points run, with their packages read from the workspace; bin/finn also from another folder, through a

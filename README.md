@@ -49,6 +49,10 @@ FIREWORKS_API_KEY=... bin/finn serve  # a preset provider once its key is set: /
 bin/finn --version
 ```
 
+`finn server status`, `stop` (waits for the running turns and ends when the server has gone; `--now` cancels them),
+`restart`, `start` and `logs [-f]` manage the server a
+client started in the background.
+
 The flags of `finn serve` (`--api`, `--model`, `--base-url`) override their environment variables (`FINN_API`,
 `FINN_MODEL`, `FINN_BASE_URL`); `finn serve --help` lists them all.
 

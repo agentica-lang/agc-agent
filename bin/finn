@@ -21,6 +21,8 @@ usage: finn [chat] [options]      talk to the agent in this folder (starts the s
        finn -p TASK [--yolo]      one task (- reads it from stdin): the answer on stdout, the rest on stderr
        finn tui [options]         the same on the full screen, --yolo too (finn tui --help lists the options)
        finn serve [options]       run the server in the foreground
+       finn server ACTION         status, start, stop, restart or logs of the server of the state folder
+                                  (stop waits for the running turns, --now cancels them; finn server --help)
        finn --version | --help
 
 chat options: --provider NAME, --api NAME, --model NAME (of a new session), --session ID, --thinking, --yolo, ...
