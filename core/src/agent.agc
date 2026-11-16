@@ -8,6 +8,8 @@ import Compaction from "compaction"
 import Tools from "tools"
 
 MAX_ROUNDS = 50
+## The provider whose models are offered `apply_patch`, as a custom tool.
+RESPONSES = "openai_responses"
 SAME_ROUNDS = 3
 DENIED_BY_RULE = "denied by a rule of the config"
 DENIED_BY_USER = "the user denied this call"
@@ -166,6 +168,14 @@ end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   tools = offered(turn).map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }
+  if turn.provider.name == RESPONSES
+    patch = Tools.patch()
+    grammar = Tools.patch_grammar()
+    tools = tools.push(
+      LLM.Tool(name: patch.name, description: patch.description, input_schema: grammar, kind: LLM.ToolKind.Custom),
+    )
+  end
+
   request = LLM.Request(model: turn.model, system: turn.system, messages: messages, tools: tools, extra: turn.extra)
   stream = try LLM.stream(turn.provider, request)
   while true
@@ -204,8 +214,15 @@ def offered(turn: Turn) -> List[Tools.Tool]
 end
 
 def run_call(turn: Turn, call: LLM.ToolCall) -> LLM.Block
-  output = noticed_run(turn, call)
+  output = noticed_run(turn, with_input(call))
   LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: output.text, is_error: output.is_error))
+end
+
+# A custom tool's call has its text as `input`, the field its tool reads.
+def with_input(call: LLM.ToolCall) -> LLM.ToolCall
+  return call if call.kind != LLM.ToolKind.Custom
+
+  call.with(input: JSON.object({"input": JSON.from(call.arguments)}))
 end
 
 # Runs the call between its `tool_started` and `tool_finished` events.

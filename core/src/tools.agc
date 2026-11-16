@@ -15,6 +15,7 @@
 
 import Approval from "approval"
 import Files from "files"
+import Patch from "patch"
 import Sandbox from "sandbox"
 import Search from "search"
 import Shell from "shell"
@@ -92,8 +93,14 @@ def all() -> List[Spec.Tool]
   ]
 end
 
+## `apply_patch`, which only OpenAI models are offered (see `Patch`).
+def patch() -> Spec.Tool = Patch.tool()
+
+## The grammar of `apply_patch` as a custom tool.
+def patch_grammar() -> JSON.Value = Patch.grammar()
+
 def find(name: String) -> Result[Spec.Tool]
-  found = all().find { |tool| tool.name == name }
+  found = all().push(Patch.tool()).find { |tool| tool.name == name }
   case found
     ok(tool) -> ok(tool)
     error(_) -> error("unknown tool: #{name}")
@@ -110,6 +117,8 @@ end
 
 ## Whether a call runs, waits for an answer or is refused. A call whose input or path is not valid is refused.
 def verdict(ctx: Spec.Context, name: String, input: JSON.Value) -> Approval.Verdict
+  return Patch.verdict(ctx, input) if name == Patch.NAME
+
   case find(name)
     ok(tool) -> verdict_of(ctx, tool, input)
     error(_) -> Approval.Verdict.Deny
@@ -122,8 +131,9 @@ def target(ctx: Spec.Context, name: String, input: JSON.Value) -> Result[String]
   tool.target(ctx, input)
 end
 
-## What a call would write, for the approval: the content of `write_file`, or the old text of `edit_file` with each line
-## marked `-` and the new text marked `+`, cut to `DETAIL_CHARS`; empty for the other tools.
+## What a call would write, for the approval: the content of `write_file`, the old text of `edit_file` with each line
+## marked `-` and the new text marked `+`, or the patch of `apply_patch`, cut to `DETAIL_CHARS`; empty for the other
+## tools.
 def detail(name: String, input: JSON.Value) -> String
   case name
     "write_file" ->
@@ -138,6 +148,7 @@ def detail(name: String, input: JSON.Value) -> String
         error(_) -> ""
       end
 
+    "apply_patch" -> cut(Patch.args(input).unwrap_or(""))
     _ -> ""
   end
 end
