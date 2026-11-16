@@ -196,6 +196,7 @@ end
 ## What a list read of one session file, valid while its size and time of change stay.
 struct Cached
   id: String
+  summary: Protocol.SessionSummary
   size: Int
   modified_s: Int
   listing: Store.Listing
@@ -320,6 +321,10 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
       case ended(found[0])
         ok(entry) ->
           removed = remove_file(entry.file)
+          if removed.ok?
+            _ = Path.remove(Store.settings_file(entry.file))
+          end
+
           Actor.reply(reply, removed)
           sessions = registry.sessions.map { |e| replaced(e, entry) }
           if removed.ok?
@@ -367,21 +372,22 @@ def cached(entry: Entry) -> Cached
   end
 
   for old in option_list(entry.listed)
-    return old if old.size == size and old.modified_s == modified
+    return old.with(summary: entry.summary) if old.size == size and old.modified_s == modified
   end
 
   listing = Store.listing(entry.file).unwrap_or(Store.Listing())
-  Cached(id: entry.summary.id, size: size, modified_s: modified, listing: listing)
+  Cached(id: entry.summary.id, summary: entry.summary, size: size, modified_s: modified, listing: listing)
 end
 
 # A session with its model now (a `PATCH` changes it after the header), when it last changed and its first message
 # without control characters.
-def summary_now(summary: Protocol.SessionSummary, found: Cached) -> Protocol.SessionSummary
-  title = found.listing.title.split("").map { |c| printable(c) }.join("")
-  summary.with(
-    model: found.listing.model.unwrap_or(summary.model),
+def summary_now(found: Cached) -> Protocol.SessionSummary
+  title = found.listing.title
+  cut = title.slice(0, [title.length, TITLE_CHARS].min.unwrap!)
+  found.summary.with(
+    model: found.listing.model.unwrap_or(found.summary.model),
     updated_s: found.modified_s,
-    title: title.slice(0, [title.length, TITLE_CHARS].min.unwrap!),
+    title: cut.split("").map { |c| printable(c) }.join(""),
   )
 end
 
@@ -727,10 +733,7 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
       entries: Result[List[Entry]] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
       read = (try entries).map { |entry| cached(entry) }
       _ = Actor.cast(registry, Msg.Listed(read), CALL_MS)
-      sessions = (try entries).map do |entry|
-        found = read.select { |c| c.id == entry.summary.id }[0]
-        summary_now(entry.summary, found)
-      end
+      sessions = read.map { |found| summary_now(found) }
 
       response(
         200,

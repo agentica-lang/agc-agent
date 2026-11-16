@@ -42,10 +42,10 @@ end
 def replaced(panel: Panel, pending: List[Protocol.ApprovalRequested], now: Int) -> Panel = changed(panel, pending, now)
 
 ## Tab focuses the panel or gives the keys back to the prompt.
-def toggled(panel: Panel) -> Panel
+def toggled(panel: Panel, now: Int) -> Panel
   return panel if panel.pending.empty?
 
-  panel.with(focused: not panel.focused)
+  panel.with(focused: not panel.focused, shown_at: now)
 end
 
 ## The answer a key gives, none when the key does not answer now. `shown` says whether the panel has rows on the
@@ -94,7 +94,7 @@ def rows(panel: Panel, width: Int, room: Int) -> List[Layout.Row]
   request = panel.pending[0]
   head = "approval #{request.approval_id} · #{request.tool}: #{request.preview}"
   body = ->(left: Int) { detail(request.detail, width, [left, MAX_DETAIL_ROWS].min.unwrap!) }
-  Layout.fit(head, keys_text(panel), body, width, room)
+  Layout.fit(head, keys(panel), body, width, room)
 end
 
 private
@@ -125,18 +125,40 @@ def letter(c: String) -> Optional[Protocol.Decision]
   end
 end
 
-def keys_text(panel: Panel) -> String
+# The keys row. Allowing for the session has no button: its key is typed, so a click meant for another state of the
+# panel (a double click on Tab) never gives it.
+def keys(panel: Panel) -> List[Layout.Key]
   request = panel.pending[0]
   session = "allow #{request.tool} on this exact target for the session"
-  more = ""
+  more: List[Layout.Key] = []
   if panel.pending.size > 1
-    more = " · #{panel.pending.size - 1} more waiting"
+    more = [Layout.Key(label: "#{panel.pending.size - 1} more waiting")]
   end
 
-  return "sending the answer…#{more}" if panel.answering.some?
-  return "y allow · n deny · a #{session} · Tab back to the prompt#{more}" if panel.focused
+  held = TUI.Mods()
+  tab = some(TUI.Event.Key(TUI.Key.Tab, held))
+  return [Layout.Key(label: "sending the answer…")] + more if panel.answering.some?
 
-  "Tab to answer (a: #{session}) · ^Y allow · ^N deny#{more}"
+  if panel.focused
+    return (
+      [
+        Layout.Key(label: "y allow", event: some(TUI.Event.Char("y", held))),
+        Layout.Key(label: "n deny", event: some(TUI.Event.Char("n", held))),
+        Layout.Key(label: "a #{session}"),
+        Layout.Key(label: "Tab back to the prompt", event: tab),
+      ] +
+      more
+    )
+  end
+
+  (
+    [
+      Layout.Key(label: "^Y allow", event: some(TUI.Event.Key(TUI.Key.Ctrl("y"), held))),
+      Layout.Key(label: "^N deny", event: some(TUI.Event.Key(TUI.Key.Ctrl("n"), held))),
+      Layout.Key(label: "Tab to answer (a: #{session})", event: tab),
+    ] +
+    more
+  )
 end
 
 def detail(text: String, width: Int, room: Int) -> List[Layout.Row]

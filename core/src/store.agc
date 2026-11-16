@@ -10,6 +10,11 @@ import Protocol from "pkg/protocol/protocol"
 import Compaction from "compaction"
 
 EXTENSION = ".jsonl"
+## Beside a session file: the model of its last `settings` record, so a list of the sessions need not read the file.
+SETTINGS_EXTENSION = ".settings.json"
+## A listing looks this far into a file for the first user message: the lines, and the bytes.
+TITLE_LINES = 64
+TITLE_BYTES = 262_144
 MAX_LINE_BYTES = 16_777_216
 MAX_WRITE_BYTES = 1_048_576
 
@@ -136,10 +141,28 @@ end
 ## From now until the next compaction the session's Anthropic requests go without thinking blocks.
 def append_stripped(path: String) -> Result[Void] = append(path, {"type": JSON.from("stripped")})
 
-## The model and thinking level the session uses from now on.
+## The model and thinking level the session uses from now on, also in the file beside it (0600, replaced whole). The
+## record goes first: the session restores from it, and the side file only feeds the list of the sessions, so a side
+## file that cannot be written leaves the list with the model before while the change holds.
 def append_settings(path: String, model: String, effort: Optional[String]) -> Result[Void]
-  append(path, {"type": JSON.from("settings"), "model": JSON.from(model), "effort": JSON.from(effort)})
+  try append(path, {"type": JSON.from("settings"), "model": JSON.from(model), "effort": JSON.from(effort)})
+  _ = write_side(settings_file(path), JSON.encode(JSON.object({"model": JSON.from(model)})))
+  ok()
 end
+
+def write_side(side: String, text: String) -> Result[Void]
+  return File.replace(side, text.bytes) if File.stat(side).ok?
+
+  temporary = "#{side}.tmp"
+  _ = Path.remove(temporary)
+  handle = try File.open(temporary, "create_private")
+  written = File.write(handle, text)
+  try File.close(handle)
+  try written
+  Path.rename(temporary, side)
+end
+
+def settings_file(path: String) -> String = "#{path.slice(0, path.length - EXTENSION.length)}#{SETTINGS_EXTENSION}"
 
 ## The answer of a turn, as a client draws it.
 def append_answer(path: String, text: String) -> Result[Void]
@@ -148,8 +171,13 @@ end
 
 def reopen(path: String) -> Result[Void] = write(path, "\n")
 
-## Reads the file a line at a time and parses only the records a listing needs.
-def listing(path: String) -> Result[Listing] = File.open(path, "read") do |handle| ok(listed_lines(handle)) end
+## The model from the file beside the session's, and the first user message from the first TITLE_LINES lines in the
+## first TITLE_BYTES bytes (none when its line does not end in them).
+def listing(path: String) -> Result[Listing]
+  start = try File.open(path, "read") do |handle| File.read_bytes(handle, TITLE_BYTES) end
+  title = first_user(decoded(start))
+  ok(Listing(model: settings_model(path), title: title))
+end
 
 ## The first line of a file: the session, without reading the rest.
 def header(path: String) -> Result[Header]
@@ -212,28 +240,42 @@ end
 
 private
 
-def listed_lines(handle: File.Handle) -> Listing
-  found = Listing()
-  while true
-    read = File.read_line(handle)
-    break if not read.ok?
+def settings_model(path: String) -> Optional[String]
+  text = File.read_text(settings_file(path)).unwrap_or("")
+  case JSON.parse(text)
+    ok(json) ->
+      case field(json, "model")
+        ok(model) -> some(model)
+        error(_) -> none
+      end
 
-    text = read.unwrap!
+    error(_) -> none
+  end
+end
 
-    settings = text.include?("\"settings\"")
-    user = found.title == "" and text.include?("\"user\"")
-    next if not settings and not user
+# The text of bytes that may end inside a character (at most 3 bytes of one).
+def decoded(bytes: Bytes) -> String
+  for cut in 0..3
+    case String.from_bytes(bytes.take([bytes.size - cut, 0].max.unwrap!))
+      ok(text) -> return text
+      error(_) -> nil
+    end
+  end
+
+  ""
+end
+
+def first_user(start: String) -> String
+  for text in start.split("\n").take(TITLE_LINES)
+    next if not text.include?("\"user\"")
 
     case JSON.parse(text)
-      ok(json) if field(json, "type") == ok("settings") ->
-        found = found.with(model: some(field(json, "model").unwrap_or("")))
-      ok(json) if user and field(json, "type") == ok("user") ->
-        found = found.with(title: field(json, "text").unwrap_or(""))
+      ok(json) if field(json, "type") == ok("user") -> return field(json, "text").unwrap_or("")
       _ -> nil
     end
   end
 
-  found
+  ""
 end
 
 # A line longer than a load reads is refused.
