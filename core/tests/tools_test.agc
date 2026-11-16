@@ -18,6 +18,12 @@ def fake_env(name: String) -> Result[String]
   end
 end
 
+def dot_env(name: String) -> Result[String]
+  return ok(".:/usr/bin:/bin") if name == "PATH"
+
+  fake_env(name)
+end
+
 def link(target: String, path: String) -> Result[Void]
   process = try Process.spawn("ln", ["-s", target, path])
   code = try Process.wait(process, 5000)
@@ -186,6 +192,19 @@ def test_bash_gets_only_the_kept_variables_of_the_real_environment() -> Result[V
     try Test.assert(allowed.include?(name), "bash got the variable #{name}")
   end
 
+  done(s)
+end
+
+# A read-only command, which may run without asking, finds its programs in /usr/bin:/bin, never in a `.` of the
+# user's PATH; another command keeps the user's PATH.
+def test_a_read_only_command_runs_with_a_fixed_path() -> Result[Void]
+  s = try setup()
+  try File.write_text("#{s.root}/cat", "#!/bin/sh\necho PWNED\n")
+  process = try Process.spawn("chmod", ["+x", "#{s.root}/cat"])
+  _ = try Process.wait(process, 5000)
+  ctx = s.ctx.with(env: &dot_env)
+  try Test.eq(Tools.run(ctx, "bash", JSON.from({"command": "cat a.txt"})).text, "one\ntwo\nthree\nfour\n")
+  try Test.eq(Tools.run(ctx, "bash", JSON.from({"command": "echo $PATH"})).text, ".:/usr/bin:/bin\n")
   done(s)
 end
 

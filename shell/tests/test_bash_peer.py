@@ -15,7 +15,7 @@ import unittest
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 HELPER = os.path.join(ROOT, "shell", "tests", "support", "argv.agc")
 AGENTICA = os.environ.get("AGENTICA", "agentica")
-CASES = 600
+CASES = 1000
 
 PLAIN = "abcxyzABC019_./:=,+@%-^]"
 PIECES_IN_QUOTES = "ab $`\\\"'!*?~{}|;&<>()#\t"
@@ -46,7 +46,8 @@ def word(rng):
     return "".join(rng.choice([unquoted, unquoted, single, double])(rng) for _ in range(rng.randint(1, 3)))
 
 
-REDIRECTIONS = ["2>/dev/null", ">/dev/null", ">out", ">>log", "2>&1", "</dev/null", "3>x", "2>>err", "> out", "< /dev/null"]
+REDIRECTIONS = ["2>/dev/null", ">/dev/null", ">out", ">>log", "2>&1", "</dev/null", "3>x", "2>>err", "> out", "< /dev/null",
+                "3<in", "0<in", "&>out", "&>>out", "2>&10", "2>&1x", "<>out", "1<>out"]
 OPERATORS = [" ; ", " && ", " || ", " | ", ";", "&&", "|"]
 
 
@@ -116,7 +117,7 @@ class BashPeerTest(unittest.TestCase):
                 self.assertEqual(bash_words(seg, []), words, text)
                 if bash_words(seg, ["ab", "a", "b", "-x"]) != words:
                     self.assertTrue(any(w[1] for w in got), "a glob not marked: " + text)
-        self.assertGreater(compared, CASES // 10)
+        self.assertGreater(compared, CASES // 20)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 ## The parser: bash quoting (single quotes, double quotes, backslash) and the operators `|`, `;`, `&&`, `||`, `&`, `>`,
 ## `>>`, `<`, `N>`, `N>>`, `2>&1` and `<<`. Anything else is an error: an expansion (`$`, backticks, `~`, braces), `<(`
-## and `>(`, a here-document, a subshell or group, a function, `!`, an assignment, a comment, a line end and any
+## and `>(`, `N<`, `&>`, `<>`, `>&` to another target, a here-document, a subshell or group, a function, `!`, an assignment, a comment, a line end and any
 ## character it does not list. A glob (`*`, `?`, `[`) is kept as it is, and its word marked.
 
 enum Join
@@ -100,9 +100,11 @@ def step(lexer: Lexer) -> Result[Lexer]
     " " -> ok(flush(lexer).with(at: lexer.at + 1))
     "\t" -> ok(flush(lexer).with(at: lexer.at + 1))
     "|" -> operator(lexer, ["||", "|"])
+    "&" if lexer.chars.drop(lexer.at + 1).take(1) == [">"] -> error("&> is not read")
     "&" -> operator(lexer, ["&&", "&"])
     ";" -> operator(lexer, [";"])
     ">" -> redirect(lexer)
+    "<" if lexer.started and lexer.digits -> error("a redirection of a numbered input is not read")
     "<" -> operator(lexer, ["<<", "<"])
     _ if PLAIN.include?(c) -> ok(add(lexer, c, false).with(at: lexer.at + 1))
     "~" if lexer.started and not "=:".include?(last_char(lexer.word)) ->
@@ -193,7 +195,8 @@ def redirect(lexer: Lexer) -> Result[Lexer]
 
   rest = lexer.chars.drop(lexer.at).take(3).join("")
   op = ">"
-  if rest.start_with?(">&1")
+  after = lexer.chars.drop(lexer.at + 3).take(1).join("")
+  if rest.start_with?(">&1") and (after.empty? or " \t;|&<>".include?(after))
     op = ">&1"
   elsif rest.start_with?(">>")
     op = ">>"

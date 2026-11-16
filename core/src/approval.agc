@@ -83,6 +83,11 @@ def decide(rules: Rules, tool: String, target: String, asks: Bool, root: Optiona
   end
 end
 
+## Whether `command` only reads inside `root` (`Shell.verdict`, its paths resolved by `Sandbox`).
+def read_only?(root: String, command: String) -> Bool
+  Shell.verdict(command, ->(path) { Sandbox.resolve(root, path).ok? }) == Shell.Verdict.Safe
+end
+
 ## Whether a deny rule of `read_file` covers the path (relative to the session folder): `glob` and `grep` skip it too.
 def read_denied?(rules: Rules, path: String) -> Bool = rules.deny.any? { |rule| matches?(rule, "read_file", path) }
 
@@ -112,10 +117,6 @@ WORD = /\A[A-Za-z0-9_]\z/
 PLAIN = /\A[A-Za-z0-9_.\/:=,+@%\- \t]*\z/
 GIT = /\A\.git\.*\z/
 WRITES = ["write_file", "edit_file", "apply_patch"]
-
-def read_only?(root: String, command: String) -> Bool
-  Shell.verdict(command, ->(path) { Sandbox.resolve(root, path).ok? }) == Shell.Verdict.Safe
-end
 
 def git_internals?(tool: String, target: String) -> Bool
   WRITES.include?(tool) and target.split("/").any? { |name| Regex.match?(name.downcase, GIT) }

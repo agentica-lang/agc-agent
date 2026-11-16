@@ -1,6 +1,8 @@
 ## Whether a parsed command only reads inside the session folder. It is an allow-list: each command in `spec` with
-## the options it lists (short ones by letter, long ones by their exact full name, never a GNU abbreviation), and each
-## path it names checked by `inside`, which the caller gives (it resolves symlinks). Anything else is `Unknown`.
+## the options it lists (short ones by letter, long ones by their exact full name, never a GNU abbreviation; an option
+## whose value is optional only as `--name=value`), and each path it names checked by `inside`, which the caller gives
+## (it resolves symlinks). A glob anywhere is `Unknown`: the names it gives are not checked. Anything else is `Unknown`
+## too.
 
 import Parse from "parse"
 
@@ -36,17 +38,22 @@ RUNNERS = [
   "command", "builtin", "source", ".", "awk", "gawk", "perl", "python", "python3", "node", "ruby",
 ]
 
+## The commands that read standard input for the operand `-`; elsewhere `-` is a file name.
+STDIN = ["cat", "head", "tail", "wc", "grep", "sed", "sort", "uniq", "cut"]
+
 FIND_TESTS = ["-name", "-iname", "-path", "-ipath", "-type", "-maxdepth", "-mindepth", "-size", "-mtime", "-mmin"]
 FIND_FLAGS = ["-print", "-print0", "-empty", "-not", "-o", "-a", "-or", "-and", "-prune", "!", "(", ")"]
 
 ## How a command reads its words: `flags` and `values` are short options (a value option takes the rest of its word
-## or the next one), `long` and `long_values` exact long names; `patterns` is how many leading arguments are not paths
+## or the next one), `long` and `long_values` exact long names (a long value in its own word or after `=`), `long_eq`
+## long names whose value is optional, so only `--name=value` is read; `patterns` is how many leading arguments are not paths
 ## (a pattern, a script), and `paths` whether the others are.
 struct Spec
   flags: String = ""
   values: String = ""
   long: List[String] = []
   long_values: List[String] = []
+  long_eq: List[String] = []
   patterns: Int = 0
   paths: Bool = true
   ## `-5` means `-n 5`.
@@ -74,7 +81,8 @@ def spec(name: String) -> Optional[Spec]
           flags: "inrvwxclLoHhqsEFPzZ",
           values: "eABCm",
           long: ["--ignore-case", "--line-number", "--recursive", "--invert-match", "--count"],
-          long_values: ["--include", "--exclude", "--exclude-dir", "--color", "--max-count", "--regexp"],
+          long_values: ["--include", "--exclude", "--exclude-dir", "--max-count", "--regexp"],
+          long_eq: ["--color", "--colour"],
           patterns: 1,
         ),
       )
@@ -93,7 +101,6 @@ def spec(name: String) -> Optional[Spec]
     "uniq" -> some(Spec(flags: "cdiuDz", values: "fsw"))
     "cut" -> some(Spec(flags: "s", values: "dfcb"))
     "tr" -> some(Spec(flags: "dsc", paths: false))
-    "diff" -> some(Spec(flags: "uqNaiwbB", values: "U"))
     "file" -> some(Spec(flags: "bi", long: ["--brief", "--mime-type"]))
     "stat" -> some(Spec(flags: "Lt", values: "c"))
     "pwd" -> some(Spec(paths: false))
@@ -108,8 +115,11 @@ def command_verdict(command: Parse.Command, inside: Fn[String, Bool]) -> Verdict
     return verdict if verdict != Verdict.Safe
   end
 
+  for word in command.words
+    return Verdict.Unknown("the glob #{word.text} gives names that are not checked") if word.glob
+  end
+
   name = command.words[0]
-  return Verdict.Unknown("the command is a glob") if name.glob
   return Verdict.Writes("#{name.text} runs other programs") if RUNNERS.include?(name.text)
   return find(command.words.drop(1), inside) if name.text == "find"
   return Verdict.Safe if name.text == "echo"
@@ -125,7 +135,7 @@ def redirect_verdict(redirect: Parse.Redirect, inside: Fn[String, Bool]) -> Verd
     Parse.Redirect.ErrToOut -> Verdict.Safe
     Parse.Redirect.Out(_, path, _) if path == NULL -> Verdict.Safe
     Parse.Redirect.Out(_, path, _) -> Verdict.Writes("it writes #{path}")
-    Parse.Redirect.In(path) -> path_verdict(Parse.Word(text: path), inside)
+    Parse.Redirect.In(path) -> path_verdict(Parse.Word(text: path), false, inside)
   end
 end
 
@@ -153,16 +163,10 @@ def checked(name: String, s: Spec, words: List[Parse.Word], inside: Fn[String, B
   return Verdict.Writes("uniq writes its second file") if name == "uniq" and args.positionals.size > 1
 
   for i in 0...args.positionals.size
-    ended = args.ended_at >= 0 and i >= args.ended_at
-    word = args.positionals[i]
-    verdict = Verdict.Safe
     if s.paths and i >= patterns
-      verdict = path_verdict(word, inside)
-    elsif word.glob
-      verdict = glob_verdict(word, ended)
+      verdict = path_verdict(args.positionals[i], STDIN.include?(name), inside)
+      return verdict if verdict != Verdict.Safe
     end
-
-    return verdict if verdict != Verdict.Safe
   end
 
   Verdict.Safe
@@ -184,11 +188,12 @@ def parsed_args(s: Spec, words: List[Parse.Word]) -> Result[Args]
       name = text.split("=")[0]
       if s.long.include?(text)
         args = args.with(longs: args.longs.push(text))
+      elsif s.long_eq.include?(name) and text.include?("=")
+        args = args.with(longs: args.longs.push(name))
       elsif s.long_values.include?(name)
         args = args.with(longs: args.longs.push(name))
         if not text.include?("=")
           return error("#{name} without its value") if i >= words.size
-          return error("a glob as the value of #{name}") if words[i].glob
 
           i = i + 1
         end
@@ -201,7 +206,6 @@ def parsed_args(s: Spec, words: List[Parse.Word]) -> Result[Args]
       args = try shorts(s, args, text)
       if value_last?(s, text)
         return error("#{text} without its value") if i >= words.size
-        return error("a glob as the value of #{text}") if words[i].glob
 
         i = i + 1
       end
@@ -233,25 +237,10 @@ def value_last?(s: Spec, text: String) -> Bool
   end
 end
 
-# A path inside the folder; a glob is not, since the names it gives are not resolved.
-def path_verdict(word: Parse.Word, inside: Fn[String, Bool]) -> Verdict
-  return Verdict.Unknown("the glob #{word.text} may name a symlink out of the folder") if word.glob
-
-  return Verdict.Safe if word.text == NULL or word.text == "-"
+# A path inside the folder. `-` is standard input only where `stdin` says so, else a name like any other.
+def path_verdict(word: Parse.Word, stdin: Bool, inside: Fn[String, Bool]) -> Verdict
+  return Verdict.Safe if word.text == NULL or (stdin and word.text == "-")
   return Verdict.Unknown("#{word.text.inspect} is outside the session folder") if not inside.call(word.text)
-
-  Verdict.Safe
-end
-
-# A glob that is not a path (a pattern) may still expand to names: only to plain ones that cannot be an option or a
-# parent, so it starts with plain text other than `-` or `.`, or comes after `--`.
-def glob_verdict(word: Parse.Word, ended: Bool) -> Verdict
-  return Verdict.Unknown("the glob #{word.text} may reach another folder") if word.text.include?("/")
-
-  first = word.text.slice(0, 1)
-  if ("*?[-".include?(first) and not ended) or first == "."
-    return Verdict.Unknown("the glob #{word.text} may expand to an option or a parent")
-  end
 
   Verdict.Safe
 end
@@ -263,7 +252,7 @@ def only?(text: String, allowed: String) -> Bool = not text.empty? and text.spli
 def find(words: List[Parse.Word], inside: Fn[String, Bool]) -> Verdict
   i = 0
   while i < words.size and not words[i].text.start_with?("-") and not ["!", "(", ")"].include?(words[i].text)
-    verdict = path_verdict(words[i], inside)
+    verdict = path_verdict(words[i], false, inside)
     return verdict if verdict != Verdict.Safe
 
     i = i + 1
@@ -271,11 +260,8 @@ def find(words: List[Parse.Word], inside: Fn[String, Bool]) -> Verdict
 
   while i < words.size
     text = words[i].text
-    return Verdict.Unknown("a glob in the expression of find") if words[i].glob
-
     if FIND_TESTS.include?(text)
       return Verdict.Unknown("find #{text} without its value") if i + 1 >= words.size
-      return Verdict.Unknown("a glob in the expression of find") if words[i + 1].glob
 
       i = i + 2
     elsif FIND_FLAGS.include?(text)

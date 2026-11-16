@@ -2,20 +2,21 @@ import Shell from "../shell"
 
 ROOT = "/work/project"
 
-# The read-only commands of a real session (s111) are safe, but the `cd` out of the folder, the one through `$PWD`, and
-# those that use awk or git, which are not on the allow-list.
+# The read-only commands of a real session (s111) are safe, but the `cd` out of the folder, the one through `$PWD`,
+# those that use awk or git, which are not on the allow-list, and those with an unquoted glob (`--include=*.agc`).
 def test_the_commands_of_a_real_session_are_safe() -> Result[Void]
   commands: List[String] = try JSON.decode(try File.read_text("tests/fixtures/s111.json"), List[String])
   safe = commands.map { |c| safe?(c) }
-  Test.eq(safe, [true, true, false, false, false, false, true, true, true, true])
+  Test.eq(safe, [true, true, false, false, false, false, true, false, false, false])
 end
 
 def test_reading_commands_are_safe() -> Result[Void]
   texts = [
-    "ls -la src", "cat a.txt | head -n 5", "grep -rn \"foo\\|bar\" --include=*.agc . 2>/dev/null | sort | uniq -c",
+    "ls -la src", "cat a.txt | head -n 5", "grep -rn \"foo\\|bar\" '--include=*.agc' . 2>/dev/null | sort | uniq -c",
     "rg -n 'x' src", "rg --files src", "find . -name '*.agc' -type f", "sed -n '1,20p' f", "sed -nE '/a/,/b/p' f",
-    "cat /work/project/a", "diff a b", "tr a b < f", "echo done; pwd", "stat f; file f", "which ls", "cut -d, -f1 f",
-    "head -5 f", "tail -n 20 f", "grep -e x -A3 f", "sort -k2 -t, f", "grep -c x -- -f",
+    "cat /work/project/a", "tr a b < f", "cat -", "grep x - f", "cat f | sort -", "echo done; pwd", "stat f; file f",
+    "which ls", "cut -d, -f1 f", "head -5 f", "tail -n 20 f", "grep -e x -A3 f", "sort -k2 -t, f", "grep -c x -- -f",
+    "grep --color=never x f", "grep -e ../x f", "head -n 5 f",
   ]
 
   for text in texts
@@ -118,6 +119,28 @@ def test_injections_are_never_safe() -> Result[Void]
     "ls a*",
     "cat -- *.txt",
     "diff -r a b",
+    "diff a b",
+    # An option whose value is optional takes it only after `=`: here `/etc/hostname` is the file.
+    "grep --color '' /etc/hostname",
+    "grep --colour x f",
+    "head -n5 ../x",
+    # A glob anywhere, as an argument, a value or a pattern: the names it gives are not checked.
+    "sed -n 1* f",
+    "grep x*",
+    "grep -e x* f",
+    "grep --include=*.agc x .",
+    "echo ../outside/*",
+    "echo /*/*/*/*",
+    "find . -name x*",
+    # `-` is a name where it is not standard input: here a symlink out of the folder.
+    "cat < -",
+    "ls -",
+    "stat -",
+    # Redirections the parser does not read.
+    "cat 3<x f",
+    "cat f &>out",
+    "cat f 2>&10",
+    "cat <>out",
     # Not on the allow-list.
     "git status",
     "git log",
@@ -144,7 +167,8 @@ end
 
 private
 
-# The folder of the tests: `lnk` is a symlink to a folder outside, `..` leaves, absolute paths count below ROOT.
+# The folder of the tests: `lnk` and `-` are symlinks to a folder outside, `..` leaves, absolute paths count
+# below ROOT.
 def inside(path: String) -> Bool
   full = path
   if not path.start_with?("/")
@@ -152,7 +176,7 @@ def inside(path: String) -> Bool
   end
 
   parts = full.split("/")
-  return false if parts.include?("..") or parts.include?("lnk")
+  return false if parts.include?("..") or parts.include?("lnk") or parts.include?("-")
 
   full == ROOT or full.start_with?("#{ROOT}/")
 end
