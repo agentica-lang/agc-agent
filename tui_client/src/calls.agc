@@ -4,6 +4,8 @@
 import Markdown from "markdown"
 
 FOLDED_ROWS = 4
+## The tool a `!` command runs as, drawn `$ command`.
+BASH = "bash"
 LEAD = " "
 BODY = "   "
 

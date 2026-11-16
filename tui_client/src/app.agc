@@ -9,6 +9,7 @@ import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
+import Calls from "calls"
 import Args from "args"
 import Input from "input"
 import Picker from "picker"
@@ -69,6 +70,8 @@ struct Model
   ## Rows above the bottom of the transcript, 0 to follow its end.
   scroll: Int = 0
   turn: Bool = false
+  ## A `!` command of the session runs.
+  shell: Bool = false
   stopping: Bool = false
   ## The reader of the event stream and the channel it fills.
   stream: Optional[Task[Void]] = none
@@ -171,6 +174,8 @@ enum Msg
   LoggedIn(String, Result[Protocol.LoginStatus])
   ## The files of the session's folder, for the `opened` count when they were asked.
   Files(Int, List[String])
+  ## The reply to a `!` command: the command, and whether it runs.
+  ShellSent(String, Result[Protocol.ShellAccepted])
 end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
@@ -310,7 +315,7 @@ def view(model: Model) -> TUI.Node = Screen.view(framed(model), model.theme)
 
 def subscriptions(model: Model) -> List[TUI.Sub[Msg]]
   keys = TUI.Sub.Events(->(event) { Msg.Key(event) })
-  return [keys] if not model.turn
+  return [keys] if not busy?(model)
 
   [keys, TUI.Sub.Tick(SPIN_MS, Msg.Spin)]
 end
@@ -347,6 +352,7 @@ def handled(app: Model, msg: Msg) -> Model
     Msg.Rechecked(_, _) -> app
     Msg.Files(opened, files) if opened == app.opened -> app.with(files: some(files), reading_files: false)
     Msg.Files(_, _) -> app
+    Msg.ShellSent(command, result) -> shell_reply(app, command, result)
   end
 end
 
@@ -461,6 +467,7 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
     files: none,
     reading_files: false,
     turn: session.turn_id.some?,
+    shell: false,
     effort: wanted_level(app, session.effort),
     confirmed: session.effort,
     stopping: false,
@@ -798,10 +805,33 @@ def send(app: Model) -> Model
 
   return noted(app, "the session is moving: wait for it") if app.moving
 
+  for request in option_list(Client.parse_shell(text))
+    return shell_send(base.with(prompt: "", scroll: 0, pastes: []), request)
+  end
+
   queued = base.with(prompt: "", scroll: 0, outbox: app.outbox.push(text), pastes: [])
   return queued if not app.outbox.empty?
 
   sending(queued, text)
+end
+
+def shell_send(app: Model, request: Protocol.RunShell) -> Model
+  server = app.server
+  id = app.id
+  effect(app, TUI.Cmd.Run(-> { Msg.ShellSent(request.command, Client.shell(server, id, request)) }))
+end
+
+# Its `shell_started` and `shell_finished` draw the command; a refusal goes back to an empty prompt.
+def shell_reply(app: Model, command: String, result: Result[Protocol.ShellAccepted]) -> Model
+  case result
+    ok(_) -> app
+    error(e) ->
+      failed = noted(app, "the command did not run: #{e.message}: #{Client.printable(command)}")
+      return failed if app.prompt != ""
+
+      text = "!#{command}"
+      failed.with(prompt: text, cursor: text.length)
+  end
 end
 
 # A command that does not touch the session, which goes on while it moves.
@@ -968,7 +998,7 @@ end
 def note_entry(text: String) -> Transcript.Entry = Transcript.Entry(kind: Transcript.Kind.Notice, text: text)
 
 def stop_command(app: Model) -> Model
-  return noted(app, "no turn is running") if not app.turn
+  return noted(app, "no turn is running") if not busy?(app)
 
   stop(app)
 end
@@ -1150,14 +1180,16 @@ end
 
 def stop(app: Model) -> Model
   return noted(app.with(stop_wanted: true), "the turn stops once it starts") if not app.turn and not app.outbox.empty?
-  return app if not app.turn or app.stopping
+  return app if not busy?(app) or app.stopping
 
   server = app.server
   id = app.id
-  effect(
-    noted(app.with(stopping: true), "stopping the turn"),
-    TUI.Cmd.Run(-> { Msg.Stopped(Client.stop(server, id)) }),
-  )
+  stopping = "stopping the turn"
+  if not app.turn
+    stopping = "stopping the command"
+  end
+
+  effect(noted(app.with(stopping: true), stopping), TUI.Cmd.Run(-> { Msg.Stopped(Client.stop(server, id)) }))
 end
 
 # The answer is sent by a command, so the keys go on; its reply comes back as a message.
@@ -1228,6 +1260,19 @@ def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
       noted(resolved(shown, done.approval_id), "#{decided} (#{Protocol.source_name(done.source)})")
     Protocol.Event.ToolStarted(tool) -> shown.with(entries: Transcript.tool_started(shown.entries, tool))
     Protocol.Event.ToolFinished(tool) -> shown.with(entries: Transcript.tool_finished(shown.entries, tool))
+    Protocol.Event.ShellStarted(started) ->
+      tool = Protocol.ToolStarted(call_id: started.shell_id, name: Calls.BASH, summary: started.command)
+      shown.with(shell: true, entries: Transcript.tool_started(shown.entries, tool))
+    Protocol.Event.ShellFinished(done) ->
+      tool = Protocol.ToolFinished(
+        call_id: done.shell_id,
+        ok: done.ok,
+        summary: done.command,
+        duration_ms: done.duration_ms,
+        output: some(done.output),
+      )
+
+      shown.with(shell: false, stopping: false, entries: Transcript.tool_finished(shown.entries, tool))
     Protocol.Event.Error(failure) ->
       failed = noted(shown, "error: #{failure.kind}: #{failure.message}")
       case shown.new_model
@@ -1241,6 +1286,8 @@ def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
     _ -> shown
   end
 end
+
+def busy?(app: Model) -> Bool = app.turn or app.shell
 
 def folds(app: Model) -> Transcript.Folds = Transcript.Folds(thinking: app.thinking, tools: app.tools)
 
@@ -1282,7 +1329,8 @@ def reconnect(app: Model, reason: String) -> Model
     },
   )
 
-  effect(app.with(reconnects: reconnects), back)
+  # A command that was running may have ended unseen with a server that stopped.
+  effect(app.with(reconnects: reconnects, shell: false), back)
 end
 
 def framed(app: Model) -> Screen.Frame
@@ -1344,7 +1392,7 @@ end
 # The spinner and what the turn does, in the top rule.
 def label(app: Model) -> String
   return "#{SPINNER[app.spin]} Stopping" if app.stopping
-  return "#{SPINNER[app.spin]} Working" if app.turn
+  return "#{SPINNER[app.spin]} Working" if busy?(app)
 
   ""
 end
@@ -1421,7 +1469,7 @@ def status(app: Model, width: Int) -> String
     parts = parts.push("YOLO")
   end
 
-  if not app.turn
+  if not busy?(app)
     parts = parts.push("ready")
   end
 

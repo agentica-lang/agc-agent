@@ -31,6 +31,8 @@ export Spec.Verdict
 
 PATCH = Patch.NAME
 BASH = "bash"
+## The longest a `bash` call may run.
+MAX_BASH_TIMEOUT_MS = Shell.MAX_TIMEOUT_MS
 
 ## The context of a session in `cwd`: the real path of the folder, where bash reads its few environment variables, and
 ## the tools `more` after the base ones.

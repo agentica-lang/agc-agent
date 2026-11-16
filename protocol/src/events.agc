@@ -139,7 +139,9 @@ struct ShellStarted
   context: Bool
 end
 
-## `output` is what the command wrote, after its exit code when it failed, cut as a tool's output is.
+## `output` is what the command wrote, after its exit code when it failed, cut as a tool's output is. `context` says
+## whether the output goes to the model: not for a stopped command, nor past the outputs and bytes that may wait for
+## the next message.
 struct ShellFinished
   shell_id: String
   command: String

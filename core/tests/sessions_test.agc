@@ -845,8 +845,9 @@ def test_a_restart_after_a_branch_resyncs_the_branch_left() -> Result[Void]
   end
 end
 
-# `!cmd` runs in the session folder and its output goes to the model with the next message, across a restart; `!!cmd`
-# does not, a deny rule refuses a command, and none runs while a turn does.
+# `!cmd` runs in the session folder and its output goes to the model with the next message, across a restart, and is
+# saved once; `!!cmd` does not, nor a stopped command or one past the outputs that may wait. A deny rule refuses a
+# command, and none runs while a turn does.
 def test_a_shell_command_runs_and_its_output_reaches_the_next_turn() -> Result[Void]
   setup = H.Setup(replies: ["text.sse", "text.sse@hold"], deny: ["bash(rm *)"])
   H.using(setup) do |h|
@@ -855,10 +856,23 @@ def test_a_shell_command_runs_and_its_output_reaches_the_next_turn() -> Result[V
     try Test.eq((try shell(h, id, "echo one", true)).status, 202)
     a = try H.until(a, Protocol.EventKind.ShellFinished)
     try Test.eq(H.kinds(a.seen), ["shell_started", "shell_finished"])
-    try Test.eq(shell_output(a), "one\n")
+    try Test.eq((try finished(a)).output, "one\n")
+    for n in 2..20
+      _ = try shell(h, id, "echo n#{n}", true)
+      a = try H.until(a.with(seen: []), Protocol.EventKind.ShellFinished)
+    end
+
+    _ = try shell(h, id, "echo full", true)
+    a = try H.until(a.with(seen: []), Protocol.EventKind.ShellFinished)
+    full = try finished(a)
+    try Test.eq([full.context, full.output.include?("[not given to the model")], [false, true])
     _ = try shell(h, id, "echo two", false)
     a = try H.until(a.with(seen: []), Protocol.EventKind.ShellFinished)
-    try Test.eq(shell_output(a), "two\n")
+    try Test.eq((try finished(a)).output, "two\n")
+    _ = try shell(h, id, "sleep 30", true)
+    _ = try H.post(h, Protocol.stop_path(id), "")
+    a = try H.until(a.with(seen: []), Protocol.EventKind.ShellFinished)
+    try Test.eq((try finished(a)).context, false)
     denied = try shell(h, id, "rm x", true)
     try Test.eq([denied.status.to_s, (try Protocol.decode_failure(denied.text)).kind], ["403", "shell.denied"])
     H.close(a)
@@ -866,8 +880,12 @@ def test_a_shell_command_runs_and_its_output_reaches_the_next_turn() -> Result[V
       _ = try H.send(r, id, "Go.")
       sent = (try H.request_messages(r, 1)).last
       text = try JSON.string(try JSON.get(sent, "content"))
-      try Test.eq([text.include?("one"), text.include?("two"), text.end_with?("\n\nGo.")], [true, false, true])
+      seen = ["one", "n20", "full", "two", "sleep"].map { |word| text.include?(word) }
+      try Test.eq(seen, [true, true, false, false, false])
+      try Test.assert(text.end_with?("\n\nGo."), text)
       _ = try H.idle(r, id)
+      saved = try File.read_text(H.session_file(r, id))
+      try Test.eq(saved.split("one\\n").size, 2)
       _ = try H.send(r, id, "Again.")
       busy = try shell(r, id, "echo three", true)
       H.release(r)
@@ -954,13 +972,13 @@ def shell(h: H.Harness, id: String, command: String, context: Bool) -> Result[H.
   H.post(h, Protocol.shell_path(id), Protocol.encode_run_shell(Protocol.RunShell(command: command, context: context)))
 end
 
-def shell_output(sub: H.Sub) -> String
-  for seen in sub.seen
+def finished(sub: H.Sub) -> Result[Protocol.ShellFinished]
+  for seen in sub.seen.reverse
     case seen.event
-      Protocol.Event.ShellFinished(finished) -> return finished.output
+      Protocol.Event.ShellFinished(done) -> return ok(done)
       _ -> nil
     end
   end
 
-  ""
+  error("no shell_finished")
 end
