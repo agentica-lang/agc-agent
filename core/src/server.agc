@@ -13,6 +13,7 @@ import Actor from "std/actor"
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Catalog from "catalog"
 import CodeMode from "code_mode"
 import Sandbox from "sandbox"
 import Permissions from "permissions"
@@ -71,8 +72,9 @@ struct Options
   model: String
   env: Fn[String, Result[String]]
   rules: Tools.Rules
-  ## The tools of the MCP servers.
+  ## The tools of the MCP servers, and those of the servers that list them after the start.
   tools: List[Tools.Tool] = []
+  late_tools: Optional[Fn[List[Tools.Tool]]] = none
   port: Int = 0
   keep_events: Int = 1000
   approval_timeout_ms: Int = 90000
@@ -90,6 +92,11 @@ struct Options
   after_load: Optional[Fn[String, Void]] = none
   ## Code mode: the model may also call the tools from a Python script (`run_script`).
   code_mode: Optional[CodeMode.Settings] = none
+  ## The models.dev catalog (`main.agc` starts it from `models_url`), for the cost of the calls and the window.
+  catalog: Optional[Catalog.Catalog] = none
+  models_url: String = Catalog.URL
+  ## The provider of the model in the catalog; empty is `anthropic` for that API and `openai` for the others.
+  models_provider: String = ""
   ## How long a turn waits for the messages queued for it (tests shorten it).
   take_ms: Int = 5000
   ## The home folder, whose skills every session has; empty for none.
@@ -407,7 +414,7 @@ def sessions_dir(options: Options) -> String = "#{options.data_dir}/#{SESSIONS_D
 
 def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]
   options = registry.options
-  ctx = case Tools.context(request.cwd, options.env, options.rules, options.tools)
+  ctx = case Tools.context(request.cwd, options.env, options.rules, options.tools, options.late_tools)
     ok(ctx) -> ok(ctx)
     error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
   end
@@ -483,7 +490,7 @@ def read(options: Options, listed: Entry) -> Result[Loaded]
     IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
   end
 
-  context = try Tools.context(saved.header.cwd, options.env, options.rules, options.tools)
+  context = try Tools.context(saved.header.cwd, options.env, options.rules, options.tools, options.late_tools)
   ok(Loaded(saved: saved, context: try with_project(options, context)))
 end
 
@@ -562,6 +569,8 @@ def entry(
     cache: api.cache,
     refresh: api.refresh,
     code_mode: options.code_mode,
+    catalog: options.catalog,
+    catalog_provider: catalog_provider(options.models_provider, api.provider),
     take_ms: options.take_ms,
   )
 
@@ -761,8 +770,8 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
     "GET 1" -> response(200, Protocol.encode_session(try Session.snapshot(try find(registry, parts[0]))))
     "POST 2" if parts[1] == "messages" ->
       message = try Protocol.decode_send_message(text)
-      turn_id = try Session.send(try find(registry, parts[0]), message.text)
-      response(202, Protocol.encode_message_accepted(Protocol.MessageAccepted(turn_id: turn_id)))
+      accepted = try Session.send(try find(registry, parts[0]), message.text)
+      response(202, Protocol.encode_message_accepted(accepted))
     "PATCH 1" ->
       change = try Protocol.decode_update_session(text)
       try Session.update(try find(registry, parts[0]), change)
@@ -861,4 +870,11 @@ def with_project(options: Options, ctx: Tools.Context) -> Result[Tools.Context]
     ok(rules) -> ok(ctx.with(rules: rules))
     error(e) -> error(e.message, kind: Protocol.KIND_INVALID)
   end
+end
+
+def catalog_provider(given: String, provider: LLM.Provider) -> String
+  return given if not given.empty?
+  return "anthropic" if provider.name == "anthropic"
+
+  "openai"
 end

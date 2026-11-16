@@ -127,6 +127,14 @@ def test_replies_round_trip() -> Result[Void]
   )
 
   try Test.eq(Protocol.decode_message_accepted(Protocol.encode_message_accepted(accepted)), ok(accepted))
+  try Test.eq(accepted.message_id, none)
+  queued = try decode_fixture(
+    "message_queued_accepted",
+    &Protocol.decode_message_accepted,
+    &Protocol.encode_message_accepted,
+  )
+
+  try Test.eq(queued, Protocol.MessageAccepted(turn_id: "t1", message_id: some("t1.1")))
 
   list = try decode_fixture("session_list", &Protocol.decode_session_list, &Protocol.encode_session_list)
   try Test.eq(list.sessions.size, 1)
@@ -275,4 +283,26 @@ def test_session_settings_round_trip_and_refuse_unknown_levels() -> Result[Void]
   try Test.eq(idle.effort, none)
   thinking = idle.with(effort: some("medium"))
   Test.eq(Protocol.decode_session(Protocol.encode_session(thinking)), ok(thinking))
+end
+
+# Every struct and enum of src/ and every error kind is in the wire shape, so a change to one changes the digest.
+# `Event` is named by `EventKind`, whose names are its variants.
+def test_the_wire_shape_has_every_record_enum_and_kind() -> Result[Void]
+  shape = Protocol.wire_shape()
+  found: List[String] = []
+  files = (try Dir.list("src")).select { |f| f.end_with?(".agc") }
+  for file in files
+    for line in (try File.read_text("src/#{file}")).split("\n")
+      words = line.split(" ")
+      if words.size > 1 and (words[0] == "struct" or words[0] == "enum") and words[1] != "Event"
+        found = found.push(words[1])
+        try Test.assert(shape.any? { |s| s.start_with?("#{words[1]}{") or s.start_with?("#{words[1]}[") }, words[1])
+      elsif words.size > 2 and words[0].start_with?("KIND_")
+        found = found.push(words[0])
+        try Test.assert(shape.include?(words[2].replace("\"", "")), words[0])
+      end
+    end
+  end
+
+  Test.assert(found.size > 40, "the scan found #{found.size} names")
 end

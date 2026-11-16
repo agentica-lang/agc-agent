@@ -29,6 +29,7 @@ export Discovery.KIND_SERVER
 export Discovery.KIND_VERSION
 export Discovery.state_dir
 export Discovery.connect
+export Discovery.recheck
 
 export Events.Feed
 export Events.Item

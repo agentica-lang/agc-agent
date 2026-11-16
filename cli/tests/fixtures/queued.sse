@@ -1,6 +1,6 @@
 id: 3
 event: message_queued
-data: {"turn_id":"t1","text":"also the docs"}
+data: {"turn_id":"t1","text":"also the docs","message_id":"t1.1"}
 
 id: 4
 event: text_delta

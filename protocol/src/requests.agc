@@ -110,15 +110,15 @@ def decode_compacted(text: String) -> Result[Compacted] = Wire.decode(text, Comp
 ## The fields of the requests and the names of their values on the wire, for `Protocol.WIRE`.
 def shape() -> List[String]
   records = [
-    NewSession.members,
-    SendMessage.members,
-    Approve.members,
-    UpdateSession.members,
-    Compacted.members,
-    ApproveWire.members,
+    Wire.record("NewSession", NewSession.members),
+    Wire.record("SendMessage", SendMessage.members),
+    Wire.record("Approve", Approve.members),
+    Wire.record("UpdateSession", UpdateSession.members),
+    Wire.record("Compacted", Compacted.members),
+    Wire.record("ApproveWire", ApproveWire.members),
   ]
 
-  Wire.fields(records) + decisions().map(&decision_name)
+  records + [Wire.values("Decision", decisions().map(&decision_name))]
 end
 
 private

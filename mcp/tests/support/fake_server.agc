@@ -5,8 +5,9 @@
 ## another), a notification and a line that is no JSON.
 ##
 ## Each start adds a line to the file `FAKE_MCP_STARTS`, and each line the client sends goes to `FAKE_MCP_SEEN`, when
-## they are set. `FAKE_MCP_MODE`: `loop` gives the same next cursor for ever, `odd` lists `echo` twice, `probe` and a tool
-## with a bad name, and `shuffle` answers a call first with another id.
+## they are set; `FAKE_MCP_SLOW_MS` waits before the first page of `tools/list`. `FAKE_MCP_MODE`: `loop` gives the same
+## next cursor for ever, `endless` a new one each time, `odd` lists `echo` twice, `probe` and a tool with a bad name,
+## and `shuffle` answers a call first with another id.
 
 TOOLS = ["echo", "fail", "big", "greeting", "probe", "image", "grandchild", "crash", "hang"]
 
@@ -59,6 +60,16 @@ end
 
 def list(id: JSON.Value, json: JSON.Value) -> Void
   params = JSON.get(json, "params").unwrap_or(JSON.object({}))
+  if text(params, "cursor").empty?
+    Task.sleep(System.env("FAKE_MCP_SLOW_MS").unwrap_or("0").to_i.unwrap_or(0))
+  end
+
+  if mode() == "endless"
+    next = "c#{JSON.encode(params).length}-#{Random.int(0, 999_999_999)}"
+    answer(id, JSON.object({"tools": JSON.array([tool("echo")]), "nextCursor": JSON.from(next)}))
+    return
+  end
+
   if mode() == "loop"
     answer(id, JSON.object({"tools": JSON.array([tool("echo")]), "nextCursor": JSON.from("same")}))
     return

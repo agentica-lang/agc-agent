@@ -1,4 +1,5 @@
 import HTTP from "std/http"
+import Catalog from "src/catalog"
 import Cli from "src/cli"
 import Config from "src/config"
 import McpTools from "src/mcp_tools"
@@ -26,12 +27,13 @@ end
 def start() -> Result[Server.Server]
   read = ->(name) { System.env(name) }
   options = try Config.from_env(read)
-  mcp = McpTools.start(try McpTools.servers(read, options.state_dir))
-  for warning in mcp.warnings
-    IO.warn(warning)
-  end
+  mcp = McpTools.background(try McpTools.servers(read, options.state_dir), ->(warning: String) { IO.warn(warning) })
 
-  Server.start(options.with(tools: mcp.tools))
+  catalog = Catalog.start(
+    Catalog.Options(url: options.models_url, cache: "#{options.state_dir}/#{Catalog.CACHE_FILE}"),
+  )
+
+  Server.start(options.with(late_tools: some(-> { McpTools.tools(mcp) }), catalog: some(catalog)))
 end
 
 def fail(message: String, usage: String) -> Void

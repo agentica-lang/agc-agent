@@ -220,6 +220,30 @@ def reconnected(rig: Driver.Rig) -> Result[Void]
   Test.eq(done.code, 0)
 end
 
+def test_a_server_of_another_version_found_on_a_reconnect_ends_the_client() -> Result[Void]
+  current = Fake.Reply(
+    body: Protocol.encode_health(Protocol.Health(version: "0.0.1", wire: some(Protocol.wire_digest()))),
+  )
+
+  old = Fake.Reply(body: "{\"version\": \"0.0.1\"}")
+  routes = [
+    Fake.Route(method: "GET", path: Protocol.HEALTH_PATH, replies: [current, old]),
+    Routes.session([Fake.Reply(session: "session_idle.json")]),
+    Routes.events([Fake.Reply(fixture: "working.sse"), Fake.Reply(hold: true)]),
+  ]
+
+  Driver.within(routes, &other_version)
+end
+
+def other_version(rig: Driver.Rig) -> Result[Void]
+  cli = try Driver.start(rig.dir, ["--session", "s1"])
+  _ = try Driver.read_until(cli, "Working on it...")
+  done = try Driver.exited(cli)
+  try Test.eq(done.code, 1)
+  try Test.assert(done.errors.include?("now runs another version"), "the reason: #{done.errors}")
+  Test.eq(Fake.unread(rig.fake, "GET", Protocol.events_path("s1")), 1)
+end
+
 def test_a_stream_that_fails_is_tried_again() -> Result[Void]
   failing = Fake.Reply(status: 500, body: "{\"kind\": \"server.error\", \"message\": \"down\"}")
   routes = [

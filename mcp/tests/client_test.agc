@@ -58,6 +58,18 @@ def test_a_cursor_seen_before_ends_the_list() -> Result[Void]
   end
 end
 
+# A server that never stops giving new cursors is read for 100 pages.
+def test_the_list_stops_after_100_pages() -> Result[Void]
+  within_dir do |dir|
+    client = Mcp.start(try fake(dir, {"FAKE_MCP_MODE": "endless"}))
+    tools = Mcp.tools(client)
+    Mcp.stop(client)
+    lists = (try File.read_text("#{dir}/seen")).split("\n").select { |l| l.include?("tools/list") }.size
+    try Test.eq(lists, 100)
+    Test.eq((try tools).size, 100)
+  end
+end
+
 # The server runs in its own process group: a stop ends what it started too.
 def test_a_stop_ends_the_programs_the_server_started() -> Result[Void]
   within_dir do |dir|

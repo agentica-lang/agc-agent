@@ -22,9 +22,11 @@ struct SessionCreated
   id: String
 end
 
-## The `202` answer of `POST /v1/sessions/ID/messages`.
+## The `202` answer of `POST /v1/sessions/ID/messages`. A message queued into the running turn `turn_id` has the
+## `message_id` of its `message_queued`; one that started the turn has none.
 struct MessageAccepted
   turn_id: String
+  message_id: Optional[String] = none
 end
 
 ## `api` is the model API of the session, by the name the server gives it.
@@ -70,6 +72,8 @@ struct Session
   history: List[Message]
   ## The edits of files run without asking (`PATCH` with `accept_edits`).
   accept_edits: Bool = false
+  ## What the session cost so far in USD, when the model catalog has its prices.
+  cost: Optional[Float] = none
   ## The thinking level of the session's calls; none leaves it to the model.
   effort: Optional[String] = none
 end
@@ -128,6 +132,7 @@ def encode_session(reply: Session) -> String
       pending_approvals: reply.pending_approvals,
       history: history,
       accept_edits: some(reply.accept_edits),
+      cost: Wire.field(reply.cost),
       effort: reply.effort,
     ),
   )
@@ -154,6 +159,7 @@ def decode_session(text: String) -> Result[Session]
       pending_approvals: wire.pending_approvals,
       history: history,
       accept_edits: wire.accept_edits.unwrap_or(false),
+      cost: Wire.optional(wire.cost),
       effort: wire.effort,
     ),
   )
@@ -162,19 +168,19 @@ end
 ## The fields of the replies and the names of their values on the wire, for `Protocol.WIRE`.
 def shape() -> List[String]
   records = [
-    Health.members,
-    SessionCreated.members,
-    MessageAccepted.members,
-    SessionSummary.members,
-    SessionList.members,
-    Message.members,
-    Session.members,
-    ServerInfo.members,
-    MessageWire.members,
-    SessionWire.members,
+    Wire.record("Health", Health.members),
+    Wire.record("SessionCreated", SessionCreated.members),
+    Wire.record("MessageAccepted", MessageAccepted.members),
+    Wire.record("SessionSummary", SessionSummary.members),
+    Wire.record("SessionList", SessionList.members),
+    Wire.record("Message", Message.members),
+    Wire.record("Session", Session.members),
+    Wire.record("ServerInfo", ServerInfo.members),
+    Wire.record("MessageWire", MessageWire.members),
+    Wire.record("SessionWire", SessionWire.members),
   ]
 
-  Wire.fields(records) + roles().map(&role_name)
+  records + [Wire.values("Role", roles().map(&role_name))]
 end
 
 private
@@ -194,6 +200,7 @@ struct SessionWire
   pending_approvals: List[Events.ApprovalRequested]
   history: List[MessageWire]
   accept_edits: Optional[Bool] = none
+  cost: JSON.Field[Float]
   effort: Optional[String] = none
 end
 

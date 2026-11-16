@@ -1,6 +1,7 @@
 ## What `--yolo` allows without asking: the approvals of the turns this client started. A turn another client started,
 ## or one that was running when this client attached, is asked as usual; so is the rest of an own turn once another
-## client queued a message into it (a `message_queued` whose text this client did not send). Pure.
+## client queued a message into it (a `message_queued` with a message id this client was not given), or once events of
+## it may have been missed (a resync that does not replay the turn). Pure.
 
 import Protocol from "pkg/protocol/protocol"
 
@@ -12,31 +13,36 @@ struct Yolo
   turn: Optional[String] = none
   ## The allowed approvals whose answer is on its way.
   sending: List[Protocol.ApprovalRequested] = []
-  ## The texts this client queued into its own turns, until their `message_queued` comes.
+  ## The ids of the messages this client queued into its own turns.
   sent: List[String] = []
   ## Own turns that another client steered.
   steered: List[String] = []
 end
 
-def started(yolo: Yolo, turn_id: String) -> Yolo = yolo.with(own: yolo.own.push(turn_id))
+## The `202` of a message this client sent: it started the turn, or it was queued into the running one.
+def accepted(yolo: Yolo, reply: Protocol.MessageAccepted) -> Yolo
+  case reply.message_id
+    some(id) -> yolo.with(sent: yolo.sent.push(id))
+    none -> yolo.with(own: yolo.own.push(reply.turn_id))
+  end
+end
 
 def running(yolo: Yolo, turn: Optional[String]) -> Yolo = yolo.with(turn: turn)
 
-## A message this client queued into the turn `turn_id`.
-def queued(yolo: Yolo, turn_id: String, text: String) -> Yolo
-  return yolo if not yolo.own.include?(turn_id)
-
-  yolo.with(sent: yolo.sent.push(text))
+## The session as the client reads it again: the running turn, whose events since it started come again when
+## `replayed`; when they do not, a message queued into it may be missed, so an own turn is steered.
+def attached(yolo: Yolo, turn: Optional[String], replayed: Bool) -> Yolo
+  case turn
+    some(id) if not replayed and yolo.own.include?(id) -> yolo.with(turn: turn, steered: yolo.steered.push(id))
+    _ -> yolo.with(turn: turn)
+  end
 end
 
 ## A `message_queued`: one this client did not send ends `--yolo` for the rest of that turn.
 def steered(yolo: Yolo, event: Protocol.MessageQueued) -> Yolo
-  return yolo if not yolo.own.include?(event.turn_id)
+  return yolo if not yolo.own.include?(event.turn_id) or yolo.sent.include?(event.message_id)
 
-  case (yolo.sent.find_index { |text| text == event.text })
-    some(i) -> yolo.with(sent: yolo.sent.take(i) + yolo.sent.drop(i + 1))
-    none -> yolo.with(steered: yolo.steered.push(event.turn_id))
-  end
+  yolo.with(steered: yolo.steered.push(event.turn_id))
 end
 
 ## An approval asked now is of the running turn.

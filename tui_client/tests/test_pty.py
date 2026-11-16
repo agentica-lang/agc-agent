@@ -136,6 +136,14 @@ class FakeModel:
                 except OSError:
                     pass
 
+            def fail(self) -> None:
+                data = json.dumps({"kind": "proxy.failed", "message": "the proxy failed it"}).encode()
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
             def chunk(self, data: bytes) -> None:
                 self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data))
                 self.wfile.flush()
@@ -155,12 +163,15 @@ class FakeModel:
 
 class Proxy:
     """Forwards the client's requests to a server. Each event stream takes the next step of `plan`: None passes it
-    on, ("cut", n) passes n events then drops the connection, "resync" answers with a `resync` event."""
+    on, ("cut", n) passes n events then drops the connection, "resync" answers with a `resync` event. Each answer of an
+    approval takes the next of `approvals`: "fail" answers 500 and sends nothing on, "late_fail" sends it on, then
+    answers 500 a second later; none left passes it on."""
 
-    def __init__(self, port: int, plan: list) -> None:
+    def __init__(self, port: int, plan: list, approvals: list[str] = []) -> None:
         self.plan: queue.Queue = queue.Queue()
         for step in plan:
             self.plan.put(step)
+        self.approvals = list(approvals)
         self.paths: list[str] = []
         # The Last-Event-ID of each event stream, and the ids each one passed on.
         self.asked: list[int] = []
@@ -187,9 +198,20 @@ class Proxy:
                 if self.path.endswith("/events"):
                     proxy.asked.append(int(self.headers.get("Last-Event-ID", "-1")))
                 body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                approval = "/approvals/" in self.path and self.command == "POST" and proxy.approvals
+                mode = proxy.approvals.pop(0) if approval else None
+                if mode == "fail":
+                    self.fail()
+                    return
                 upstream = http.client.HTTPConnection("127.0.0.1", port, timeout=TIMEOUT)
                 upstream.request(self.command, self.path, body, dict(self.headers.items()))
                 response = upstream.getresponse()
+                if mode == "late_fail":
+                    response.read()
+                    upstream.close()
+                    time.sleep(1)
+                    self.fail()
+                    return
                 if self.path.endswith("/events") and response.status == 200:
                     self.stream(response)
                 else:
@@ -231,6 +253,14 @@ class Proxy:
                 except (OSError, http.client.HTTPException):
                     return
                 self.close_connection = True
+
+            def fail(self) -> None:
+                data = json.dumps({"kind": "proxy.failed", "message": "the proxy failed it"}).encode()
+                self.send_response(500)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
 
             def chunk(self, data: bytes) -> None:
                 self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data))
@@ -386,7 +416,9 @@ class PtyTest(unittest.TestCase):
         terminal.wait_for("ready")
         return terminal
 
-    def start_proxied(self, replies: list[Reply], plan: list) -> Terminal:
+    def start_proxied(
+        self, replies: list[Reply], plan: list, approvals: list[str] = [], extra: list[str] = []
+    ) -> Terminal:
         """A server the test starts, and the client reaching it through a proxy."""
         base = self.folder()
         model = self.model(replies)
@@ -407,7 +439,7 @@ class PtyTest(unittest.TestCase):
             time.sleep(0.05)
         time.sleep(0.1)
         info = json.loads((server_dir / "server.json").read_text())
-        proxy = Proxy(info["port"], plan)
+        proxy = Proxy(info["port"], plan, approvals)
         self.addCleanup(proxy.close)
         self.proxy = proxy
         client_dir = base / "client"
@@ -415,7 +447,7 @@ class PtyTest(unittest.TestCase):
         info_file = client_dir / "server.json"
         info_file.write_text(json.dumps(dict(info, port=proxy.port)))
         info_file.chmod(0o600)
-        terminal = Terminal(base, model, ["--state-dir", str(client_dir)])
+        terminal = Terminal(base, model, [*extra, "--state-dir", str(client_dir)])
         self.addCleanup(terminal.close)
         terminal.wait_for("ready")
         return terminal
@@ -646,7 +678,10 @@ class PtyTest(unittest.TestCase):
         term = self.start([held, Reply("write_file.sse"), Reply("text.sse")], extra=["--yolo"])
         session_id = re.search(r"· session (\S+)", text_of(term.screen())).group(1)
         term.type("say hi\r")
-        term.settle(0.4)
+        deadline = time.monotonic() + TIMEOUT
+        while self.fake.requests.empty():
+            self.assertLess(time.monotonic(), deadline, "the turn called no model")
+            term.settle(0.05)
         info = json.loads((term.base / "state" / "server.json").read_text())
         server = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=TIMEOUT)
         headers = {"Authorization": f"Bearer {info['token']}", "Content-Type": "application/json"}
@@ -658,6 +693,24 @@ class PtyTest(unittest.TestCase):
         term.wait_for("Tab to answer")
         self.assertNotIn("--yolo allows", text_of(term.settle(0.6)))
         self.assertFalse((term.base / "work" / "hello.txt").exists())
+
+    def test_yolo_asks_an_allow_that_was_not_sent(self) -> None:
+        term = self.start_proxied([Reply("write_file.sse"), Reply("text.sse")], [], ["fail"], ["--yolo"])
+        term.type("write it\r")
+        rows = term.wait_for("Tab to answer")
+        self.assertIn("· --yolo allows write_file:", text_of(rows))
+        term.wait_for("error: the answer was not sent")
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+
+    def test_yolo_drops_a_failed_allow_the_server_resolved_first(self) -> None:
+        term = self.start_proxied([Reply("write_file.sse"), Reply("text.sse")], [], ["late_fail"], ["--yolo"])
+        term.type("write it\r")
+        term.wait_for(": allow (client)")
+        term.wait_for("error: the answer was not sent")
+        rows = term.wait_until(lambda rows: ANSWER in text_of(rows) and "ready" in rows[-2], "the answer")
+        self.assertNotIn("Tab to answer", text_of(term.settle()))
+        self.assertNotIn("approval waiting", text_of(rows))
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
 
     def test_a_tool_is_approved_and_its_notices_shown(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])

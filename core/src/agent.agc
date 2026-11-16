@@ -3,10 +3,12 @@
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Catalog from "catalog"
 import CodeMode from "code_mode"
 import Compaction from "compaction"
 import Tools from "tools"
 
+CATALOG_WAIT_MS = 1500
 MAX_ROUNDS = 50
 ## The provider whose models are offered `apply_patch`, as a custom tool.
 RESPONSES = "openai_responses"
@@ -80,6 +82,11 @@ struct Turn
   max_rounds: Int = MAX_ROUNDS
   ## Adds `run_script`, which calls the tools from a Python script.
   code_mode: Optional[CodeMode.Settings] = none
+  ## Where the prices and the window of the model come from: the catalog and the provider of the model there.
+  catalog: Optional[Catalog.Catalog] = none
+  catalog_provider: String = ""
+  ## Read from the catalog when the turn starts.
+  listed: Optional[Catalog.Model] = none
   ## The thinking level of the calls; none leaves it to the model.
   effort: Optional[String] = none
   ## The tools of extensions, after the base tools.
@@ -102,7 +109,7 @@ struct Outcome
 end
 
 def run(given: Turn) -> Outcome
-  turn = windowed(given)
+  turn = windowed(given.with(listed: listed_model(given)))
   messages = turn.history.push(LLM.Message(role: LLM.Role.User, content: [text_block(turn.text)]))
   turn.link.commit.call(messages, [], [])
   marks = turn.marks
@@ -213,7 +220,12 @@ end
 ## The text of the model's blocks, for the history a client draws.
 def assistant_text(message: LLM.Message) -> String = message.content.map { |b| text_of(b) }.join("")
 
+## Whether `url` is on this machine, where a llama-server knows the window it runs with.
+def local?(url: String) -> Bool = LOCAL_HOSTS.any? { |host| url.start_with?(host) }
+
 private
+
+LOCAL_HOSTS = ["http://127.0.0.1:", "http://localhost:", "http://[::1]:", "http://0.0.0.0:"]
 
 EMPTY = LLM.Response(
   message: LLM.Message(role: LLM.Role.Assistant, content: []),
@@ -232,8 +244,15 @@ struct Folded
 end
 
 # The session keeps a window once the API answered; after a failed request a later turn asks again.
+# A local server (llama-server) knows the window it runs with (`/props`): it goes first there; elsewhere the catalog,
+# else the API.
 def windowed(given: Turn) -> Turn
-  return given if given.compaction.window != 0
+  listed = given.listed.map { |model| model.window.unwrap_or(0) }.unwrap_or(0)
+  return given if given.compaction.window > 0 or (given.compaction.window < 0 and listed == 0)
+
+  if listed > 0 and not local?(given.compaction.props_url)
+    return given.with(compaction: given.compaction.with(window: known_window(given, ok(listed))))
+  end
 
   renewal = with_token(
     given.provider,
@@ -242,7 +261,12 @@ def windowed(given: Turn) -> Turn
   )
 
   turn = renewed(given, renewal.fresh)
-  turn.with(compaction: turn.compaction.with(window: known_window(turn, renewal.result)))
+  asked = renewal.result
+  if listed > 0 and asked.unwrap_or(0) <= 0
+    asked = ok(listed)
+  end
+
+  turn.with(compaction: turn.compaction.with(window: known_window(turn, asked)))
 end
 
 def known_window(turn: Turn, asked: Result[Int]) -> Int
@@ -364,18 +388,34 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   end
 
   response = try LLM.response(stream)
-  turn.link.emit.call(Protocol.Event.Usage(usage(response.usage)))
+  turn.link.emit.call(Protocol.Event.Usage(usage(response.usage, turn.listed)))
   ok(response)
 end
 
-def usage(u: LLM.Usage) -> Protocol.Usage
+def usage(u: LLM.Usage, listed: Optional[Catalog.Model]) -> Protocol.Usage
+  cost: Optional[Float] = none
+  for model in option_list(listed)
+    cost = Catalog.cost(model, u)
+  end
+
   Protocol.Usage(
     input: u.input,
     output: u.output,
     cache_read: u.cache_read,
     cache_write: u.cache_write,
     context: u.input + u.cache_read + u.cache_write,
+    cost: cost,
   )
+end
+
+# A catalog still loading gets a short wait, so that a first turn has its prices and window.
+def listed_model(turn: Turn) -> Optional[Catalog.Model]
+  for catalog in option_list(turn.catalog)
+    _ = Catalog.wait(catalog, CATALOG_WAIT_MS)
+    return Catalog.find(catalog, turn.catalog_provider, turn.model)
+  end
+
+  none
 end
 
 def offered(turn: Turn) -> List[Tools.Tool]

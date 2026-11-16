@@ -8,8 +8,9 @@ struct Context
   root: String
   env: Fn[String, Result[String]]
   rules: Approval.Rules
-  ## The tools after the base ones (MCP).
+  ## The tools after the base ones (MCP), and those that come later (MCP servers still listing at the start).
   tools: List[Tool] = []
+  late: Optional[Fn[List[Tool]]] = none
   ## Folders outside `root` that `read_file` reads too: those of the session's skills.
   read_roots: List[String] = []
 end
@@ -61,6 +62,16 @@ def output(result: Result[String]) -> Output
   case result
     ok(text) -> Output(text: cap(text), is_error: false)
     error(e) -> Output(text: cap(e.message), is_error: true)
+  end
+end
+
+## `ctx` with the tools there are now, so they stay the same for a whole turn.
+def snapshot(ctx: Context) -> Context = ctx.with(tools: more_tools(ctx), late: none)
+
+def more_tools(ctx: Context) -> List[Tool]
+  case ctx.late
+    some(late) -> ctx.tools + late.call()
+    none -> ctx.tools
   end
 end
 
