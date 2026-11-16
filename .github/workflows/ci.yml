@@ -52,6 +52,18 @@ jobs:
           path: ~/.cache/agentica/pkg
           key: packages-${{ hashFiles('**/agentica.lock') }}
 
+      # The compile cache of each package (_build/, 75 MB for core) is named by the hash of the sources, so a stale file
+      # is never used; the last cache of the job and the Agentica version is the start of the next one.
+      - name: Cache the compiled packages
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            */_build
+            !*/_build/bin
+          key: build-${{ env.AGENTICA_VERSION }}-${{ matrix.name }}-${{ hashFiles('**/*.agc', '!**/deps/**', '!**/_build/**') }}
+          restore-keys: |
+            build-${{ env.AGENTICA_VERSION }}-${{ matrix.name }}-
+
       - run: agentica --version
 
       # make check uses rg for the coupling rules of the packages.

@@ -107,6 +107,14 @@ def env_for(base: Path, model: "FakeModel") -> dict[str, str]:
         FINN_BASE_URL=model.url,
         FINN_MODEL="test-model",
         FINN_DATA_DIR=str(base / "data"),
+        # The user's own settings, skills and model list never reach the server: home is the test folder, and the
+        # model catalog is not fetched.
+        HOME=str(base / "home"),
+        XDG_CONFIG_HOME=str(base / "home" / ".config"),
+        XDG_DATA_HOME=str(base / "home" / ".local" / "share"),
+        XDG_STATE_HOME=str(base / "home" / ".local" / "state"),
+        XDG_CACHE_HOME=str(base / "home" / ".cache"),
+        FINN_MODELS_URL="off",
         FINN_CONTEXT_WINDOW="100000",
     )
 
@@ -418,6 +426,7 @@ class PtyTest(unittest.TestCase):
         base = Path(tempfile.mkdtemp(prefix="agc-tui-"))
         self.addCleanup(shutil.rmtree, base, True)
         (base / "work").mkdir()
+        (base / "home").mkdir()
         return base
 
     def model(self, replies: list[Reply]) -> FakeModel:
@@ -578,6 +587,20 @@ class PtyTest(unittest.TestCase):
         term.wait_for("leave")
         term.type("/quit\r")
         self.assertEqual(term.finish(), 0)
+
+    def test_a_bracketed_paste_goes_to_the_prompt_and_answers_nothing(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        term.wait_for("Tab to answer")
+        term.type("\t")
+        term.wait_for("y allow · n deny")
+        term.settle(0.4)
+        # The raw bytes of a paste, with control bytes and a CRLF: the terminal decodes them end to end.
+        term.type("\x1b[200~y\x01a\x19n\r\nnext\x1b[201~")
+        rows = term.wait_for(" next")
+        self.assertIn(" yan", rows)
+        self.assertIn("y allow · n deny", text_of(term.settle()))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
 
     def test_a_slash_line_that_is_no_command_goes_to_the_agent(self) -> None:
         term = self.start([Reply("text.sse"), Reply("text.sse")])
