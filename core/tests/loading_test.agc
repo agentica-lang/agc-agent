@@ -1,8 +1,7 @@
 import HTTP from "std/http"
 import Protocol from "pkg/protocol/protocol"
 
-BIG_EVENTS = 100_000
-GONE_EVENTS = 40_000
+EVENTS = 100_000
 WAIT_MS = 30_000
 STARTED_MS = 200
 CHUNK = 5000
@@ -31,8 +30,8 @@ def loaded(base: String) -> Result[Void]
   try Dir.mkdir(work)
   try Dir.mkdir_private("#{base}/data")
   try Dir.mkdir_private(sessions)
-  try write_session("#{sessions}/big.jsonl", "big", work, BIG_EVENTS, "\n")
-  try write_session("#{sessions}/gone.jsonl", "gone", work, GONE_EVENTS, "")
+  try write_session("#{sessions}/big.jsonl", "big", work, EVENTS, "\n")
+  try write_session("#{sessions}/gone.jsonl", "gone", work, EVENTS, "")
   remote = try start(base, sessions)
   result = checked(remote, work)
   Process.close(remote.process)
@@ -57,7 +56,7 @@ def checked(remote: Remote, work: String) -> Result[Void]
   try Test.assert(quick * 4 < loads.min.unwrap!, "list and create took #{quick} ms, the loads #{loads} ms")
   ended = try File.foreach("#{remote.sessions}/big.jsonl").select { |line| line.include?("turn_finished") }.to_a
   try Test.eq(ended.size, 1)
-  deleted_while_loading(remote)
+  deleted_while_loading(remote, loads.max.unwrap!)
 end
 
 # The time from `started` of a request that answered 200.
@@ -67,14 +66,21 @@ def timed(response: Result[HTTP.Response], started: Int) -> Result[Int]
   ok(Time.now_ms - started)
 end
 
-def deleted_while_loading(remote: Remote) -> Result[Void]
+# `load_ms` is how long a file of this size takes to load.
+def deleted_while_loading(remote: Remote, load_ms: Int) -> Result[Void]
   path = Protocol.session_path("gone")
+  started = Time.now_ms
   loading = Task.spawn do status(call(remote, "GET", path, "")) end
   Task.sleep(STARTED_MS)
+  case Task.await(loading, 1)
+    Await.TimedOut -> nil
+    Await.Done(code) -> return error("the load ended before the delete: #{code}")
+  end
+
   try Test.eq(status(call(remote, "DELETE", path, "")), 200)
   try Test.eq(Task.await(loading), 404)
   # The load goes on after the delete; what it read never comes back.
-  Task.sleep(2000)
+  Task.sleep([load_ms - (Time.now_ms - started), 0].max.unwrap! + STARTED_MS)
   try Test.eq(File.stat("#{remote.sessions}/gone.jsonl").ok?, false)
   Test.eq(status(call(remote, "GET", path, "")), 404)
 end

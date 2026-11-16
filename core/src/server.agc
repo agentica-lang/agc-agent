@@ -28,6 +28,8 @@ MAX_READ_BYTES = 1_048_576
 CALL_MS = 5000
 ## A request for a session that is not loaded yet waits for its load.
 LOAD_MS = 60_000
+## The requests that may wait for one load; past them a request answers 503.
+MAX_WAITING = 64
 SYSTEM_PROMPT = <<~TEXT
   You are a coding agent. You work in the session folder with the tools you have: read before you change a file, keep
   changes small, and say briefly what you did.
@@ -139,9 +141,15 @@ struct Load
   registry: Address[Msg]
 end
 
+## What `Find` gives: the session, or the channel that gets it once it loads.
+enum Found
+  Ready(Address[Session.Msg])
+  Loading(Channel[Result[Address[Session.Msg]]])
+end
+
 enum Msg
   Create(Protocol.NewSession, Channel[Result[String]])
-  Find(String, Channel[Result[Address[Session.Msg]]])
+  Find(String, Channel[Result[Found]])
   Delete(String, Channel[Result[Void]])
   List(Channel[Protocol.SessionList])
   Load(String, Result[Loaded])
@@ -235,7 +243,13 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
 
       listed = found[0]
       for session in option_list(listed.session)
-        Actor.reply(reply, ok(session.address))
+        Actor.reply(reply, ok(Found.Ready(session.address)))
+        return Actor.continue(registry)
+      end
+
+      if listed.waiting.size >= MAX_WAITING
+        message = "session #{id} is loading for too many requests"
+        Actor.reply(reply, error(message, kind: Protocol.KIND_SESSION_UNAVAILABLE))
         return Actor.continue(registry)
       end
 
@@ -243,7 +257,9 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
         _ = Task.spawn(&load, Load(options: registry.options, entry: listed, registry: registry.address))
       end
 
-      waiting = listed.with(waiting: listed.waiting.push(reply))
+      loaded: Channel[Result[Address[Session.Msg]]] = Channel.new(1)
+      Actor.reply(reply, ok(Found.Loading(loaded)))
+      waiting = listed.with(waiting: listed.waiting.push(loaded))
       Actor.continue(registry.with(sessions: registry.sessions.map { |e| replaced(e, waiting) }))
 
     Msg.Load(id, read) -> Actor.continue(registered(registry, id, read))
@@ -326,8 +342,16 @@ def replaced(entry: Entry, by: Entry) -> Entry
   entry
 end
 
+# The load always reports, even when it crashes, so the requests that wait for it get an answer.
 def load(job: Load) -> Void
-  _ = Actor.cast(job.registry, Msg.Load(job.entry.summary.id, read(job.options, job.entry)), LOAD_MS)
+  reading = Task.spawn do read(job.options, job.entry) end
+  loaded = Msg.Load(job.entry.summary.id, Task.await(reading))
+  while true
+    case Actor.cast(job.registry, loaded, CALL_MS)
+      error(e) if e.message.include?("timeout") -> next
+      _ -> break
+    end
+  end
 end
 
 def read(options: Options, listed: Entry) -> Result[Loaded]
@@ -573,8 +597,15 @@ def subscribe(registry: Address[Msg], id: String, last: Optional[Int]) -> Result
 end
 
 def find(registry: Address[Msg], id: String) -> Result[Address[Session.Msg]]
-  found: Result[Result[Address[Session.Msg]]] = Actor.call(registry, LOAD_MS) do |reply| Msg.Find(id, reply) end
-  ok(try try found)
+  found: Result[Result[Found]] = Actor.call(registry, CALL_MS) do |reply| Msg.Find(id, reply) end
+  case try try found
+    Found.Ready(address) -> ok(address)
+    Found.Loading(loaded) ->
+      case loaded.recv(LOAD_MS)
+        ok(address) -> address
+        error(_) -> error("session #{id} is still loading", kind: Protocol.KIND_SESSION_UNAVAILABLE)
+      end
+  end
 end
 
 def no_route(method: String, path: String) -> HTTP.Response
