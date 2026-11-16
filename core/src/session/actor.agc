@@ -984,6 +984,15 @@ def busy_reason(state: State) -> String
 end
 
 def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Result[Void]]) -> State
+  if change.accept_edits.some? and state.setup.approvals.none?
+    Actor.reply(
+      reply,
+      error("accept_edits needs the approval extension (FINN_APPROVALS=1)", kind: Protocol.KIND_INVALID),
+    )
+
+    return state
+  end
+
   setup = state.setup
   for name in option_list(change.provider)
     case resolve_endpoint(setup, name)

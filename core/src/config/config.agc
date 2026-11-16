@@ -8,8 +8,9 @@
 ## `FINN_CODE_MODE=1` adds code mode, whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is
 ## not checked), else the pinned one fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be private to the user). Skills:
 ## those of the home folder always, those of a session folder only under a folder of `FINN_TRUSTED_DIRS` (separated by
-## `:`). Approval rules: the user's config file (`FINN_CONFIG`, else `$XDG_CONFIG_HOME/finn/config.json`, else
-## `~/.config/finn/config.json`) and the project file `.finn/config.json` (`Permissions`). The names of before Finn
+## `:`). Approvals are off unless `FINN_APPROVALS=1` or `"approvals": true` in the user's config file (`FINN_CONFIG`,
+## else `$XDG_CONFIG_HOME/finn/config.json`, else `~/.config/finn/config.json`), which has their rules with the
+## project file `.finn/config.json` (`Permissions`). The names of before Finn
 ## still work: `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder is there.
 ##
 ## The `anthropic` API is at `ANTHROPIC_BASE_URL` (else Anthropic's), with `ANTHROPIC_API_KEY`, else
@@ -182,7 +183,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       login: some(login),
       model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,
-      approvals: some(try Permissions.user_rules(read)),
+      approvals: try Permissions.user_rules(read, try approvals_switch(read)),
       context_window: try context_window(read),
       drain_ms: try drain_ms(read),
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
@@ -256,6 +257,16 @@ def login_entries(customs: List[Providers.Custom], anthropic_url: String) -> Lis
   end
 
   out
+end
+
+## `FINN_APPROVALS`: `1` turns the approval extension on, `0` off; unset leaves it to the config file.
+def approvals_switch(read: Fn[String, Result[String]]) -> Result[Optional[Bool]]
+  case set(read, "FINN_APPROVALS")
+    some("1") -> ok(some(true))
+    some("0") -> ok(some(false))
+    some(other) -> error("FINN_APPROVALS must be 0 or 1, not #{other.inspect}")
+    none -> ok(none)
+  end
 end
 
 ## Code mode when `FINN_CODE_MODE` is `1`: the worker is found when the first script runs.

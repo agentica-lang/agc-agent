@@ -1,0 +1,10 @@
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"role":"assistant","content":null}}],"id":"chatcmpl-core-glob","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_glob","type":"function","function":{"name":"glob","arguments":"{\"pattern\": \"*\"}"}}]}}],"id":"chatcmpl-core-glob","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":"tool_calls","index":0,"delta":{}}],"id":"chatcmpl-core-glob","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[],"id":"chatcmpl-core-glob","model":"m","object":"chat.completion.chunk","usage":{"completion_tokens":20,"prompt_tokens":100,"total_tokens":120}}
+
+data: [DONE]
+

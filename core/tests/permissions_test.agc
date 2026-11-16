@@ -45,6 +45,16 @@ def test_accept_edits_runs_writes_without_asking() -> Result[Void]
   end
 end
 
+# Without the approval extension there is no mode to turn on: the update is refused.
+def test_accept_edits_is_refused_without_the_extension() -> Result[Void]
+  H.using(H.Setup(replies: [], approvals: false)) do |h|
+    id = try H.new_session(h)
+    patched = try H.call(h, "PATCH", Protocol.session_path(id), "{\"accept_edits\": true}", H.auth(h))
+    try Test.eq(patched.status, 400)
+    Test.eq((try H.session(h, id)).accept_edits, false)
+  end
+end
+
 # A project file adds its deny rules; its allow rules count only in a trusted folder.
 def test_a_project_file_denies_anywhere_and_allows_only_when_trusted() -> Result[Void]
   H.using(H.Setup(replies: ["bash_read.sse", "text.sse"])) do |h|
@@ -68,6 +78,26 @@ def test_a_project_file_denies_anywhere_and_allows_only_when_trusted() -> Result
     try Test.eq(Permissions.with_project(base, h.work, false), ok(base))
     Test.eq(Permissions.with_project(base, h.work, true).ok?, false)
   end
+end
+
+# A `read_file` deny rule of the extension hides its files from `glob` in a session; without the extension, nothing
+# is hidden.
+def test_a_read_deny_rule_hides_files_from_glob_only_with_the_extension() -> Result[Void]
+  for on in [true, false]
+    try H.using(H.Setup(replies: ["glob.sse", "text.sse"], approvals: on, deny: ["read_file(secret*)"])) do |h|
+      try File.write_text("#{h.work}/secret.txt", "s")
+      try File.write_text("#{h.work}/open.txt", "o")
+      id = try H.new_session(h)
+      a = try H.subscribe(h, id)
+      _ = try H.send(h, id, "List the files.")
+      a = try H.until(a, Protocol.EventKind.TurnFinished)
+      H.close(a)
+      text = try File.read_text(H.session_file(h, id))
+      Test.eq([on, text.include?("open.txt"), text.include?("secret.txt")], [on, true, not on])
+    end
+  end
+
+  ok()
 end
 
 # A session allow keeps the bash deny rules: each simple command and every tail of its words is checked (a wrapper in
@@ -120,28 +150,42 @@ def test_the_prefix_of_a_command() -> Result[Void]
   Test.eq(Permissions.prefix("bash", "ls | wc"), none)
 end
 
-# The user's rules come from FINN_CONFIG, else the default file when it is there; a broken file stops the start.
-def test_the_user_config_gives_the_rules() -> Result[Void]
+# The extension is off unless the user's config file (FINN_CONFIG, else the default file when it is there) or
+# FINN_APPROVALS turns it on; a broken file stops the start either way.
+def test_the_user_config_turns_approvals_on_with_its_rules() -> Result[Void]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-perm-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)
-  try File.write_text("#{dir}/ok.json", "{\"allow\": [\"bash(npm test*)\"], \"deny\": [\"read_file(.env)\"]}")
+  rules = "\"allow\": [\"bash(npm test*)\"], \"deny\": [\"read_file(.env)\"]"
+  try File.write_text("#{dir}/on.json", "{\"approvals\": true, #{rules}}")
+  try File.write_text("#{dir}/off.json", "{#{rules}}")
   try File.write_text("#{dir}/bad.json", "{\"allow\": [\"npm test\"]}")
-  given = Config.from_env(->(n) { env(dir, n, "#{dir}/ok.json") })
-  broken = Config.from_env(->(n) { env(dir, n, "#{dir}/bad.json") })
-  missing = Config.from_env(->(n) { env(dir, n, "#{dir}/none.json") })
-  none_set = Config.from_env(->(n) { env(dir, n, "") })
+  sizes = ->(config: String, switch: String) { rule_sizes(dir, config, switch) }
+  results = [
+    sizes.call("#{dir}/on.json", ""),
+    sizes.call("#{dir}/off.json", ""),
+    sizes.call("#{dir}/off.json", "1"),
+    sizes.call("#{dir}/on.json", "0"),
+    sizes.call("", ""),
+    sizes.call("", "1"),
+  ]
+
+  failed = [sizes.call("#{dir}/bad.json", "0").ok?, sizes.call("#{dir}/none.json", "").ok?, sizes.call("", "2").ok?]
   _ = Path.remove(dir)
-  rules = (try given).approvals.unwrap!
-  try Test.eq([rules.allow.size, rules.deny.size], [1, 1])
-  try Test.eq([broken.ok?, missing.ok?], [false, false])
-  Test.eq((try none_set).approvals.map { |r| r.allow.size }, some(0))
+  try Test.eq(results, [ok(some([1, 1])), ok(none), ok(some([1, 1])), ok(none), ok(none), ok(some([0, 0]))])
+  Test.eq(failed, [false, false, false])
 end
 
 private
 
-def env(dir: String, name: String, config: String) -> Result[String]
+def rule_sizes(dir: String, config: String, switch: String) -> Result[Optional[List[Int]]]
+  options = try Config.from_env(->(n) { env(dir, n, config, switch) })
+  ok(options.approvals.map { |r| [r.allow.size, r.deny.size] })
+end
+
+def env(dir: String, name: String, config: String, switch: String) -> Result[String]
   case name
     "FINN_CONFIG" -> ok(config)
+    "FINN_APPROVALS" -> ok(switch)
     "HOME" -> ok(dir)
     _ -> error("not set")
   end

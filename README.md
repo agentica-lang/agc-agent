@@ -41,7 +41,8 @@ bin/finn tui                           # the same on the full screen: Enter send
 # (the mouse answers panel keys, opens tool calls and thinking, and moves the prompt cursor; --yolo allows its own turns)
 # in both: /new, /resume, /tree, /fork, /clone, /model, /thinking, /compact, /stop, /help, /quit
 # in both: !CMD runs CMD in the folder and the model gets its output with the next message; !!CMD does not give it
-bin/finn -p "fix the failing test"    # one task, then exit with its status; approvals denied (--yolo allows its own turn)
+bin/finn -p "fix the failing test"    # one task, then exit with its status
+bin/finn serve --approvals             # ask before a tool call no rule allows (-p denies them; --yolo allows own turns)
 bin/finn serve                         # the server in the foreground, on a llama-server at http://127.0.0.1:8080/v1
 bin/finn serve --api openai_responses  # the same on /v1/responses
 bin/finn serve --api anthropic         # Anthropic: ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or `ant auth login`
@@ -49,6 +50,10 @@ FIREWORKS_API_KEY=... bin/finn serve  # a preset provider once its key is set: /
 bin/finn login                         # set up a provider with its key, checked and stored for the next starts
 bin/finn --version
 ```
+
+Tools run without asking by default: the model can run any command and change any file the user can. Run Finn in a
+sandbox or a container, or turn the approvals on with `finn serve --approvals`, `FINN_APPROVALS=1` or
+`"approvals": true` in `~/.config/finn/config.json` (its `allow` and `deny` rules: `finn serve --help`).
 
 `finn server status`, `stop` (waits for the running turns and ends when the server has gone; `--now` cancels them),
 `restart`, `start` and `logs [-f]` manage the server a

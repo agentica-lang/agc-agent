@@ -1,7 +1,8 @@
 ## Where the approval rules come from, and what a session allowed while it runs.
 ##
 ## Rules: the user's config file (`FINN_CONFIG`, else `$XDG_CONFIG_HOME/finn/config.json`, else
-## `~/.config/finn/config.json`), `{"allow": [...], "deny": [...]}` in the syntax of `Approval`; and the project file
+## `~/.config/finn/config.json`), `{"approvals": true, "allow": [...], "deny": [...]}` in the syntax of `Approval`,
+## whose `approvals` turns the extension on; and the project file
 ## `.finn/config.json` of the session folder, whose deny rules always count and whose allow rules count only in a
 ## folder of `FINN_TRUSTED_DIRS` (`:` between folders), since anyone who writes the project can write them.
 ##
@@ -42,14 +43,6 @@ struct Allows
   accept_edits: Bool = false
 end
 
-## The rules of the user's config file; none when the default file is not there.
-def user_rules(read: Fn[String, Result[String]]) -> Result[Approval.Rules]
-  case config_path(read)
-    some(path) -> rules_of(path)
-    none -> ok(no_rules())
-  end
-end
-
 ## The user's config file: `FINN_CONFIG`, else the default file when it is there.
 def config_path(read: Fn[String, Result[String]]) -> Optional[String]
   case read.call(CONFIG_ENV)
@@ -61,6 +54,16 @@ def config_path(read: Fn[String, Result[String]]) -> Optional[String]
     some(found) if File.stat(found).ok? -> some(found)
     _ -> none
   end
+end
+
+## The rules of the user's config file when the extension is on: `switch` when given (`FINN_APPROVALS`), else the
+## file's `approvals`. No rules when the default file is not there.
+def user_rules(read: Fn[String, Result[String]], switch: Optional[Bool]) -> Result[Optional[Approval.Rules]]
+  file = try user_file(read)
+  rules = try parsed_rules(file.path, file.file)
+  return ok(none) if not switch.unwrap_or(file.file.approvals.unwrap_or(false))
+
+  ok(some(rules))
 end
 
 ## `rules` with those of the project file of `root`: its deny rules, and its allow rules when `root` is `trusted`. A
@@ -146,13 +149,17 @@ private
 
 # Optional, so a file without rules (only `providers`) reads.
 struct RulesFile
+  approvals: Optional[Bool] = none
   allow: Optional[List[String]] = none
   deny: Optional[List[String]] = none
 end
 
-def key(tool: String, target: String) -> String = "#{tool}\n#{target}"
+struct UserFile
+  path: String
+  file: RulesFile
+end
 
-def no_rules() -> Approval.Rules = Approval.Rules(allow: [], deny: [])
+def key(tool: String, target: String) -> String = "#{tool}\n#{target}"
 
 # None without a home folder.
 def default_config(read: Fn[String, Result[String]]) -> Optional[String]
@@ -166,14 +173,24 @@ def default_config(read: Fn[String, Result[String]]) -> Optional[String]
   end
 end
 
-def rules_of(path: String) -> Result[Approval.Rules]
+def user_file(read: Fn[String, Result[String]]) -> Result[UserFile]
+  case config_path(read)
+    some(found) -> ok(UserFile(path: found, file: try file_of(found)))
+    none -> ok(UserFile(path: "", file: RulesFile()))
+  end
+end
+
+def rules_of(path: String) -> Result[Approval.Rules] = parsed_rules(path, try file_of(path))
+
+def file_of(path: String) -> Result[RulesFile]
   text = try File.read_text(path)
-  file = case JSON.decode(text, RulesFile)
+  case JSON.decode(text, RulesFile)
     ok(found) -> ok(found)
     error(e) -> error("#{path}: #{e.message}")
   end
+end
 
-  parsed = try file
+def parsed_rules(path: String, parsed: RulesFile) -> Result[Approval.Rules]
   case Approval.parse_rules(parsed.allow.unwrap_or([]), parsed.deny.unwrap_or([]))
     ok(rules) -> ok(rules)
     error(e) -> error("#{path}: #{e.message}")

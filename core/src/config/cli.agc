@@ -3,9 +3,9 @@ import LLM from "pkg/llm/llm"
 VERSION = "0.0.1"
 
 USAGE = <<~TEXT
-  usage: finn serve [--api NAME] [--model NAME] [--base-url URL]
+  usage: finn serve [--api NAME] [--model NAME] [--base-url URL] [--approvals]
 
-  Each flag overrides its variable: FINN_API, FINN_MODEL, FINN_BASE_URL.
+  Each flag overrides its variable: FINN_API, FINN_MODEL, FINN_BASE_URL, FINN_APPROVALS=1.
 
   The Finn Agent core. `serve` runs the server on 127.0.0.1 and writes server.json in the state folder: FINN_STATE_DIR,
   else $XDG_STATE_HOME/finn, else ~/.local/state/finn. The sessions are kept in sessions/ of FINN_DATA_DIR, else
@@ -32,13 +32,15 @@ USAGE = <<~TEXT
   model loads one with activate_skill, the user with /name in a message. The catalog of models.dev (FINN_MODELS_URL,
   "off" for none), loaded at the start and kept a day in models.json of the state folder, gives each usage event its
   cost in USD (FINN_MODELS_PROVIDER names the provider there; by default anthropic for that API, else openai).
-  Approvals: the rules {"allow": [...], "deny": [...]} come from FINN_CONFIG, else $XDG_CONFIG_HOME/finn/config.json,
-  else ~/.config/finn/config.json, and from .finn/config.json of the session folder (its deny rules always; its allow
-  rules under a folder of FINN_TRUSTED_DIRS). A bash command that only reads inside the folder runs without asking. An
-  answer may allow the same call (allow_session), the bash commands with the same first words (allow_prefix) or the
-  whole tool (allow_tool) for the session, until the server restarts; PATCH {"accept_edits": true} runs the edits of
-  files without asking. None of them reaches into .git/. The deny rules are checked first, as far as the parser sees a
-  command (best effort, not a sandbox); while a read_file deny rule exists, only the same bash call is allowed again.
+  Approvals: off by default, so the model runs any command and edits any file without asking (use a sandbox or a
+  container). FINN_APPROVALS=1 (finn serve --approvals), or "approvals": true in the config file, turns them on. The
+  rules {"allow": [...], "deny": [...]} come from FINN_CONFIG, else $XDG_CONFIG_HOME/finn/config.json, else
+  ~/.config/finn/config.json, and from .finn/config.json of the session folder (its deny rules always; its allow rules
+  under a folder of FINN_TRUSTED_DIRS). A bash command that only reads inside the folder runs without asking. An answer
+  may allow the same call (allow_session), the bash commands with the same first words (allow_prefix) or the whole tool
+  (allow_tool) for the session, until the server restarts; PATCH {"accept_edits": true} runs the edits of files without
+  asking. None of them reaches into .git/. The deny rules are checked first, as far as the parser sees a command (best
+  effort, not a sandbox); while a read_file deny rule exists, only the same bash call is allowed again.
   Providers: local (FINN_BASE_URL with FINN_API_KEY) and anthropic always; openai, fireworks, openrouter, groq and
   deepseek when OPENAI_API_KEY, FIREWORKS_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY or DEEPSEEK_API_KEY is set; and
   those of "providers" in the config file ([{"name", "api", "base_url", "key_env", "models"}], api openai or

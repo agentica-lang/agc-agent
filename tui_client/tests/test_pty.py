@@ -122,6 +122,8 @@ def env_for(base: Path, model: "FakeModel") -> dict[str, str]:
         XDG_CACHE_HOME=str(base / "home" / ".cache"),
         FINN_MODELS_URL="off",
         FINN_CONTEXT_WINDOW="100000",
+        # The panels under test need the approvals, which are off by default.
+        FINN_APPROVALS="1",
     )
 
 
