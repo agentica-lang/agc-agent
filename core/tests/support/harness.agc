@@ -3,8 +3,10 @@
 
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
+import Monty from "pkg/monty/monty"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
+import CodeMode from "../../src/code_mode"
 import Config from "../../src/config"
 import Server from "../../src/server"
 import Tools from "../../src/tools"
@@ -55,6 +57,8 @@ struct Setup
   before_load: Optional[Fn[String, Void]] = none
   ## The model API of the server, as `FINN_API` names it; the fixtures come from the folder of its format.
   api: String = "openai"
+  ## Code mode on a fake Monty worker that replays this fixture of `tests/fixtures/monty`.
+  monty: String = ""
 end
 
 def fake_env(name: String) -> Result[String]
@@ -109,6 +113,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     compact_model: setup.compact_model,
     props_url: props_url(setup, fake),
     before_load: setup.before_load,
+    code_mode: code_mode(setup.monty),
   )
 
   server = try Server.start(options)
@@ -159,6 +164,15 @@ def props_url(setup: Setup, fake: Fake.Fake) -> String
   return "" if not setup.props
 
   "#{fake.url.slice(0, fake.url.length - 3)}/props"
+end
+
+# The fake worker of the monty package, which replays frames recorded from the real one.
+def code_mode(fixture: String) -> Optional[CodeMode.Settings]
+  return none if fixture == ""
+
+  agentica = System.env("AGENTICA").unwrap_or("agentica")
+  words = [agentica, "../monty/testing/fake_worker.agc", "tests/fixtures/monty/#{fixture}"]
+  some(CodeMode.Settings(worker: -> { ok(words) }, limits: Monty.Limits()))
 end
 
 def window(tokens: Int) -> Optional[Int]

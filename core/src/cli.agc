@@ -17,7 +17,9 @@ USAGE = <<~TEXT
   another model and API (finn --model, --api), kept in its file. Past 80 % of the model's window
   (FINN_CONTEXT_WINDOW, else llama-server's /props, else GET /models), the history after the first task becomes a
   summary by FINN_COMPACT_MODEL (else the session's model), whose tokens are not in `usage`; the last round of the
-  running turn is kept whole.
+  running turn is kept whole. FINN_CODE_MODE=1 adds run_script: the model calls the tools from a Python script in
+  pydantic's Monty sandbox, each call approved as a direct one; the worker is FINN_MONTY, else the pinned Monty 1.6.0
+  fetched from PyPI (sha256 checked) on first use into $XDG_CACHE_HOME/finn, else ~/.cache/finn.
 TEXT
 
 enum Command

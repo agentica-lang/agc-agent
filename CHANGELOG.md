@@ -34,3 +34,4 @@
 - Sessions made before the API choice keep no API in their file: one made with `FINN_API=openai_responses` follows the server's current default. `GET /v1/sessions` shows the API of each session.
 - **Breaking:** the command is `finn` (`bin/finn`), the product Finn Agent: variables are `FINN_*` and folders `finn`; the `AGC_AGENT_*` names and an existing `agc-agent` folder still work.
 - The approval of an `edit_file` call marks each old line `-` and each new line `+`.
+- Code mode (`FINN_CODE_MODE=1`): `run_script` runs a Python script in pydantic's Monty sandbox that calls the tools as functions, each call approved as a direct one; the pinned worker is fetched on first use with its sha256 checked (`FINN_MONTY` names another). The `monty` package drives it.

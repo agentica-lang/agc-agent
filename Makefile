@@ -3,9 +3,9 @@ AGENTICA ?= agentica
 export AGENTICA
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
-PACKAGES = sse llm protocol core cli
+PACKAGES = sse llm protocol monty core cli
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
-LEAVES = llm sse protocol
+LEAVES = llm sse protocol monty
 SERVER_AND_CLIENTS = core|cli|tui_client|web_client
 # A client reaches the server only through the protocol: it never depends on these.
 NOT_FOR_CLIENTS = core|llm|tui_client|web_client
@@ -27,7 +27,7 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: check coupling fmt-check unit smoke test smoke-llama live-fireworks
+.PHONY: check coupling fmt-check unit smoke test smoke-llama smoke-monty live-fireworks
 
 check: coupling
 	for pkg in $(PACKAGES); do (cd $$pkg && $(AGENTICA) check .) || exit 1; done
@@ -66,6 +66,11 @@ smoke-llama:
 	mkdir -p llm/_build/llama-logs
 	export LLAMA_SERVER='$(LLAMA_SERVER)' LLAMA_MODEL='$(LLAMA_MODEL)' LLAMA_LOG_DIR='$(CURDIR)/llm/_build/llama-logs'; \
 	$(call tests,llm,smoke)
+
+# The monty tests against the real worker: the pinned wheel of this platform, fetched from PyPI into .tools/cache with
+# its sha256 checked, or the binary at MONTY_BIN.
+smoke-monty:
+	$(call tests,monty,real)
 
 # A real Fireworks call, which costs money: local only, with the owner's yes, never in CI. Skips without the key.
 live-fireworks:

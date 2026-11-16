@@ -17,6 +17,7 @@ import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
 import Agent from "agent"
+import CodeMode from "code_mode"
 import Compaction from "compaction"
 import Store from "store"
 import Tools from "tools"
@@ -43,6 +44,7 @@ struct Setup
   props_url: String = ""
   api_key: String = ""
   extra: Map[String, JSON.Value] = {}
+  code_mode: Optional[CodeMode.Settings] = none
 end
 
 enum Msg
@@ -441,6 +443,7 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
       extra: setup.extra,
     ),
     last_context: state.context,
+    code_mode: setup.code_mode,
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
