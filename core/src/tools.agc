@@ -122,8 +122,8 @@ def target(ctx: Spec.Context, name: String, input: JSON.Value) -> Result[String]
   tool.target(ctx, input)
 end
 
-## What a call would write, for the approval: the content of `write_file`, the old and new text of `edit_file`, cut to
-## `DETAIL_CHARS`; empty for the other tools.
+## What a call would write, for the approval: the content of `write_file`, or the old text of `edit_file` with each line
+## marked `-` and the new text marked `+`, cut to `DETAIL_CHARS`; empty for the other tools.
 def detail(name: String, input: JSON.Value) -> String
   case name
     "write_file" ->
@@ -134,7 +134,7 @@ def detail(name: String, input: JSON.Value) -> String
 
     "edit_file" ->
       case Spec.args(input, Files.EditFileArgs.codec)
-        ok(args) -> cut("--- old\n#{args.old_string}\n+++ new\n#{args.new_string}")
+        ok(args) -> cut("#{marked("-", args.old_string)}\n#{marked("+", args.new_string)}")
         error(_) -> ""
       end
 
@@ -151,6 +151,8 @@ def cut(text: String) -> String
 
   "#{text.slice(0, DETAIL_CHARS)}\n[cut: #{text.length} characters]"
 end
+
+def marked(mark: String, text: String) -> String = text.split("\n").map { |line| "#{mark} #{line}" }.join("\n")
 
 def verdict_of(ctx: Spec.Context, tool: Spec.Tool, input: JSON.Value) -> Approval.Verdict
   case tool.target(ctx, input)
