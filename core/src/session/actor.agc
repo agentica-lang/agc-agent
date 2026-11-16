@@ -54,6 +54,7 @@ struct Setup
   code_mode: Optional[CodeMode.Settings] = none
   catalog: Optional[Catalog.Catalog] = none
   catalog_provider: String = ""
+  catalog_wait_ms: Int = 1500
   ## How long a turn waits for the queued messages before it goes on without them.
   take_ms: Int = 5000
   ## Ask the provider for its prompt cache.
@@ -626,6 +627,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     code_mode: setup.code_mode,
     catalog: setup.catalog,
     catalog_provider: setup.catalog_provider,
+    catalog_wait_ms: setup.catalog_wait_ms,
     turn_tools: Skills.tools(setup.skills),
     marks: state.marks,
     on_fold: some(Skills.on_fold(setup.skills)),
