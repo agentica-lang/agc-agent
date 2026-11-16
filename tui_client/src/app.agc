@@ -67,6 +67,8 @@ struct App
   reconnects: Int = 0
   ## `resync` events in a row, with no other event between.
   resyncs: Int = 0
+  ## A draw failed and the transcript says so; later failures are not noted again.
+  draw_failed: Bool = false
   ## The thinking of the model is drawn.
   thinking: Bool = false
   approvals: Approvals.Panel
@@ -159,7 +161,7 @@ end
 
 def loop(start: App) -> Result[Int]
   app = start
-  drawn(app)
+  app = drawn(app)
   while app.exit.none?
     case app.inbox.recv(WAIT_MS)
       ok(input) ->
@@ -171,7 +173,7 @@ def loop(start: App) -> Result[Int]
           end
         end
 
-        drawn(app)
+        app = drawn(app)
 
       error(_) -> next
     end
@@ -200,7 +202,7 @@ def handle(app: App, input: Inbox.Input) -> Result[App]
 end
 
 def on_key(app: App, event: TUI.Event) -> App
-  case Approvals.decision(app.approvals, event, Time.monotonic_ms)
+  case Approvals.decision(app.approvals, event, Time.monotonic_ms, not panel(app).empty?)
     some(decision) -> return answer(app, decision)
     none -> nil
   end
@@ -450,9 +452,20 @@ def reconnect(app: App, reason: String) -> Result[App]
   ok(subscribe(app.with(reconnects: reconnects), app.last_event_id))
 end
 
-# A draw that fails leaves the old screen; the client goes on.
-def drawn(app: App) -> Void
-  _ = draw(app)
+# A draw that fails leaves the old screen; the client goes on, and the transcript says so once.
+def drawn(app: App) -> App
+  case draw(app)
+    ok(_) -> app
+    error(_) if app.draw_failed -> app
+    error(e) -> noted(app.with(draw_failed: true), "error: the screen was not drawn: #{e.message}")
+  end
+end
+
+# The rows of the approval panel on the screen now.
+def panel(app: App) -> List[Approvals.Row]
+  width = TUI.width(app.screen)
+  room = TUI.height(app.screen) - Prompt.rows(app.prompt, width).size - 2
+  Approvals.rows(app.approvals, width, room)
 end
 
 # Every write is clipped to the screen, which may be smaller than the panel and the prompt.
@@ -462,7 +475,7 @@ def draw(app: App) -> Result[Void]
   height = TUI.height(screen)
   try TUI.clear(screen)
   prompt = Prompt.rows(app.prompt, width)
-  asked = Approvals.rows(app.approvals, width, height - prompt.size - 2)
+  asked = panel(app)
   area = [height - prompt.size - asked.size - 1, 0].max.unwrap!
   lines = Transcript.lines(app.entries, width, app.thinking)
   top = [lines.size - area - [app.scroll, [lines.size - area, 0].max.unwrap!].min.unwrap!, 0].max.unwrap!
@@ -510,6 +523,10 @@ def status(app: App, width: Int) -> String
     state = "stopping"
   elsif app.turn
     state = "working"
+  end
+
+  if not app.approvals.pending.empty?
+    state = "#{state} · approval waiting"
   end
 
   text = " #{state} · #{HINTS}"

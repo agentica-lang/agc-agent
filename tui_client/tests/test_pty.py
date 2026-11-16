@@ -516,8 +516,9 @@ class PtyTest(unittest.TestCase):
     def test_a_tool_is_approved_and_its_notices_shown(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")
-        rows = term.wait_for("Tab to answer · ^Y allow · ^N deny")
-        self.assertIn("^A allow write_file on this exact target for the session", " ".join(rows))
+        rows = term.wait_for("Tab to answer (a: allow write_file on this exact target for the session)")
+        self.assertIn("^Y allow · ^N deny", " ".join(rows))
+        self.assertIn("approval waiting", text_of(rows))
         self.assertIn("· write_file:", text_of(rows))
         self.assertIn("  hi", rows)
         term.type("\t")
@@ -560,6 +561,39 @@ class PtyTest(unittest.TestCase):
         term.wait_for("ready")
         self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
 
+    def test_a_pasted_control_byte_answers_nothing(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        term.wait_for("Tab to answer")
+        term.settle(0.4)
+        term.type("x\x01a\x01")
+        rows = term.wait_for("> xa")
+        self.assertIn("Tab to answer", text_of(term.settle()))
+        self.assertNotIn("allow_session", text_of(rows))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+
+    def test_a_client_that_attaches_asks_the_pending_approval(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        rows = term.wait_for("Tab to answer")
+        approval_id = re.search(r"approval (\S+) · write_file", text_of(rows)).group(1)
+        term.type("\x03")
+        self.assertEqual(term.finish(), 0)
+        info = json.loads((term.base / "state" / "server.json").read_text())
+        server = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=TIMEOUT)
+        server.request("GET", "/v1/sessions", headers={"Authorization": f"Bearer {info['token']}"})
+        session_id = json.loads(server.getresponse().read())["sessions"][0]["id"]
+        server.close()
+        args = ["--state-dir", str(term.base / "state"), "--session", session_id]
+        again = Terminal(term.base, self.fake, args)
+        self.addCleanup(again.close)
+        rows = again.wait_for("Tab to answer")
+        self.assertIn(f"approval {approval_id} · write_file", text_of(rows))
+        again.settle(0.4)
+        again.type("\x19")
+        again.wait_for(ANSWER)
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
+
     def test_an_approval_answered_by_another_client_closes_the_panel(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")
@@ -591,8 +625,13 @@ class PtyTest(unittest.TestCase):
         term.resize(3, 10)
         term.settle()
         self.assertIsNone(term.process.poll())
+        # No panel row on the screen: no key answers.
+        term.type("\x19")
+        term.settle()
         term.resize(ROWS, COLS)
-        term.wait_for("Tab to answer · ^Y allow")
+        rows = term.wait_for("Tab to answer")
+        self.assertIn("approval waiting", text_of(rows))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
         term.type("\x19")
         term.wait_for(ANSWER)
         term.wait_for("ready")
