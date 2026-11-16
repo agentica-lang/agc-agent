@@ -305,6 +305,10 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
       case ended(found[0])
         ok(entry) ->
           removed = remove_file(entry.file)
+          if removed.ok?
+            _ = Path.remove(Store.settings_file(entry.file))
+          end
+
           Actor.reply(reply, removed)
           sessions = registry.sessions.map { |e| replaced(e, entry) }
           if removed.ok?

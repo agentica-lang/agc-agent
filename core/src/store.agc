@@ -10,6 +10,10 @@ import Protocol from "pkg/protocol/protocol"
 import Compaction from "compaction"
 
 EXTENSION = ".jsonl"
+## Beside a session file: the model of its last `settings` record, so a list of the sessions need not read the file.
+SETTINGS_EXTENSION = ".settings.json"
+## A listing looks this far into a file for the first user message.
+TITLE_LINES = 64
 MAX_LINE_BYTES = 16_777_216
 MAX_WRITE_BYTES = 1_048_576
 
@@ -120,10 +124,23 @@ def append_compaction(path: String, compaction: Compaction.Compaction, answer: L
   )
 end
 
-## The model and thinking level the session uses from now on.
+## The model and thinking level the session uses from now on, also in the file beside it (0600, replaced whole).
 def append_settings(path: String, model: String, effort: Optional[String]) -> Result[Void]
-  append(path, {"type": JSON.from("settings"), "model": JSON.from(model), "effort": JSON.from(effort)})
+  try append(path, {"type": JSON.from("settings"), "model": JSON.from(model), "effort": JSON.from(effort)})
+  side = settings_file(path)
+  text = JSON.encode(JSON.object({"model": JSON.from(model)}))
+  return File.replace(side, text.bytes) if File.stat(side).ok?
+
+  temporary = "#{side}.tmp"
+  _ = Path.remove(temporary)
+  handle = try File.open(temporary, "create_private")
+  written = File.write(handle, text)
+  try File.close(handle)
+  try written
+  Path.rename(temporary, side)
 end
+
+def settings_file(path: String) -> String = "#{path.slice(0, path.length - EXTENSION.length)}#{SETTINGS_EXTENSION}"
 
 ## The answer of a turn, as a client draws it.
 def append_answer(path: String, text: String) -> Result[Void]
@@ -132,8 +149,11 @@ end
 
 def reopen(path: String) -> Result[Void] = write(path, "\n")
 
-## Reads the file a line at a time and parses only the records a listing needs.
-def listing(path: String) -> Result[Listing] = File.open(path, "read") do |handle| ok(listed_lines(handle)) end
+## The model from the file beside the session's, and the first user message from the first TITLE_LINES lines.
+def listing(path: String) -> Result[Listing]
+  title = try File.open(path, "read") do |handle| ok(first_user(handle)) end
+  ok(Listing(model: settings_model(path), title: title))
+end
 
 ## The first line of a file: the session, without reading the rest.
 def header(path: String) -> Result[Header]
@@ -196,28 +216,34 @@ end
 
 private
 
-def listed_lines(handle: File.Handle) -> Listing
-  found = Listing()
-  while true
+def settings_model(path: String) -> Optional[String]
+  text = File.read_text(settings_file(path)).unwrap_or("")
+  case JSON.parse(text)
+    ok(json) ->
+      case field(json, "model")
+        ok(model) -> some(model)
+        error(_) -> none
+      end
+
+    error(_) -> none
+  end
+end
+
+def first_user(handle: File.Handle) -> String
+  for _i in 1..TITLE_LINES
     read = File.read_line(handle)
     break if not read.ok?
 
     text = read.unwrap!
-
-    settings = text.include?("\"settings\"")
-    user = found.title == "" and text.include?("\"user\"")
-    next if not settings and not user
+    next if not text.include?("\"user\"")
 
     case JSON.parse(text)
-      ok(json) if field(json, "type") == ok("settings") ->
-        found = found.with(model: some(field(json, "model").unwrap_or("")))
-      ok(json) if user and field(json, "type") == ok("user") ->
-        found = found.with(title: field(json, "text").unwrap_or(""))
+      ok(json) if field(json, "type") == ok("user") -> return field(json, "text").unwrap_or("")
       _ -> nil
     end
   end
 
-  found
+  ""
 end
 
 # A line longer than a load reads is refused.
