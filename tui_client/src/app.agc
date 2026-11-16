@@ -404,7 +404,11 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
     yolo: Yolo.attached(app.yolo, session.turn_id, not skip_replay),
   )
 
-  subscribe(fresh, from)
+  subscribed = subscribe(fresh, from)
+  return subscribed if session.turn_id.some?
+
+  # The end of the turn they waited for was not seen.
+  after_turn(subscribed, Protocol.StopReason.EndTurn)
 end
 
 # A new reader of the stream from `from`; the old one stops, and its channel is closed so its last read ends.
@@ -526,9 +530,9 @@ def follow_up(app: Model) -> Model
   text = app.prompt.strip
   return send(app) if text == "" or (not app.turn and app.outbox.empty?)
 
-  later = app.follow_ups.push(expanded(app, text))
-  waiting = app.with(prompt: "", cursor: 0, recall: none, follow_ups: later, pastes: [])
-  waiting.with(history: remembered(waiting.history, text))
+  whole = expanded(app, text)
+  waiting = app.with(prompt: "", cursor: 0, recall: none, follow_ups: app.follow_ups.push(whole), pastes: [])
+  waiting.with(history: remembered(waiting.history, whole))
 end
 
 # Esc puts the follow-ups back in the prompt, before what it holds.
@@ -690,14 +694,14 @@ def send(app: Model) -> Model
   typed_text = app.prompt.strip
   return app if typed_text == ""
 
-  base = app.with(history: remembered(app.history, typed_text), recall: none, cursor: 0, mention_closed: none)
+  text = expanded(app, typed_text)
+  base = app.with(history: remembered(app.history, text), recall: none, cursor: 0, mention_closed: none)
   case Client.parse_command(typed_text)
     some(ok(command)) -> return on_command(base.with(prompt: "", scroll: 0), command)
     some(error(e)) -> return noted(app, e.message)
     _ -> nil
   end
 
-  text = expanded(app, typed_text)
   queued = base.with(prompt: "", scroll: 0, outbox: app.outbox.push(text), pastes: [])
   return queued if not app.outbox.empty?
 
@@ -719,7 +723,7 @@ def next_send(app: Model) -> Model
 end
 
 # A message sent while a turn runs is queued; its `message_queued` event shows it. A message that was not sent goes
-# back to an empty prompt.
+# back to an empty prompt; one that may have been sent (a timeout) stays only in the note, so it is not sent twice.
 def sent_reply(app: Model, text: String, result: Result[Protocol.MessageAccepted]) -> Model
   case result
     ok(accepted) if accepted.message_id.some? ->
@@ -737,7 +741,11 @@ def sent_reply(app: Model, text: String, result: Result[Protocol.MessageAccepted
     # The text stays in the note: put back in the prompt, it would take the keys typed after it.
     error(e) if e.kind == Client.KIND_TIMEOUT ->
       noted(app, "error: the message may not have been sent (#{e.message}): #{Client.printable(text)}")
-    error(e) -> noted(app, "error: the message was not sent: #{e.message}: #{Client.printable(text)}")
+    error(e) ->
+      failed = noted(app, "error: the message was not sent: #{e.message}: #{Client.printable(text)}")
+      return failed if app.prompt != ""
+
+      failed.with(prompt: text, cursor: text.length)
   end
 end
 
@@ -789,9 +797,16 @@ def tried(app: Model, result: Result[Model]) -> Model
   end
 end
 
-# The state of no session yet, with the stream that `subscribe` replaces.
+# The state of no session yet, with the stream that `subscribe` replaces; the follow-ups not sent wait in the prompt.
 def fresh(app: Model) -> Model
+  kept = app
+  if not app.follow_ups.empty?
+    kept = put_back(app)
+  end
+
   seed(app.server, app.options, app.signals, app.width, app.height).with(
+    prompt: kept.prompt,
+    cursor: kept.cursor,
     thinking: app.thinking,
     tools: app.tools,
     theme: app.theme,

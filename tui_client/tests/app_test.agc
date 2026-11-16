@@ -1,3 +1,4 @@
+import HTTP from "std/http"
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
@@ -47,7 +48,11 @@ def test_a_message_is_sent_by_a_command_and_the_stream_waits_for_its_reply() -> 
   try Test.eq([replied.model.turn, replied.model.held.empty?], [true, true])
   try Test.eq(replied.cmds.size, 1)
   failed = App.update(sending.model, App.Msg.Sent(0, "hi", error("down", kind: "client.unreachable")))
-  try Test.eq([failed.model.prompt, failed.model.entries.last.text], ["", "error: the message was not sent: down: hi"])
+  try Test.eq(
+    [failed.model.prompt, failed.model.entries.last.text],
+    ["hi", "error: the message was not sent: down: hi"],
+  )
+
   late = App.update(sending.model, App.Msg.Sent(0, "hi", error("slow", kind: Client.KIND_TIMEOUT)))
   try Test.eq(late.model.entries.last.text, "error: the message may not have been sent (slow): hi")
   stale = App.update(sending.model.with(opened: 1), App.Msg.Sent(0, "hi", ok(Protocol.MessageAccepted(turn_id: "t1"))))
@@ -222,6 +227,35 @@ def test_follow_ups_wait_for_the_end_of_the_turn() -> Result[Void]
   Test.eq(idle.model.outbox, ["now"])
 end
 
+# A resync that finds no turn running sends the follow-ups: the end of their turn was missed. A new session keeps them
+# in the prompt.
+def test_a_resync_with_no_turn_sends_the_follow_ups() -> Result[Void]
+  session = Protocol.Session(
+    id: "s1",
+    cwd: ".",
+    model: "m",
+    last_event_id: 9,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+  )
+
+  handler = ->(_request: HTTP.Request, _body: HTTP.RequestBody) {
+    ok(HTTP.Answer.Whole(HTTP.Response(status: 200, headers: [], body: Protocol.encode_session(session).bytes)))
+  }
+
+  http = try HTTP.serve("127.0.0.1", 0, handler)
+  server = Client.Server(url: "http://127.0.0.1:#{HTTP.local_port(http)}", token: "t")
+  model = model_of(30, 8).with(server: server, id: "s1", turn: true, generation: 1, follow_ups: ["later"])
+  resynced = App.update(model, App.Msg.Stream(1, [Client.Item.Event(some(3), Protocol.Event.Resync)])).model
+  Task.await(resynced.stream.unwrap!)
+  HTTP.close_server(http)
+  _ = HTTP.wait(http)
+  try Test.eq([resynced.follow_ups, resynced.outbox], [[], ["later"]])
+  ok()
+end
+
 # Up on an empty prompt goes back through the prompts sent, Down comes forward to an empty prompt; a large paste is
 # one token that the send puts back.
 def test_up_recalls_prompts_and_a_large_paste_is_one_token() -> Result[Void]
@@ -244,7 +278,9 @@ def test_up_recalls_prompts_and_a_large_paste_is_one_token() -> Result[Void]
   ).model
 
   try Test.eq(pasted.prompt, "see [paste #1 +12 lines]")
-  Test.eq(App.update(pasted, enter()).model.outbox, ["see #{text}"])
+  sent = App.update(pasted, enter()).model
+  try Test.eq(sent.outbox, ["see #{text}"])
+  Test.eq(App.update(sent, App.Msg.Key(TUI.Event.Key(TUI.Key.Up, TUI.Mods()))).model.prompt, "see #{text}")
 end
 
 # `@` reads the files of the session's folder once; the list under the editor narrows as the word grows, Tab puts the

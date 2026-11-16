@@ -169,13 +169,18 @@ def change(ctx: Spec.Context, name: String, input: JSON.Value) -> Optional[Strin
   case name
     "edit_file" ->
       case Spec.args(input, Files.EditFileArgs.codec)
-        ok(args) -> nonempty(Diff.edit(text_of(ctx, args.path), args.old_string, args.new_string))
+        ok(args) ->
+          nonempty(
+            cut(
+              Diff.edit(text_of(ctx, args.path), args.old_string, args.new_string, args.replace_all.unwrap_or(false)),
+            ),
+          )
         error(_) -> none
       end
 
     "write_file" ->
       case Spec.args(input, Files.WriteFileArgs.codec)
-        ok(args) -> nonempty(Diff.written(args.content))
+        ok(args) -> nonempty(cut(Diff.written(args.content)))
         error(_) -> none
       end
 

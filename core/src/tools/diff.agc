@@ -4,18 +4,21 @@
 CONTEXT = 2
 MAX_LINES = 60
 
-## The lines of `text` around the first `old` and what `new` puts in its place.
-def edit(text: String, old: String, new: String) -> String
-  pieces = text.split(old)
-  return "" if pieces.size < 2
+## The lines of `text` around the first `old` and what `new` puts in its place; with `all`, a last line says how many
+## more places change.
+def edit(text: String, old: String, new: String, all: Bool = false) -> String
+  found = text.index_of(old)
+  return "" if old == "" or found.none?
 
-  before = pieces[0]
+  before = text.slice(0, found.unwrap!)
   after = before + new + text.slice(before.length + old.length, text.length - before.length - old.length)
   lines = lines_of(text)
   changed = lines_of(after)
-  first = before.split("\n").size - 1
-  removed = touched(before, old)
-  added = touched(before, new)
+  first = line_ends(before)
+  # Whole lines go when `old` starts a line and ends with its line end.
+  whole = old.end_with?("\n") and (before == "" or before.end_with?("\n"))
+  removed = touched(old, whole)
+  added = touched(new, whole)
   top = [first - CONTEXT, 0].max.unwrap!
   bottom = [first + added + CONTEXT, changed.size].min.unwrap!
   width = bottom.to_s.length
@@ -32,11 +35,18 @@ def edit(text: String, old: String, new: String) -> String
     rows = rows.push("...")
   end
 
+  more = occurrences(text, old) - 1
+  if all and more > 0
+    rows = rows.push("... and #{more} more")
+  end
+
   capped(rows)
 end
 
 ## A new file: each line of `content` added.
 def written(content: String) -> String
+  return "" if content == ""
+
   lines = lines_of(content)
   width = lines.size.to_s.length
   capped((0...lines.size).to_a.map { |i| numbered("+", i, lines[i], width) })
@@ -51,11 +61,25 @@ def lines_of(text: String) -> List[String]
   text.split("\n")
 end
 
-# How many lines `piece` takes when it starts after `before`: a line end at its end starts no line when the piece
-# starts a line.
-def touched(before: String, piece: String) -> Int
-  count = piece.split("\n").size
-  return count - 1 if piece.end_with?("\n") and (before == "" or before.end_with?("\n"))
+# How many lines `piece` takes; in place of whole lines, a line end at its end starts no line.
+def touched(piece: String, whole: Bool) -> Int
+  return 0 if whole and piece == ""
+  return line_ends(piece) if whole and piece.end_with?("\n")
+
+  line_ends(piece) + 1
+end
+
+def line_ends(text: String) -> Int = text.length - text.replace("\n", "").length
+
+def occurrences(text: String, part: String) -> Int
+  count = 0
+  rest = text
+  found = rest.index_of(part)
+  while found.some?
+    count += 1
+    rest = rest.slice(found.unwrap! + part.length, rest.length - found.unwrap! - part.length)
+    found = rest.index_of(part)
+  end
 
   count
 end
