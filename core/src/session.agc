@@ -46,6 +46,10 @@ struct Setup
   api_key: String = ""
   extra: Map[String, JSON.Value] = {}
   code_mode: Optional[CodeMode.Settings] = none
+  ## Ask the provider for its prompt cache.
+  cache: Bool = false
+  ## A provider with a fresh token, after a 401.
+  refresh: Optional[Fn[Result[LLM.Provider]]] = none
   skills: List[Skills.Skill] = []
   ## The thinking level of the calls; none leaves it to the model.
   effort: Optional[String] = none
@@ -68,11 +72,14 @@ enum Msg
   Update(Protocol.UpdateSession, Channel[Result[Void]])
   Fold(Channel[Result[Fold]])
   Folded(Optional[Compaction.Compaction], Channel[Result[Void]])
+  Stripped(String)
+  Renewed(LLM.Provider)
 end
 
 ## What a compaction that a client asked for needs, taken from the session while no turn runs.
 struct Fold
   provider: LLM.Provider
+  refresh: Optional[Fn[Result[LLM.Provider]]] = none
   settings: Compaction.Settings
   history: List[LLM.Message]
   span: Optional[Compaction.Compaction]
@@ -129,6 +136,8 @@ struct State
   lost: Optional[Lost] = none
   ## A compaction that a client asked for runs: no turn starts meanwhile.
   compacting: Bool = false
+  ## Anthropic requests go without thinking blocks until the next fold: a turn passed the limit inside a tool round.
+  stripped: Bool = false
 end
 
 ## Starts a session; from what its file saved when there is one.
@@ -186,7 +195,17 @@ def compact_now(address: Address[Msg]) -> Result[Bool]
   fold = try try taken
   summary: Result[Optional[Compaction.Compaction]] = ok(none)
   for span in option_list(fold.span)
-    summary = case Compaction.summarize(fold.provider, fold.settings, fold.history, span)
+    renewal = Agent.with_token(
+      fold.provider,
+      fold.refresh,
+      ->(p: LLM.Provider) { Compaction.summarize(p, fold.settings, fold.history, span) },
+    )
+
+    for provider in option_list(renewal.fresh)
+      _ = Actor.cast(address, Msg.Renewed(provider), CALL_MS)
+    end
+
+    summary = case renewal.result
       ok(compaction) -> ok(some(compaction))
       error(e) -> error("the history was not compacted: #{e.message}", kind: Compaction.KIND_FAILED, cause: e)
     end
@@ -249,6 +268,8 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
       Actor.continue(if_current(state, turn_id, ->(s) { commit(s, history, marks) }))
     Msg.Compacted(turn_id, compaction) -> Actor.continue(if_current(state, turn_id, ->(s) { compact(s, compaction) }))
     Msg.Window(window) -> Actor.continue(state.with(window: window))
+    Msg.Stripped(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { stripped(s) }))
+    Msg.Renewed(provider) -> Actor.continue(state.with(setup: state.setup.with(provider: provider)))
     Msg.Finished(turn_id, reason) -> Actor.continue(if_current(state, turn_id, ->(s) { finish(s, reason) }))
     Msg.Update(change, reply) -> Actor.continue(update_setup(state, change, reply))
     Msg.Fold(reply) -> Actor.continue(start_fold(state, reply))
@@ -479,6 +500,8 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
     commit: ->(history, marks) { tell(address, Msg.Commit(turn_id, history, marks)) },
     compacted: ->(compaction) { tell(address, Msg.Compacted(turn_id, compaction)) },
     window: ->(window) { tell(address, Msg.Window(window)) },
+    stripped: -> { tell(address, Msg.Stripped(turn_id)) },
+    renewed: ->(provider) { tell(address, Msg.Renewed(provider)) },
   )
 
   turn = Agent.Turn(
@@ -491,6 +514,9 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
     ctx: setup.ctx,
     link: link,
     extra: setup.extra,
+    cache: setup.cache,
+    refresh: setup.refresh,
+    stripped: state.stripped,
     compaction: Compaction.Settings(
       window: state.window,
       model: compact_model(setup),
@@ -713,6 +739,7 @@ def start_fold(state: State, reply: Channel[Result[Fold]]) -> State
 
   fold = Fold(
     provider: setup.provider,
+    refresh: setup.refresh,
     settings: settings,
     history: state.history,
     span: Compaction.span(state.history),
@@ -749,7 +776,14 @@ end
 def compact(state: State, compaction: Compaction.Compaction) -> State
   answer = state.turn.map { |t| t.texts }.unwrap_or([])
   case save(state, -> { Store.append_compaction(state.setup.file, compaction, answer) })
-    ok(_) -> state.with(history: Compaction.apply(state.history, compaction), broken: none)
+    ok(_) -> state.with(history: Compaction.apply(state.history, compaction), broken: none, stripped: false)
+    error(e) -> broke(state, e)
+  end
+end
+
+def stripped(state: State) -> State
+  case save(state, -> { Store.append_stripped(state.setup.file) })
+    ok(_) -> state.with(stripped: true, broken: none)
     error(e) -> broke(state, e)
   end
 end
@@ -783,6 +817,7 @@ def restore(setup: Setup, saved: Store.Saved) -> State
     log: events.drop([events.size - setup.keep_events, 0].max.unwrap!),
     history: saved.history,
     marks: saved.marks,
+    stripped: saved.stripped,
     display: saved.shown,
     turns: [saved.users, count(events, Protocol.EventKind.TurnStarted)].max.unwrap!,
     approvals: count(events, Protocol.EventKind.ApprovalRequested),

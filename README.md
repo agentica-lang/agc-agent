@@ -43,6 +43,7 @@ bin/finn tui                           # the same on the full screen: Enter send
 bin/finn -p "fix the failing test"    # one task, then exit with its status; approvals denied (--yolo allows all)
 bin/finn serve                         # the server in the foreground, on a llama-server at http://127.0.0.1:8080/v1
 bin/finn serve --api openai_responses  # the same on /v1/responses
+bin/finn serve --api anthropic         # Anthropic: ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or `ant auth login`
 bin/finn --version
 ```
 

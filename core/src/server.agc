@@ -20,6 +20,8 @@ import Skills from "skills"
 import Store from "store"
 import Tools from "tools"
 
+## The model of a session on an OpenAI API of a server whose own API has its own model (Anthropic).
+DEFAULT_MODEL = "default"
 VERSION = "0.0.1"
 SERVER_JSON = "server.json"
 SESSIONS_DIR = "sessions"
@@ -48,6 +50,15 @@ SSE_HEADERS = [
 struct ModelApi
   provider: LLM.Provider
   extra: Map[String, JSON.Value] = {}
+  ## The model of a session that picks this API without a model, when it is not the server's API; empty for the
+  ## server's model.
+  model: String = ""
+  ## Ask for the prompt cache (Anthropic).
+  cache: Bool = false
+  ## A local server whose `/props` may give the window (llama-server), and which may get `FINN_API_KEY` there.
+  local: Bool = true
+  ## A provider with a fresh token, after a 401 (the token of `ant`).
+  refresh: Optional[Fn[Result[LLM.Provider]]] = none
 end
 
 struct Options
@@ -405,7 +416,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   header = Store.Header(
     id: "s#{registry.sessions.size + 1}-#{OpenSSL.Random.hex(4)}",
     cwd: context.root,
-    model: request.model.unwrap_or(options.model),
+    model: request.model.unwrap_or(default_model(options, api)),
     created_ms: Time.now_ms,
     system: some(with_catalog(system_prompt(context.root), skills_of(options, context.root).skills)),
     api: some(api),
@@ -534,10 +545,12 @@ def entry(
     approval_timeout_ms: options.approval_timeout_ms,
     file: file,
     window: options.context_window.unwrap_or(0),
-    compact_model: options.compact_model,
-    props_url: options.props_url,
-    api_key: options.api_key,
+    compact_model: own(options, name, options.compact_model),
+    props_url: if_local(api, options.props_url),
+    api_key: if_local(api, options.api_key),
     extra: api.extra,
+    cache: api.cache,
+    refresh: api.refresh,
     code_mode: options.code_mode,
   )
 
@@ -549,6 +562,29 @@ def entry(
       session: some(Session.start(setup, saved)),
     ),
   )
+end
+
+# A session on another API than the server's takes that API's model, when it names one; on an OpenAI API of a server
+# whose API has its own model, `default`.
+def default_model(options: Options, api: String) -> String
+  return options.model if api == options.api
+  return options.apis[api].model if options.apis[api].model != ""
+  return DEFAULT_MODEL if options.apis[options.api].model != ""
+
+  options.model
+end
+
+# `FINN_COMPACT_MODEL` is a model of the server's API.
+def own(options: Options, api: String, value: String) -> String
+  return "" if api != options.api
+
+  value
+end
+
+def if_local(api: ModelApi, url: String) -> String
+  return "" if not api.local
+
+  url
 end
 
 def summary_of(options: Options, header: Store.Header) -> Protocol.SessionSummary

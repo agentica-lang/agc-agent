@@ -30,7 +30,7 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check unit smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic
+.PHONY: install check coupling fmt-check unit smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (agentica-tui) go into the package's deps/ (gitignored).
 install:
@@ -107,3 +107,16 @@ smoke-anthropic:
 	fi; \
 	mkdir -p llm/_build; export ANTHROPIC_LIVE_REPORT='$(CURDIR)/llm/_build/anthropic-live.txt'; \
 	rm -f "$$ANTHROPIC_LIVE_REPORT"; $(call tests,llm,live/anthropic_test.agc); cat "$$ANTHROPIC_LIVE_REPORT"
+
+# A real core session on Anthropic's cheap model (three calls: a tool round, then a second turn that must read the
+# cache), which costs money: local only, with the owner's yes, never in CI. The credential as for smoke-anthropic.
+live-anthropic-core:
+	@if [ -n "$$CI" ]; then echo "live-anthropic-core: refused in CI" >&2; exit 1; fi; \
+	if [ -z "$$ANTHROPIC_API_KEY$$ANTHROPIC_AUTH_TOKEN" ]; then \
+	  if ! command -v ant >/dev/null; then echo "live-anthropic-core: no key, no token and no ant, skipped"; exit 0; fi; \
+	  ANTHROPIC_AUTH_TOKEN=$$(ant auth print-credentials --access-token 2>/dev/null) || ANTHROPIC_AUTH_TOKEN=; \
+	  if [ -z "$$ANTHROPIC_AUTH_TOKEN" ]; then echo "live-anthropic-core: ant is not logged in, skipped"; exit 0; fi; \
+	  export ANTHROPIC_AUTH_TOKEN; \
+	fi; \
+	mkdir -p core/_build; export ANTHROPIC_LIVE_REPORT='$(CURDIR)/core/_build/anthropic-live.txt'; \
+	rm -f "$$ANTHROPIC_LIVE_REPORT"; $(call tests,core,live/anthropic_test.agc); cat "$$ANTHROPIC_LIVE_REPORT"
