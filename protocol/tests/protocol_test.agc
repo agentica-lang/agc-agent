@@ -272,7 +272,28 @@ def test_routes() -> Result[Void]
   try Test.eq(Protocol.approval_path("s1", "a1"), "/v1/sessions/s1/approvals/a1")
   try Test.eq(Protocol.events_path("s1"), "/v1/sessions/s1/events")
   try Test.eq(Protocol.compact_path("s1"), "/v1/sessions/s1/compact")
+  try Test.eq(Protocol.tree_path("s1"), "/v1/sessions/s1/tree")
+  try Test.eq(Protocol.branch_path("s1"), "/v1/sessions/s1/branch")
+  try Test.eq(Protocol.fork_path("s1"), "/v1/sessions/s1/fork")
   Test.eq(Protocol.stop_path("s1"), "/v1/sessions/s1/stop")
+end
+
+def test_the_tree_and_its_branches_round_trip() -> Result[Void]
+  nodes = [
+    Protocol.TreeNode(id: 1, text: "one", answer: "a", last: 6, active: true),
+    Protocol.TreeNode(id: 7, parent: some(1), text: "two", last: 9),
+  ]
+
+  tree = Protocol.SessionTree(nodes: nodes)
+  try Test.eq(Protocol.decode_session_tree(Protocol.encode_session_tree(tree)), ok(tree))
+  branched = Protocol.Branched(id: "s2-ab", text: "two")
+  try Test.eq(Protocol.decode_branched(Protocol.encode_branched(branched)), ok(branched))
+  branch = Protocol.Branch(entry: 7)
+  try Test.eq(Protocol.decode_branch(Protocol.encode_branch(branch)), ok(branch))
+  try Test.eq(Protocol.decode_fork(Protocol.encode_fork(Protocol.Fork())), ok(Protocol.Fork()))
+  try Test.eq(Protocol.decode_fork("{\"entry\": 3}"), ok(Protocol.Fork(entry: some(3))))
+  try Test.eq(error_kind(Protocol.decode_branch("{\"entry\": -1}")), "protocol.invalid")
+  Test.eq(error_kind(Protocol.decode_fork("{\"entri\": 1}")), "protocol.invalid")
 end
 
 def test_session_settings_round_trip_and_refuse_unknown_levels() -> Result[Void]

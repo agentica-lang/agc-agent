@@ -21,6 +21,12 @@ def stop_path(session_id: String) -> String = "#{session_path(session_id)}/stop"
 
 def compact_path(session_id: String) -> String = "#{session_path(session_id)}/compact"
 
+def tree_path(session_id: String) -> String = "#{session_path(session_id)}/tree"
+
+def branch_path(session_id: String) -> String = "#{session_path(session_id)}/branch"
+
+def fork_path(session_id: String) -> String = "#{session_path(session_id)}/fork"
+
 ## The paths and the header, for `Protocol.wire_shape`.
 def shape() -> List[String]
   [
@@ -33,5 +39,8 @@ def shape() -> List[String]
     approval_path("ID", "A"),
     stop_path("ID"),
     compact_path("ID"),
+    tree_path("ID"),
+    branch_path("ID"),
+    fork_path("ID"),
   ]
 end

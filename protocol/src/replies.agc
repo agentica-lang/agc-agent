@@ -94,6 +94,30 @@ struct Session
   api: String = ""
 end
 
+## A user message of `SessionTree`. `id` is its entry: a branch from it goes back before the message. `last` is the
+## entry that ends its turn: a branch from there goes on after the turn. `parent` is the message before it on its
+## branch, none for a first one; `active` marks the messages of the branch the session is on.
+struct TreeNode
+  id: Int
+  parent: Optional[Int] = none
+  text: String
+  answer: String = ""
+  last: Int
+  active: Bool = false
+end
+
+## The answer of `GET /v1/sessions/ID/tree`: the user messages of every branch, in the order they were sent.
+struct SessionTree
+  nodes: List[TreeNode]
+end
+
+## The answer of `branch` and (`201`) of `fork`: the session that goes on, and the user message the branch went back
+## before, for the editor ("" after a turn or for a copy).
+struct Branched
+  id: String
+  text: String = ""
+end
+
 ## `server.json` in the state folder, which only its user can read: where the server listens and its Bearer token.
 struct ServerInfo
   port: Int
@@ -132,6 +156,14 @@ def decode_message_accepted(text: String) -> Result[MessageAccepted] = Wire.deco
 def encode_session_list(reply: SessionList) -> String = JSON.encode(reply)
 
 def decode_session_list(text: String) -> Result[SessionList] = Wire.decode(text, SessionList.codec)
+
+def encode_session_tree(reply: SessionTree) -> String = JSON.encode(reply)
+
+def decode_session_tree(text: String) -> Result[SessionTree] = Wire.decode(text, SessionTree.codec)
+
+def encode_branched(reply: Branched) -> String = JSON.encode(reply)
+
+def decode_branched(text: String) -> Result[Branched] = Wire.decode(text, Branched.codec)
 
 def encode_provider_list(reply: ProviderList) -> String = JSON.encode(reply)
 
@@ -202,6 +234,9 @@ def shape() -> List[String]
     Wire.record("Message", Message.members),
     Wire.record("Session", Session.members),
     Wire.record("ServerInfo", ServerInfo.members),
+    Wire.record("TreeNode", TreeNode.members),
+    Wire.record("SessionTree", SessionTree.members),
+    Wire.record("Branched", Branched.members),
     Wire.record("MessageWire", MessageWire.members),
     Wire.record("SessionWire", SessionWire.members),
   ]
