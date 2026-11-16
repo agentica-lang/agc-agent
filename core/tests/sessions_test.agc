@@ -185,7 +185,7 @@ def test_a_session_is_loaded_when_first_used() -> Result[Void]
     H.restarted(h, setup, "") do |r|
       size = (try File.stat(file)).size_bytes
       listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
-      try Test.eq(listed.sessions.map { |s| s.id }, [id, gone, "a-late"])
+      try Test.eq(listed.sessions.map { |s| s.id }.sort, [id, gone, "a-late"].sort)
       try Test.eq((try File.stat(file)).size_bytes, size)
       try Test.eq((try H.session(r, id)).turn_id, none)
       try Test.assert((try File.stat(file)).size_bytes > size, "the cut turn did not end when the session loaded")

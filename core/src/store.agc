@@ -132,25 +132,8 @@ end
 
 def reopen(path: String) -> Result[Void] = write(path, "\n")
 
-## Reads only the records a listing needs.
-def listing(path: String) -> Result[Listing]
-  found = Listing()
-  for text in try File.foreach(path, MAX_LINE_BYTES).to_a
-    settings = text.include?("\"settings\"")
-    user = found.title == "" and text.include?("\"user\"")
-    next if not settings and not user
-
-    case JSON.parse(text)
-      ok(json) if field(json, "type") == ok("settings") ->
-        found = found.with(model: some(field(json, "model").unwrap_or("")))
-      ok(json) if user and field(json, "type") == ok("user") ->
-        found = found.with(title: field(json, "text").unwrap_or(""))
-      _ -> nil
-    end
-  end
-
-  ok(found)
-end
+## Reads the file a line at a time and parses only the records a listing needs.
+def listing(path: String) -> Result[Listing] = File.open(path, "read") do |handle| ok(listed_lines(handle)) end
 
 ## The first line of a file: the session, without reading the rest.
 def header(path: String) -> Result[Header]
@@ -212,6 +195,30 @@ def decode_message(json: JSON.Value) -> Result[LLM.Message]
 end
 
 private
+
+def listed_lines(handle: File.Handle) -> Listing
+  found = Listing()
+  while true
+    read = File.read_line(handle)
+    break if not read.ok?
+
+    text = read.unwrap!
+
+    settings = text.include?("\"settings\"")
+    user = found.title == "" and text.include?("\"user\"")
+    next if not settings and not user
+
+    case JSON.parse(text)
+      ok(json) if field(json, "type") == ok("settings") ->
+        found = found.with(model: some(field(json, "model").unwrap_or("")))
+      ok(json) if user and field(json, "type") == ok("user") ->
+        found = found.with(title: field(json, "text").unwrap_or(""))
+      _ -> nil
+    end
+  end
+
+  found
+end
 
 # A line longer than a load reads is refused.
 def line(fields: Map[String, JSON.Value]) -> Result[String]

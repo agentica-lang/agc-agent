@@ -563,6 +563,7 @@ def test_slash_text_busy_switches_and_the_model_warning() -> Result[Void]
 
     try Driver.say(cli, "/stop")
     try Driver.read_until(cli, "[warning] the call failed after /model qwen3")
+    try Driver.read_until(cli, "[turn finished]")
     try Driver.say(cli, "/etc/hosts has a bad entry")
     try Driver.say(cli, "/quit")
     done = try Driver.finish(cli)

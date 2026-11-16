@@ -134,6 +134,7 @@ struct Entry
   session: Optional[Actor.Ref[Session.State, Session.Msg]]
   ## The requests that wait while the session loads; a load runs while it is not empty.
   waiting: List[Channel[Result[Address[Session.Msg]]]] = []
+  listed: Optional[Cached] = none
 end
 
 ## What the task that loads a session read from its file.
@@ -172,6 +173,16 @@ enum Msg
   Delete(String, Channel[Result[Void]])
   List(Channel[List[Entry]])
   Load(String, Result[Loaded])
+  ## What a list read of session files, kept for the next list.
+  Listed(List[Cached])
+end
+
+## What a list read of one session file, valid while its size and time of change stay.
+struct Cached
+  id: String
+  size: Int
+  modified_s: Int
+  listing: Store.Listing
 end
 
 def serve(options: Options, registry: Actor.Ref[Registry, Msg], lock: File.Handle) -> Result[Server]
@@ -310,32 +321,59 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
           Actor.continue(registry)
       end
 
+    Msg.Listed(read) ->
+      sessions = registry.sessions.map { |entry| with_listed(entry, read) }
+
+      Actor.continue(registry.with(sessions: sessions))
     Msg.List(reply) ->
       Actor.reply(reply, registry.sessions)
       Actor.continue(registry)
   end
 end
 
-# Newest first, each with its model now (a `PATCH` changes it after the header), when it last changed and its first
-# message. A file that cannot be read keeps what its header said.
-def listed(entries: List[Entry]) -> Protocol.SessionList
-  sessions = entries.map do |entry|
-    summary = entry.summary
-    file = entry.file
-    found = Store.listing(file).unwrap_or(Store.Listing())
-    updated = case File.stat(file)
-      ok(info) -> info.modified_seconds
-      error(_) -> 0
-    end
+def with_listed(entry: Entry, read: List[Cached]) -> Entry
+  fresh = read.select { |c| c.id == entry.summary.id }
+  return entry if fresh.empty?
 
-    summary.with(
-      model: found.model.unwrap_or(summary.model),
-      updated_s: updated,
-      title: found.title.slice(0, [found.title.length, TITLE_CHARS].min.unwrap!),
-    )
+  entry.with(listed: some(fresh[0]))
+end
+
+# The listing of a session file, read again only when its size or time of change moved. A file that cannot be read
+# keeps what its header said.
+def cached(entry: Entry) -> Cached
+  size = 0
+  modified = 0
+  case File.stat(entry.file)
+    ok(info) ->
+      size = info.size_bytes
+      modified = info.modified_seconds
+    error(_) -> nil
   end
 
-  Protocol.SessionList(sessions: sessions.sort_by { |s| -s.updated_s })
+  for old in option_list(entry.listed)
+    return old if old.size == size and old.modified_s == modified
+  end
+
+  listing = Store.listing(entry.file).unwrap_or(Store.Listing())
+  Cached(id: entry.summary.id, size: size, modified_s: modified, listing: listing)
+end
+
+# A session with its model now (a `PATCH` changes it after the header), when it last changed and its first message
+# without control characters.
+def summary_now(summary: Protocol.SessionSummary, found: Cached) -> Protocol.SessionSummary
+  title = found.listing.title.split("").map { |c| printable(c) }.join("")
+  summary.with(
+    model: found.listing.model.unwrap_or(summary.model),
+    updated_s: found.modified_s,
+    title: title.slice(0, [title.length, TITLE_CHARS].min.unwrap!),
+  )
+end
+
+def printable(c: String) -> String
+  code = c.code
+  return " " if code < 0x20 or (code >= 0x7f and code < 0xa0)
+
+  c
 end
 
 def sessions_dir(options: Options) -> String = "#{options.data_dir}/#{SESSIONS_DIR}"
@@ -627,7 +665,17 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
       response(201, Protocol.encode_session_created(Protocol.SessionCreated(id: id)))
     "GET 0" ->
       entries: Result[List[Entry]] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
-      response(200, Protocol.encode_session_list(listed(try entries)))
+      read = (try entries).map { |entry| cached(entry) }
+      _ = Actor.cast(registry, Msg.Listed(read), CALL_MS)
+      sessions = (try entries).map do |entry|
+        found = read.select { |c| c.id == entry.summary.id }[0]
+        summary_now(entry.summary, found)
+      end
+
+      response(
+        200,
+        Protocol.encode_session_list(Protocol.SessionList(sessions: sessions.sort_by { |s| -s.updated_s })),
+      )
     "DELETE 1" ->
       deleted: Result[Result[Void]] = Actor.call(registry, CALL_MS) do |reply| Msg.Delete(parts[0], reply) end
       try try deleted

@@ -32,14 +32,14 @@ def test_commands_parse_with_their_arguments() -> Result[Void]
   try Test.eq(Client.parse_command("  /new "), some(ok(Client.Command.New)))
   try Test.eq(Client.parse_command("/resume"), some(ok(Client.Command.Resume(none))))
   try Test.eq(Client.parse_command("/resume 2"), some(ok(Client.Command.Resume(some("2")))))
-  try Test.eq(Client.parse_command("/model qwen3 8b"), some(ok(Client.Command.Model(some("qwen3 8b")))))
+  try Test.eq(Client.parse_command("/model qwen3:8b"), some(ok(Client.Command.Model(some("qwen3:8b")))))
   try Test.eq(Client.parse_command("/thinking high"), some(ok(Client.Command.Thinking(some("high")))))
   try Test.eq(Client.parse_command("/thinking default"), some(ok(Client.Command.Thinking(some("default")))))
   for text in ["/review-pr 12", "/etc/hosts has a bad entry", "/"]
     try Test.eq(Client.parse_command(text), none)
   end
 
-  for bad in ["/thinking max", "/new now"]
+  for bad in ["/thinking max", "/new now", "/model qwen3 8b"]
     parsed = Client.parse_command(bad)
     case parsed
       some(error(e)) -> try Test.eq(e.kind, Client.KIND_COMMAND)

@@ -269,7 +269,7 @@ def send(app: App) -> App
 
   case Client.parse_command(text)
     some(ok(command)) -> return on_command(app.with(prompt: "", scroll: 0), command)
-    some(error(e)) -> return noted(app.with(prompt: ""), e.message)
+    some(error(e)) -> return noted(app, e.message)
     _ -> nil
   end
 

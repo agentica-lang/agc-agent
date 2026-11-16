@@ -77,7 +77,7 @@ def command(name: String, argument: String) -> Result[Command]
   case name
     "/new" -> bare(Command.New, name, argument)
     "/resume" -> ok(Command.Resume(given(argument)))
-    "/model" -> ok(Command.Model(given(argument)))
+    "/model" -> model(argument)
     "/thinking" -> thinking(argument)
     "/compact" -> bare(Command.Compact, name, argument)
     "/stop" -> bare(Command.Stop, name, argument)
@@ -98,6 +98,12 @@ def given(argument: String) -> Optional[String]
   return none if argument == ""
 
   some(argument)
+end
+
+def model(argument: String) -> Result[Command]
+  return error("a model name has no spaces", kind: KIND_COMMAND) if argument.include?(" ")
+
+  ok(Command.Model(given(argument)))
 end
 
 def thinking(argument: String) -> Result[Command]
