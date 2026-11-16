@@ -206,6 +206,8 @@ def test_negative_numbers_are_refused() -> Result[Void]
   try Test.eq(error_kind(Protocol.decode_event("usage", usage)), "protocol.invalid")
   finished = "{\"call_id\": \"c\", \"ok\": true, \"summary\": \"\", \"duration_ms\": -5}"
   try Test.eq(error_kind(Protocol.decode_event("tool_finished", finished)), "protocol.invalid")
+  started = "{\"turn_id\": \"t\", \"history_size\": -1}"
+  try Test.eq(error_kind(Protocol.decode_event("turn_started", started)), "protocol.invalid")
   session = session_json(-1, "[]")
 
   try Test.eq(error_kind(Protocol.decode_session(session)), "protocol.invalid")

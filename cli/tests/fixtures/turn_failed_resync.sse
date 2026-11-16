@@ -1,0 +1,19 @@
+id: 8
+event: turn_started
+data: {"turn_id":"t2","history_size":3}
+
+id: 9
+event: text_delta
+data: {"text":"writing\n"}
+
+id: 10
+event: error
+data: {"kind":"llm.server","message":"down"}
+
+id: 11
+event: turn_finished
+data: {"turn_id":"t2","stop_reason":"error","history_size":3}
+
+event: resync
+data: {}
+

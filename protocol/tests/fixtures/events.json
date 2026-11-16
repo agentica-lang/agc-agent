@@ -1,5 +1,6 @@
 [
-  {"name": "turn_started", "data": {"turn_id": "t1"}},
+  {"name": "turn_started", "data": {"turn_id": "t1", "history_size": 3}},
+  {"name": "turn_started", "data": {"turn_id": "t0"}},
   {"name": "text_delta", "data": {"text": "Hello, \"world\"\n"}},
   {"name": "thinking_delta", "data": {"text": "The user wants a file."}},
   {"name": "tool_started", "data": {"call_id": "call_1", "name": "write_file", "summary": "write hello.txt"}},
@@ -11,7 +12,7 @@
   {"name": "approval_resolved", "data": {"approval_id": "a3", "decision": "deny", "source": "stop"}},
   {"name": "approval_resolved", "data": {"approval_id": "a4", "decision": "allow", "source": "rule"}},
   {"name": "usage", "data": {"input": 1200, "output": 85, "cache_read": 1000, "cache_write": 0, "context": 1285}},
-  {"name": "turn_finished", "data": {"turn_id": "t1", "stop_reason": "end_turn"}},
+  {"name": "turn_finished", "data": {"turn_id": "t1", "stop_reason": "end_turn", "history_size": 4}},
   {"name": "turn_finished", "data": {"turn_id": "t2", "stop_reason": "max_tokens"}},
   {"name": "turn_finished", "data": {"turn_id": "t3", "stop_reason": "refusal"}},
   {"name": "turn_finished", "data": {"turn_id": "t4", "stop_reason": "cancelled"}},

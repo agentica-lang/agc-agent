@@ -1,0 +1,31 @@
+{
+  "id": "s1",
+  "cwd": "/work",
+  "model": "fake-model",
+  "last_event_id": 12,
+  "turn_id": null,
+  "turn_from_event_id": null,
+  "pending_approvals": [],
+  "history": [
+    {
+      "role": "user",
+      "text": "hello"
+    },
+    {
+      "role": "assistant",
+      "text": "hi"
+    },
+    {
+      "role": "user",
+      "text": "write it"
+    },
+    {
+      "role": "user",
+      "text": "next"
+    },
+    {
+      "role": "assistant",
+      "text": "done"
+    }
+  ]
+}

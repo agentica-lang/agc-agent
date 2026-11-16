@@ -142,6 +142,33 @@ def printed_once(rig: Driver.Rig) -> Result[Void]
   Test.eq(done.code, 0)
 end
 
+def test_a_turn_stopped_after_text_adds_no_answer_to_the_history() -> Result[Void]
+  stopped("turn_cancelled_resync.sse", "[turn finished] cancelled")
+end
+
+def test_a_turn_failed_after_text_adds_no_answer_to_the_history() -> Result[Void]
+  stopped("turn_failed_resync.sse", "[turn finished] error")
+end
+
+def stopped(fixture: String, finished: String) -> Result[Void]
+  routes = [
+    Routes.session([Fake.Reply(session: "session_resync_a.json"), Fake.Reply(session: "session_after_stop.json")]),
+    Routes.events([Fake.Reply(fixture: fixture), Fake.Reply(hold: true)]),
+  ]
+
+  Driver.within(routes) do |rig|
+    cli = try Driver.start(rig.dir, ["--session", "s1"])
+    lines = try Driver.read_until(cli, "assistant: done")
+    done = try Driver.finish(cli)
+    try Test.eq(
+      lines.drop(lines.size - 4),
+      [finished, "[resync: reading the session again]", "user: next", "assistant: done"],
+    )
+
+    Test.eq(done.code, 0)
+  end
+end
+
 def test_a_turn_cut_by_a_restart_shows_its_end_after_the_resync() -> Result[Void]
   routes = [
     Routes.session([Fake.Reply(session: "session_running.json"), Fake.Reply(session: "session_cut.json")]),

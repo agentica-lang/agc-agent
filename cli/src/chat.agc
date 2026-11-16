@@ -40,10 +40,8 @@ struct Chat
   replay_until: Int = 0
   ## The highest event id already printed, so a replay after a resync prints nothing twice.
   shown_id: Int = 0
-  ## The messages of the session's history already printed or shown by their events, so a resync prints only the rest.
+  ## The size of the session's history the client has seen, so a resync prints only the rest.
   known: Int = 0
-  ## The running turn streamed text, so its end adds an answer to the history.
-  answered: Bool = false
   turn: Bool = false
   stopping: Bool = false
   pending: List[Protocol.ApprovalRequested] = []
@@ -206,23 +204,11 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
     shown = show(shown, Render.event(event, chat.style))
   end
 
-  # An event after the snapshot of the session adds to the history: the user message, then the answer if any.
-  after = 0
-  if id.some? and seen > chat.replay_until
-    after = 1
-  end
-
   changed = case event
-    Protocol.Event.TurnStarted(_) ->
-      shown.with(turn: true, stopping: false, known: shown.known + after, answered: false)
-    Protocol.Event.TextDelta(delta) if not delta.text.empty? -> shown.with(answered: true)
-    Protocol.Event.TurnFinished(_) ->
-      answer = 0
-      if shown.answered
-        answer = after
-      end
-
-      shown.with(turn: false, stopping: false, known: shown.known + answer, answered: false)
+    Protocol.Event.TurnStarted(started) ->
+      shown.with(turn: true, stopping: false, known: started.history_size.unwrap_or(shown.known))
+    Protocol.Event.TurnFinished(finished) ->
+      shown.with(turn: false, stopping: false, known: finished.history_size.unwrap_or(shown.known))
     Protocol.Event.ApprovalRequested(request) -> shown.with(pending: added(shown.pending, request))
     Protocol.Event.ApprovalResolved(resolved) -> forgotten(shown, resolved.approval_id)
     _ -> shown
