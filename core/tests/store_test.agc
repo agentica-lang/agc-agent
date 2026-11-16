@@ -30,7 +30,7 @@ def test_a_message_reads_back_with_every_kind_of_block() -> Result[Void]
     LLM.Message(
       role: LLM.Role.Assistant,
       content: [
-        LLM.Block.Thinking(LLM.ThinkingPart(text: "plan", replay: some(replay))),
+        LLM.Block.Thinking(LLM.ThinkingPart(text: "plan", replay: some(replay), source: "local/openai")),
         LLM.Block.Text(LLM.TextPart(text: "ok", replay: some(replay))),
         LLM.Block.ToolUse(good),
         LLM.Block.ToolUse(bad),
@@ -148,11 +148,11 @@ def branches(dir: String) -> Result[Void]
   try Store.append_user(path, "Other.")
   try Store.append_event(path, started(1007))
   try Store.append_answer(path, "Sure.")
-  try Store.append_settings(path, "m3", none)
+  try Store.append_settings(path, Store.Choice(model: "m3", effort: none, provider: "fw", api: "openai"))
   moved = try Store.load(path)
   try Test.eq(moved.shown.map { |m| m.text }, ["Hi", "Hi!", "Other.", "Sure."])
   try Test.eq([moved.history.size, moved.users, moved.turns, moved.last_id, moved.skipped], [3, 2, 3, 1007, 0])
-  try Test.eq([moved.model, moved.effort], [some("m3"), none])
+  try Test.eq([moved.model, moved.effort, moved.provider, moved.api], [some("m3"), none, some("fw"), some("openai")])
   known = try Store.entries(path, some(known))
   tree = Store.tree(known).nodes
   try Test.eq(tree, Store.tree(try Store.entries(path)).nodes)
@@ -161,7 +161,7 @@ def branches(dir: String) -> Result[Void]
   back = try Store.load(path)
   try Test.eq(back.shown.map { |m| m.text }, ["Hi", "Hi!", "Again.", "Yes."])
   try Test.eq([back.events.size, back.last_id, back.reserved], [5, 1007, 1008])
-  try Store.append_settings(path, "m4", none)
+  try Store.append_settings(path, Store.Choice(model: "m4", effort: none, provider: "local", api: "openai"))
   known = try Store.entries(path, some(known))
   try Test.eq(Store.tree(known), Store.tree(try Store.entries(path)))
   try Test.eq(Store.tree(known).nodes.map { |n| n.last }, tree.map { |n| n.last })
@@ -217,7 +217,7 @@ end
 def block_kind(block: LLM.Block) -> String
   case block
     LLM.Block.Text(part) -> "text #{part.text} #{part.replay.some?}"
-    LLM.Block.Thinking(part) -> "thinking #{part.text} #{part.replay.some?}"
+    LLM.Block.Thinking(part) -> "thinking #{part.text} #{part.replay.some?} #{part.source}"
     LLM.Block.ToolUse(call) ->
       "tool_use #{call.id} #{call.name} #{call.input_error.some?} #{call.kind == LLM.ToolKind.Custom}"
     LLM.Block.ToolResult(output) -> "tool_result #{output.tool_use_id} #{output.content} #{output.is_error}"

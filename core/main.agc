@@ -27,6 +27,10 @@ end
 def start() -> Result[Server.Server]
   read = ->(name) { System.env(name) }
   options = try Config.from_env(read)
+  for warning in options.warnings
+    IO.warn(warning)
+  end
+
   mcp = McpTools.background(try McpTools.servers(read, options.state_dir), ->(warning: String) { IO.warn(warning) })
 
   catalog = Catalog.start(

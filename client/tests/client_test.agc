@@ -103,3 +103,30 @@ end
 def test_printable_turns_control_characters_into_spaces() -> Result[Void]
   Test.eq(Client.printable("a#{String.from_code(27)}[2Jb\nc\td"), "a [2Jb c d")
 end
+
+# `/model provider/model` moves to a provider of the list, unless the session's provider lists that name; any other
+# text (a name with a `/`) is the model alone.
+def test_model_change_splits_a_known_provider() -> Result[Void]
+  list = Protocol.ProviderList(
+    provider: "local",
+    providers: [
+      Protocol.ProviderInfo(name: "fw", api: "openai", models: []),
+      Protocol.ProviderInfo(name: "or", api: "openai", models: ["fw/m"]),
+    ],
+  )
+
+  try Test.eq(
+    Client.model_change(list, "local", "fw/m"),
+    Protocol.UpdateSession(provider: some("fw"), model: some("m")),
+  )
+
+  try Test.eq(Client.model_change(list, "or", "fw/m"), Protocol.UpdateSession(model: some("fw/m")))
+  try Test.eq(
+    Client.model_change(list, "or", "or/fw/m"),
+    Protocol.UpdateSession(provider: some("or"), model: some("fw/m")),
+  )
+
+  try Test.eq(Client.model_change(list, "local", "org/m"), Protocol.UpdateSession(model: some("org/m")))
+  try Test.eq(Client.model_change(list, "local", "fw/"), Protocol.UpdateSession(model: some("fw/")))
+  Test.eq(Client.model_change(list, "local", "m"), Protocol.UpdateSession(model: some("m")))
+end

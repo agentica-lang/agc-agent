@@ -70,6 +70,8 @@ struct Model
   opened: Int = 0
   ## The picker of `/resume`, `/tree` or `/fork`, open over the prompt.
   picker: Optional[Picker.Picker] = none
+  ## The provider and model of the session, as `provider/model`, for the status line and the `/model` picker.
+  serving: String = ""
   ## The tree the picker of `/tree` or `/fork` showed last, whose numbers `/tree N` and `/fork N` name.
   listed: Optional[Protocol.SessionTree] = none
   ## A branch, a fork or a copy is on its way: nothing is sent until its reply.
@@ -347,9 +349,10 @@ def create(app: Model) -> Result[Model]
     none -> try Path.cwd()
   end
 
-  request = Protocol.NewSession(cwd: cwd, model: options.model, api: options.api)
+  request = Protocol.NewSession(cwd: cwd, model: options.model, api: options.api, provider: options.provider)
   id = try Client.create_session(app.server, request)
-  ok(subscribe(noted(app.with(id: id, opened: app.opened + 1), "session #{id}"), 0))
+  serving = serving_of(try Client.session(app.server, id))
+  ok(subscribe(noted(app.with(id: id, opened: app.opened + 1, serving: serving), "session #{id}"), 0))
 end
 
 def resume(app: Model, id: String) -> Result[Model]
@@ -365,6 +368,7 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
   end
 
   fresh = app.with(
+    serving: serving_of(session),
     opened: app.opened + 1,
     entries: Transcript.from_history(session.history),
     turn: session.turn_id.some?,
@@ -599,8 +603,8 @@ def on_command(app: Model, command: Client.Command) -> Model
     Client.Command.Tree(choice) -> tried(app, tree_command(app, Picker.Kind.Tree, choice))
     Client.Command.Fork(choice) -> tried(app, tree_command(app, Picker.Kind.Fork, choice))
     Client.Command.Clone -> move(app, Picker.Kind.Fork, none)
-    Client.Command.Model(model) -> setting_command(app, "model", model, Protocol.UpdateSession(model: model))
-    Client.Command.Thinking(level) -> setting_command(app, "thinking", level, Protocol.UpdateSession(effort: level))
+    Client.Command.Model(model) -> model_command(app, model)
+    Client.Command.Thinking(level) -> thinking_command(app, level)
     Client.Command.Compact -> compact_command(app)
   end
 end
@@ -655,6 +659,8 @@ def picking(app: Model) -> Result[Model]
 end
 
 def picked(app: Model, kind: Picker.Kind, key: String) -> Model
+  return model_command(app, some(key)) if kind == Picker.Kind.Models
+
   case key.to_i
     ok(entry) if kind != Picker.Kind.Sessions -> move(app, kind, some(entry))
     _ -> switch_command(app, some(key))
@@ -711,18 +717,38 @@ def switched(app: Model, choice: String) -> Result[Model]
   resume(fresh(app), try Client.pick(try Client.list_sessions(app.server), choice))
 end
 
-def setting_command(app: Model, name: String, value: Optional[String], change: Protocol.UpdateSession) -> Model
-  case value
-    some(text) -> tried(app, changed(app, change, "#{name} #{text} from the next turn"))
-    none -> tried(app, shown_setting(app, name))
+def thinking_command(app: Model, level: Optional[String]) -> Model
+  case level
+    some(text) ->
+      tried(app, changed(app, Protocol.UpdateSession(effort: level), "thinking #{text} from the next turn"))
+    none -> tried(app, shown_thinking(app))
   end
 end
 
-def shown_setting(app: Model, name: String) -> Result[Model]
+def shown_thinking(app: Model) -> Result[Model]
   session = try Client.session(app.server, app.id)
-  return ok(noted(app, "model #{session.model}")) if name == "model"
-
   ok(noted(app, "thinking #{session.effort.unwrap_or("as the model's default")}"))
+end
+
+# `/model` opens the picker; `/model provider/model` moves the session to that provider when one has that name, else
+# `/model NAME` changes the model.
+def model_command(app: Model, given: Optional[String]) -> Model
+  case given
+    some(text) -> tried(app, model_changed(app, text))
+    none -> tried(app, model_picking(app))
+  end
+end
+
+def model_picking(app: Model) -> Result[Model]
+  list = try Client.list_providers(app.server)
+  ok(app.with(picker: some(Picker.models(list, app.serving))))
+end
+
+def model_changed(app: Model, text: String) -> Result[Model]
+  current = app.serving.split("/")[0]
+  change = Client.model_change(try Client.list_providers(app.server), current, text)
+  done = try changed(app, change, "model #{text} from the next turn")
+  ok(done.with(serving: serving_of(try Client.session(app.server, app.id))))
 end
 
 def changed(app: Model, change: Protocol.UpdateSession, done: String) -> Result[Model]
@@ -983,6 +1009,16 @@ end
 
 def level_name(level: Optional[String]) -> String = level.unwrap_or(Protocol.EFFORT_DEFAULT)
 
+def serving_of(session: Protocol.Session) -> String = "#{session.provider}/#{session.model}"
+
+# `provider/model` as `(provider) model`.
+def footer_model(serving: String) -> String
+  case serving.index_of("/")
+    some(at) -> "(#{serving.slice(0, at)}) #{serving.slice(at + 1, serving.length - at - 1)}"
+    none -> serving
+  end
+end
+
 # What the turn does is in the top rule; the status line says when the client is ready.
 def status(app: Model, width: Int) -> String
   parts: List[String] = []
@@ -996,6 +1032,10 @@ def status(app: Model, width: Int) -> String
 
   if not app.approvals.pending.empty?
     parts = parts.push("approval waiting")
+  end
+
+  if not app.serving.empty?
+    parts = parts.push(footer_model(app.serving))
   end
 
   text = " #{(parts + [HINTS]).join(" · ")}"

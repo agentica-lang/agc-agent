@@ -20,11 +20,13 @@ enum Decision
   AllowTool
 end
 
-## `POST /v1/sessions`. `model` and `api` (the model API, by the name the server gives it) default to the server's.
+## `POST /v1/sessions`. `provider`, `model` and `api` (the model API, by the name the server gives it) default to the
+## server's; `api` to the provider's own.
 struct NewSession
   cwd: String
   model: Optional[String]
   api: Optional[String] = none
+  provider: Optional[String] = none
 end
 
 ## `POST /v1/sessions/ID/messages`.
@@ -39,6 +41,8 @@ end
 
 ## `PATCH /v1/sessions/ID`: what to change from the next turn on; a field left out stays.
 struct UpdateSession
+  ## Another provider takes its own model API, and its default model unless `model` names one.
+  provider: Optional[String] = none
   model: Optional[String] = none
   effort: Optional[String] = none
   ## The edits of files in the session folder run without asking.
@@ -91,6 +95,7 @@ def decode_new_session(text: String) -> Result[NewSession]
   try Wire.non_empty("cwd", body.cwd)
   try Wire.non_empty_if_present("model", body.model)
   try Wire.non_empty_if_present("api", body.api)
+  try Wire.non_empty_if_present("provider", body.provider)
   ok(body)
 end
 
@@ -114,6 +119,7 @@ def encode_update_session(body: UpdateSession) -> String = JSON.encode(body)
 def decode_update_session(text: String) -> Result[UpdateSession]
   body = try Wire.decode_strict(text, UpdateSession.codec)
   try Wire.non_empty_if_present("model", body.model)
+  try Wire.non_empty_if_present("provider", body.provider)
   for effort in Wire.option_list(body.effort)
     known = EFFORTS.include?(effort) or effort == EFFORT_DEFAULT
     return error("unknown effort: #{effort}", kind: Kinds.KIND_UNKNOWN) if not known

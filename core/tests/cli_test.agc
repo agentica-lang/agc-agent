@@ -31,13 +31,14 @@ def test_the_model_api_is_chat_completions_responses_or_anthropic() -> Result[Vo
 
   try Test.error?(Config.from_env(->(name) { api_env(name, "gemini") }))
   chat = try Config.from_env(->(name) { api_env(name, "") })
-  try Test.eq(chat.api, "openai")
+  try Test.eq([chat.provider, chat.providers[chat.provider].api], ["local", "openai"])
   responses = try Config.from_env(->(name) { api_env(name, "openai_responses") })
-  try Test.eq(responses.api, "openai_responses")
-  names = responses.apis.keys.map { |name| "#{name} #{responses.apis[name].provider.name}" }
-  try Test.eq(names.sort, ["anthropic anthropic", "openai openai_chat", "openai_responses openai_responses"])
-  try Test.eq(JSON.encode(JSON.object(responses.apis["openai"].extra)), "{}")
-  stateless = responses.apis["openai_responses"].extra
+  try Test.eq(responses.providers["local"].api, "openai_responses")
+  apis = responses.providers["local"].apis
+  names = apis.keys.map { |name| "#{name} #{apis[name].provider.name}" }
+  try Test.eq(names.sort, ["openai openai_chat", "openai_responses openai_responses"])
+  try Test.eq(JSON.encode(JSON.object(apis["openai"].extra)), "{}")
+  stateless = apis["openai_responses"].extra
   Test.eq(JSON.encode(JSON.object(stateless)), "{\"include\":[\"reasoning.encrypted_content\"],\"store\":false}")
 end
 
@@ -59,13 +60,16 @@ def test_the_anthropic_credential_comes_in_its_order() -> Result[Void]
   failed = Config.from_env_with(->(n) { located(bare, n) }, refused)
   try Test.assert(not failed.ok? and failed.message.include?("ANTHROPIC_API_KEY"), failed.message)
   options = try Config.from_env_with(->(n) { located(token, n) }, never)
-  try Test.eq([options.api, options.model], ["anthropic", LLM.ANTHROPIC_MODEL])
-  try Test.eq([options.apis["anthropic"].cache, options.apis["anthropic"].refresh.some?], [true, false])
+  claude = ->(o: Config.Options) { o.providers["anthropic"].apis["anthropic"] }
+  try Test.eq([options.provider, options.model], ["anthropic", LLM.ANTHROPIC_MODEL])
+  try Test.eq([claude.call(options).cache, claude.call(options).refresh.some?], [true, false])
   from_ant = try Config.from_env_with(->(n) { located(bare, n) }, given)
-  try Test.eq(from_ant.apis["anthropic"].refresh.some?, true)
+  try Test.eq(claude.call(from_ant).refresh.some?, true)
   on_openai = try Config.from_env_with(->(n) { located({"FINN_API_KEY": "openai"}, n) }, never)
-  try Test.eq(on_openai.apis["anthropic"].refresh.some?, true)
-  Test.eq(on_openai.apis.keys.select { |name| on_openai.apis[name].local }.sort, ["openai", "openai_responses"])
+  try Test.eq(claude.call(on_openai).refresh.some?, true)
+  local = on_openai.providers["local"].apis
+  try Test.eq(claude.call(on_openai).local, false)
+  Test.eq(local.keys.select { |name| local[name].local }.sort, ["openai", "openai_responses"])
 end
 
 # The token is what `ant` prints, stripped; empty output or a failed `ant` is an error that does not show the output.
@@ -99,6 +103,39 @@ def located(values: Map[String, String], name: String) -> Result[String]
   return ok("/data") if name == "FINN_DATA_DIR"
 
   from_map(values, name)
+end
+
+# A preset is offered when its key is set; the config file adds providers (one with a key variable only when it is
+# set) and refuses a bad one; FINN_PROVIDER picks the default among those offered.
+def test_providers_come_from_presets_with_a_key_and_the_config_file() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-providers-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  custom = "{\"name\": \"box\", \"base_url\": \"http://box/v1\", \"models\": [\"q\"]}"
+  keyed = "{\"name\": \"paid\", \"base_url\": \"http://paid/v1\", \"key_env\": \"PAID_KEY\"}"
+  shared = "{\"name\": \"proxy\", \"base_url\": \"http://proxy/v1\", \"key_env\": \"FIREWORKS_API_KEY\"}"
+  try File.write_text("#{dir}/config.json", "{\"providers\": [#{custom}, #{keyed}, #{shared}]}")
+  try File.write_text("#{dir}/bad.json", "{\"providers\": [{\"name\": \"x\", \"base_url\": \"\"}]}")
+  try File.write_text("#{dir}/slash.json", "{\"providers\": [{\"name\": \"a/b\", \"base_url\": \"http://a/v1\"}]}")
+  bare = try Config.from_env(->(n) { located({}, n) })
+  keys = {
+    "FIREWORKS_API_KEY": "fw",
+    "FINN_CONFIG": "#{dir}/config.json",
+    "FINN_PROVIDER": "fireworks",
+    "FINN_MODEL": "k",
+  }
+
+  given = try Config.from_env(->(n) { located(keys, n) })
+  missing = Config.from_env(->(n) { located({"FINN_PROVIDER": "fireworks"}, n) })
+  broken = Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/bad.json"}, n) })
+  slash = Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/slash.json"}, n) })
+  _ = Path.remove(dir)
+  try Test.eq(bare.providers.keys.sort, ["anthropic", "local"])
+  try Test.eq(given.providers.keys.sort, ["anthropic", "box", "fireworks", "local", "proxy"])
+  try Test.eq([given.key_envs["paid"], given.key_envs["groq"]], ["PAID_KEY", "GROQ_API_KEY"])
+  try Test.eq(given.warnings, ["providers fireworks and proxy both take FIREWORKS_API_KEY"])
+  try Test.eq([given.provider, given.model, given.providers["fireworks"].catalog], ["fireworks", "k", "fireworks-ai"])
+  try Test.eq(given.providers["box"].models, ["q"])
+  Test.eq([missing.ok?, broken.ok?, slash.ok?], [false, false, false])
 end
 
 # No trusted folder when `FINN_TRUSTED_DIRS` is unset or empty; empty parts are skipped.
@@ -136,7 +173,7 @@ def test_the_names_before_finn_still_work() -> Result[Void]
 
   options = try Config.from_env(->(name) { from_map(old, name) })
   try Test.eq(
-    [options.api, options.model, options.state_dir, options.data_dir],
+    [options.providers[options.provider].api, options.model, options.state_dir, options.data_dir],
     ["openai_responses", "m", "#{base}/agc-agent", "#{base}/agc-agent"],
   )
 

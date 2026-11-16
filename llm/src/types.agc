@@ -15,6 +15,9 @@ end
 struct ThinkingPart
   text: String
   replay: Optional[JSON.Value] = none
+  ## The provider that gave it, as the caller names it (empty when not named): a caller that moves to another provider
+  ## sends none of the thinking of the one before.
+  source: String = ""
 end
 
 ## A call of a tool by the model.

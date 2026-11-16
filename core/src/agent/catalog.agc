@@ -101,6 +101,13 @@ def find(catalog: Catalog, provider: String, id: String) -> Optional[Model]
   end
 end
 
+## The ids of the models of `provider` (a models.dev id) that call tools, from what is loaded now, sorted.
+def models(catalog: Catalog, provider: String) -> List[String]
+  none_found: List[String] = []
+  answer: Result[List[String]] = Actor.call(catalog.actor.address, CALL_MS) do |reply| Msg.Models(provider, reply) end
+  answer.unwrap_or(none_found)
+end
+
 ## What a call cost in USD; none without prices.
 def cost(model: Model, usage: LLM.Usage) -> Optional[Float]
   return none if model.prices.none?
@@ -153,6 +160,7 @@ end
 
 enum Msg
   Find(Query)
+  Models(String, Channel[List[String]])
   Load
   Loaded(Result[List[Model]])
   ## `loading`, `loaded`, or `none` when a load failed or the catalog is off.
@@ -181,6 +189,10 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
   case msg
     Msg.Find(query) ->
       _ = Actor.reply(query.reply, lookup(state.models, query.provider, query.id))
+      Actor.continue(load(state))
+    Msg.Models(provider, reply) ->
+      ids = state.models.select { |m| m.provider == provider and m.tools }.map { |m| m.id }.sort
+      _ = Actor.reply(reply, ids)
       Actor.continue(load(state))
     Msg.Load -> Actor.continue(load(state))
     Msg.Stop(reply) ->
