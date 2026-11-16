@@ -49,7 +49,7 @@ end
 
 private
 
-def strong() -> TUI.Style = TUI.Style(fg: TUI.Color.Yellow, attrs: [TUI.Attr.Bold])
+def strong() -> TUI.Style = TUI.Style(fg: TUI.Color.Yellow, bold: true)
 
 # The labels in rows of `width`, separated by SEPARATOR; a label wider than a row is cut.
 def key_rows(keys: List[Key], width: Int) -> List[Row]

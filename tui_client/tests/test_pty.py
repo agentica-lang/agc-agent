@@ -136,14 +136,6 @@ class FakeModel:
                 except OSError:
                     pass
 
-            def fail(self) -> None:
-                data = json.dumps({"kind": "proxy.failed", "message": "the proxy failed it"}).encode()
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-
             def chunk(self, data: bytes) -> None:
                 self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data))
                 self.wfile.flush()

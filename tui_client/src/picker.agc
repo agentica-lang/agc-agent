@@ -99,7 +99,7 @@ def row(session: Protocol.SessionSummary, selected: Bool, width: Int, now_s: Int
   style = TUI.Style()
   if selected
     mark = "› "
-    style = TUI.Style(attrs: [TUI.Attr.Reverse])
+    style = TUI.Style(reverse: true)
   end
 
   title = session.title.split("\n")[0]
