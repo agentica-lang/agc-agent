@@ -1,0 +1,4 @@
+id: 3
+event: turn_finished
+data: {"turn_id":"t1","stop_reason":"error"}
+

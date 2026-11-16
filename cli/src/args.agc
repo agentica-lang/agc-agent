@@ -14,6 +14,10 @@ struct Options
   model: Optional[String]
   api: Optional[String] = none
   thinking: Bool
+  ## One-shot: the task to send; the client prints the turn and exits with its status.
+  prompt: Optional[String] = none
+  ## Every approval is allowed without asking.
+  yolo: Bool = false
 end
 
 enum Command
@@ -27,7 +31,9 @@ end
 def parse(args: List[String]) -> Result[Command]
   parser = OP.new(
     "finn",
-    "The line-mode client of Finn Agent: it starts the server when none runs.",
+    "The line-mode client of Finn Agent: it starts the server when none runs, and leaves it running. With -p it " +
+    "runs one task: the answer on stdout, the rest on stderr, approvals denied unless --yolo; the exit code is 0 " +
+    "when the turn ends normally (even after a denied call), 130 when it is cancelled, 1 otherwise.",
     [],
     [
       Opt(name: "state-dir", help: "folder of server.json (default: FINN_STATE_DIR, else the user's state folder)"),
@@ -40,6 +46,12 @@ def parse(args: List[String]) -> Result[Command]
       Opt(name: "model", help: "model of a new session (default: the server's)"),
       Opt(name: "api", help: "model API of a new session: openai or openai_responses (default: the server's)"),
       Opt(name: "thinking", kind: Kind.Flag, help: "show the model's thinking, dimmed"),
+      Opt(
+        name: "prompt",
+        short: "p",
+        help: "run this one task (- reads it from stdin) and exit: 0 end_turn, 130 cancelled, 1 otherwise",
+      ),
+      Opt(name: "yolo", kind: Kind.Flag, help: "allow every tool call without asking (also in one-shot)"),
       Opt(name: "delete", help: "id of a session to delete (with its file), then exit"),
       Opt(name: "version", kind: Kind.Flag, help: "print the version"),
     ],
@@ -67,6 +79,8 @@ def command(parsed: Parsed) -> Result[Command]
     model: OP.optional_string(parsed, "model"),
     api: OP.optional_string(parsed, "api"),
     thinking: OP.flag(parsed, "thinking"),
+    prompt: OP.optional_string(parsed, "prompt"),
+    yolo: OP.flag(parsed, "yolo"),
   )
 
   for id in option_list(OP.optional_string(parsed, "delete"))
