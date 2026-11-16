@@ -23,6 +23,8 @@ struct Call
   output: String = ""
   diff: String = ""
   duration_ms: Int = 0
+  ## A muted line after the output, shown folded too.
+  aside: String = ""
 end
 
 ## The rows of `call` in `width` columns; `open` shows the whole body.
@@ -39,6 +41,10 @@ def rows(call: Call, width: Int, open: Bool) -> List[List[Markdown.Span]]
   if not open and body.size > FOLDED_ROWS
     more = "#{BODY}… #{body.size - FOLDED_ROWS} more lines (click or ^O shows them)"
     shown = body.take(FOLDED_ROWS).push([span(more, Markdown.Look.Muted)])
+  end
+
+  if call.aside != ""
+    shown = shown.push([span(BODY + call.aside, Markdown.Look.Muted)])
   end
 
   head + shown + [[span("#{BODY}Took #{seconds(call.duration_ms)}", Markdown.Look.Muted)]]
@@ -59,7 +65,7 @@ def span(text: String, look: Markdown.Look) -> Markdown.Span = Markdown.Span(tex
 # The title of the call (`$` for a command) and its argument, cut to `columns`.
 def title(call: Call, columns: Int) -> List[Markdown.Span]
   word = case call.name
-    "bash" -> "$"
+    _ if call.name == BASH -> "$"
     "read_file" -> "read"
     "write_file" -> "write"
     "edit_file" -> "edit"

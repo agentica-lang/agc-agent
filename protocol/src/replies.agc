@@ -103,6 +103,8 @@ struct Session
   effort: Optional[String] = none
   provider: String = ""
   api: String = ""
+  ## The `!` command that runs, none when none does.
+  shell_id: Optional[String] = none
 end
 
 ## A user message of `SessionTree`. `id` is its entry: a branch from it goes back before the message. `last` is the
@@ -213,6 +215,7 @@ def encode_session(reply: Session) -> String
       effort: reply.effort,
       provider: some(reply.provider),
       api: some(reply.api),
+      shell_id: reply.shell_id,
     ),
   )
 end
@@ -242,6 +245,7 @@ def decode_session(text: String) -> Result[Session]
       effort: wire.effort,
       provider: wire.provider.unwrap_or(""),
       api: wire.api.unwrap_or(""),
+      shell_id: wire.shell_id,
     ),
   )
 end
@@ -292,6 +296,7 @@ struct SessionWire
   effort: Optional[String] = none
   provider: Optional[String] = none
   api: Optional[String] = none
+  shell_id: Optional[String] = none
 end
 
 def check_turn(wire: SessionWire) -> Result[Void]

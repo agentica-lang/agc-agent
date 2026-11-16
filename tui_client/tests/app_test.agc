@@ -120,8 +120,9 @@ def test_a_turn_spins_in_the_rule() -> Result[Void]
   Test.eq(rows(spun)[2].slice(0, 12), "── ⠙ Working")
 end
 
-# `!cmd` goes to the shell route from a command and draws as a `$` line with its output; Esc stops it, and a refused
-# command goes back to the prompt.
+# `!cmd` goes to the shell route from a command and draws as a `$` line with its output, and a muted line when the
+# model does not get it; Esc stops it. A refused command goes back to the prompt, one that may have run does not, and
+# none goes while the session moves or as a follow-up.
 def test_a_bang_line_runs_a_shell_command() -> Result[Void]
   model = model_of(40, 10).with(id: "s1", generation: 1, prompt: "!echo one")
   sending = App.update(model, enter())
@@ -148,10 +149,33 @@ def test_a_bang_line_runs_a_shell_command() -> Result[Void]
 
   try Test.eq([finished.model.shell, finished.model.stopping], [false, false])
   try Test.assert(rows(finished.model).include?("one"), "the output is drawn: #{rows(finished.model)}")
+  try Test.assert(not rows(finished.model).include?("not sent to the model"), "a ! output goes to the model")
+  quiet = done.with(shell_id: "sh2", command: "true", context: false, output: "")
+  silent = App.update(
+    finished.model,
+    App.Msg.Stream(1, [Client.Item.Event(some(3), Protocol.Event.ShellFinished(quiet))]),
+  )
+
+  shown = rows(silent.model)
+  try Test.eq(
+    [shown.include?("$ true"), shown.include?("true"), shown.include?("not sent to the model")],
+    [true, false, true],
+  )
+
   refused = App.update(model_of(40, 10), App.Msg.ShellSent("ls", error("a turn is running", kind: "session.busy")))
-  Test.eq(
+  try Test.eq(
     [refused.model.prompt, refused.model.entries.last.text],
     ["!ls", "the command did not run: a turn is running: ls"],
+  )
+
+  late = App.update(model_of(40, 10), App.Msg.ShellSent("ls", error("slow", kind: Client.KIND_TIMEOUT))).model
+  try Test.eq([late.prompt, late.entries.last.text], ["", "the command may have run (slow): ls"])
+  moving = App.update(model_of(40, 10).with(moving: true, prompt: "!ls"), enter())
+  try Test.eq([moving.model.entries.last.text, "#{moving.cmds.size}"], ["the session is moving: wait for it", "0"])
+  later = App.update(model_of(40, 10).with(turn: true, prompt: "!ls"), alt_enter())
+  Test.eq(
+    [later.model.prompt, "#{later.model.follow_ups}", later.model.entries.last.text],
+    ["!ls", "[]", "a ! command runs between turns: send it once the turn ends"],
   )
 end
 
