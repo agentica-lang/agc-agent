@@ -29,7 +29,7 @@ def a_turn(rig: Driver.Rig) -> Result[Void]
     "[tool] read_file README.md",
     "[tool ok] read 120 bytes (8 ms)",
     "It says \"agc-agent\".",
-    "[usage] input 1200, output 85, cache read 1000, cache write 0, context 1285",
+    "[usage] input 1200, output (session) 85, cache read 1000, cache write 0, context 1285",
     "[turn finished] end_turn",
   ]
 

@@ -247,12 +247,16 @@ def lost_after(state: State, id: Int) -> List[String]
   end
 end
 
-# A `usage` of one call goes out with the session's output so far.
+# A `usage` of one call goes out with the session's output so far, which counts it once it is saved. A call that a stop
+# cut is not counted: its `usage` comes after the turn ended, if at all.
 def emit_counted(state: State, event: Protocol.Event) -> State
   case event
     Protocol.Event.Usage(usage) ->
       output = state.output + usage.output
-      emit(state.with(output: output), Protocol.Event.Usage(usage.with(output: output)))
+      emitted = emit(state, Protocol.Event.Usage(usage.with(output: output)))
+      return emitted if emitted.counter == state.counter
+
+      emitted.with(output: output)
     _ -> emit(state, event)
   end
 end

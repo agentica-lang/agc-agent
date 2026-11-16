@@ -27,7 +27,7 @@ def test_usage_sums_the_output_of_the_session() -> Result[Void]
 end
 
 # What a prompt cache needs: the system prompt and the tools are the same bytes on every call of a session, across
-# turns, tool rounds and a restart, and the system prompt comes first.
+# turns, tool rounds and a restart (after which AGENTS.md changed), and the system prompt comes first.
 def test_the_prompt_prefix_is_the_same_on_every_call() -> Result[Void]
   setup = H.Setup(replies: ["write_file.sse", "text.sse", "text.sse", "text.sse"])
   H.using(setup) do |h|
@@ -41,6 +41,7 @@ def test_the_prompt_prefix_is_the_same_on_every_call() -> Result[Void]
     H.close(a)
     _ = try H.send(h, id, "Again.")
     _ = try H.idle(h, id)
+    try File.write_text("#{h.work}/AGENTS.md", "Use spaces.\n")
     H.restarted(h, setup, "") do |r|
       _ = try H.send(r, id, "Once more.")
       _ = try H.idle(r, id)
