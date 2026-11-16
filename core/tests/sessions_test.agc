@@ -121,14 +121,16 @@ def test_a_turn_cut_before_it_started_ends_cancelled() -> Result[Void]
 end
 
 # A write that fails gives no id: the clients get an `error` and the end of the turn without one (a client keeps the
-# last id it saw), and no turn starts
-# until the file can be written again; a client that attaches from inside the turn gets them too. A line the failed
-# write left cut does not take the next record with it. After a restart the ids go on from the last saved one.
+# last id it saw), and no turn starts until the file can be written again; a client whose replay passes the failure
+# gets them too. A line the failed write left cut does not take the next record with it. After a restart the ids go on
+# from the last saved one.
 def test_a_failed_write_stops_the_turn_and_reuses_no_id() -> Result[Void]
-  setup = H.Setup(replies: ["write_file.sse", "text.sse", "text.sse"])
+  setup = H.Setup(replies: ["text.sse", "write_file.sse", "text.sse", "text.sse"])
   H.using(setup) do |h|
     id = try H.new_session(h)
     file = H.session_file(h, id)
+    _ = try H.send(h, id, "Hi.")
+    _ = try H.idle(h, id)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Write hello.txt.")
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
@@ -151,10 +153,17 @@ def test_a_failed_write_stops_the_turn_and_reuses_no_id() -> Result[Void]
     late = try H.until(try H.subscribe(h, id, some(saved_last)), Protocol.EventKind.TurnFinished)
     H.close(late)
     try Test.eq(H.kinds(late.seen), ["error", "turn_finished"])
+    early = try H.until(try H.subscribe(h, id, some(2)), Protocol.EventKind.Error)
+    if H.kinds(early.seen).last != "turn_finished"
+      early = try H.until(early, Protocol.EventKind.TurnFinished)
+    end
+
+    H.close(early)
+    try Test.eq(H.kinds(early.seen.drop(early.seen.size - 3)), ["approval_requested", "error", "turn_finished"])
     try chmod("600", file)
     try File.append_text(file, "{\"type\":\"event\",\"id\":999,\"name\":\"text_de")
     sent = try H.send(h, id, "Hello.")
-    try Test.eq((try Protocol.decode_message_accepted(sent.text)).turn_id, "turn-2")
+    try Test.eq((try Protocol.decode_message_accepted(sent.text)).turn_id, "turn-3")
     a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
     H.close(a)
     try Test.eq(a.seen.first.id, Protocol.format_event_id(saved_last + 1))

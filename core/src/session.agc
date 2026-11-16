@@ -128,9 +128,8 @@ struct Job
 end
 
 # The end of a turn that a failed write stopped: the clients got `frames` without an id after event `to`, and a
-# client that attaches from `from` to `to` gets them again.
+# client whose replay passes `to` gets them again.
 struct Lost
-  from: Int
   to: Int
   frames: List[String]
 end
@@ -209,12 +208,9 @@ def attach(state: State, last: Optional[Int], reply: Channel[Channel[Bytes]]) ->
   if from > state.counter or from < first - 1
     replay = [frame("", Protocol.Event.Resync)]
   else
-    replay = lost_after(state, from, from)
+    replay = lost_after(state, from)
     for logged in (state.log.select { |l| l.id > from })
-      replay = (
-        replay.push(frame(Protocol.format_event_id(logged.id), logged.event)) +
-        lost_after(state, from, logged.id)
-      )
+      replay = replay.push(frame(Protocol.format_event_id(logged.id), logged.event)) + lost_after(state, logged.id)
     end
   end
 
@@ -241,10 +237,10 @@ def frame(id: String, event: Protocol.Event) -> String
   SSE.encode(sse).unwrap_or("")
 end
 
-# The frames a failed write lost right after event `id`, for a client that attached from `from`.
-def lost_after(state: State, from: Int, id: Int) -> List[String]
+# The frames a failed write lost right after event `id`.
+def lost_after(state: State, id: Int) -> List[String]
   case state.lost
-    some(lost) if lost.to == id and from >= lost.from -> lost.frames
+    some(lost) if lost.to == id -> lost.frames
     _ -> []
   end
 end
@@ -291,7 +287,7 @@ def broke(state: State, e: Error) -> State
 
       cancelled = Protocol.TurnFinished(turn_id: turn.id, stop_reason: Protocol.StopReason.Cancelled)
       end_frame = frame("", Protocol.Event.TurnFinished(cancelled))
-      lost = Lost(from: turn.from_event_id, to: out.counter, frames: [error_frame, end_frame])
+      lost = Lost(to: out.counter, frames: [error_frame, end_frame])
       out.with(turn: none, pending: [], subscribers: broadcast(out, end_frame), lost: some(lost))
     none -> out
   end
