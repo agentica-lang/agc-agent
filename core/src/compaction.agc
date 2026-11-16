@@ -113,7 +113,7 @@ def apply(history: List[LLM.Message], compaction: Compaction) -> List[LLM.Messag
   kept = history.drop(compaction.to)
   folded = history.take(compaction.to).drop(compaction.from)
   text = summary_text(compaction.summary)
-  skills = kept_skills(folded, history.take(compaction.from) + kept)
+  skills = Skills.kept(all_texts(folded), all_texts(history.take(compaction.from) + kept))
   if not skills.empty?
     text = "#{text}\n\nThe skills loaded in this session:\n\n#{skills.join("\n\n")}"
   end
@@ -199,22 +199,6 @@ def cut(text: String) -> String
   return text if text.length <= MAX_TEXT
 
   "#{text.slice(0, MAX_TEXT)} [cut: #{text.length} characters]"
-end
-
-# The skill blocks of `folded`, once each, but those `others` still hold.
-def kept_skills(folded: List[LLM.Message], others: List[LLM.Message]) -> List[String]
-  present = Skills.loaded(all_texts(others))
-  blocks: List[String] = []
-  names: List[String] = []
-  for block in (all_texts(folded).flat_map { |text| Skills.blocks(text) })
-    name = Skills.loaded([block])[0]
-    next if present.include?(name) or names.include?(name)
-
-    blocks = blocks.push(block)
-    names = names.push(name)
-  end
-
-  blocks
 end
 
 def all_texts(messages: List[LLM.Message]) -> List[String]

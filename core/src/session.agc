@@ -403,7 +403,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
     return state
   end
 
-  text = Skills.expand(typed, state.setup.skills, Skills.loaded(Agent.texts(state.history)))
+  text = Skills.on_message(typed, state.setup.skills, Agent.texts(state.history))
   case save(state, -> { Store.append_user(state.setup.file, text) })
     ok(_) -> nil
     error(e) ->
@@ -445,7 +445,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
       extra: setup.extra,
     ),
     last_context: state.context,
-    skills: setup.skills,
+    turn_tools: Skills.tools(setup.skills),
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))

@@ -26,6 +26,12 @@ struct Tool
   target: Fn[Context, JSON.Value, Result[String]]
 end
 
+## A tool of an extension (skills now): the agent runs it with the texts of the session's history so far.
+struct TurnTool
+  tool: Tool
+  run: Fn[JSON.Value, List[String], Output]
+end
+
 ## The input of a call as the record `codec` reads. It is strict: a key the record has not is an error, and so is a
 ## `null` for a required field or for `path`, so a `null` path is no "default path". A `null` for another optional
 ## field is the same as leaving it out.

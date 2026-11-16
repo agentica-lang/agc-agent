@@ -67,7 +67,36 @@ def catalog(skills: List[Skill]) -> String
   )
 end
 
-## The `activate_skill` tool, its name an enum of the skills the model may load; none when there is none.
+## The tools of the skills: `activate_skill`, its name an enum of the skills the model may load; none when there is
+## none. It answers with the skill's content, or a short note when the history has it already.
+def tools(skills: List[Skill]) -> List[Spec.TurnTool]
+  for tool in option_list(tool(skills))
+    run = ->(input: JSON.Value, texts: List[String]) { Spec.output(activate(skills, input, loaded(texts))) }
+    return [Spec.TurnTool(tool: tool, run: run)]
+  end
+
+  []
+end
+
+## The user's `/name` of a skill in `text` puts its content before it, unless the history's `texts` have it already.
+def on_message(text: String, skills: List[Skill], texts: List[String]) -> String = expand(text, skills, loaded(texts))
+
+## The skill blocks of the folded `texts` that compaction keeps, once each, but those the `others` still hold.
+def kept(texts: List[String], others: List[String]) -> List[String]
+  present = loaded(others)
+  out: List[String] = []
+  names: List[String] = []
+  for block in (texts.flat_map { |text| blocks(text) })
+    name = block_name(block)
+    next if present.include?(name) or names.include?(name)
+
+    out = out.push(block)
+    names = names.push(name)
+  end
+
+  out
+end
+
 def tool(skills: List[Skill]) -> Optional[Spec.Tool]
   names = skills.select { |skill| skill.for_model }.map { |skill| JSON.from(skill.name) }
   return none if names.empty?

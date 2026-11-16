@@ -4,7 +4,6 @@
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Compaction from "compaction"
-import Skills from "skills"
 import Tools from "tools"
 
 MAX_ROUNDS = 50
@@ -45,7 +44,8 @@ struct Turn
   ## The context of the session's last call.
   last_context: Int = 0
   max_rounds: Int = MAX_ROUNDS
-  skills: List[Skills.Skill] = []
+  ## The tools of extensions, after the base tools.
+  turn_tools: List[Tools.TurnTool] = []
 end
 
 struct Outcome
@@ -95,7 +95,7 @@ end
 
 def text_block(text: String) -> LLM.Block = LLM.Block.Text(LLM.TextPart(text: text))
 
-## The texts of the messages, tool results included: where the loaded skills are.
+## The texts of the messages, tool results included.
 def texts(messages: List[LLM.Message]) -> List[String]
   messages.flat_map { |message| message.content.map { |block| text_of(block) } }
 end
@@ -196,21 +196,24 @@ def usage(u: LLM.Usage) -> Protocol.Usage
   )
 end
 
-def offered(turn: Turn) -> List[Tools.Tool]
-  for tool in option_list(Skills.tool(turn.skills))
-    return Tools.all().push(tool)
-  end
-
-  Tools.all()
-end
+def offered(turn: Turn) -> List[Tools.Tool] = Tools.all() + turn.turn_tools.map { |t| t.tool }
 
 def target(turn: Turn, call: LLM.ToolCall) -> Result[String]
-  return Skills.target(turn.ctx, call.input) if call.name == Skills.TOOL
+  for extra in option_list(turn_tool(turn, call.name))
+    return extra.tool.target.call(turn.ctx, call.input)
+  end
 
   Tools.target(turn.ctx, call.name, call.input)
 end
 
-# `seen` is the history so far, where the skills already loaded are.
+def turn_tool(turn: Turn, name: String) -> Optional[Tools.TurnTool]
+  case (turn.turn_tools.find { |t| t.tool.name == name })
+    ok(found) -> some(found)
+    error(_) -> none
+  end
+end
+
+# `seen` is the history so far, which a tool of an extension reads.
 def run_call(turn: Turn, call: LLM.ToolCall, seen: List[LLM.Message]) -> LLM.Block
   summary = target(turn, call).unwrap_or(call.name)
   turn.link.emit.call(
@@ -235,8 +238,8 @@ def checked_run(turn: Turn, call: LLM.ToolCall, seen: List[LLM.Message]) -> Tool
     return Tools.Output(text: problem, is_error: true)
   end
 
-  if call.name == Skills.TOOL and not turn.skills.empty?
-    return Tools.output(Skills.activate(turn.skills, call.input, Skills.loaded(texts(seen))))
+  for extra in option_list(turn_tool(turn, call.name))
+    return extra.run.call(call.input, texts(seen))
   end
 
   case Tools.target(turn.ctx, call.name, call.input)
