@@ -72,6 +72,12 @@ struct Model
   picker: Optional[Picker.Picker] = none
   ## The provider and model of the session, as `provider/model`, for the status line and the `/model` picker.
   serving: String = ""
+  ## The tree the picker of `/tree` or `/fork` showed last, whose numbers `/tree N` and `/fork N` name.
+  listed: Optional[Protocol.SessionTree] = none
+  ## A branch, a fork or a copy is on its way: nothing is sent until its reply.
+  moving: Bool = false
+  ## The prompt holds the message a move went back before, selected: typing replaces it.
+  prefilled: Bool = false
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
   new_model: Optional[String] = none
   yolo: Yolo.Yolo
@@ -132,6 +138,12 @@ def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) ->
     start = start.with(theme: Theme.basic())
   end
 
+  drive(TUI.Raw.backend(screen), start, output)
+end
+
+## Runs the app from the model `start` and its effects on `backend` until it ends: the exit code. The tests give it a
+## fake terminal.
+def drive(backend: TUI.Backend, start: Model, output: TUI.OutputMode = TUI.OutputMode.Colors256) -> Result[Int]
   app = TUI.App(
     model: start.with(effects: []),
     update: &update,
@@ -143,11 +155,16 @@ def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) ->
     output: output,
   )
 
-  last = try TUI.Raw.program(screen, app)
+  last = try TUI.Raw.program(backend, app)
   case last.failure
     some(reason) -> error(reason, kind: "tui.session")
     none -> ok(last.exit.unwrap_or(0))
   end
+end
+
+## The command that reads the next items of the stream `feed` of `generation`.
+def read_feed(generation: Int, feed: Channel[Client.Item]) -> TUI.Cmd[Msg]
+  TUI.Cmd.Run(-> { Msg.Stream(generation, drained(feed)) })
 end
 
 ## The model before the session is opened.
@@ -276,11 +293,6 @@ def listen(signals: Channel[System.Signal]) -> TUI.Cmd[Msg]
   )
 end
 
-# The next items of the stream: the first that comes, and those that wait after it.
-def read_feed(generation: Int, feed: Channel[Client.Item]) -> TUI.Cmd[Msg]
-  TUI.Cmd.Run(-> { Msg.Stream(generation, drained(feed)) })
-end
-
 def drained(feed: Channel[Client.Item]) -> List[Client.Item]
   items: List[Client.Item] = []
   got = feed.recv(WAIT_MS)
@@ -404,6 +416,21 @@ def on_key(app: Model, event: TUI.Event) -> Model
 
   return app if Approvals.captures?(app.approvals, event)
 
+  on_prompt_key(unselected(app, event), event)
+end
+
+# A typed character, a paste or Backspace replaces a selected prompt; any other key keeps it as text.
+def unselected(app: Model, event: TUI.Event) -> Model
+  return app if not app.prefilled
+
+  case event
+    TUI.Event.Char(_, _), TUI.Event.Paste(_), TUI.Event.Key(TUI.Key.Backspace, _) ->
+      app.with(prompt: "", cursor: 0, prefilled: false)
+    _ -> app.with(prefilled: false)
+  end
+end
+
+def on_prompt_key(app: Model, event: TUI.Event) -> Model
   case event
     TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(exit: some(0))
     TUI.Event.Key(TUI.Key.Enter, _) -> send(app)
@@ -484,6 +511,7 @@ def scrolled(app: Model, rows: Int) -> Model = app.with(scroll: [app.scroll + ro
 def send(app: Model) -> Model
   text = app.prompt.strip
   return app if text == ""
+  return noted(app, "the session is moving: wait for it") if app.moving
 
   case Client.parse_command(text)
     some(ok(command)) -> return on_command(app.with(prompt: "", scroll: 0), command)
@@ -620,16 +648,19 @@ def picked(app: Model, kind: Picker.Kind, key: String) -> Model
   end
 end
 
-# The picker of the tree without a choice; else the move to the message the choice names (`/tree 2`, `/fork 1+`).
+# The picker of the tree without a choice; else the move to the message the choice names in the tree the picker
+# showed last (`/tree 2`, `/fork 1+`), so a message another client adds since does not change what a number names.
 def tree_command(app: Model, kind: Picker.Kind, choice: Optional[String]) -> Result[Model]
-  tree = try Client.tree(app.server, app.id)
   for picked in option_list(choice)
-    return ok(move(app, kind, some(try Client.tree_entry(tree, picked))))
+    return ok(noted(app, "open the list first: /tree")) if app.listed.none?
+
+    return ok(move(app, kind, some(try Client.tree_entry(app.listed.unwrap!, picked))))
   end
 
+  tree = try Client.tree(app.server, app.id)
   return ok(noted(app, "no messages yet")) if tree.nodes.empty?
 
-  ok(app.with(picker: some(Picker.Picker(tree: Client.tree_rows(tree), kind: kind))))
+  ok(app.with(picker: some(Picker.Picker(tree: Client.tree_rows(tree), kind: kind)), listed: some(tree)))
 end
 
 # A branch of this session from `entry` (`Kind.Tree`), or a new session from it (`Kind.Fork`), a copy when none. A
@@ -637,14 +668,16 @@ end
 def move(app: Model, kind: Picker.Kind, entry: Optional[Int]) -> Model
   return noted(app, "a turn is running: Esc stops it first") if app.turn
   return noted(app, "a message is being sent: wait for its reply first") if not app.outbox.empty?
+  return noted(app, "the session is moving: wait for it") if app.moving
 
   server = app.server
   id = app.id
+  moving = app.with(moving: true)
   case kind
     Picker.Kind.Tree ->
       at = entry.unwrap_or(0)
-      effect(app, TUI.Cmd.Run(-> { Msg.Moved(Client.branch(server, id, at)) }))
-    _ -> effect(app, TUI.Cmd.Run(-> { Msg.Moved(Client.fork(server, id, entry)) }))
+      effect(moving, TUI.Cmd.Run(-> { Msg.Moved(Client.branch(server, id, at)) }))
+    _ -> effect(moving, TUI.Cmd.Run(-> { Msg.Moved(Client.fork(server, id, entry)) }))
   end
 end
 
@@ -652,14 +685,12 @@ end
 def moved(app: Model, result: Result[Protocol.Branched]) -> Model
   case result
     ok(done) ->
-      opened = tried(app, resume(fresh(app), done.id))
+      opened = tried(app.with(moving: false), resume(fresh(app), done.id))
       return opened if done.text.empty?
 
-      noted(
-        opened.with(prompt: done.text, cursor: done.text.length),
-        "went back before a message: it is in the prompt",
-      )
-    error(e) -> noted(app, "error: #{e.message}")
+      filled = opened.with(prompt: done.text, cursor: done.text.length, prefilled: true)
+      noted(filled, "went back before a message: it is in the prompt (typing replaces it, an arrow keeps it)")
+    error(e) -> noted(app.with(moving: false), "error: #{e.message}")
   end
 end
 

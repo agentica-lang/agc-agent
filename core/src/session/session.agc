@@ -532,6 +532,7 @@ def entry(
     code_mode: options.code_mode,
     catalog: options.catalog,
     take_ms: options.take_ms,
+    catalog_wait_ms: options.catalog_wait_ms,
     approvals: opened.approvals,
     endpoint: some(->(name: String, now: String) { switched_endpoint(options, name, now) }),
   )

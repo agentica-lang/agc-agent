@@ -7,8 +7,8 @@ import Routes from "support/routes"
 
 PLAIN = ["--cwd", "/work"]
 PROMPT = Routes.PROMPT
-# Longer than the 10 s the client once waited for a piece of the stream.
-QUIET_MS = 12_000
+# A gap with nothing on the stream; that no timeout cuts a quiet one is checked in client_test.
+QUIET_MS = 1_000
 
 def test_a_turn_streams_text_tools_and_usage() -> Result[Void]
   Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["turn.sse"])], &a_turn)
@@ -576,7 +576,8 @@ def test_session_commands() -> Result[Void]
   end
 end
 
-# /tree lists the messages and goes back before one, drawing the session again with the message it went back before;
+# /tree lists the messages and goes back before one of that listing (a session drawn again needs a new listing),
+# drawing the session again with the message it went back before;
 # /fork starts a new session from a message and /clone copies the session.
 def test_tree_fork_and_clone() -> Result[Void]
   nodes = [
@@ -593,7 +594,7 @@ def test_tree_fork_and_clone() -> Result[Void]
   routes = [
     Routes.created(),
     Routes.events([Fake.Reply(hold: true), Fake.Reply(hold: true)]),
-    Fake.Route(method: "GET", path: Protocol.tree_path("s1"), replies: [tree, tree, tree, tree]),
+    Fake.Route(method: "GET", path: Protocol.tree_path("s1"), replies: [tree, tree]),
     Fake.Route(
       method: "POST",
       path: Protocol.branch_path("s1"),
@@ -634,6 +635,10 @@ def test_tree_fork_and_clone() -> Result[Void]
     try Driver.say(cli, "/tree 2")
     shown = try Driver.read_until(cli, "[went back before: Two.]")
     try Test.assert(shown.include?("assistant: A1"), "the branch is drawn again: #{shown}")
+    try Driver.say(cli, "/fork 1")
+    try Driver.read_until(cli, "[list the messages first: /tree]")
+    try Driver.say(cli, "/tree")
+    try Driver.read_until(cli, "2. * Two.  -> A2")
     try Driver.say(cli, "/fork 1")
     try Driver.read_until(cli, "[went back before: One.]")
     try Driver.say(cli, "/clone")

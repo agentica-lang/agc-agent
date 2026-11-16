@@ -83,6 +83,8 @@ struct Chat
   yolo: Yolo.Yolo
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
   new_model: Optional[String] = none
+  ## The tree `/tree` or `/fork` listed last, whose numbers `/tree N` and `/fork N` name.
+  listed: Optional[Protocol.SessionTree] = none
   ## One task from the command line: the exit code is the status of its turn.
   once: Bool = false
   status: Int = 0
@@ -345,17 +347,24 @@ def resume_command(chat: Chat, choice: Optional[String]) -> Result[Step]
   switch_command(chat, choice)
 end
 
-# The tree without a choice; else what `go` does with the entry the choice names.
+# The tree without a choice; else what `go` does with the entry the choice names in the last listing, so a message
+# another client adds since does not change what a number names.
 def tree_command(chat: Chat, choice: Optional[String], go: Fn[Chat, Int, Result[Protocol.Branched]]) -> Result[Step]
   case choice
     none -> tried(chat, tree_listed(chat))
     some(picked) ->
-      moved_command(chat, -> { go.call(chat, try Client.tree_entry(try Client.tree(chat.server, chat.id), picked)) })
+      case chat.listed
+        some(tree) -> moved_command(chat, -> { go.call(chat, try Client.tree_entry(tree, picked)) })
+        none -> said(chat, "[list the messages first: /tree]")
+      end
   end
 end
 
 def tree_listed(chat: Chat) -> Result[Chat]
-  ok(note(chat, Client.tree_listing(try Client.tree(chat.server, chat.id)).join("\n")))
+  tree = try Client.tree(chat.server, chat.id)
+  return ok(note(chat, "[no messages yet]")) if tree.nodes.empty?
+
+  ok(note(chat, Client.tree_listing(tree).join("\n")).with(listed: some(tree)))
 end
 
 def branched(chat: Chat, entry: Int) -> Result[Protocol.Branched] = Client.branch(chat.server, chat.id, entry)

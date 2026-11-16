@@ -9,7 +9,6 @@ import CodeMode from "../tools/code_mode"
 import Compaction from "compaction"
 import Tools from "../tools/tools"
 
-CATALOG_WAIT_MS = 1500
 MAX_ROUNDS = 50
 ## The provider whose models are offered `apply_patch`, as a custom tool.
 RESPONSES = "openai_responses"
@@ -88,6 +87,8 @@ struct Turn
   ## Where the prices and the window of the model come from: the catalog and the provider of the model there.
   catalog: Optional[Catalog.Catalog] = none
   catalog_provider: String = ""
+  ## How long a turn waits for a catalog that still loads.
+  catalog_wait_ms: Int = 1500
   ## Read from the catalog when the turn starts.
   listed: Optional[Catalog.Model] = none
   ## The thinking level of the calls; none leaves it to the model.
@@ -417,7 +418,7 @@ end
 # A catalog still loading gets a short wait, so that a first turn has its prices and window.
 def listed_model(turn: Turn) -> Optional[Catalog.Model]
   for catalog in option_list(turn.catalog)
-    _ = Catalog.wait(catalog, CATALOG_WAIT_MS)
+    _ = Catalog.wait(catalog, turn.catalog_wait_ms)
     return Catalog.find(catalog, turn.catalog_provider, turn.model)
   end
 

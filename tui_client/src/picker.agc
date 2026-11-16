@@ -134,8 +134,8 @@ end
 def choices(picker: Picker, now_s: Int) -> List[Choice]
   case picker.kind
     Kind.Sessions -> picker.sessions.map { |s| session_choice(s, now_s) }
-    Kind.Tree -> picker.tree.flat_map { |row| tree_choices(row, true) }
-    Kind.Fork -> picker.tree.flat_map { |row| tree_choices(row, false) }
+    Kind.Tree -> (0...picker.tree.size).to_a.flat_map { |i| tree_choices(picker.tree[i], i + 1, true) }
+    Kind.Fork -> (0...picker.tree.size).to_a.flat_map { |i| tree_choices(picker.tree[i], i + 1, false) }
     Kind.Models -> picker.models.map { |pair| Choice(key: pair, search: pair, text: pair) }
   end
 end
@@ -149,21 +149,24 @@ def session_choice(session: Protocol.SessionSummary, now_s: Int) -> Choice
   )
 end
 
-# A message, `*` on the branch the session is on; with `answers`, its answer under it.
-def tree_choices(row: Client.TreeRow, answers: Bool) -> List[Choice]
+# A message with its number (as `/tree N` takes it), `*` on the branch the session is on; with `answers`, its answer
+# under it.
+def tree_choices(row: Client.TreeRow, number: Int, answers: Bool) -> List[Choice]
   node = row.node
-  indent = "  " * row.depth
+  indent = Client.tree_indent(row)
   mark = "  "
   if node.active
     mark = "* "
   end
 
   message = Client.printable(node.text.split("\n")[0])
-  said = Choice(key: node.id.to_s, search: node.text, text: "#{indent}#{mark}#{message}")
+  label = "#{number}. "
+  said = Choice(key: node.id.to_s, search: node.text, text: "#{label}#{indent}#{mark}#{message}")
   return [said] if not answers or node.answer.empty?
 
   answer = Client.printable(node.answer.split("\n")[0])
-  [said, Choice(key: node.last.to_s, search: node.answer, text: "#{indent}    → #{answer}")]
+  pad = " " * label.length
+  [said, Choice(key: node.last.to_s, search: node.answer, text: "#{pad}#{"  " * row.depth}    → #{answer}")]
 end
 
 # The indexes of the rows in sight: from the top, or ending at the selected one.

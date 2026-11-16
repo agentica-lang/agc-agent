@@ -80,6 +80,8 @@ struct Options
   models_provider: String = ""
   ## How long a turn waits for the messages queued for it (tests shorten it).
   take_ms: Int = 5000
+  ## How long a turn waits for a catalog that still loads (tests shorten it).
+  catalog_wait_ms: Int = 1500
   ## The home folder, whose skills every session has; empty for none.
   home: String = ""
   ## The folders whose sessions load the skills of their own folder: a project's skills are its instructions.

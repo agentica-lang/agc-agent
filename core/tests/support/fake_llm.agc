@@ -18,6 +18,8 @@ struct Reply
   cut: Bool = false
   ## The answer waits this long first.
   delay_ms: Int = 0
+  ## The answer waits for `release` first.
+  hold: Bool = false
 end
 
 ## A request the fake got.
@@ -29,12 +31,13 @@ struct Seen
 end
 
 ## A running fake. `url` is the base URL a provider takes. `left` gets one value each time a client left a streamed
-## answer before its end.
+## answer before its end. A reply with `hold` waits for a value of `held`, which `release` sends.
 struct Fake
   server: HTTP.Server
   url: String
   seen: Channel[Seen]
   left: Channel[Bool]
+  held: Channel[Bool]
 end
 
 ## Starts a fake that gives `replies` in order, then 500.
@@ -46,19 +49,25 @@ def start(replies: List[Reply]) -> Result[Fake]
 
   seen: Channel[Seen] = Channel.new(replies.size + 1)
   left: Channel[Bool] = Channel.new(replies.size + 1)
+  held: Channel[Bool] = Channel.new(replies.size + 1)
   server = try HTTP.serve(
     "127.0.0.1",
     0,
-    ->(request, body) { answer(Script(replies: script, seen: seen, left: left), request, body) },
+    ->(request, body) { answer(Script(replies: script, seen: seen, left: left, held: held), request, body) },
   )
 
-  ok(Fake(server: server, url: "http://127.0.0.1:#{HTTP.local_port(server)}/v1", seen: seen, left: left))
+  ok(Fake(server: server, url: "http://127.0.0.1:#{HTTP.local_port(server)}/v1", seen: seen, left: left, held: held))
 end
 
 ## Stops the fake and its connections.
 def stop(fake: Fake) -> Result[Void]
   HTTP.close_server(fake.server)
   HTTP.wait(fake.server)
+end
+
+## Lets the oldest reply that is held, or the next one that comes to be, go on.
+def release(fake: Fake) -> Void
+  _ = fake.held.send(true, 0)
 end
 
 ## The next request the fake got.
@@ -95,6 +104,7 @@ struct Script
   replies: Channel[Reply]
   seen: Channel[Seen]
   left: Channel[Bool]
+  held: Channel[Bool]
 end
 
 struct Pieces
@@ -111,6 +121,10 @@ def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Res
   try script.seen.send(Seen(method: request.method, path: request.path, headers: request.headers, body: text), WAIT_MS)
   reply = script.replies.recv(0).unwrap_or(Reply(status: 500, body: "{\"error\": \"no reply left\"}".bytes))
   Task.sleep(reply.delay_ms)
+  if reply.hold
+    _ = script.held.recv(WAIT_MS)
+  end
+
   if reply.piece_bytes == 0 and not reply.cut
     return ok(HTTP.Answer.Whole(HTTP.Response(status: reply.status, headers: reply.headers, body: reply.body)))
   end

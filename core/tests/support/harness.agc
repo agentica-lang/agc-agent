@@ -81,10 +81,17 @@ struct Setup
   fresh_token: String = ""
   ## How long a turn waits for its queued messages.
   take_ms: Int = 5000
+  ## How long a turn waits for a catalog that still loads.
+  catalog_wait_ms: Int = 1500
   ## Skills: the home folder is `home` under the test's folder, and the folders of `trust` (under the test's folder;
   ## the test's folder itself when none) are trusted.
   skills: Bool = false
   trust: Optional[List[String]] = none
+end
+
+## Lets a held reply of the fake go on (`name@hold` in `replies`).
+def release(h: Harness) -> Void
+  Fake.release(h.fake)
 end
 
 def fake_env(name: String) -> Result[String]
@@ -184,6 +191,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     code_mode: code_mode(setup.monty),
     catalog: setup.catalog,
     take_ms: setup.take_ms,
+    catalog_wait_ms: setup.catalog_wait_ms,
     home: skills_home(setup, base),
     trusted: skills_trusted(setup, base),
   )
@@ -278,14 +286,20 @@ def window(tokens: Int) -> Optional[Int]
   some(tokens)
 end
 
-## A name is a fixture under `dir`, `STATUS:name.json`, or a path; `name@MS` answers after MS milliseconds.
+## A name is a fixture under `dir`, `STATUS:name.json`, or a path; `name@MS` answers after MS milliseconds, and
+## `name@hold` when the test calls `release`.
 def fixtures(names: List[String], dir: String = "openai_chat") -> Result[List[Fake.Reply]]
   replies: List[Fake.Reply] = []
   for timed in names
     name = timed.split("@")[0]
     if timed.include?("@")
       later = try fixtures([name], dir)
-      replies = replies.push(later[0].with(delay_ms: try timed.split("@")[1].to_i))
+      if timed.split("@")[1] == "hold"
+        replies = replies.push(later[0].with(hold: true))
+      else
+        replies = replies.push(later[0].with(delay_ms: try timed.split("@")[1].to_i))
+      end
+
       next
     end
 

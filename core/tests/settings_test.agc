@@ -93,7 +93,7 @@ end
 
 # While a compaction a client asked for runs, a turn and a second compaction are `session.busy`; then both work.
 def test_a_compaction_refuses_turns_and_another_compaction() -> Result[Void]
-  replies = ["text.sse", "text.sse", "summary.sse@800", "text.sse"]
+  replies = ["text.sse", "text.sse", "summary.sse@hold", "text.sse"]
   H.using(H.Setup(replies: replies)) do |h|
     id = try H.new_session(h)
     for text in ["Say hello.", "Say it again."]
@@ -102,7 +102,10 @@ def test_a_compaction_refuses_turns_and_another_compaction() -> Result[Void]
     end
 
     first = Task.spawn(-> { compact(h, id) })
-    Task.sleep(300)
+    for _ in 1..3
+      _ = try H.next_request(h)
+    end
+
     turn = try H.send(h, id, "Now?")
     again = try compact(h, id)
     for refused in [turn, again]
@@ -112,6 +115,7 @@ def test_a_compaction_refuses_turns_and_another_compaction() -> Result[Void]
       )
     end
 
+    H.release(h)
     done = try Task.await(first)
     try Test.eq(Protocol.decode_compacted(done.text), ok(Protocol.Compacted(compacted: true)))
     sent = try H.send(h, id, "Now?")
