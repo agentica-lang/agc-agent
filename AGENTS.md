@@ -12,6 +12,9 @@ llm/                 client for LLM APIs; llm.agc is its public module, src/ the
 mcp/                 client for MCP servers on stdio; mcp.agc is its public module
 protocol/            commands, replies and events between server and clients, with JSON codecs, pure;
                      protocol.agc is its public module
+monty/               Python scripts in pydantic's Monty sandbox: the pinned `monty subprocess` worker (fetched
+                     with its sha256), its protobuf codec, and a fake worker that replays recorded frames
+                     (`serve_fake`); monty.agc is its public module; real/ the tests on the real worker
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point
 cli/                 the line-mode client: depends only on sse and protocol; main.agc is the entry point
@@ -49,6 +52,9 @@ by the phase that needs it, never as an empty folder.
   `scripts/`, one tag and its sha256 to bump), then runs `llm/smoke` against a
   llama-server it starts on port 0 and stops; `LLAMA_URL` uses a running one.
   CI runs it in the `llama` job.
+- `make smoke-monty`: the `monty` tests on the real worker (the pinned wheel
+  from PyPI into `.tools/cache`, or `MONTY_BIN`). Record the fixtures again
+  with `MONTY_RECORD=path/to/monty` set for `make unit`.
 - `make live-fireworks`: one real call to Fireworks (`FIREWORKS_API_KEY`,
   `FIREWORKS_MODEL`); it skips without the key. It costs money: only with the
   owner's yes, never in CI.

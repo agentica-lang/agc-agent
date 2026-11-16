@@ -23,7 +23,8 @@ The repo is an Agentica workspace (`agentica.toml`): one folder per package.
 | `sse` | Server-Sent Events: a parser and a writer |
 | `llm` | client for LLM APIs |
 | `protocol` | the records, events and JSON codecs between the server and its clients |
-| `core` | the server: agent loop, tools, approval, sessions, extensions |
+| `monty` | Python scripts in pydantic's Monty sandbox, through its `monty subprocess` worker |
+| `core` | the server: agent loop, tools, approval, sessions, extensions, code mode (`FINN_CODE_MODE=1`) |
 | `cli` | the line-mode client: sends messages, prints the events, answers approvals, stops with Ctrl+C |
 
 ## Try it
