@@ -78,7 +78,7 @@ def run(given: Turn) -> Outcome
     messages = messages + [response.message, LLM.Message(role: LLM.Role.User, content: results)]
     turn.link.commit.call(messages)
     context = response.usage.input + response.usage.cache_read + response.usage.cache_write
-    folded = compacted(turn, context, Folded(messages: messages, on: folded.on))
+    folded = compacted(turn, context, folded.with(messages: messages))
     messages = folded.messages
     this_round = JSON.encode(JSON.from([calls.map { |c| "#{c.name} #{c.arguments}" }, results.map { |r| text_of(r) }]))
     same = same_count(this_round, last_round, same)
@@ -104,8 +104,10 @@ EMPTY = LLM.Response(
 
 struct Folded
   messages: List[LLM.Message]
-  # False once a summary failed in this turn.
+  # False once a summary failed in this turn, or a fold left the context past the limit.
   on: Bool
+  # A fold happened and no call measured the context since.
+  just: Bool = false
 end
 
 # The session keeps a window once the API answered; after a failed request a later turn asks again.
@@ -126,15 +128,25 @@ def known_window(turn: Turn) -> Int
 end
 
 # Past the part of the window the settings give, the history from the first task to the running turn becomes a
-# summary. A summary that fails is an `error` event, and the turn tries no more.
+# summary. A summary that fails is an `error` event, and the turn tries no more; so is a fold after which the next call
+# is still past the limit, so that every round does not fold again.
 def compacted(turn: Turn, context: Int, folded: Folded) -> Folded
-  return folded if not folded.on or not Compaction.due?(turn.compaction, context)
+  return folded if not folded.on
+
+  due = Compaction.due?(turn.compaction, context)
+  return folded.with(just: false) if not due
+
+  if folded.just
+    message = "the compacted history is still past the limit: no more compaction in this turn"
+    turn.link.emit.call(Protocol.Event.Error(Protocol.Failure(kind: Compaction.KIND_FAILED, message: message)))
+    return folded.with(on: false, just: false)
+  end
 
   for span in option_list(Compaction.span(folded.messages))
     case Compaction.summarize(turn.provider, turn.compaction, folded.messages, span)
       ok(compaction) ->
         turn.link.compacted.call(compaction)
-        return folded.with(messages: Compaction.apply(folded.messages, compaction))
+        return folded.with(messages: Compaction.apply(folded.messages, compaction), just: true)
       error(e) ->
         message = "the history was not compacted: #{e.message}"
         turn.link.emit.call(Protocol.Event.Error(Protocol.Failure(kind: Compaction.KIND_FAILED, message: message)))

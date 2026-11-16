@@ -122,7 +122,7 @@ def broken_lines(dir: String) -> Result[Void]
   try Test.eq([again.skipped, again.events.size, again.history.size], [4, 2, 1])
   try Test.eq(again.open_end, false)
   try Test.eq(again.events.map { |l| l.id }, [1, 2])
-  try Store.append_compaction(path, Compaction.Compaction(from: 1, to: 3, summary: "past the end"))
+  try Store.append_compaction(path, Compaction.Compaction(from: 1, to: 3, summary: "past the end"), [])
   try Test.eq([(try Store.load(path)).skipped, (try Store.load(path)).history.size], [5, 1])
   Test.eq(again.shown.map { |m| "#{Protocol.role_name(m.role)}: #{m.text}" }, ["user: Hello.", "assistant: Hi!"])
 end

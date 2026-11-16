@@ -40,6 +40,15 @@ struct Saved
   open_user: Bool = false
   ## After the last saved event, the ids up to this one may have gone to events that are not saved; 0 when none.
   reserved: Int = 0
+  ## The answer of the last turn so far at its last compaction, which may have folded part of it.
+  folded: Optional[Folded] = none
+end
+
+## The answer texts of a turn when it was compacted, and the size of the history after: the texts of the messages
+## from there on follow them.
+struct Folded
+  texts: List[String]
+  at: Int
 end
 
 def file_of(dir: String, id: String) -> String = "#{dir}/#{id}#{EXTENSION}"
@@ -85,8 +94,8 @@ def append_reserved(path: String, until: Int) -> Result[Void]
   append(path, {"type": JSON.from("ids"), "until": JSON.from(until)})
 end
 
-## A compaction of the history as the records before it left it.
-def append_compaction(path: String, compaction: Compaction.Compaction) -> Result[Void]
+## A compaction of the history as the records before it left it, with the answer texts of the running turn so far.
+def append_compaction(path: String, compaction: Compaction.Compaction, answer: List[String]) -> Result[Void]
   append(
     path,
     {
@@ -94,6 +103,7 @@ def append_compaction(path: String, compaction: Compaction.Compaction) -> Result
       "from": JSON.from(compaction.from),
       "to": JSON.from(compaction.to),
       "summary": JSON.from(compaction.summary),
+      "answer": JSON.from(answer),
     },
   )
 end
@@ -224,6 +234,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
           shown: saved.shown.push(shown),
           users: users,
           open_user: true,
+          folded: none,
         ),
       )
     "messages" ->
@@ -242,7 +253,14 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
 
       return error("a compaction outside the history") if compaction.to > saved.history.size
 
-      ok(saved.with(history: Compaction.apply(saved.history, compaction)))
+      history = Compaction.apply(saved.history, compaction)
+      folded = saved.folded
+      case JSON.get(json, "answer")
+        ok(texts) -> folded = some(Folded(texts: try JSON.decode(texts, List[String]), at: history.size))
+        error(_) -> nil
+      end
+
+      ok(saved.with(history: history, folded: folded))
     "ids" -> ok(saved.with(reserved: try JSON.int(try JSON.get(json, "until"))))
     "answer" ->
       shown = Protocol.Message(role: Protocol.Role.Assistant, text: try field(json, "text"))
