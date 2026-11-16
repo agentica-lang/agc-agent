@@ -575,6 +575,80 @@ def test_session_commands() -> Result[Void]
   end
 end
 
+# /tree lists the messages and goes back before one, drawing the session again with the message it went back before;
+# /fork starts a new session from a message and /clone copies the session.
+def test_tree_fork_and_clone() -> Result[Void]
+  nodes = [
+    Protocol.TreeNode(id: 1, text: "One.", answer: "A1", last: 7, active: true),
+    Protocol.TreeNode(id: 8, parent: some(1), text: "Two.", answer: "A2", last: 14, active: true),
+  ]
+
+  tree = Fake.Reply(body: Protocol.encode_session_tree(Protocol.SessionTree(nodes: nodes)))
+  one = [
+    Protocol.Message(role: Protocol.Role.User, text: "One."),
+    Protocol.Message(role: Protocol.Role.Assistant, text: "A1"),
+  ]
+
+  routes = [
+    Routes.created(),
+    Routes.events([Fake.Reply(hold: true), Fake.Reply(hold: true)]),
+    Fake.Route(method: "GET", path: Protocol.tree_path("s1"), replies: [tree, tree, tree, tree]),
+    Fake.Route(
+      method: "POST",
+      path: Protocol.branch_path("s1"),
+      replies: [Fake.Reply(body: Protocol.encode_branched(Protocol.Branched(id: "s1", text: "Two.")))],
+    ),
+    Routes.session([Fake.Reply(body: Protocol.encode_session(idle("s1", one)))]),
+    Fake.Route(
+      method: "POST",
+      path: Protocol.fork_path("s1"),
+      replies: [Fake.Reply(status: 201, body: Protocol.encode_branched(Protocol.Branched(id: "s2", text: "One.")))],
+    ),
+    Fake.Route(
+      method: "POST",
+      path: Protocol.fork_path("s2"),
+      replies: [Fake.Reply(status: 201, body: Protocol.encode_branched(Protocol.Branched(id: "s3")))],
+    ),
+    Fake.Route(
+      method: "GET",
+      path: Protocol.session_path("s2"),
+      replies: [Fake.Reply(body: Protocol.encode_session(idle("s2", [])))],
+    ),
+    Fake.Route(method: "GET", path: Protocol.events_path("s2"), replies: [Fake.Reply(hold: true)]),
+    Fake.Route(
+      method: "GET",
+      path: Protocol.session_path("s3"),
+      replies: [Fake.Reply(body: Protocol.encode_session(idle("s3", one)))],
+    ),
+    Fake.Route(method: "GET", path: Protocol.events_path("s3"), replies: [Fake.Reply(hold: true)]),
+  ]
+
+  Driver.within(routes) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN)
+    try Driver.read_until(cli, "[session s1]")
+    try Driver.say(cli, "/tree")
+    try Driver.read_until(cli, "2. * Two.  -> A2")
+    try Driver.say(cli, "/tree 3")
+    try Driver.read_until(cli, "[error] no message 3: /tree lists them")
+    try Driver.say(cli, "/tree 2")
+    shown = try Driver.read_until(cli, "[went back before: Two.]")
+    try Test.assert(shown.include?("assistant: A1"), "the branch is drawn again: #{shown}")
+    try Driver.say(cli, "/fork 1")
+    try Driver.read_until(cli, "[went back before: One.]")
+    try Driver.say(cli, "/clone")
+    try Driver.read_until(cli, "[session s3]")
+    try Driver.say(cli, "/quit")
+    try Test.eq((try Driver.finish(cli)).code, 0)
+    branch = try Fake.request(rig.fake, "POST", Protocol.branch_path("s1"))
+    try Test.eq(Protocol.decode_branch(branch.body), ok(Protocol.Branch(entry: 8)))
+    fork = try Fake.request(rig.fake, "POST", Protocol.fork_path("s1"))
+    try Test.eq(Protocol.decode_fork(fork.body), ok(Protocol.Fork(entry: some(1))))
+    clone = try Fake.request(rig.fake, "POST", Protocol.fork_path("s2"))
+    try Test.eq(Protocol.decode_fork(clone.body), ok(Protocol.Fork()))
+    Test.eq(Fake.strays(rig.fake), 0)
+  end
+end
+
 # A line that starts with `/` but is no client command (a path, a skill, `/` alone) goes to the agent as text. While a
 # turn runs, /new and /resume are refused; a call that fails after /model warns about the name.
 def test_slash_text_busy_switches_and_the_model_warning() -> Result[Void]
@@ -632,5 +706,18 @@ def providers_route() -> Fake.Route
     method: "GET",
     path: Protocol.PROVIDERS_PATH,
     replies: [Fake.Reply(body: Protocol.encode_provider_list(list))],
+  )
+end
+
+def idle(id: String, history: List[Protocol.Message]) -> Protocol.Session
+  Protocol.Session(
+    id: id,
+    cwd: "/work",
+    model: "m",
+    last_event_id: 0,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: history,
   )
 end

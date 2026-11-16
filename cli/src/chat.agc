@@ -324,6 +324,9 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Cost -> said(chat, "[/cost comes with the model catalog]")
     Client.Command.New -> switch_command(chat, none)
     Client.Command.Resume(choice) -> resume_command(chat, choice)
+    Client.Command.Tree(choice) -> tree_command(chat, choice, &branched)
+    Client.Command.Fork(choice) -> tree_command(chat, choice, &forked)
+    Client.Command.Clone -> moved_command(chat, -> { Client.fork(chat.server, chat.id, none) })
     Client.Command.Model(model) -> model_command(chat, model)
     Client.Command.Thinking(level) -> setting_command(chat, "thinking", level, Protocol.UpdateSession(effort: level))
     Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
@@ -340,6 +343,39 @@ def resume_command(chat: Chat, choice: Optional[String]) -> Result[Step]
   return tried(chat, listed(chat)) if choice.none?
 
   switch_command(chat, choice)
+end
+
+# The tree without a choice; else what `go` does with the entry the choice names.
+def tree_command(chat: Chat, choice: Optional[String], go: Fn[Chat, Int, Result[Protocol.Branched]]) -> Result[Step]
+  case choice
+    none -> tried(chat, tree_listed(chat))
+    some(picked) ->
+      moved_command(chat, -> { go.call(chat, try Client.tree_entry(try Client.tree(chat.server, chat.id), picked)) })
+  end
+end
+
+def tree_listed(chat: Chat) -> Result[Chat]
+  ok(note(chat, Client.tree_listing(try Client.tree(chat.server, chat.id)).join("\n")))
+end
+
+def branched(chat: Chat, entry: Int) -> Result[Protocol.Branched] = Client.branch(chat.server, chat.id, entry)
+
+def forked(chat: Chat, entry: Int) -> Result[Protocol.Branched] = Client.fork(chat.server, chat.id, some(entry))
+
+# The session that a branch, a fork or a copy goes on in, drawn again from its start, with the message it went back
+# before.
+def moved_command(chat: Chat, move: Fn[Result[Protocol.Branched]]) -> Result[Step]
+  return said(chat, "[a turn is running: /stop it first]") if chat.turn
+
+  tried(chat, moved(chat, move))
+end
+
+def moved(chat: Chat, move: Fn[Result[Protocol.Branched]]) -> Result[Chat]
+  done = try move.call()
+  opened = try resume(fresh(chat).with(id: done.id), done.id)
+  return ok(opened) if done.text.empty?
+
+  ok(note(opened, "[went back before: #{Client.printable(done.text)}]"))
 end
 
 # A new session (no choice), or the session `/resume` chose.

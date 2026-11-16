@@ -86,6 +86,22 @@ def compact(server: Server, id: String) -> Result[Bool]
   ok(compacted.compacted)
 end
 
+def tree(server: Server, id: String) -> Result[Protocol.SessionTree]
+  Protocol.decode_session_tree(try call(server, "GET", Protocol.tree_path(id), ""))
+end
+
+## Goes on from `entry` of the tree in the same session.
+def branch(server: Server, id: String, entry: Int) -> Result[Protocol.Branched]
+  body = Protocol.encode_branch(Protocol.Branch(entry: entry))
+  Protocol.decode_branched(try call(server, "POST", Protocol.branch_path(id), body))
+end
+
+## A new session from `entry` of the tree, a copy of the session when none.
+def fork(server: Server, id: String, entry: Optional[Int]) -> Result[Protocol.Branched]
+  body = Protocol.encode_fork(Protocol.Fork(entry: entry))
+  Protocol.decode_branched(try call(server, "POST", Protocol.fork_path(id), body))
+end
+
 def stop(server: Server, id: String) -> Result[Void]
   _ = try call(server, "POST", Protocol.stop_path(id), "")
   ok()

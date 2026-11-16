@@ -3,10 +3,15 @@
 import Protocol from "pkg/protocol/protocol"
 
 KIND_COMMAND = "client.command"
-NAMES = ["/new", "/resume", "/model", "/thinking", "/compact", "/stop", "/cost", "/help", "/quit"]
+NAMES = [
+  "/new", "/resume", "/tree", "/fork", "/clone", "/model", "/thinking", "/compact", "/stop", "/cost", "/help", "/quit",
+]
 HELP = [
   "/new                       a new session in this folder",
   "/resume                    list the sessions; /resume N or /resume ID switches to one",
+  "/tree [N|N+]               the session's messages; N goes back before message N, N+ on after its answer",
+  "/fork [N|N+]               a new session from before message N (or after its answer)",
+  "/clone                     a new session with this one's history",
   "/model [PROVIDER/]NAME     change the model (and provider) from the next turn on; alone: pick or show it",
   "/thinking [low|medium|high|default]  the thinking level, or change it",
   "/compact                   fold the history into a summary now",
@@ -20,6 +25,11 @@ enum Command
   New
   ## Lists the sessions without an argument; switches to the one of that number or id.
   Resume(Optional[String])
+  ## Shows the tree without an argument; goes back to the message it names (see `tree_entry`).
+  Tree(Optional[String])
+  ## Shows the tree without an argument; a new session from the message it names.
+  Fork(Optional[String])
+  Clone
   ## Shows the model without an argument.
   Model(Optional[String])
   ## Shows the thinking level without an argument.
@@ -104,6 +114,9 @@ def command(name: String, argument: String) -> Result[Command]
   case name
     "/new" -> bare(Command.New, name, argument)
     "/resume" -> ok(Command.Resume(given(argument)))
+    "/tree" -> ok(Command.Tree(given(argument)))
+    "/fork" -> ok(Command.Fork(given(argument)))
+    "/clone" -> bare(Command.Clone, name, argument)
     "/model" -> model(argument)
     "/thinking" -> thinking(argument)
     "/compact" -> bare(Command.Compact, name, argument)

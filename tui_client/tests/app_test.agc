@@ -147,6 +147,33 @@ def test_the_status_shows_the_model_and_the_model_picker_closes() -> Result[Void
   Test.eq(closed.picker.none?, true)
 end
 
+# The /tree picker lists the messages and answers of every branch; Enter on one asks for the branch by a command, not
+# while a turn runs. The session the server moved to is opened, with the message it went back before in the prompt.
+def test_the_tree_picker_moves_the_session_and_fills_the_prompt() -> Result[Void]
+  nodes = [
+    Protocol.TreeNode(id: 1, text: "One.", answer: "A1", last: 7, active: true),
+    Protocol.TreeNode(id: 8, parent: some(1), text: "Two.", answer: "A2", last: 14),
+    Protocol.TreeNode(id: 15, parent: some(1), text: "Three.", last: 20, active: true),
+  ]
+
+  tree = Client.tree_rows(Protocol.SessionTree(nodes: nodes))
+  model = model_of(50, 12).with(id: "s1", picker: some(Picker.Picker(tree: tree, kind: Picker.Kind.Tree)))
+  drawn = rows(model)
+  try Test.assert(drawn.include?("› * One."), "the first message is selected: #{drawn}")
+  try Test.assert(drawn.include?("→ A2"), "an answer is a row: #{drawn}")
+  down = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))).model
+  busy = App.update(down.with(turn: true), enter())
+  try Test.eq([busy.cmds.size.to_s, busy.model.picker.some?.to_s], ["0", "false"])
+  picked = App.update(down, enter())
+  try Test.eq([picked.cmds.size.to_s, picked.model.picker.some?.to_s], ["1", "false"])
+  try Test.assert(picked.cmds.flat_map { |cmd| run(cmd) }.all? { |msg| moved?(msg) }, "the branch is asked")
+  branched = Protocol.Branched(id: "s1", text: "Two.")
+  back = App.update(model.with(picker: none), App.Msg.Moved(ok(branched))).model
+  try Test.eq([back.prompt, back.cursor.to_s], ["Two.", "4"])
+  failed = App.update(model.with(picker: none), App.Msg.Moved(error("busy", kind: "session.busy"))).model
+  Test.eq([failed.prompt, failed.entries.last.text], ["", "error: busy"])
+end
+
 def model_of(width: Int, height: Int) -> App.Model
   options = Args.Options(
     state_dir: none,
@@ -187,6 +214,13 @@ end
 def quit?(cmd: TUI.Cmd[App.Msg]) -> Bool
   case cmd
     TUI.Cmd.Quit -> true
+    _ -> false
+  end
+end
+
+def moved?(msg: App.Msg) -> Bool
+  case msg
+    App.Msg.Moved(_) -> true
     _ -> false
   end
 end

@@ -1,31 +1,41 @@
-## The pickers over the prompt: the sessions of `/resume` (newest first, one row each with its id, folder, model, last
-## change and first message) and the `provider/model` pairs of `/model`. Up and Down (or the wheel) move, typing
-## filters, Enter picks, Esc closes. Pure.
+## The picker of `/resume`, `/tree`, `/fork` and `/model`: the sessions newest first, one row each with its id, folder,
+## model, last change and first message; the messages of the session's tree, a branch a step in; or the
+## `provider/model` pairs. Up and Down (or the wheel) move, typing filters, Enter picks, Esc closes. Pure.
 
+import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Layout from "panel"
 import Prompt from "prompt"
 import Width from "width"
 
-## What a pick does.
-enum Purpose
-  Resume
-  Model
-end
+KEYS = ["↑↓ move", "Enter resume", "Esc close", "type to filter"]
 
-## A row to pick: `id` is what a pick gives, `text` what the row shows and the filter searches.
-struct Item
-  id: String
-  text: String
+## What the picker lists: the sessions, the messages and answers of the tree (a message picks going back before it,
+## an answer going on after it), the messages of the tree to fork from, or the `provider/model` pairs.
+enum Kind
+  Sessions
+  Tree
+  Fork
+  Models
 end
 
 struct Picker
-  purpose: Purpose
-  items: List[Item]
+  sessions: List[Protocol.SessionSummary] = []
+  tree: List[Client.TreeRow] = []
+  models: List[String] = []
+  kind: Kind = Kind.Sessions
   filter: String = ""
   ## The index in `shown`.
   selected: Int = 0
+end
+
+## A row to pick: `key` is what `Step.Pick` gives (a session id, or an entry of the tree), `search` what the filter
+## looks in.
+struct Choice
+  key: String
+  search: String
+  text: String
 end
 
 ## What a key did to the picker.
@@ -51,50 +61,30 @@ def key(picker: Picker, event: TUI.Event) -> Step
   end
 end
 
-## The picker of `/resume`; `now_s` dates the last changes.
-def sessions(list: List[Protocol.SessionSummary], now_s: Int) -> Picker
-  Picker(purpose: Purpose.Resume, items: list.map { |s| Item(id: s.id, text: session_text(s, now_s)) })
-end
-
 ## The picker of `/model`: every model of every provider, as `provider/model`, on the one in use.
 def models(list: Protocol.ProviderList, current: String) -> Picker
-  ids = list.providers.flat_map { |p| p.models.map { |m| "#{p.name}/#{m}" } }
-  selected = ids.index(current).unwrap_or(0)
-  Picker(purpose: Purpose.Model, items: ids.map { |id| Item(id: id, text: id) }, selected: selected)
+  pairs = list.providers.flat_map { |p| p.models.map { |m| "#{p.name}/#{m}" } }
+  Picker(models: pairs, kind: Kind.Models, selected: pairs.index(current).unwrap_or(0))
 end
 
-## The items the filter keeps: it is found in their text, in any case.
-def shown(picker: Picker) -> List[Item]
+## The rows the filter keeps, in any case: of a session its id, folder, model or first message; of the tree the text.
+## `now_s` dates the last changes of the sessions.
+def shown(picker: Picker, now_s: Int = 0) -> List[Choice]
   wanted = picker.filter.downcase
-  picker.items.select { |item| item.text.downcase.include?(wanted) }
+  choices(picker, now_s).select { |c| c.search.downcase.include?(wanted) }
 end
 
-## The keys the panel shows.
-def keys(purpose: Purpose) -> List[String]
-  verb = case purpose
-    Purpose.Resume -> "resume"
-    Purpose.Model -> "use"
-  end
-
-  ["↑↓ move", "Enter #{verb}", "Esc close", "type to filter"]
-end
-
-## The picker in at most `room` rows; the selected item stays in sight.
-def rows(picker: Picker, width: Int, room: Int) -> List[Layout.Row]
-  found = shown(picker)
-  title = case picker.purpose
-    Purpose.Resume -> "resume a session"
-    Purpose.Model -> "pick a model"
-  end
-
-  head = "#{title} (#{found.size} of #{picker.items.size})"
+## The picker in at most `room` rows; the selected row stays in sight.
+def rows(picker: Picker, width: Int, room: Int, now_s: Int) -> List[Layout.Row]
+  found = shown(picker, now_s)
+  head = "#{title(picker.kind)} (#{found.size} of #{choices(picker, now_s).size})"
   if picker.filter != ""
     head = "#{head} · filter: #{picker.filter}"
   end
 
   body = ->(left: Int) { window(found, picker.selected, left).map { |i| row(found[i], i == picker.selected, width) } }
 
-  Layout.fit(head, keys(picker.purpose).map { |label| Layout.Key(label: label) }, body, width, room)
+  Layout.fit(head, keys(picker.kind).map { |label| Layout.Key(label: label) }, body, width, room)
 end
 
 ## How long ago `then_s` was, in the largest unit: "now", "5m", "3h", "2d".
@@ -120,18 +110,71 @@ def picked(picker: Picker) -> Step
   found = shown(picker)
   return Step.Stay(picker) if found.empty?
 
-  Step.Pick(found[picker.selected].id)
+  Step.Pick(found[picker.selected].key)
+end
+
+def title(kind: Kind) -> String
+  case kind
+    Kind.Sessions -> "resume a session"
+    Kind.Tree -> "go back to a message, or on after an answer"
+    Kind.Fork -> "fork a new session from a message"
+    Kind.Models -> "pick a model"
+  end
+end
+
+def keys(kind: Kind) -> List[String]
+  case kind
+    Kind.Sessions -> KEYS
+    Kind.Tree -> ["↑↓ move", "Enter go there", "Esc close", "type to filter"]
+    Kind.Fork -> ["↑↓ move", "Enter fork", "Esc close", "type to filter"]
+    Kind.Models -> ["↑↓ move", "Enter use", "Esc close", "type to filter"]
+  end
+end
+
+def choices(picker: Picker, now_s: Int) -> List[Choice]
+  case picker.kind
+    Kind.Sessions -> picker.sessions.map { |s| session_choice(s, now_s) }
+    Kind.Tree -> picker.tree.flat_map { |row| tree_choices(row, true) }
+    Kind.Fork -> picker.tree.flat_map { |row| tree_choices(row, false) }
+    Kind.Models -> picker.models.map { |pair| Choice(key: pair, search: pair, text: pair) }
+  end
+end
+
+def session_choice(session: Protocol.SessionSummary, now_s: Int) -> Choice
+  title = session.title.split("\n")[0]
+  Choice(
+    key: session.id,
+    search: [session.id, session.cwd, session.model, session.title].join(" "),
+    text: "#{session.id}  #{session.cwd}  #{session.model}  #{ago(now_s, session.updated_s)}  #{title}",
+  )
+end
+
+# A message, `*` on the branch the session is on; with `answers`, its answer under it.
+def tree_choices(row: Client.TreeRow, answers: Bool) -> List[Choice]
+  node = row.node
+  indent = "  " * row.depth
+  mark = "  "
+  if node.active
+    mark = "* "
+  end
+
+  message = Client.printable(node.text.split("\n")[0])
+  said = Choice(key: node.id.to_s, search: node.text, text: "#{indent}#{mark}#{message}")
+  return [said] if not answers or node.answer.empty?
+
+  answer = Client.printable(node.answer.split("\n")[0])
+  [said, Choice(key: node.last.to_s, search: node.answer, text: "#{indent}    → #{answer}")]
 end
 
 # The indexes of the rows in sight: from the top, or ending at the selected one.
-def window(found: List[Item], selected: Int, left: Int) -> List[Int]
+def window(found: List[Choice], selected: Int, left: Int) -> List[Int]
   return [] if left <= 0
 
   first = [selected - left + 1, 0].max.unwrap!
   (first...[first + left, found.size].min.unwrap!).to_a
 end
 
-def row(item: Item, selected: Bool, width: Int) -> Layout.Row
+def row(choice: Choice, selected: Bool, width: Int) -> Layout.Row
   mark = "  "
   look = Layout.Look.Plain
   if selected
@@ -139,10 +182,5 @@ def row(item: Item, selected: Bool, width: Int) -> Layout.Row
     look = Layout.Look.Selected
   end
 
-  Layout.Row(text: Width.cut("#{mark}#{item.text}", width)[0], look: look)
-end
-
-def session_text(session: Protocol.SessionSummary, now_s: Int) -> String
-  title = session.title.split("\n")[0]
-  "#{session.id}  #{session.cwd}  #{session.model}  #{ago(now_s, session.updated_s)}  #{title}"
+  Layout.Row(text: Width.cut("#{mark}#{choice.text}", width)[0], look: look)
 end
