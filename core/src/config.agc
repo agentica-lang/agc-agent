@@ -2,10 +2,14 @@
 ## `~/.local/state/finn`), `FINN_DATA_DIR` for the sessions (else `$XDG_DATA_HOME/finn`, else
 ## `~/.local/share/finn`), and the model API: `FINN_API` (`openai`, chat completions, by default, or
 ## `openai_responses`), `FINN_BASE_URL` (a local llama-server by default), `FINN_API_KEY` and
-## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction. The names of before Finn still work:
+## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction. `FINN_CODE_MODE=1` adds code mode,
+## whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is not checked), else the pinned one
+## fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be private to the user). The names of before Finn still work:
 ## `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder is there.
 
 import LLM from "pkg/llm/llm"
+import Monty from "pkg/monty/monty"
+import CodeMode from "code_mode"
 import Server from "server"
 import Tools from "tools"
 
@@ -37,8 +41,30 @@ def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(base_url),
       api_key: api_key,
+      code_mode: try code_mode(read),
     ),
   )
+end
+
+## Code mode when `FINN_CODE_MODE` is `1`: the worker is found when the first script runs.
+def code_mode(read: Fn[String, Result[String]]) -> Result[Optional[CodeMode.Settings]]
+  switch = set(read, "FINN_CODE_MODE").unwrap_or("0")
+  return ok(none) if switch == "0"
+  return error("FINN_CODE_MODE must be 0 or 1, not #{switch.inspect}") if switch != "1"
+
+  binary = set(read, "FINN_MONTY")
+  cache = try cache_dir(read)
+  worker = -> { worker_command(binary, cache) }
+  ok(some(CodeMode.Settings(worker: worker, limits: Monty.Limits())))
+end
+
+def worker_command(binary: Optional[String], cache: String) -> Result[List[String]]
+  for path in option_list(binary)
+    return ok(Monty.command(path))
+  end
+
+  wheel = try Monty.wheel(try Monty.platform())
+  ok(Monty.command(try Monty.binary(cache, wheel)))
 end
 
 ## Every model API at `base_url`, by its `FINN_API` name. On the Responses format the API keeps nothing
@@ -114,6 +140,14 @@ def props_url(base_url: String) -> String
   return "" if not base.end_with?("/v1")
 
   "#{base.slice(0, base.length - 3)}/props"
+end
+
+def cache_dir(read: Fn[String, Result[String]]) -> Result[String]
+  for base in option_list(set(read, "XDG_CACHE_HOME"))
+    return Path.join([base, "finn"])
+  end
+
+  Path.join([try read.call("HOME"), ".cache", "finn"])
 end
 
 def option_list[T](value: Optional[T]) -> List[T]

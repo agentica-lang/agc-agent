@@ -3,13 +3,13 @@ AGENTICA ?= agentica
 export AGENTICA
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
-PACKAGES = sse llm protocol client core cli tui_client
+PACKAGES = sse llm protocol monty client core cli tui_client
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
-LEAVES = llm sse protocol
+LEAVES = llm sse protocol monty
 SERVER_AND_CLIENTS = core|client|cli|tui_client|web_client
 # A client, and `client` (the code every client shares), reach the server only through the protocol: they never
 # depend on these (or on another client).
-NOT_FOR_CLIENTS = core|llm|cli|tui_client|web_client
+NOT_FOR_CLIENTS = core|llm|monty|cli|tui_client|web_client
 
 # A fake key in the environment of every recipe: the bash test of core checks that the tool does not pass it on.
 export AGC_TEST_SECRET = sk-test-secret-must-not-reach-bash
@@ -28,7 +28,7 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check unit smoke pty test smoke-llama live-fireworks smoke-anthropic
+.PHONY: install check coupling fmt-check unit smoke pty test smoke-llama smoke-monty live-fireworks smoke-anthropic
 
 # The packages from outside this repository (agentica-tui) go into the package's deps/ (gitignored).
 install:
@@ -76,6 +76,11 @@ smoke-llama:
 	mkdir -p llm/_build/llama-logs
 	export LLAMA_SERVER='$(LLAMA_SERVER)' LLAMA_MODEL='$(LLAMA_MODEL)' LLAMA_LOG_DIR='$(CURDIR)/llm/_build/llama-logs'; \
 	$(call tests,llm,smoke)
+
+# The monty tests against the real worker: the pinned wheel of this platform, fetched from PyPI into .tools/cache with
+# its sha256 checked, or the binary at MONTY_BIN.
+smoke-monty:
+	$(call tests,monty,real)
 
 # A real Fireworks call, which costs money: local only, with the owner's yes, never in CI. Skips without the key.
 live-fireworks:
