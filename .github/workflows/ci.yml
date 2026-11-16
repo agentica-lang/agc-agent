@@ -9,6 +9,8 @@ permissions:
   contents: read
 
 env:
+  # The jobs share the runners' CPUs with the llama job, whose tests have 30 s each: each job runs two things at once.
+  JOBS: 2
   AGENTICA_VERSION: 0.32.0
   AGENTICA_SHA256: ec2a71e7c655e9c4a2f9e0c72ec6d3e661878ca561da4ce18ec84ae2c8d6ea95
 
