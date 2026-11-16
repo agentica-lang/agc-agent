@@ -1,7 +1,7 @@
 ## The file of a session in the data folder: JSON Lines, appended as the session goes. The first line is the session;
-## then one line per event but the deltas (with its id), per block of ids the deltas take, per user message, per round of the model's history and per answer a client
-## draws. A record is one line, written whole or cut by a crash: loading skips a line that does not parse or decode,
-## and `reopen` ends a line that a crash left open.
+## then one line per event but the deltas (with its id), per block of ids the deltas take, per user message, per
+## round of the model's history and per answer a client draws. A record is one line, written whole or cut by a crash:
+## loading skips a line that does not parse or decode, and `reopen` ends a line that a crash left open.
 ##
 ## The file keeps the events and messages in plain text, tool output and file contents included, until it is removed.
 
@@ -104,6 +104,11 @@ def append_answer(path: String, text: String) -> Result[Void]
 end
 
 def reopen(path: String) -> Result[Void] = write(path, "\n")
+
+## The first line of a file: the session, without reading the rest.
+def header(path: String) -> Result[Header]
+  File.open(path, "read") do |handle| decode_header(try JSON.parse(try File.read_line(handle))) end
+end
 
 def load(path: String) -> Result[Saved]
   lines = try File.foreach(path, MAX_LINE_BYTES).to_a

@@ -156,6 +156,58 @@ def test_a_restart_after_unsaved_deltas_skips_their_ids() -> Result[Void]
   end
 end
 
+# After a restart the sessions are listed from the first line of their files, in the order they were made; a session
+# is loaded when it is first used (a turn the restart cut ends only then), and one that cannot be loaded leaves the
+# list.
+def test_a_session_is_loaded_when_first_used() -> Result[Void]
+  setup = H.Setup(replies: ["write_file.sse"])
+  H.using(setup) do |h|
+    gone_cwd = "#{h.base}/gone"
+    try Dir.mkdir(gone_cwd)
+    id = try H.new_session(h)
+    gone = try H.new_session_in(h, gone_cwd)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    H.close(a)
+    try Path.remove(gone_cwd)
+    file = H.session_file(h, id)
+    H.restarted(h, setup, "") do |r|
+      size = (try File.stat(file)).size_bytes
+      listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
+      try Test.eq(listed.sessions.map { |s| s.id }, [id, gone])
+      try Test.eq((try File.stat(file)).size_bytes, size)
+      try Test.eq((try H.session(r, id)).turn_id, none)
+      try Test.assert((try File.stat(file)).size_bytes > size, "the cut turn did not end when the session loaded")
+      try Test.eq((try H.get(r, Protocol.session_path(gone))).status, 404)
+      after = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
+      Test.eq(after.sessions.map { |s| s.id }, [id])
+    end
+  end
+end
+
+# One delta between two saved events is lost in a restart: a client from before it gets `resync`, one from it gets
+# the rest.
+def test_one_lost_delta_is_a_resync() -> Result[Void]
+  setup = H.Setup(replies: ["summary.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hello.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.kinds(a.seen), ["turn_started", "text_delta", "usage", "turn_finished"])
+    H.restarted(h, setup, "") do |r|
+      before = try H.until(try H.subscribe(r, id, some(1)), Protocol.EventKind.Resync)
+      H.close(before)
+      try Test.eq(H.kinds(before.seen), ["resync"])
+      rest = try H.until(try H.subscribe(r, id, some(2)), Protocol.EventKind.TurnFinished)
+      H.close(rest)
+      Test.eq(H.kinds(rest.seen), ["usage", "turn_finished"])
+    end
+  end
+end
+
 # A write that fails gives no id: the clients get an `error` and the end of the turn without one (a client keeps the
 # last id it saw), and no turn starts until the file can be written again; a client whose replay passes the failure
 # gets them too. A line the failed write left cut does not take the next record with it. After a restart the ids go on

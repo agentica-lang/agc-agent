@@ -5,8 +5,8 @@
 ## the running server holds locked so that a second one does not start. A client holds `server.lock` while it starts
 ## a server, so the server takes another file.
 ##
-## The sessions live in `sessions/` of the data folder (0700), one file each (`Store`); the server starts them all
-## again from there.
+## The sessions live in `sessions/` of the data folder (0700), one file each (`Store`). At start the server reads only
+## the first line of each file, for the list; a session is loaded from its file on its first request.
 
 import Actor from "std/actor"
 import HTTP from "std/http"
@@ -100,13 +100,15 @@ private
 
 struct Entry
   summary: Protocol.SessionSummary
-  session: Actor.Ref[Session.State, Session.Msg]
+  header: Store.Header
+  file: String
+  ## None until the session is first used.
+  session: Optional[Actor.Ref[Session.State, Session.Msg]]
 end
 
-struct Loaded
+struct Listed
   file: String
-  saved: Store.Saved
-  context: Tools.Context
+  header: Store.Header
 end
 
 struct Registry
@@ -181,7 +183,9 @@ end
 
 def terminate(registry: Registry) -> Void
   for entry in registry.sessions
-    _ = Actor.stop(entry.session, CALL_MS)
+    for session in option_list(entry.session)
+      _ = Actor.stop(session, CALL_MS)
+    end
   end
 end
 
@@ -198,14 +202,22 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
       end
 
     Msg.Find(id, reply) ->
-      found = registry.sessions.select { |entry| entry.summary.id == id }.map { |entry| entry.session.address }
-      address: Optional[Address[Session.Msg]] = none
-      if not found.empty?
-        address = some(found[0])
+      found = registry.sessions.select { |entry| entry.summary.id == id }
+      if found.empty?
+        Actor.reply(reply, none)
+        return Actor.continue(registry)
       end
 
-      Actor.reply(reply, address)
-      Actor.continue(registry)
+      case started(registry.options, found[0])
+        ok(entry) ->
+          Actor.reply(reply, entry.session.map { |session| session.address })
+          Actor.continue(registry.with(sessions: registry.sessions.map { |e| replaced(e, entry) }))
+        error(e) ->
+          IO.warn("session #{id} not loaded: #{e.message}")
+          Actor.reply(reply, none)
+          Actor.continue(registry.with(sessions: registry.sessions.select { |other| other.summary.id != id }))
+      end
+
     Msg.List(reply) ->
       Actor.reply(reply, Protocol.SessionList(sessions: registry.sessions.map { |entry| entry.summary }))
       Actor.continue(registry)
@@ -234,6 +246,32 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   ok(entry(options, header, context, file, none))
 end
 
+def replaced(entry: Entry, by: Entry) -> Entry
+  return by if entry.summary.id == by.summary.id
+
+  entry
+end
+
+# The entry with its session running: loaded from its file when it is not yet.
+def started(options: Options, listed: Entry) -> Result[Entry]
+  return ok(listed) if listed.session.some?
+
+  info = try File.lstat(listed.file)
+  return error("not a regular file") if info.kind != "file"
+
+  saved = try Store.load(listed.file)
+  if saved.skipped > 0
+    IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
+  end
+
+  context = try Tools.context(saved.header.cwd, options.env, options.rules)
+  if saved.open_end
+    try Store.reopen(listed.file)
+  end
+
+  ok(entry(options, saved.header, context, listed.file, some(saved)))
+end
+
 def entry(
   options: Options,
   header: Store.Header,
@@ -257,47 +295,40 @@ def entry(
     api_key: options.api_key,
   )
 
-  summary = Protocol.SessionSummary(id: header.id, cwd: context.root, model: header.model)
-  Entry(summary: summary, session: Session.start(setup, saved))
+  Entry(summary: summary_of(header), header: header, file: file, session: some(Session.start(setup, saved)))
 end
 
-# In the order they were made. A session whose file or folder cannot be read is left out, with a warning, and so is a
-# record of a file that does not decode.
+def summary_of(header: Store.Header) -> Protocol.SessionSummary
+  Protocol.SessionSummary(id: header.id, cwd: header.cwd, model: header.model)
+end
+
+# In the order they were made, not loaded yet. A file whose first line is not a session is left out, with a warning.
 def load_sessions(options: Options) -> List[Entry]
   dir = sessions_dir(options)
   names: List[String] = []
   case Dir.list(dir)
     ok(found) -> names = found.select { |name| name.end_with?(Store.EXTENSION) }
-    error(e) -> IO.warn("sessions not loaded: #{e.message}")
+    error(e) -> IO.warn("sessions not listed: #{e.message}")
   end
 
-  loaded: List[Loaded] = []
+  listed: List[Listed] = []
   for name in names
-    case load_session(options, "#{dir}/#{name}")
-      ok(one) -> loaded = loaded.push(one)
-      error(e) -> IO.warn("session #{name} not loaded: #{e.message}")
+    file = "#{dir}/#{name}"
+    case listed_session(file)
+      ok(header) -> listed = listed.push(Listed(file: file, header: header))
+      error(e) -> IO.warn("session #{name} not listed: #{e.message}")
     end
   end
 
-  sorted = loaded.sort_by { |one| one.saved.header.id }.sort_by { |one| one.saved.header.created_ms }
-  sorted.map { |one| entry(options, one.saved.header, one.context, one.file, some(one.saved)) }
+  sorted = listed.sort_by { |one| one.header.id }.sort_by { |one| one.header.created_ms }
+  sorted.map { |one| Entry(summary: summary_of(one.header), header: one.header, file: one.file, session: none) }
 end
 
-def load_session(options: Options, file: String) -> Result[Loaded]
+def listed_session(file: String) -> Result[Store.Header]
   info = try File.lstat(file)
   return error("not a regular file") if info.kind != "file"
 
-  saved = try Store.load(file)
-  if saved.skipped > 0
-    IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
-  end
-
-  context = try Tools.context(saved.header.cwd, options.env, options.rules)
-  if saved.open_end
-    try Store.reopen(file)
-  end
-
-  ok(Loaded(file: file, saved: saved, context: context))
+  Store.header(file)
 end
 
 # `AGENTS.md` goes to the model only when it is a regular file inside the folder: a link out of it could be any file.
