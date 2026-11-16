@@ -1,14 +1,16 @@
 ## One session on the full screen, as an Elm program of agentica-tui: the `Model` holds the whole state, `update`
 ## takes the keys and the events of the server as messages and gives the next model with the work to start, and
 ## `view` draws a model. The event stream, the signals, the answers of approvals and the compactions run as commands,
-## each giving one message, which `update` arms again. The short calls to the server (send, stop, session, list,
-## update) run inside `update`, so the loop waits at most the client's call timeout (10 s) for each of them.
+## each giving one message, which `update` arms again; so do the sends, the stops, the level changes and the read of
+## the files for `@`. The short calls to the server (session, list, update) run inside `update`, so the loop waits at
+## most the client's call timeout (10 s) for each of them.
 
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
 import Args from "args"
+import Input from "input"
 import Picker from "picker"
 import Layout from "panel"
 import Prompt from "prompt"
@@ -29,7 +31,22 @@ MAX_RESYNCS = 2
 SCROLL_STEP = 3
 YOLO_WARNING = "--yolo: the tool calls of turns sent from here run without asking"
 ## The key hints of the status line, most needed first: those that do not fit are left out.
-HINTS = ["Enter send", "Esc stop", "^C quit", "^J newline", "⇧Tab level", "^T thinking", "^O tools", "PgUp/PgDn"]
+HINTS = [
+  "Enter send",
+  "Esc stop",
+  "^C quit",
+  "^J newline",
+  "Alt+Enter follow-up",
+  "⇧Tab level",
+  "^T thinking",
+  "^O tools",
+  "@ files",
+  "↑ history",
+  "PgUp/PgDn",
+]
+## The most files the `@` list reads from the session's folder, and the folders it never enters.
+MAX_FILES = 5000
+SKIPPED_DIRS = ["node_modules", "deps", "target", "dist", "build", "__pycache__"]
 SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 SPIN_MS = 80
 ## The thinking levels Shift+Tab goes through, none for the model's default.
@@ -38,6 +55,8 @@ LEVELS: List[Optional[String]] = [none, some("low"), some("medium"), some("high"
 struct Model
   server: Client.Server
   id: String
+  ## The folder of the session, where `@` finds files.
+  cwd: String = ""
   ## What `/new` makes a session with.
   options: Args.Options
   signals: Channel[System.Signal]
@@ -65,6 +84,18 @@ struct Model
   ## reply came, so its events meet the state the replies give (the turn this client started, the message it queued).
   outbox: List[String] = []
   held: List[Client.Item] = []
+  ## Messages for after the turn (Alt+Enter), sent together when it ends.
+  follow_ups: List[String] = []
+  ## The prompts sent, oldest first, and the one Up shows (none: the prompt being typed).
+  history: List[String] = []
+  recall: Optional[Int] = none
+  ## The large pastes behind the tokens of the prompt, until it is sent.
+  pastes: List[String] = []
+  ## The files of the session's folder once read, the selected one of the `@` list, and the `@` that Esc closed.
+  files: Optional[List[String]] = none
+  reading_files: Bool = false
+  mention_selected: Int = 0
+  mention_closed: Optional[Int] = none
   ## Esc came before the turn of a message sent started: the turn stops once the reply says it did.
   stop_wanted: Bool = false
   ## How many times a session was opened, so the reply to a send made before is dropped.
@@ -120,6 +151,8 @@ enum Msg
   Leveled(Result[Void])
   ## The reply to a branch, a fork or a copy: the session to go on in.
   Moved(Result[Protocol.Branched])
+  ## The files of the session's folder, for the `opened` count when they were asked.
+  Files(Int, List[String])
 end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
@@ -238,6 +271,8 @@ def handled(app: Model, msg: Msg) -> Model
     Msg.Moved(result) -> moved(app, result)
     Msg.Rechecked(generation, result) if generation == app.generation -> rechecked(app, result)
     Msg.Rechecked(_, _) -> app
+    Msg.Files(opened, files) if opened == app.opened -> app.with(files: some(files), reading_files: false)
+    Msg.Files(_, _) -> app
   end
 end
 
@@ -331,7 +366,7 @@ def create(app: Model) -> Result[Model]
 
   request = Protocol.NewSession(cwd: cwd, model: options.model, api: options.api)
   id = try Client.create_session(app.server, request)
-  ok(subscribe(noted(app.with(id: id, opened: app.opened + 1), "session #{id}"), 0))
+  ok(subscribe(noted(app.with(id: id, cwd: cwd, opened: app.opened + 1), "session #{id}"), 0))
 end
 
 def resume(app: Model, id: String) -> Result[Model]
@@ -346,9 +381,14 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
     from = session.turn_from_event_id.unwrap_or(session.last_event_id)
   end
 
+  entries = Transcript.from_history(session.history)
   fresh = app.with(
     opened: app.opened + 1,
-    entries: Transcript.from_history(session.history),
+    cwd: session.cwd,
+    entries: entries,
+    history: entries.select { |entry| entry.kind == Transcript.Kind.User }.map { |entry| entry.text },
+    files: none,
+    reading_files: false,
     turn: session.turn_id.some?,
     effort: wanted_level(app, session.effort),
     confirmed: session.effort,
@@ -403,9 +443,16 @@ def on_key(app: Model, event: TUI.Event) -> Model
 
   return app if Approvals.captures?(app.approvals, event)
 
+  for found in option_list(mention_list(app))
+    return on_mention_key(app, found, event) if mention_key?(event)
+  end
+
   case event
     TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(exit: some(0))
+    TUI.Event.Key(TUI.Key.Enter, mods) if mods.alt -> follow_up(app)
     TUI.Event.Key(TUI.Key.Enter, _) -> send(app)
+    TUI.Event.Key(TUI.Key.Up, _) if app.prompt == "" or app.recall.some? -> recalled(app, -1)
+    TUI.Event.Key(TUI.Key.Down, _) if app.recall.some? -> recalled(app, 1)
     TUI.Event.Key(TUI.Key.Ctrl("t"), _) ->
       shown = app.with(thinking: not app.thinking, entries: Transcript.unfold_thinking(app.entries))
       noted(shown, "thinking blocks: #{shown_name(shown.thinking)}")
@@ -415,7 +462,7 @@ def on_key(app: Model, event: TUI.Event) -> Model
     TUI.Event.Key(TUI.Key.Ctrl("j"), _) -> typed(app, "\n")
     TUI.Event.Key(TUI.Key.Backspace, _) ->
       at = cursor(app)
-      app.with(prompt: Prompt.backspace(app.prompt, at), cursor: [at - 1, 0].max.unwrap!)
+      app.with(prompt: Prompt.backspace(app.prompt, at), cursor: [at - 1, 0].max.unwrap!, recall: none)
     TUI.Event.Key(TUI.Key.Left, _) -> app.with(cursor: [cursor(app) - 1, 0].max.unwrap!)
     TUI.Event.Key(TUI.Key.Right, _) -> app.with(cursor: Prompt.clamp(app.prompt, cursor(app) + 1))
     TUI.Event.Key(TUI.Key.Home, _) -> app.with(cursor: 0)
@@ -425,13 +472,14 @@ def on_key(app: Model, event: TUI.Event) -> Model
     TUI.Event.Key(TUI.Key.BackTab, _) -> leveled(app)
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
       app.with(approvals: Approvals.toggled(app.approvals, app.now))
+    TUI.Event.Key(TUI.Key.Escape, _) if not app.follow_ups.empty? -> stop(put_back(app))
     TUI.Event.Key(TUI.Key.Escape, _) -> stop(app)
     TUI.Event.Key(TUI.Key.PageUp, _) -> scrolled(app, page(app))
     TUI.Event.Key(TUI.Key.PageDown, _) -> scrolled(app, -page(app))
     TUI.Event.Mouse(TUI.Mouse.WheelUp, _, _, _) -> scrolled(app, SCROLL_STEP)
     TUI.Event.Mouse(TUI.Mouse.WheelDown, _, _, _) -> scrolled(app, -SCROLL_STEP)
     TUI.Event.Char(char, _) -> typed(app, char)
-    TUI.Event.Paste(text) -> typed(app, Prompt.pasted(text))
+    TUI.Event.Paste(text) -> pasted(app, Prompt.pasted(text))
     _ -> app
   end
 end
@@ -440,7 +488,155 @@ def cursor(app: Model) -> Int = Prompt.clamp(app.prompt, app.cursor)
 
 def typed(app: Model, piece: String) -> Model
   at = cursor(app)
-  app.with(prompt: Prompt.insert(app.prompt, at, piece), cursor: at + piece.length)
+  edited = app.with(prompt: Prompt.insert(app.prompt, at, piece), cursor: at + piece.length, recall: none)
+  return edited if piece != "@" or edited.files.some? or edited.reading_files
+
+  read_files(edited)
+end
+
+# A large paste goes in as a token, which the send puts back.
+def pasted(app: Model, text: String) -> Model
+  return typed(app, text) if not Input.large?(text)
+
+  pastes = app.pastes.push(text)
+  typed(app.with(pastes: pastes), Input.token(pastes.size, text))
+end
+
+# Up shows the prompt sent before the one shown, Down the one after; past the newest the prompt is empty again.
+def recalled(app: Model, step: Int) -> Model
+  return app if app.history.empty?
+
+  at = app.recall.unwrap_or(app.history.size) + step
+  return app if at < 0
+
+  return app.with(prompt: "", cursor: 0, recall: none) if at >= app.history.size
+
+  text = app.history[at]
+  app.with(prompt: text, cursor: text.length, recall: some(at))
+end
+
+# Alt+Enter: while a turn runs (or a message that starts one is on its way), the text waits for the turn's end.
+def follow_up(app: Model) -> Model
+  text = app.prompt.strip
+  return send(app) if text == "" or (not app.turn and app.outbox.empty?)
+
+  later = app.follow_ups.push(expanded(app, text))
+  waiting = app.with(prompt: "", cursor: 0, recall: none, follow_ups: later, pastes: [])
+  waiting.with(history: remembered(waiting.history, text))
+end
+
+# Esc puts the follow-ups back in the prompt, before what it holds.
+def put_back(app: Model) -> Model
+  text = (app.follow_ups + [app.prompt].select { |t| t.strip != "" }).join("\n")
+  noted(app.with(prompt: text, cursor: text.length, follow_ups: []), "follow-ups back in the prompt")
+end
+
+# The follow-ups go as one message once the turn ended by itself; a stopped turn puts them back in the prompt.
+def after_turn(app: Model, reason: Protocol.StopReason) -> Model
+  return app if app.follow_ups.empty?
+  return put_back(app) if reason == Protocol.StopReason.Cancelled
+
+  text = app.follow_ups.join("\n\n")
+  queued = app.with(follow_ups: [], outbox: app.outbox.push(text))
+  return queued if not app.outbox.empty?
+
+  sending(queued, text)
+end
+
+def expanded(app: Model, text: String) -> String = Input.expanded(text, app.pastes)
+
+def remembered(history: List[String], text: String) -> List[String]
+  return history if not history.empty? and history.last == text
+
+  history.push(text)
+end
+
+# The files of the session's folder are read once, by a command.
+def read_files(app: Model) -> Model
+  root = app.cwd
+  opened = app.opened
+  effect(app.with(reading_files: true), TUI.Cmd.Run(-> { Msg.Files(opened, listed(root)) }))
+end
+
+# The paths of the files under `root`, at most MAX_FILES, without hidden files and the folders of SKIPPED_DIRS.
+def listed(root: String) -> List[String]
+  found: List[String] = []
+  dirs = [""]
+  while not dirs.empty? and found.size < MAX_FILES
+    dir = dirs[0]
+    dirs = dirs.drop(1)
+    names: List[String] = Dir.list(under(root, dir)).unwrap_or([])
+    for name in names.sort
+      next if name.start_with?(".") or SKIPPED_DIRS.include?(name)
+
+      path = name
+      if dir != ""
+        path = "#{dir}/#{name}"
+      end
+
+      kind = kind_of(under(root, path))
+      if kind == "directory"
+        dirs = dirs.push(path)
+      elsif kind == "file"
+        found = found.push(path)
+      end
+    end
+  end
+
+  found.take(MAX_FILES)
+end
+
+def kind_of(path: String) -> String
+  case File.lstat(path)
+    ok(info) -> info.kind
+    error(_) -> ""
+  end
+end
+
+def under(root: String, path: String) -> String
+  return root if path == ""
+
+  "#{root}/#{path}"
+end
+
+# The `@` list while the cursor ends an `@` word, the files are read and Esc did not close it.
+def mention_list(app: Model) -> Optional[Input.Mention]
+  return none if app.files.none? or app.picker.some?
+
+  found = Input.mention(app.prompt, cursor(app))
+  return none if found.none? or app.mention_closed == some(found.unwrap!.start)
+
+  found
+end
+
+def mention_key?(event: TUI.Event) -> Bool
+  case event
+    TUI.Event.Key(TUI.Key.Tab, _) -> true
+    TUI.Event.Key(TUI.Key.Up, _) -> true
+    TUI.Event.Key(TUI.Key.Down, _) -> true
+    TUI.Event.Key(TUI.Key.Escape, _) -> true
+    _ -> false
+  end
+end
+
+def mention_matches(app: Model, found: Input.Mention) -> List[String]
+  Input.matches(app.files.unwrap_or([]), found.query)
+end
+
+# Tab puts the selected file in place of the `@` word, Up and Down move, Esc closes the list.
+def on_mention_key(app: Model, found: Input.Mention, event: TUI.Event) -> Model
+  files = mention_matches(app, found)
+  selected = [[app.mention_selected, files.size - 1].min.unwrap!, 0].max.unwrap!
+  case event
+    TUI.Event.Key(TUI.Key.Up, _) -> app.with(mention_selected: [selected - 1, 0].max.unwrap!)
+    TUI.Event.Key(TUI.Key.Down, _) -> app.with(mention_selected: [selected + 1, files.size - 1].min.unwrap!)
+    TUI.Event.Key(TUI.Key.Escape, _) -> app.with(mention_closed: some(found.start))
+    _ if files.empty? -> app
+    _ ->
+      at = cursor(app)
+      text = Input.completed(app.prompt, at, found, files[selected])
+      app.with(prompt: text, cursor: at + text.length - app.prompt.length, mention_selected: 0)
+  end
 end
 
 # A click on the transcript opens or closes a thinking block or a tool call; on a key of the approval panel it is
@@ -485,16 +681,18 @@ def page(app: Model) -> Int = [app.height / 2, 1].max.unwrap!
 def scrolled(app: Model, rows: Int) -> Model = app.with(scroll: [app.scroll + rows, 0].max.unwrap!)
 
 def send(app: Model) -> Model
-  text = app.prompt.strip
-  return app if text == ""
+  typed_text = app.prompt.strip
+  return app if typed_text == ""
 
-  case Client.parse_command(text)
-    some(ok(command)) -> return on_command(app.with(prompt: "", scroll: 0), command)
+  base = app.with(history: remembered(app.history, typed_text), recall: none, cursor: 0, mention_closed: none)
+  case Client.parse_command(typed_text)
+    some(ok(command)) -> return on_command(base.with(prompt: "", scroll: 0), command)
     some(error(e)) -> return noted(app, e.message)
     _ -> nil
   end
 
-  queued = app.with(prompt: "", scroll: 0, outbox: app.outbox.push(text))
+  text = expanded(app, typed_text)
+  queued = base.with(prompt: "", scroll: 0, outbox: app.outbox.push(text), pastes: [])
   return queued if not app.outbox.empty?
 
   sending(queued, text)
@@ -785,7 +983,7 @@ def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
       shown.with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)))
     Protocol.Event.TurnFinished(done) ->
       ended = shown.with(turn: false, stopping: false, new_model: none, yolo: Yolo.running(shown.yolo, none))
-      finished(ended, done.stop_reason)
+      after_turn(finished(ended, done.stop_reason), done.stop_reason)
     Protocol.Event.ApprovalRequested(request) if Yolo.allows?(shown.yolo) -> allowed(shown, request)
     Protocol.Event.ApprovalRequested(request) ->
       shown.with(approvals: Approvals.requested(shown.approvals, request, app.now))
@@ -859,6 +1057,7 @@ def framed(app: Model) -> Screen.Frame
     label: label(app),
     level: app.effort,
     status: status(app, app.width),
+    queued: app.follow_ups.map { |text| "follow-up: #{Client.printable(text)}" },
   )
 
   Screen.frame(
@@ -888,7 +1087,16 @@ end
 def approval_rows(app: Model, room: Int) -> List[Layout.Row]
   return [] if app.picker.some?
 
-  Approvals.rows(app.approvals, app.width, room)
+  asked = Approvals.rows(app.approvals, app.width, room)
+  return asked if not asked.empty?
+
+  case mention_list(app)
+    some(found) ->
+      files = mention_matches(app, found)
+      selected = [[app.mention_selected, files.size - 1].min.unwrap!, 0].max.unwrap!
+      Input.rows(files, selected, app.width).take([room, 0].max.unwrap!)
+    none -> []
+  end
 end
 
 # The spinner and what the turn does, in the top rule.

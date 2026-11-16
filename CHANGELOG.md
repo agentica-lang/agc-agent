@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- `finn tui` shows a tool call as a shell line (`$ ls`, `read x`, `edit x`) tinted by how it went, with its output, a numbered diff of an edit and "Took 1.2s"; Ctrl+O shows or folds every tool output and Ctrl+T every thinking block, with a note. `tool_finished` has `output` and `diff`.
+- `finn tui`: Alt+Enter keeps a message for the end of the turn (listed above the prompt; Esc puts it back), Up on an empty prompt recalls earlier prompts, `@` lists the files of the session's folder (Tab completes one), and a large paste stays one `[paste #1 +31 lines]` token.
+- `finn tui` says a send that timed out "may not have been sent", stops another client's turn when Esc came before the reply, and keeps the thinking level it is setting across a new read of the session.
+- `message_queued` events without `message_id` load again.
+
 - `finn chat` and `finn tui` have `/tree` (go back before an earlier message, or on after an answer, in the same session), `/fork` (a new session from a message) and `/clone` (a copy of the session); `finn tui` picks from a list, and the message gone back before waits in the prompt.
 - A session file is a tree: `GET /v1/sessions/ID/tree` lists the user messages of every branch, `POST /v1/sessions/ID/branch` goes on from an earlier message in the same session, and `POST /v1/sessions/ID/fork` starts a new session from one (or copies the session); older session files still load.
 - `finn tui` looks like pi: the prompt sits between two rules whose color shows the thinking level (Shift+Tab sets the next one), a spinner and "Working" sit in the top rule during a turn, the transcript has no `>` or `·` marks, the `/resume` picker takes the prompt's place and an approval shows under it.

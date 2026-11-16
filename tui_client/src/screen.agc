@@ -1,5 +1,5 @@
-## What the screen shows, top to bottom, each region apart: the transcript, the prompt between two rules (or the
-## session picker in its place), the panel under it (an approval) and the status line. `frame` places them on a screen of a size, `view` draws a
+## What the screen shows, top to bottom, each region apart: the transcript, the follow-ups waiting, the prompt between
+## two rules (or the session picker in its place), the panel under it (an approval) and the status line. `frame` places them on a screen of a size, `view` draws a
 ## frame as a view tree, and `hit` tells what a click at a cell of the same frame is on, so a click meets what was
 ## drawn. Pure.
 
@@ -27,6 +27,8 @@ struct Parts
   label: String
   level: Optional[String]
   status: String
+  ## The messages waiting for the end of the turn, one row each above the editor.
+  queued: List[String] = []
 end
 
 ## Where each region is: `area` transcript rows (the `transcript` lines shown, from the top), the top rule, the
@@ -36,6 +38,7 @@ struct Frame
   height: Int
   transcript: List[Transcript.Line]
   area: Int
+  queued: List[String]
   label: String
   level: Optional[String]
   picker: List[Layout.Row]
@@ -68,7 +71,8 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
   end
 
   asked = parts.panel.call(panel_room(height, editor))
-  area = [height - editor - asked.size - CHROME, 0].max.unwrap!
+  queued = parts.queued.take([height - editor - asked.size - CHROME, 0].max.unwrap!)
+  area = [height - editor - asked.size - queued.size - CHROME, 0].max.unwrap!
   hidden = [lines.size - area, 0].max.unwrap!
   top = [hidden - [scroll, hidden].min.unwrap!, 0].max.unwrap!
   Frame(
@@ -76,6 +80,7 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
     height: height,
     transcript: lines.drop(top).take(area),
     area: area,
+    queued: queued.map { |text| Width.cut(" #{text}", width)[0] },
     label: parts.label,
     level: parts.level,
     picker: picker,
@@ -98,13 +103,14 @@ def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
   bottom = TUI.line([TUI.span(rule_text("", frame.width), rule)])
   panel = frame.panel.map { |row| panel_row(row, theme.panel) }
   footer = TUI.line([TUI.span(frame.status, theme.footer.status)])
-  TUI.col(rows + blank + [top] + editor + [bottom] + panel + [footer])
+  queued = frame.queued.map { |text| TUI.line([TUI.span(text, theme.transcript.notice)]) }
+  TUI.col(rows + blank + queued + [top] + editor + [bottom] + panel + [footer])
 end
 
 def hit(frame: Frame, x: Int, y: Int) -> Hit
   return Hit.Entry(frame.transcript[y].entry) if y >= 0 and y < frame.transcript.size
 
-  editor_top = frame.area + 1
+  editor_top = frame.area + frame.queued.size + 1
   editor = editor_rows(frame)
   if y >= editor_top and y < editor_top + editor
     return Hit.Prompt(x, y - editor_top) if frame.picker.empty?

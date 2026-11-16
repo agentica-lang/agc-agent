@@ -194,6 +194,79 @@ def test_the_tree_picker_moves_the_session_and_fills_the_prompt() -> Result[Void
   Test.eq([failed.prompt, failed.entries.last.text], ["", "error: busy"])
 end
 
+# Alt+Enter during a turn keeps the text for after it, listed above the editor; the turn's end sends the follow-ups
+# as one message, and Esc puts them back in the prompt instead.
+def test_follow_ups_wait_for_the_end_of_the_turn() -> Result[Void]
+  model = model_of(30, 8).with(id: "s1", turn: true, feed: some(Channel.new(4)), generation: 1)
+  for text in ["one", "two"]
+    model = App.update(model.with(prompt: text), alt_enter()).model
+  end
+
+  try Test.eq([model.follow_ups, [model.prompt]], [["one", "two"], [""]])
+  try Test.eq(rows(model).drop(2).take(2), ["follow-up: one", "follow-up: two"])
+  finished = Protocol.Event.TurnFinished(
+    Protocol.TurnFinished(turn_id: "t1", stop_reason: Protocol.StopReason.EndTurn),
+  )
+
+  ended = App.update(model, App.Msg.Stream(1, [Client.Item.Event(some(5), finished)]))
+  try Test.eq([ended.model.follow_ups.size, ended.cmds.size], [0, 2])
+  try Test.eq(ended.model.outbox, ["one\n\ntwo"])
+
+  back = App.update(model.with(prompt: "three"), App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods())))
+  try Test.eq(
+    [back.model.prompt, "#{back.model.follow_ups}", "#{back.model.stopping}"],
+    ["one\ntwo\nthree", "[]", "true"],
+  )
+
+  idle = App.update(model_of(30, 8).with(prompt: "now"), alt_enter())
+  Test.eq(idle.model.outbox, ["now"])
+end
+
+# Up on an empty prompt goes back through the prompts sent, Down comes forward to an empty prompt; a large paste is
+# one token that the send puts back.
+def test_up_recalls_prompts_and_a_large_paste_is_one_token() -> Result[Void]
+  model = model_of(40, 8).with(id: "s1")
+  for text in ["first", "/help"]
+    model = App.update(model.with(prompt: text), enter()).model
+  end
+
+  up = App.Msg.Key(TUI.Event.Key(TUI.Key.Up, TUI.Mods()))
+  down = App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))
+  model = App.update(model, up).model
+  try Test.eq(model.prompt, "/help")
+  model = App.update(App.update(model, up).model, up).model
+  try Test.eq(model.prompt, "first")
+  try Test.eq(App.update(App.update(model, down).model, down).model.prompt, "")
+  text = (1..12).to_a.map { |i| "line #{i}" }.join("\n")
+  pasted = App.update(
+    model_of(40, 8).with(id: "s1", prompt: "see ", cursor: 4),
+    App.Msg.Key(TUI.Event.Paste(text)),
+  ).model
+
+  try Test.eq(pasted.prompt, "see [paste #1 +12 lines]")
+  Test.eq(App.update(pasted, enter()).model.outbox, ["see #{text}"])
+end
+
+# `@` reads the files of the session's folder once; the list under the editor narrows as the word grows, Tab puts the
+# selected path in its place, and Esc closes the list.
+def test_at_lists_the_files_and_tab_completes_one() -> Result[Void]
+  model = model_of(40, 10).with(id: "s1", cwd: "tests/fixtures", prompt: "see ", cursor: 4)
+  asked = App.update(model, App.Msg.Key(TUI.Event.Char("@", TUI.Mods())))
+  files = asked.cmds.flat_map { |cmd| run(cmd) }
+  try Test.eq(files.size, 1)
+  model = App.update(asked.model, files[0]).model
+  try Test.assert(model.files.unwrap_or([]).include?("README.md"), "the files are read")
+  for char in ["t", "h", "k"]
+    model = App.update(model, App.Msg.Key(TUI.Event.Char(char, TUI.Mods()))).model
+  end
+
+  try Test.assert(rows(model).include?("thinking.sse"), "the list shows the file")
+  done = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))).model
+  try Test.eq([done.prompt, done.cursor.to_s], ["see @thinking.sse ", "18"])
+  closed = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model
+  Test.assert(not rows(closed).include?("thinking.sse"), "Esc closes the list")
+end
+
 def model_of(width: Int, height: Int) -> App.Model
   options = Args.Options(
     state_dir: none,
@@ -216,6 +289,8 @@ end
 def back_tab() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.BackTab, TUI.Mods()))
 
 def enter() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+
+def alt_enter() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Enter, TUI.Mods(alt: true)))
 
 def run(cmd: TUI.Cmd[App.Msg]) -> List[App.Msg]
   case cmd
