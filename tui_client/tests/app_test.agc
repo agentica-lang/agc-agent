@@ -172,6 +172,23 @@ def test_an_update_keeps_the_wrapped_rows_of_the_entries() -> Result[Void]
   Test.assert(rows(step.model).include?("one two three"), "the note is drawn")
 end
 
+# The status line shows the session's provider and model; the `/model` picker draws its pairs, and Esc closes it.
+def test_the_status_shows_the_model_and_the_model_picker_closes() -> Result[Void]
+  list = Protocol.ProviderList(
+    provider: "local",
+    providers: [Protocol.ProviderInfo(name: "fireworks", api: "openai", models: ["k2"])],
+  )
+
+  model = model_of(100, 12).with(serving: "local/qwen")
+  try Test.assert(rows(model).any? { |row| row.include?("(local) qwen") }, "the status shows the model")
+  picking = model.with(picker: some(Picker.models(list, "local/qwen")))
+  shown = rows(picking)
+  try Test.assert(shown.any? { |row| row.include?("pick a model (1 of 1)") }, "the picker is drawn")
+  try Test.assert(shown.any? { |row| row.include?("fireworks/k2") }, "the pair is drawn")
+  closed = App.update(picking, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model
+  Test.eq(closed.picker.none?, true)
+end
+
 # The /tree picker lists the numbered messages and answers of every branch; Enter on one asks for the branch by a
 # command, not while a turn runs, and nothing but a local command (/help) goes until its reply. `/tree N` names a
 # message of the picker shown last. The session the server moved to is opened with the message it went back before

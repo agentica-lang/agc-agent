@@ -39,6 +39,11 @@ USAGE = <<~TEXT
   whole tool (allow_tool) for the session, until the server restarts; PATCH {"accept_edits": true} runs the edits of
   files without asking. None of them reaches into .git/. The deny rules are checked first, as far as the parser sees a
   command (best effort, not a sandbox); while a read_file deny rule exists, only the same bash call is allowed again.
+  Providers: local (FINN_BASE_URL with FINN_API_KEY) and anthropic always; openai, fireworks, openrouter, groq and
+  deepseek when OPENAI_API_KEY, FIREWORKS_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY or DEEPSEEK_API_KEY is set; and
+  those of "providers" in the config file ([{"name", "api", "base_url", "key_env", "models"}], api openai or
+  openai_responses; one with key_env only when that variable is set). FINN_PROVIDER is the provider of a session that
+  names none (finn --provider names one); PATCH {"provider", "model"} moves a session to another.
 TEXT
 
 enum Command

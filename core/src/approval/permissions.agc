@@ -44,13 +44,22 @@ end
 
 ## The rules of the user's config file; none when the default file is not there.
 def user_rules(read: Fn[String, Result[String]]) -> Result[Approval.Rules]
+  case config_path(read)
+    some(path) -> rules_of(path)
+    none -> ok(no_rules())
+  end
+end
+
+## The user's config file: `FINN_CONFIG`, else the default file when it is there.
+def config_path(read: Fn[String, Result[String]]) -> Optional[String]
   case read.call(CONFIG_ENV)
-    ok(path) if not path.empty? -> rules_of(path)
-    _ ->
-      case default_config(read)
-        some(path) if File.stat(path).ok? -> rules_of(path)
-        _ -> ok(no_rules())
-      end
+    ok(given) if not given.empty? -> return some(given)
+    _ -> nil
+  end
+
+  case default_config(read)
+    some(found) if File.stat(found).ok? -> some(found)
+    _ -> none
   end
 end
 
@@ -135,9 +144,10 @@ end
 
 private
 
+# Optional, so a file without rules (only `providers`) reads.
 struct RulesFile
-  allow: List[String] = []
-  deny: List[String] = []
+  allow: Optional[List[String]] = none
+  deny: Optional[List[String]] = none
 end
 
 def key(tool: String, target: String) -> String = "#{tool}\n#{target}"
@@ -164,7 +174,7 @@ def rules_of(path: String) -> Result[Approval.Rules]
   end
 
   parsed = try file
-  case Approval.parse_rules(parsed.allow, parsed.deny)
+  case Approval.parse_rules(parsed.allow.unwrap_or([]), parsed.deny.unwrap_or([]))
     ok(rules) -> ok(rules)
     error(e) -> error("#{path}: #{e.message}")
   end

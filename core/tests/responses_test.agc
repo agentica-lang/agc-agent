@@ -39,6 +39,68 @@ def test_a_turn_runs_on_the_responses_format() -> Result[Void]
   end
 end
 
+# The reasoning of one provider does not go to another: after a move (and a restart), the next request has none.
+def test_a_move_to_another_provider_leaves_the_reasoning_behind() -> Result[Void]
+  replies = ["write_file.sse", "text.sse", "text.sse"]
+  setup = H.Setup(api: "openai_responses", replies: replies, providers: ["other:openai_responses"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    change = Protocol.encode_update_session(Protocol.UpdateSession(provider: some("other"), model: some("m1")))
+    try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), change, H.auth(h))).status, 200)
+    H.restarted(h, setup, "") do |r|
+      _ = try H.send(r, id, "Thanks.")
+      _ = try H.idle(r, id)
+      _ = try H.next_request(r)
+      _ = try H.next_request(r)
+      third = try H.next_request(r)
+      try Test.eq(third.path, "/other/responses")
+      Test.eq(
+        types(try JSON.parse(third.body), "input").uniq.sort,
+        ["function_call", "function_call_output", "message"],
+      )
+    end
+  end
+end
+
+# Reasoning saved before providers names none: it is of the session's first provider, so it goes back to that one and
+# not to another after a move.
+def test_old_reasoning_stays_with_the_first_provider() -> Result[Void]
+  setup = H.Setup(api: "openai_responses", replies: ["text.sse", "text.sse"], providers: ["other:openai_responses"])
+  H.using(setup) do |h|
+    head = (
+      "{\"type\":\"session\",\"id\":\"old\",\"cwd\":\"#{h.work}\",\"model\":\"m\",\"created_ms\":1,\"api\":\"openai_responses\"}"
+    )
+
+    reasoning = "{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[],\"encrypted_content\":\"gAAAold==\"}"
+    blocks = "[{\"type\":\"thinking\",\"text\":\"t\",\"replay\":#{reasoning}},{\"type\":\"text\",\"text\":\"Hello.\"}]"
+    answer = "{\"type\":\"messages\",\"messages\":[{\"role\":\"assistant\",\"content\":#{blocks}}]}"
+    try File.write_text(
+      H.session_file(h, "old"),
+      [head, "{\"type\":\"user\",\"text\":\"Hi.\"}", answer, ""].join("\n"),
+    )
+
+    H.restarted(h, setup, "") do |r|
+      _ = try H.send(r, "old", "Again.")
+      _ = try H.idle(r, "old")
+      change = Protocol.encode_update_session(Protocol.UpdateSession(provider: some("other"), model: some("m1")))
+      try Test.eq((try H.call(r, "PATCH", Protocol.session_path("old"), change, H.auth(r))).status, 200)
+      _ = try H.send(r, "old", "Thanks.")
+      _ = try H.idle(r, "old")
+      first = try H.next_request(r)
+      second = try H.next_request(r)
+      try Test.eq([first.path, second.path], ["/v1/responses", "/other/responses"])
+      try Test.eq(types(try JSON.parse(first.body), "input").include?("reasoning"), true)
+      Test.eq(types(try JSON.parse(second.body), "input").include?("reasoning"), false)
+    end
+  end
+end
+
 private
 
 def string(json: JSON.Value, key: String) -> String
