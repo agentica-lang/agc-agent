@@ -165,17 +165,21 @@ def detail(name: String, input: JSON.Value) -> String
 end
 
 ## What a call of `edit_file` or `write_file` would change, as numbered lines, read before it runs; none for the other
-## tools, a call it cannot read, or a diff that fails: it is only shown, so it never stops the call.
+## tools, a call it cannot read, or a diff that fails or takes over DIFF_MS: it is only shown, so it never stops the
+## call.
 def change(ctx: Spec.Context, name: String, input: JSON.Value) -> Optional[String]
-  case Task.await(Task.spawn do ok(changed(ctx, name, input)) end)
-    ok(text) -> nonempty(text)
-    error(_) -> none
+  task = Task.spawn do changed(ctx, name, input) end
+  case Task.await(task, DIFF_MS)
+    Await.Done(text) -> nonempty(text)
+    _ ->
+      Task.cancel(task)
+      none
   end
 end
 
 ## The first lines of a result for the clients, none when it has one line at most (its summary shows it).
 def shown_output(text: String) -> Optional[String]
-  lines = text.strip.split("\n")
+  lines = text.strip.split("\n").map { |line| without_cr(line) }
   return none if lines.size <= 1
 
   shown = lines.take(OUTPUT_LINES)
@@ -189,6 +193,7 @@ end
 private
 
 DETAIL_CHARS = 4000
+DIFF_MS = 2000
 OUTPUT_LINES = 40
 
 # The text of a file in the session folder, "" when it cannot be read.
@@ -225,6 +230,12 @@ def edited(text: String, old: String, new: String, all: Bool) -> String
   return shown if not all or more <= 0 or shown == ""
 
   "#{shown}\n... and #{more} more"
+end
+
+def without_cr(line: String) -> String
+  return line.slice(0, line.length - 1) if line.end_with?("\r")
+
+  line
 end
 
 def nonempty(text: String) -> Optional[String]

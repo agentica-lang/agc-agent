@@ -55,16 +55,7 @@ end
 def occurrences(text: String, old: String) -> Int
   return 0 if old == ""
 
-  count = 0
-  rest = text
-  found = rest.index_of(old)
-  while found.some?
-    count += 1
-    rest = rest.slice(found.unwrap! + old.length, rest.length - found.unwrap! - old.length)
-    found = rest.index_of(old)
-  end
-
-  count
+  text.split(old).size - 1
 end
 
 ## A new file: each line of `content` added.
@@ -88,7 +79,13 @@ end
 
 def numbered(mark: String, index: Int, line: String, width: Int) -> String
   number = (index + 1).to_s
-  "#{mark} #{" " * [width - number.length, 0].max.unwrap!}#{number} #{line}"
+  shown = line
+  # A CRLF file: the line end is not drawn.
+  if shown.end_with?("\r")
+    shown = shown.slice(0, shown.length - 1)
+  end
+
+  "#{mark} #{" " * [width - number.length, 0].max.unwrap!}#{number} #{shown}"
 end
 
 def capped(rows: List[String]) -> String

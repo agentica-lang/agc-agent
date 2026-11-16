@@ -540,7 +540,19 @@ def test_an_edit_is_shown_as_numbered_lines() -> Result[Void]
   news = JSON.encode(JSON.from("b\n" * 70))
   fields = "\"path\": \"big.txt\", \"old_string\": #{olds}, \"new_string\": #{news}, \"replace_all\": true"
   block = JSON.parse("{#{fields}}").unwrap!
-  Test.assert(Tools.change(s.ctx, "edit_file", block).unwrap_or("").end_with?("\n... and 1 more"), "the count stays")
+  try Test.assert(
+    Tools.change(s.ctx, "edit_file", block).unwrap_or("").end_with?("\n... and 1 more"),
+    "the count stays",
+  )
+
+  try Test.eq(Diff.edit("a\r\nb\r\n", "b", "c"), "  1 a\n- 2 b\n+ 2 c")
+  # Many matches in a large file: counted at once, and the diff never holds the call long.
+  try File.write_text("#{s.root}/many.txt", "ab\n" * 340_000)
+  many = JSON.parse("{\"path\": \"many.txt\", \"old_string\": \"a\", \"new_string\": \"c\", \"replace_all\": true}")
+  started = Time.monotonic_ms
+  shown = Tools.change(s.ctx, "edit_file", many.unwrap!)
+  try Test.assert(Time.monotonic_ms - started < 3000, "the diff took #{Time.monotonic_ms - started} ms")
+  Test.assert(shown.unwrap_or("... and 339999 more").end_with?("... and 339999 more"), "#{shown}")
 end
 
 # Any edit of any small file gives a diff whose `-` rows are lines of the file and `+` rows lines of the result, at

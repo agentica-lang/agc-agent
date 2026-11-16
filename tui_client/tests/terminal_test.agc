@@ -162,9 +162,6 @@ def options() -> Args.Options
   )
 end
 
-# Runs `body` with the app on a fake terminal of `width` by `height` and a server that records its calls, then ends
-# the app with Ctrl-C. The server answers a call with its body in `replies` ("{}" when none), and an event stream
-# with one that stays open until the end.
 # A long output is folded; a click on the call's row shows all of it.
 def test_a_click_on_a_tool_call_shows_its_whole_output() -> Result[Void] = within(80, 24, &tool_click)
 
@@ -181,6 +178,9 @@ def tool_click(rig: Rig) -> Result[Void]
   Test.assert(not rows.any? { |row| row.include?("more lines") }, "the whole output shows")
 end
 
+# Runs `body` with the app on a fake terminal of `width` by `height` and a server that records its calls, then ends
+# the app with Ctrl-C. The server answers a call with its body in `replies` ("{}" when none), and an event stream
+# with one that stays open until the end.
 def within(width: Int, height: Int, body: Fn[Rig, Result[Void]], replies: Map[String, String] = {}) -> Result[Void]
   requests: Channel[String] = Channel.new(32)
   streams: Channel[Channel[Bytes]] = Channel.new(8)
