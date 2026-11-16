@@ -75,8 +75,11 @@ struct Model
   yolo: Yolo.Yolo
   ## The thinking of the model is drawn.
   thinking: Bool = false
-  ## The thinking level of the session, none for the model's default.
+  ## The thinking level the rules show, none for the model's default; the server's own is `confirmed`.
   effort: Optional[String] = none
+  confirmed: Optional[String] = none
+  ## The level whose change is on its way: one at a time, and the reply sends the latest one wanted.
+  level_sending: Optional[String] = none
   ## The frame of the spinner while a turn runs.
   spin: Int = 0
   approvals: Approvals.Panel
@@ -110,14 +113,21 @@ enum Msg
   Stopped(Result[Void])
   ## The spinner moves on.
   Spin
-  ## The reply to a change of the thinking level: the level before it.
-  Leveled(Optional[String], Result[Void])
+  ## The reply to a change of the thinking level.
+  Leveled(Result[Void])
 end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
 def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
   signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
+  palette = Theme.colors256?(System.env("TERM").unwrap_or(""), System.env("COLORTERM").unwrap_or(""))
+  output = TUI.OutputMode.Colors256
   start = try opened(seed(server, options, signals, TUI.Raw.width(screen), TUI.Raw.height(screen)))
+  if not palette
+    output = TUI.OutputMode.Normal
+    start = start.with(theme: Theme.basic())
+  end
+
   app = TUI.App(
     model: start.with(effects: []),
     update: &update,
@@ -126,7 +136,7 @@ def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) ->
     cmds: start.effects,
     input: TUI.InputMode.Esc,
     mouse: true,
-    output: TUI.OutputMode.Colors256,
+    output: output,
   )
 
   last = try TUI.Raw.program(screen, app)
@@ -219,7 +229,7 @@ def handled(app: Model, msg: Msg) -> Model
     Msg.Sent(_, _, _) -> app
     Msg.Stopped(result) -> stop_reply(app, result)
     Msg.Spin -> app.with(spin: (app.spin + 1) % SPINNER.size)
-    Msg.Leveled(before, result) -> level_reply(app, before, result)
+    Msg.Leveled(result) -> level_reply(app, result)
     Msg.Rechecked(generation, result) if generation == app.generation -> rechecked(app, result)
     Msg.Rechecked(_, _) -> app
   end
@@ -335,6 +345,7 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
     entries: Transcript.from_history(session.history),
     turn: session.turn_id.some?,
     effort: session.effort,
+    confirmed: session.effort,
     stopping: false,
     shown_id: from,
     approvals: Approvals.replaced(app.approvals, session.pending_approvals, app.now),
@@ -561,6 +572,7 @@ end
 def fresh(app: Model) -> Model
   seed(app.server, app.options, app.signals, app.width, app.height).with(
     thinking: app.thinking,
+    theme: app.theme,
     stream: app.stream,
     feed: app.feed,
     generation: app.generation,
@@ -611,7 +623,7 @@ def changed(app: Model, change: Protocol.UpdateSession, done: String) -> Result[
   try Client.update_session(app.server, app.id, change)
   shown = noted(app, done)
   for effort in option_list(change.effort)
-    shown = shown.with(effort: level_of(effort))
+    shown = shown.with(effort: level_of(effort), confirmed: level_of(effort))
   end
 
   return ok(shown) if change.model.none?
@@ -820,21 +832,40 @@ def label(app: Model) -> String
   ""
 end
 
-# Shift+Tab: the next thinking level, sent by a command; the rules take its color at once.
+# Shift+Tab: the next thinking level; the rules take its color at once.
 def leveled(app: Model) -> Model
   at = LEVELS.find_index { |level| level == app.effort }.unwrap_or(0)
-  level = LEVELS[(at + 1) % LEVELS.size]
-  server = app.server
-  id = app.id
-  before = app.effort
-  change = Protocol.UpdateSession(effort: some(level.unwrap_or(Protocol.EFFORT_DEFAULT)))
-  effect(app.with(effort: level), TUI.Cmd.Run(-> { Msg.Leveled(before, Client.update_session(server, id, change)) }))
+  wanted = app.with(effort: LEVELS[(at + 1) % LEVELS.size])
+  return wanted if wanted.level_sending.some?
+
+  send_level(wanted)
 end
 
-def level_reply(app: Model, before: Optional[String], result: Result[Void]) -> Model
+def send_level(app: Model) -> Model
+  name = level_name(app.effort)
+  server = app.server
+  id = app.id
+  change = Protocol.UpdateSession(effort: some(name))
+  effect(
+    app.with(level_sending: some(name)),
+    TUI.Cmd.Run(-> { Msg.Leveled(Client.update_session(server, id, change)) }),
+  )
+end
+
+# A level wanted while the change was on its way goes next; the note comes once the level settles, and a failure
+# with nothing newer wanted goes back to the server's level.
+def level_reply(app: Model, result: Result[Void]) -> Model
+  sent = app.level_sending.unwrap_or("")
+  done = app.with(level_sending: none)
+  if result.ok?
+    done = done.with(confirmed: level_of(sent))
+  end
+
+  return send_level(done) if level_name(app.effort) != sent
+
   case result
-    ok(_) -> noted(app, "thinking #{level_name(app.effort)} from the next turn")
-    error(e) -> noted(app.with(effort: before), "error: the thinking level was not set: #{e.message}")
+    ok(_) -> noted(done, "thinking #{sent} from the next turn")
+    error(e) -> noted(done.with(effort: done.confirmed), "error: the thinking level was not set: #{e.message}")
   end
 end
 
@@ -846,22 +877,21 @@ end
 
 def level_name(level: Optional[String]) -> String = level.unwrap_or(Protocol.EFFORT_DEFAULT)
 
+# What the turn does is in the top rule; the status line says when the client is ready.
 def status(app: Model, width: Int) -> String
-  state = "ready"
-  if app.stopping
-    state = "stopping"
-  elsif app.turn
-    state = "working"
+  parts: List[String] = []
+  if app.options.yolo
+    parts = parts.push("YOLO")
+  end
+
+  if not app.turn
+    parts = parts.push("ready")
   end
 
   if not app.approvals.pending.empty?
-    state = "#{state} · approval waiting"
+    parts = parts.push("approval waiting")
   end
 
-  if app.options.yolo
-    state = "YOLO · #{state}"
-  end
-
-  text = " #{state} · #{HINTS}"
+  text = " #{(parts + [HINTS]).join(" · ")}"
   text + " " * [width - Width.text(text), 0].max.unwrap!
 end

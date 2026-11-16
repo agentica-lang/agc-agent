@@ -451,7 +451,7 @@ class PtyTest(unittest.TestCase):
         term.wait_for(" hello there")
         term.type("\r")
         rows = term.wait_for("Hello!")
-        self.assertIn("working", text_of(rows))
+        self.assertIn("Working", text_of(rows))
         self.assertNotIn("meet you", text_of(rows))
         reply.release.set()
         term.wait_for(ANSWER)
@@ -496,7 +496,7 @@ class PtyTest(unittest.TestCase):
         term = self.start([Reply("text.sse", hold=3), Reply("text.sse")])
         term.type("hi\r")
         term.wait_for("Hello!")
-        term.wait_for("working")
+        term.wait_for("Working")
         term.type("\x1b")
         term.wait_for(" stopped")
         term.wait_for("ready")
@@ -586,10 +586,11 @@ class PtyTest(unittest.TestCase):
     def test_shift_tab_sets_the_next_thinking_level(self) -> None:
         term = self.start([])
         term.wait_for("session")
-        term.type("\x1b[Z")
-        term.wait_for(" thinking low from the next turn")
+        term.type("\x1b[Z\x1b[Z\x1b[Z")
+        term.wait_for(" thinking high from the next turn")
         term.type("/thinking\r")
-        term.wait_until(lambda rows: " thinking low" in rows, "the level the server keeps")
+        rows = term.wait_until(lambda rows: " thinking high" in rows, "the level the server keeps")
+        self.assertEqual(text_of(rows).count("from the next turn"), 1, text_of(rows))
 
     def test_a_slash_line_that_is_no_command_goes_to_the_agent(self) -> None:
         term = self.start([Reply("text.sse"), Reply("text.sse")])
@@ -875,7 +876,7 @@ class PtyTest(unittest.TestCase):
         term.type("\x1b")
         term.type("x")
         rows = term.wait_for(" x")
-        self.assertNotIn("stopping", text_of(term.settle()))
+        self.assertNotIn("Stopping", text_of(term.settle()))
         self.assertIn("ready", text_of(rows))
         self.assertFalse(any(path.endswith("/stop") for path in self.proxy.paths), self.proxy.paths)
 

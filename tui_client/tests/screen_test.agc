@@ -68,6 +68,15 @@ def test_the_theme_colors_each_region() -> Result[Void]
   Test.eq((try cells.find { |cell| cell.y == 5 and cell.x == 0 }).style, TUI.Style(bold: true))
 end
 
+# The 256-color theme only where the terminal says it shows them.
+def test_the_palette_follows_the_terminal() -> Result[Void]
+  checks = [["xterm-256color", ""], ["xterm", ""], ["xterm", "truecolor"]].map { |env|
+    Theme.colors256?(env[0], env[1])
+  }
+
+  Test.eq(checks, [true, false, true])
+end
+
 def parts_of(prompt: Prompt.View) -> Screen.Parts
   Screen.Parts(prompt: prompt, picker: &nothing, panel: &nothing, label: "", level: none, status: "ready")
 end

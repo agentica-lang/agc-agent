@@ -83,3 +83,38 @@ def default() -> Theme
     ),
   )
 end
+
+## The colors for a terminal of the eight named colors.
+def basic() -> Theme
+  Theme(
+    transcript: TranscriptColors(
+      user: TUI.Style(bold: true),
+      assistant: TUI.Style(),
+      bold: TUI.Style(bold: true),
+      heading: TUI.Style(fg: TUI.Color.Yellow, bold: true),
+      code: TUI.Style(fg: TUI.Color.Magenta),
+      thinking: TUI.Style(dim: true, italic: true),
+      notice: TUI.Style(dim: true),
+      tool: TUI.Style(fg: TUI.Color.Cyan),
+      tool_failed: TUI.Style(fg: TUI.Color.Red),
+    ),
+    panel: PanelColors(
+      head: TUI.Style(fg: TUI.Color.Yellow, bold: true),
+      text: TUI.Style(),
+      selected: TUI.Style(reverse: true),
+      removed: TUI.Style(fg: TUI.Color.Red),
+      added: TUI.Style(fg: TUI.Color.Green),
+    ),
+    footer: FooterColors(status: TUI.Style(dim: true)),
+    editor: EditorColors(text: TUI.Style(), cursor: TUI.Style(reverse: true)),
+    rules: RuleColors(
+      default: TUI.Style(dim: true),
+      low: TUI.Style(fg: TUI.Color.Cyan),
+      medium: TUI.Style(fg: TUI.Color.Blue),
+      high: TUI.Style(fg: TUI.Color.Magenta),
+    ),
+  )
+end
+
+## Whether a terminal shows the 256-color palette, from its `TERM` and `COLORTERM`.
+def colors256?(term: String, colorterm: String) -> Bool = term.include?("256color") or colorterm != ""
