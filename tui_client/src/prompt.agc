@@ -6,7 +6,7 @@ import Width from "width"
 
 MAX_ROWS = 6
 NARROW = /\A[ -~]*\z/
-LEAD = "> "
+LEAD = " "
 
 ## The rows the prompt draws (at most MAX_ROWS, the cursor's among them), and where the cursor is in them.
 struct View
@@ -45,9 +45,9 @@ def pasted(text: String) -> String = text.split("").select { |c| kept?(c) }.join
 
 def clamp(text: String, at: Int) -> Int = [[at, 0].max.unwrap!, text.length].min.unwrap!
 
-def rows(text: String, width: Int) -> List[String] = view(text, text.length, width, MAX_ROWS + 1).rows
+def rows(text: String, width: Int) -> List[String] = view(text, text.length, width, MAX_ROWS + 3).rows
 
-## `height` is the rows of the screen: the prompt leaves one to the status line.
+## `height` is the rows of the screen: the prompt leaves three to its rules and the status line.
 def view(text: String, cursor: Int, width: Int, height: Int) -> View
   at = clamp(text, cursor)
   shown = window(text, at, width, height)
@@ -152,7 +152,8 @@ def kept?(c: String) -> Bool
   c == "\n" or c == "\t" or not (code < 0x20 or (code >= 0x7f and code < 0xa0))
 end
 
-def most(height: Int) -> Int = [[height - 1, 1].max.unwrap!, MAX_ROWS].min.unwrap!
+# The rules above and under the prompt and the status line take three rows.
+def most(height: Int) -> Int = [[height - 3, 1].max.unwrap!, MAX_ROWS].min.unwrap!
 
 def lead(piece: Piece) -> String
   return LEAD if piece.start == 0

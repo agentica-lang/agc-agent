@@ -37,7 +37,7 @@ folder (link it into your PATH if you like):
 ```sh
 bin/finn --help
 bin/finn                               # chat in this folder; starts the server when none runs
-bin/finn tui                           # the same on the full screen: Enter sends, Ctrl+J newline, Ctrl+T thinking, Esc stops
+bin/finn tui                           # the same on the full screen: Enter sends, Ctrl+J newline, Ctrl+T thinking, Shift+Tab level, Esc stops
 # (the mouse answers panel keys, opens tool calls and thinking, and moves the prompt cursor; --yolo allows its own turns)
 # in both: /new, /resume, /model, /thinking, /compact, /stop, /help, /quit
 bin/finn -p "fix the failing test"    # one task, then exit with its status; approvals denied (--yolo allows its own turn)
