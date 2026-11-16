@@ -11,10 +11,11 @@ USAGE = <<~TEXT
   plain text (tool output and file contents included), until it is deleted (agc --delete ID). A file keeps every event
   but the text deltas and grows with the session; the server reads a session's file when the session is first used. The
   model API is AGC_AGENT_BASE_URL (a local llama-server by default) in the format AGC_AGENT_API names: openai (chat
-  completions, the default) or openai_responses; with AGC_AGENT_API_KEY and AGC_AGENT_MODEL. Past 80 % of the model's
-  window (AGC_AGENT_CONTEXT_WINDOW, else llama-server's /props, else GET /models), the history after the first task
-  becomes a summary by AGC_AGENT_COMPACT_MODEL (else the session's model), whose tokens are not in `usage`; the last
-  round of the running turn is kept whole.
+  completions, the default) or openai_responses; with AGC_AGENT_API_KEY and AGC_AGENT_MODEL. A new session may name
+  another model and API (agc --model, --api), kept in its file. Past 80 % of the model's window
+  (AGC_AGENT_CONTEXT_WINDOW, else llama-server's /props, else GET /models), the history after the first task becomes a
+  summary by AGC_AGENT_COMPACT_MODEL (else the session's model), whose tokens are not in `usage`; the last round of the
+  running turn is kept whole.
 TEXT
 
 enum Command

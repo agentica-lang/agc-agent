@@ -28,6 +28,8 @@ MAX_READ_BYTES = 1_048_576
 CALL_MS = 5000
 ## A request for a session that is not loaded yet waits for its load.
 LOAD_MS = 60_000
+## A session whose file names a model API this server does not have; its 503 says so.
+KIND_UNKNOWN_API = "core.unknown_api"
 ## The requests that may wait for one load; past them a request answers 503.
 MAX_WAITING = 64
 SYSTEM_PROMPT = <<~TEXT
@@ -40,10 +42,18 @@ SSE_HEADERS = [
   HTTP.Header(name: "Cache-Control", value: "no-cache"),
 ]
 
+## A model API a session can use: its provider, and the fields every request to it carries.
+struct ModelApi
+  provider: LLM.Provider
+  extra: Map[String, JSON.Value] = {}
+end
+
 struct Options
   state_dir: String
   data_dir: String
-  provider: LLM.Provider
+  ## The model APIs by name (`Config.apis`), and the one of a session that names none.
+  apis: Map[String, ModelApi]
+  api: String
   model: String
   env: Fn[String, Result[String]]
   rules: Tools.Rules
@@ -58,8 +68,6 @@ struct Options
   props_url: String = ""
   ## The key `/props` takes, as the provider's.
   api_key: String = ""
-  ## Fields every request to the model API carries, in the format of that API (`Config.request_extra`).
-  extra: Map[String, JSON.Value] = {}
   ## Runs in the task that loads a session, with its id, before the file is read: a seam for the tests.
   before_load: Optional[Fn[String, Void]] = none
 end
@@ -311,16 +319,22 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   end
 
   context = try ctx
+  api = request.api.unwrap_or(options.api)
+  if not options.apis.has_key?(api)
+    return error("unknown api #{api.inspect}: one of #{options.apis.keys.join(", ")}", kind: Protocol.KIND_INVALID)
+  end
+
   header = Store.Header(
     id: "s#{registry.sessions.size + 1}-#{OpenSSL.Random.hex(4)}",
     cwd: context.root,
     model: request.model.unwrap_or(options.model),
     created_ms: Time.now_ms,
     system: some(system_prompt(context.root)),
+    api: some(api),
   )
 
   file = try Store.create(sessions_dir(options), header)
-  ok(entry(options, header, context, file, none))
+  entry(options, header, context, file, none)
 end
 
 # The entry with its session ended, refused while a turn runs; it loads again on its next use.
@@ -390,8 +404,13 @@ def registered(registry: Registry, id: String, read: Result[Loaded]) -> Registry
       registry.with(sessions: registry.sessions.map { |e| replaced(e, entry) })
     error(e) ->
       IO.warn("session #{id} cannot be loaded now: #{e.message}")
+      message = "session #{id} cannot be loaded now"
+      if e.kind == KIND_UNKNOWN_API
+        message = "#{message}: #{e.message}"
+      end
+
       for waiting in listed.waiting
-        Actor.reply(waiting, error("session #{id} cannot be loaded now", kind: Protocol.KIND_SESSION_UNAVAILABLE))
+        Actor.reply(waiting, error(message, kind: Protocol.KIND_SESSION_UNAVAILABLE))
       end
 
       registry.with(sessions: registry.sessions.map { |other| replaced(other, listed.with(waiting: [])) })
@@ -404,7 +423,7 @@ def started(options: Options, listed: Entry, read: Result[Loaded]) -> Result[Ent
     try Store.reopen(listed.file)
   end
 
-  ok(entry(options, loaded.saved.header, loaded.context, listed.file, some(loaded.saved)))
+  entry(options, loaded.saved.header, loaded.context, listed.file, some(loaded.saved))
 end
 
 def entry(
@@ -413,12 +432,17 @@ def entry(
   context: Tools.Context,
   file: String,
   saved: Optional[Store.Saved],
-) -> Entry
+) -> Result[Entry]
+  name = header.api.unwrap_or(options.api)
+  return error("unknown API #{name}", kind: KIND_UNKNOWN_API) if not options.apis.has_key?(name)
+
+  api = options.apis[name]
+
   setup = Session.Setup(
     id: header.id,
     cwd: context.root,
     model: header.model,
-    provider: options.provider,
+    provider: api.provider,
     system: header.system.unwrap_or(system_prompt(context.root)),
     ctx: context,
     keep_events: options.keep_events,
@@ -428,14 +452,21 @@ def entry(
     compact_model: options.compact_model,
     props_url: options.props_url,
     api_key: options.api_key,
-    extra: options.extra,
+    extra: api.extra,
   )
 
-  Entry(summary: summary_of(header), header: header, file: file, session: some(Session.start(setup, saved)))
+  ok(
+    Entry(
+      summary: summary_of(options, header),
+      header: header,
+      file: file,
+      session: some(Session.start(setup, saved)),
+    ),
+  )
 end
 
-def summary_of(header: Store.Header) -> Protocol.SessionSummary
-  Protocol.SessionSummary(id: header.id, cwd: header.cwd, model: header.model)
+def summary_of(options: Options, header: Store.Header) -> Protocol.SessionSummary
+  Protocol.SessionSummary(id: header.id, cwd: header.cwd, model: header.model, api: header.api.unwrap_or(options.api))
 end
 
 # In the order they were made, not loaded yet. A file whose first line is not a session is left out, with a warning.
@@ -457,7 +488,9 @@ def load_sessions(options: Options) -> List[Entry]
   end
 
   sorted = listed.sort_by { |one| one.header.id }.sort_by { |one| one.header.created_ms }
-  sorted.map { |one| Entry(summary: summary_of(one.header), header: one.header, file: one.file, session: none) }
+  sorted.map { |one|
+    Entry(summary: summary_of(options, one.header), header: one.header, file: one.file, session: none)
+  }
 end
 
 def listed_session(file: String) -> Result[Store.Header]

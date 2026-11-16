@@ -21,7 +21,7 @@ struct Harness
   data_dir: String
   url: String
   token: String
-  provider: LLM.Provider
+  apis: Map[String, Server.ModelApi]
 end
 
 struct Answer
@@ -98,7 +98,8 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   options = Server.Options(
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
-    provider: try Config.provider(setup.api, fake.url, "test-key", LLM.Options(timeout_ms: 5000, retry_base_ms: 1)),
+    apis: Config.apis(fake.url, "test-key", LLM.Options(timeout_ms: 5000, retry_base_ms: 1)),
+    api: setup.api,
     model: "qwen2.5-0.5b-instruct",
     env: &fake_env,
     rules: no_rules(),
@@ -108,7 +109,6 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     compact_model: setup.compact_model,
     props_url: props_url(setup, fake),
     before_load: setup.before_load,
-    extra: Config.request_extra(setup.api),
   )
 
   server = try Server.start(options)
@@ -122,7 +122,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
       data_dir: options.data_dir,
       url: "http://127.0.0.1:#{server.port}",
       token: server.token,
-      provider: options.provider,
+      apis: options.apis,
     ),
   )
 end
@@ -173,7 +173,9 @@ def fixtures(names: List[String], dir: String = "openai_chat") -> Result[List[Fa
   replies: List[Fake.Reply] = []
   for name in names
     parts = name.split(":")
-    if parts.size == 2
+    if name.include?("/")
+      replies = replies.push(try Fake.sse(name))
+    elsif parts.size == 2
       replies = replies.push(try Fake.json(try parts[0].to_i, "#{dir}/#{parts[1]}"))
     elsif name.end_with?(".json")
       replies = replies.push(try Fake.json(200, "#{dir}/#{name}"))
@@ -207,8 +209,9 @@ def post(h: Harness, path: String, body: String) -> Result[Answer] = call(h, "PO
 
 def new_session(h: Harness) -> Result[String] = new_session_in(h, h.work)
 
-def new_session_in(h: Harness, cwd: String) -> Result[String]
-  answer = try post(h, Protocol.SESSIONS_PATH, Protocol.encode_new_session(Protocol.NewSession(cwd: cwd, model: none)))
+def new_session_in(h: Harness, cwd: String, api: Optional[String] = none) -> Result[String]
+  asked = Protocol.NewSession(cwd: cwd, model: none, api: api)
+  answer = try post(h, Protocol.SESSIONS_PATH, Protocol.encode_new_session(asked))
 
   return error("POST /v1/sessions: #{answer.status} #{answer.text}") if answer.status != 201
 

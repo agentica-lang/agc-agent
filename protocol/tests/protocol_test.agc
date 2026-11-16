@@ -88,7 +88,8 @@ end
 
 def test_requests_round_trip() -> Result[Void]
   new_session = try decode_fixture("new_session", &Protocol.decode_new_session, &Protocol.encode_new_session)
-  try Test.eq(new_session, Protocol.NewSession(cwd: "/home/ana/project", model: some("qwen2.5-0.5b")))
+  expected = Protocol.NewSession(cwd: "/home/ana/project", model: some("qwen2.5-0.5b"), api: some("openai_responses"))
+  try Test.eq(new_session, expected)
   try Test.eq(Protocol.decode_new_session(Protocol.encode_new_session(new_session)), ok(new_session))
 
   no_model = try decode_fixture(
@@ -97,7 +98,8 @@ def test_requests_round_trip() -> Result[Void]
     &Protocol.encode_new_session,
   )
 
-  try Test.eq(no_model.model, none)
+  try Test.eq([no_model.model, no_model.api], [none, none])
+  try Test.eq(error_kind(Protocol.decode_new_session("{\"cwd\": \"/x\", \"api\": \"\"}")), "protocol.invalid")
   try Test.eq(Protocol.decode_new_session("{\"cwd\": \"/x\"}"), ok(Protocol.NewSession(cwd: "/x", model: none)))
 
   message = try decode_fixture("send_message", &Protocol.decode_send_message, &Protocol.encode_send_message)

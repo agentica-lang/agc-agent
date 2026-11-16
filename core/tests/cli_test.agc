@@ -31,10 +31,14 @@ def test_the_model_api_is_chat_completions_or_responses() -> Result[Void]
 
   try Test.error?(Config.from_env(->(name) { api_env(name, "anthropic") }))
   chat = try Config.from_env(->(name) { api_env(name, "") })
-  try Test.eq([chat.provider.name, JSON.encode(JSON.object(chat.extra))], ["openai_chat", "{}"])
+  try Test.eq(chat.api, "openai")
   responses = try Config.from_env(->(name) { api_env(name, "openai_responses") })
-  try Test.eq(responses.provider.name, "openai_responses")
-  Test.eq(JSON.encode(JSON.object(responses.extra)), "{\"include\":[\"reasoning.encrypted_content\"],\"store\":false}")
+  try Test.eq(responses.api, "openai_responses")
+  names = responses.apis.keys.map { |name| "#{name} #{responses.apis[name].provider.name}" }
+  try Test.eq(names.sort, ["openai openai_chat", "openai_responses openai_responses"])
+  try Test.eq(JSON.encode(JSON.object(responses.apis["openai"].extra)), "{}")
+  stateless = responses.apis["openai_responses"].extra
+  Test.eq(JSON.encode(JSON.object(stateless)), "{\"include\":[\"reasoning.encrypted_content\"],\"store\":false}")
 end
 
 private

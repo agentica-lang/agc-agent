@@ -254,6 +254,60 @@ def test_a_load_takes_at_most_64_waiting_requests() -> Result[Void]
   end
 end
 
+# A session keeps the model API it was made with, in its file, across a restart: the one it named, or the server's
+# when it named none, even after the server's changes. A session whose file names none (made before the choice) uses
+# the server's of now, and one that names an API the server does not know answers 503. An unknown API is refused, and
+# the list shows the API of each session.
+def test_a_session_keeps_its_model_api() -> Result[Void]
+  replies = [
+    "openai_responses/text.sse",
+    "openai_chat/text.sse",
+    "openai_chat/text.sse",
+    "openai_responses/text.sse",
+    "openai_responses/text.sse",
+  ]
+
+  setup = H.Setup(replies: replies)
+  H.using(setup) do |h|
+    responses = try H.new_session_in(h, h.work, some("openai_responses"))
+    chat = try H.new_session(h)
+    _ = try H.send(h, responses, "Hi.")
+    _ = try H.idle(h, responses)
+    _ = try H.send(h, chat, "Hi.")
+    _ = try H.idle(h, chat)
+    first = try H.next_request(h)
+    try Test.eq([first.path, (try H.next_request(h)).path], ["/v1/responses", "/v1/chat/completions"])
+    asked = try JSON.parse(first.body)
+    try Test.eq(JSON.get(asked, "store"), ok(JSON.from(false)))
+    try Test.eq(JSON.get(asked, "include"), ok(JSON.from(["reasoning.encrypted_content"])))
+    unknown = Protocol.NewSession(cwd: h.work, model: none, api: some("nope"))
+    refused = try H.post(h, Protocol.SESSIONS_PATH, Protocol.encode_new_session(unknown))
+    try Test.eq(
+      [refused.status.to_s, (try Protocol.decode_failure(refused.text)).kind],
+      ["400", Protocol.KIND_INVALID],
+    )
+
+    try File.write_text(H.session_file(h, "old"), header(h.work, "old", ""))
+    try File.write_text(H.session_file(h, "odd"), header(h.work, "odd", ",\"api\":\"nope\""))
+    H.restarted(h, setup.with(api: "openai_responses"), "") do |r|
+      listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
+      apis = listed.sessions.map { |s| "#{s.id} #{s.api}" }.sort
+      try Test.eq(apis, ["#{chat} openai", "#{responses} openai_responses", "odd nope", "old openai_responses"].sort)
+      for id in [chat, "old", responses]
+        _ = try H.send(r, id, "Again.")
+        _ = try H.idle(r, id)
+      end
+
+      paths = [try H.next_request(r), try H.next_request(r), try H.next_request(r)].map { |seen| seen.path }
+      try Test.eq(paths, ["/v1/chat/completions", "/v1/responses", "/v1/responses"])
+      odd = try H.get(r, Protocol.session_path("odd"))
+      failure = try Protocol.decode_failure(odd.text)
+      try Test.eq([odd.status.to_s, failure.kind], ["503", Protocol.KIND_SESSION_UNAVAILABLE])
+      Test.assert(failure.message.include?("unknown API nope"), "the reason is not said: #{failure.message}")
+    end
+  end
+end
+
 # A session is deleted with its file, but not while a turn runs; one whose file stays loads again; one not loaded
 # since a restart is deleted too.
 def test_a_session_is_deleted() -> Result[Void]
@@ -373,6 +427,10 @@ private
 
 WAIT_MS = 20_000
 PROBE_MS = 300
+
+def header(cwd: String, id: String, more: String) -> String
+  "{\"type\":\"session\",\"id\":\"#{id}\",\"cwd\":\"#{cwd}\",\"model\":\"m\",\"created_ms\":1#{more}}\n"
+end
 
 def crash_once(crash: Channel[Bool]) -> Void
   if crash.recv(0).ok?

@@ -12,6 +12,7 @@ struct Options
   session: Optional[String]
   cwd: Optional[String]
   model: Optional[String]
+  api: Optional[String] = none
   thinking: Bool
 end
 
@@ -40,6 +41,7 @@ def parse(args: List[String]) -> Result[Command]
       Opt(name: "session", help: "id of the session to resume (default: a new one)"),
       Opt(name: "cwd", help: "folder of a new session (default: the current folder)"),
       Opt(name: "model", help: "model of a new session (default: the server's)"),
+      Opt(name: "api", help: "model API of a new session: openai or openai_responses (default: the server's)"),
       Opt(name: "thinking", kind: Kind.Flag, help: "show the model's thinking, dimmed"),
       Opt(name: "delete", help: "id of a session to delete (with its file), then exit"),
       Opt(name: "version", kind: Kind.Flag, help: "print the version"),
@@ -66,6 +68,7 @@ def command(parsed: Parsed) -> Result[Command]
     session: OP.optional_string(parsed, "session"),
     cwd: OP.optional_string(parsed, "cwd"),
     model: OP.optional_string(parsed, "model"),
+    api: OP.optional_string(parsed, "api"),
     thinking: OP.flag(parsed, "thinking"),
   )
 
