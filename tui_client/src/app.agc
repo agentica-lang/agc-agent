@@ -175,7 +175,7 @@ def attach(app: App, session: Protocol.Session, skip_replay: Bool) -> App
     stopping: false,
     shown_id: from,
     approvals: Approvals.replaced(app.approvals, session.pending_approvals, Time.monotonic_ms),
-    yolo: Yolo.running(app.yolo, session.turn_id),
+    yolo: Yolo.attached(app.yolo, session),
   )
 
   subscribe(fresh, from)
@@ -594,6 +594,7 @@ def reconnect(app: App, reason: String) -> Result[App]
   return error("lost the event stream: #{reason}", kind: "tui.stream") if reconnects > MAX_RECONNECTS
 
   Task.sleep(RECONNECT_MS * reconnects)
+  try Client.recheck(app.server)
   ok(subscribe(app.with(reconnects: reconnects), app.last_event_id))
 end
 

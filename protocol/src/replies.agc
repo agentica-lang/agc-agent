@@ -68,6 +68,8 @@ struct Session
   turn_from_event_id: Optional[Int]
   pending_approvals: List[Events.ApprovalRequested]
   history: List[Message]
+  ## What the session cost so far in USD, when the model catalog has its prices.
+  cost: Optional[Float] = none
   ## The thinking level of the session's calls; none leaves it to the model.
   effort: Optional[String] = none
 end
@@ -125,6 +127,7 @@ def encode_session(reply: Session) -> String
       turn_from_event_id: reply.turn_from_event_id,
       pending_approvals: reply.pending_approvals,
       history: history,
+      cost: Wire.field(reply.cost),
       effort: reply.effort,
     ),
   )
@@ -150,6 +153,7 @@ def decode_session(text: String) -> Result[Session]
       turn_from_event_id: wire.turn_from_event_id,
       pending_approvals: wire.pending_approvals,
       history: history,
+      cost: Wire.optional(wire.cost),
       effort: wire.effort,
     ),
   )
@@ -158,19 +162,19 @@ end
 ## The fields of the replies and the names of their values on the wire, for `Protocol.WIRE`.
 def shape() -> List[String]
   records = [
-    Health.members,
-    SessionCreated.members,
-    MessageAccepted.members,
-    SessionSummary.members,
-    SessionList.members,
-    Message.members,
-    Session.members,
-    ServerInfo.members,
-    MessageWire.members,
-    SessionWire.members,
+    Wire.record("Health", Health.members),
+    Wire.record("SessionCreated", SessionCreated.members),
+    Wire.record("MessageAccepted", MessageAccepted.members),
+    Wire.record("SessionSummary", SessionSummary.members),
+    Wire.record("SessionList", SessionList.members),
+    Wire.record("Message", Message.members),
+    Wire.record("Session", Session.members),
+    Wire.record("ServerInfo", ServerInfo.members),
+    Wire.record("MessageWire", MessageWire.members),
+    Wire.record("SessionWire", SessionWire.members),
   ]
 
-  Wire.fields(records) + roles().map(&role_name)
+  records + [Wire.values("Role", roles().map(&role_name))]
 end
 
 private
@@ -189,6 +193,7 @@ struct SessionWire
   turn_from_event_id: Optional[Int]
   pending_approvals: List[Events.ApprovalRequested]
   history: List[MessageWire]
+  cost: JSON.Field[Float]
   effort: Optional[String] = none
 end
 
