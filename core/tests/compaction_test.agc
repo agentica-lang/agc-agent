@@ -82,12 +82,15 @@ def test_a_turn_compacts_at_its_start() -> Result[Void]
     _ = try H.send(h, id, "Go on.")
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
-    for _i in 1..3
-      _ = try H.next_request(h)
-    end
-
+    _ = try H.next_request(h)
+    tool_output = string((try JSON.list(try JSON.get(try body(h), "messages"))).last, "content")
+    _ = try H.next_request(h)
     summary_request = try body(h)
     asked = try JSON.list(try JSON.get(summary_request, "messages"))
+    items = try JSON.list(try JSON.parse(string(asked[1], "content")))
+    results = items.select { |item| string(item, "type") == "tool_result" }.map { |item| string(item, "content") }
+    try Test.assert(not tool_output.empty?, "the tool gave no output")
+    try Test.eq(results, [tool_output])
     try Test.eq(
       transcript(asked[1]),
       ["assistant text", "assistant tool_call", "user tool_result", "assistant text", "user text", "assistant text"],
@@ -102,7 +105,8 @@ def test_a_turn_compacts_at_its_start() -> Result[Void]
   end
 end
 
-# A summary that fails, or comes back empty, is an `error` event; the turn goes on with its history whole and does not
+# A summary that fails, comes back empty or is cut at the token limit is an `error` event; the turn goes on with its
+# history whole and does not
 # ask again, and a later turn asks again.
 def test_a_failed_or_empty_summary_is_an_error_and_not_asked_again_in_the_turn() -> Result[Void]
   replies = [
@@ -113,6 +117,9 @@ def test_a_failed_or_empty_summary_is_an_error_and_not_asked_again_in_the_turn()
     "text.sse",
     "write_file.sse",
     "summary_empty.sse",
+    "text.sse",
+    "write_file.sse",
+    "summary_length.sse",
     "text.sse",
   ]
 
@@ -128,16 +135,20 @@ def test_a_failed_or_empty_summary_is_an_error_and_not_asked_again_in_the_turn()
     try Test.eq(H.stop_reason(a), "end_turn")
     _ = try H.send(h, id, "Once more.")
     a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "And again.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
     try Test.eq(H.stop_reason(a), "end_turn")
-    try Test.eq(failures(a.seen), [Compaction.KIND_FAILED, Compaction.KIND_FAILED])
-    systems: List[String] = []
-    for _i in 1..8
-      systems = systems.push(contents(try body(h)).first)
+    try Test.eq(failures(a.seen), [Compaction.KIND_FAILED, Compaction.KIND_FAILED, Compaction.KIND_FAILED])
+    bodies: List[JSON.Value] = []
+    for _i in 1..11
+      bodies = bodies.push(try body(h))
     end
 
-    try Test.eq(systems.select { |s| s == Compaction.SYSTEM }.size, 2)
-    Test.eq((try H.session(h, id)).history.size, 6)
+    try Test.eq(bodies.select { |b| contents(b).first == Compaction.SYSTEM }.size, 3)
+    try Test.eq(contents(bodies[10])[1], "Say hello.")
+    try Test.eq(roles(bodies[10]).select { |r| r == "user" }.size, 4)
+    Test.eq((try H.session(h, id)).history.size, 8)
   end
 end
 
