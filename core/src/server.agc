@@ -674,7 +674,7 @@ def route(token: String, registry: Address[Msg], request: HTTP.Request, body: HT
   end
 
   if request.method == "GET" and request.path == Protocol.HEALTH_PATH
-    return whole(200, Protocol.encode_health(Protocol.Health(version: VERSION)))
+    return whole(200, Protocol.encode_health(Protocol.Health(version: VERSION, wire: some(Protocol.wire_digest()))))
   end
 
   prefix = Protocol.SESSIONS_PATH
