@@ -262,12 +262,14 @@ def test_follow_ups_wait_for_the_end_of_the_turn() -> Result[Void]
     ["one\ntwo\nthree", "[]", "true"],
   )
 
+  quit = App.update(model.with(prompt: "/quit"), alt_enter()).model
+  try Test.eq([quit.exit, some(quit.follow_ups.size)], [some(0), some(2)])
   idle = App.update(model_of(30, 8).with(prompt: "now"), alt_enter())
   Test.eq(idle.model.outbox, ["now"])
 end
 
-# A resync that finds no turn running sends the follow-ups: the end of their turn was missed. A new session keeps them
-# in the prompt.
+# A resync that finds no turn running sends the follow-ups: the end of their turn was missed. A move to another branch
+# puts them in the prompt after the message it went back before.
 def test_a_resync_with_no_turn_sends_the_follow_ups() -> Result[Void]
   session = Protocol.Session(
     id: "s1",
@@ -289,10 +291,13 @@ def test_a_resync_with_no_turn_sends_the_follow_ups() -> Result[Void]
   model = model_of(30, 8).with(server: server, id: "s1", turn: true, generation: 1, follow_ups: ["later"])
   resynced = App.update(model, App.Msg.Stream(1, [Client.Item.Event(some(3), Protocol.Event.Resync)])).model
   Task.await(resynced.stream.unwrap!)
+  branched = Protocol.Branched(id: "s1", text: "Two.")
+  moved = App.update(model.with(turn: false, moving: true), App.Msg.Moved(ok(branched))).model
+  Task.await(moved.stream.unwrap!)
   HTTP.close_server(http)
   _ = HTTP.wait(http)
   try Test.eq([resynced.follow_ups, resynced.outbox], [[], ["later"]])
-  ok()
+  Test.eq([moved.prompt, moved.follow_ups.size.to_s, moved.outbox.size.to_s], ["Two.\nlater", "0", "0"])
 end
 
 # Up on an empty prompt goes back through the prompts sent, Down comes forward to an empty prompt; a large paste is

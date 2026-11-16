@@ -562,7 +562,8 @@ end
 # Alt+Enter: while a turn runs (or a message that starts one is on its way), the text waits for the turn's end.
 def follow_up(app: Model) -> Model
   text = app.prompt.strip
-  return send(app) if text == "" or (not app.turn and app.outbox.empty?)
+  # A command runs now, as with Enter: it is no message for the model.
+  return send(app) if text == "" or (not app.turn and app.outbox.empty?) or Client.parse_command(text).some?
 
   whole = expanded(app, text)
   waiting = app.with(prompt: "", cursor: 0, recall: none, follow_ups: app.follow_ups.push(whole), pastes: [])
@@ -931,6 +932,12 @@ def moved(app: Model, result: Result[Protocol.Branched]) -> Model
     ok(done) ->
       opened = tried(app.with(moving: false), resume(fresh(app), done.id))
       return opened if done.text.empty?
+
+      # Follow-ups put back in the prompt stay after the message; typing then adds to both.
+      if opened.prompt != ""
+        both = "#{done.text}\n#{opened.prompt}"
+        return noted(opened.with(prompt: both, cursor: both.length), "went back before a message: it is in the prompt")
+      end
 
       filled = opened.with(prompt: done.text, cursor: done.text.length, prefilled: true)
       noted(filled, "went back before a message: it is in the prompt (typing replaces it, an arrow keeps it)")

@@ -4,43 +4,67 @@
 CONTEXT = 2
 MAX_LINES = 60
 
-## The lines of `text` around the first `old` and what `new` puts in its place; with `all`, a last line says how many
-## more places change.
-def edit(text: String, old: String, new: String, all: Bool = false) -> String
+## The lines of `text` that the first `old` changes, as `new` replaces it, with the lines around them.
+def edit(text: String, old: String, new: String) -> String
   found = text.index_of(old)
   return "" if old == "" or found.none?
 
-  before = text.slice(0, found.unwrap!)
-  after = before + new + text.slice(before.length + old.length, text.length - before.length - old.length)
+  at = found.unwrap!
+  after = text.slice(0, at) + new + text.slice(at + old.length, text.length - at - old.length)
   lines = lines_of(text)
   changed = lines_of(after)
-  first = line_ends(before)
-  # Whole lines go when `old` starts a line and ends with its line end.
-  whole = old.end_with?("\n") and (before == "" or before.end_with?("\n"))
-  removed = touched(old, whole)
-  added = touched(new, whole)
-  top = [first - CONTEXT, 0].max.unwrap!
-  bottom = [first + added + CONTEXT, changed.size].min.unwrap!
-  width = bottom.to_s.length
+  # The lines the same at the start and at the end of both; what is between them changed.
+  head = 0
+  while head < lines.size and head < changed.size and lines[head] == changed[head]
+    head += 1
+  end
+
+  tail = 0
+  while (
+    tail < lines.size - head and
+    tail < changed.size - head and
+    lines[lines.size - 1 - tail] == changed[changed.size - 1 - tail]
+  )
+    tail += 1
+  end
+
+  removed_end = lines.size - tail
+  added_end = changed.size - tail
+  return "" if removed_end == head and added_end == head
+
+  top = [head - CONTEXT, 0].max.unwrap!
+  bottom = [added_end + CONTEXT, changed.size].min.unwrap!
+  width = [lines.size, changed.size].max.unwrap!.to_s.length
   rows: List[String] = []
   if top > 0
     rows = rows.push("...")
   end
 
-  rows = rows + (top...first).to_a.map { |i| numbered(" ", i, lines[i], width) }
-  rows = rows + (first...(first + removed)).to_a.map { |i| numbered("-", i, lines[i], width) }
-  rows = rows + (first...(first + added)).to_a.map { |i| numbered("+", i, changed[i], width) }
-  rows = rows + ((first + added)...bottom).to_a.map { |i| numbered(" ", i, changed[i], width) }
+  rows = rows + (top...head).to_a.map { |i| numbered(" ", i, lines[i], width) }
+  rows = rows + (head...removed_end).to_a.map { |i| numbered("-", i, lines[i], width) }
+  rows = rows + (head...added_end).to_a.map { |i| numbered("+", i, changed[i], width) }
+  rows = rows + (added_end...bottom).to_a.map { |i| numbered(" ", i, changed[i], width) }
   if bottom < changed.size
     rows = rows.push("...")
   end
 
-  more = occurrences(text, old) - 1
-  if all and more > 0
-    rows = rows.push("... and #{more} more")
+  capped(rows)
+end
+
+## How many times `old` is in `text`.
+def occurrences(text: String, old: String) -> Int
+  return 0 if old == ""
+
+  count = 0
+  rest = text
+  found = rest.index_of(old)
+  while found.some?
+    count += 1
+    rest = rest.slice(found.unwrap! + old.length, rest.length - found.unwrap! - old.length)
+    found = rest.index_of(old)
   end
 
-  capped(rows)
+  count
 end
 
 ## A new file: each line of `content` added.
@@ -56,37 +80,15 @@ private
 
 # The lines of a text; a line end at the end starts no line.
 def lines_of(text: String) -> List[String]
+  return [] if text == ""
   return text.split("\n").take(text.split("\n").size - 1) if text.end_with?("\n")
 
   text.split("\n")
 end
 
-# How many lines `piece` takes; in place of whole lines, a line end at its end starts no line.
-def touched(piece: String, whole: Bool) -> Int
-  return 0 if whole and piece == ""
-  return line_ends(piece) if whole and piece.end_with?("\n")
-
-  line_ends(piece) + 1
-end
-
-def line_ends(text: String) -> Int = text.length - text.replace("\n", "").length
-
-def occurrences(text: String, part: String) -> Int
-  count = 0
-  rest = text
-  found = rest.index_of(part)
-  while found.some?
-    count += 1
-    rest = rest.slice(found.unwrap! + part.length, rest.length - found.unwrap! - part.length)
-    found = rest.index_of(part)
-  end
-
-  count
-end
-
 def numbered(mark: String, index: Int, line: String, width: Int) -> String
   number = (index + 1).to_s
-  "#{mark} #{" " * (width - number.length)}#{number} #{line}"
+  "#{mark} #{" " * [width - number.length, 0].max.unwrap!}#{number} #{line}"
 end
 
 def capped(rows: List[String]) -> String

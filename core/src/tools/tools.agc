@@ -165,27 +165,11 @@ def detail(name: String, input: JSON.Value) -> String
 end
 
 ## What a call of `edit_file` or `write_file` would change, as numbered lines, read before it runs; none for the other
-## tools or a call it cannot read.
+## tools, a call it cannot read, or a diff that fails: it is only shown, so it never stops the call.
 def change(ctx: Spec.Context, name: String, input: JSON.Value) -> Optional[String]
-  case name
-    "edit_file" ->
-      case Spec.args(input, Files.EditFileArgs.codec)
-        ok(args) ->
-          nonempty(
-            cut(
-              Diff.edit(text_of(ctx, args.path), args.old_string, args.new_string, args.replace_all.unwrap_or(false)),
-            ),
-          )
-        error(_) -> none
-      end
-
-    "write_file" ->
-      case Spec.args(input, Files.WriteFileArgs.codec)
-        ok(args) -> nonempty(cut(Diff.written(args.content)))
-        error(_) -> none
-      end
-
-    _ -> none
+  case Task.await(Task.spawn do ok(changed(ctx, name, input)) end)
+    ok(text) -> nonempty(text)
+    error(_) -> none
   end
 end
 
@@ -213,6 +197,34 @@ def text_of(ctx: Spec.Context, path: String) -> String
     ok(found) -> File.read_text(found).unwrap_or("")
     error(_) -> ""
   end
+end
+
+def changed(ctx: Spec.Context, name: String, input: JSON.Value) -> String
+  case name
+    "edit_file" ->
+      case Spec.args(input, Files.EditFileArgs.codec)
+        ok(args) ->
+          edited(text_of(ctx, args.path), args.old_string, args.new_string, args.replace_all.unwrap_or(false))
+        error(_) -> ""
+      end
+
+    "write_file" ->
+      case Spec.args(input, Files.WriteFileArgs.codec)
+        ok(args) -> cut(Diff.written(args.content))
+        error(_) -> ""
+      end
+
+    _ -> ""
+  end
+end
+
+# The diff of the first place, and with `all` how many more change, after any cut.
+def edited(text: String, old: String, new: String, all: Bool) -> String
+  shown = cut(Diff.edit(text, old, new))
+  more = Diff.occurrences(text, old) - 1
+  return shown if not all or more <= 0 or shown == ""
+
+  "#{shown}\n... and #{more} more"
 end
 
 def nonempty(text: String) -> Optional[String]
