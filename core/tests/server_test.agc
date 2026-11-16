@@ -297,7 +297,30 @@ def test_requests_need_the_token_a_local_host_and_no_foreign_origin() -> Result[
       rules: H.no_rules(),
     )
 
-    Test.error?(Server.start(options))
+    try Test.error?(Server.start(options))
+    foreign_owner(h)
+  end
+end
+
+# A private folder of another user (`/root` when it is there and not ours) is refused for that reason.
+def foreign_owner(h: H.Harness) -> Result[Void]
+  root = File.stat("/root")
+  mine = File.stat("/proc/self")
+  return ok() if not root.ok? or not mine.ok?
+  return ok() if root.unwrap!.user_id == mine.unwrap!.user_id or root.unwrap!.mode % 64 != 0
+
+  options = Server.Options(
+    state_dir: "/root",
+    data_dir: "#{h.base}/data",
+    provider: h.provider,
+    model: "m",
+    env: &H.fake_env,
+    rules: H.no_rules(),
+  )
+
+  case Server.start(options)
+    ok(_) -> Test.assert(false, "a folder of another user was taken")
+    error(e) -> Test.assert(e.message.include?("not owned by you"), e.message)
   end
 end
 

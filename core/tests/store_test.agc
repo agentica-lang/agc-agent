@@ -45,6 +45,8 @@ def test_a_message_reads_back_with_every_kind_of_block() -> Result[Void]
   for message in messages
     json = Store.encode_message(message)
     back = try Store.decode_message(json)
+    try Test.eq(back.role, message.role)
+    try Test.eq(back.content.map { |b| block_kind(b) }, message.content.map { |b| block_kind(b) })
     try Test.eq(JSON.encode(Store.encode_message(back)), JSON.encode(json))
   end
 
@@ -67,7 +69,33 @@ def test_a_load_skips_broken_lines_and_reopen_ends_a_cut_one() -> Result[Void]
   result
 end
 
+# A record longer than a load reads is refused, and the file keeps what it had.
+def test_a_record_over_the_line_limit_is_refused() -> Result[Void]
+  dir = try temp_dir()
+  result = too_long(dir)
+  _ = Path.remove(dir)
+  result
+end
+
 private
+
+def too_long(dir: String) -> Result[Void]
+  path = try Store.create(dir, Store.Header(id: "s1-ab", cwd: "/work", model: "m", created_ms: 7))
+  try Test.error?(Store.append_user(path, "x" * Store.MAX_LINE_BYTES))
+  try Store.append_user(path, "x" * (Store.MAX_LINE_BYTES - 100))
+  saved = try Store.load(path)
+  Test.eq([saved.users, saved.skipped], [1, 0])
+end
+
+def block_kind(block: LLM.Block) -> String
+  case block
+    LLM.Block.Text(part) -> "text #{part.text} #{part.replay.some?}"
+    LLM.Block.Thinking(part) -> "thinking #{part.text} #{part.replay.some?}"
+    LLM.Block.ToolUse(call) ->
+      "tool_use #{call.id} #{call.name} #{call.input_error.some?} #{call.kind == LLM.ToolKind.Custom}"
+    LLM.Block.ToolResult(output) -> "tool_result #{output.tool_use_id} #{output.content} #{output.is_error}"
+  end
+end
 
 def broken_lines(dir: String) -> Result[Void]
   header = Store.Header(id: "s1-ab", cwd: "/work", model: "m", created_ms: 7)
