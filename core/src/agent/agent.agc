@@ -466,14 +466,22 @@ def noticed_run(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Tools.Tu
     Protocol.Event.ToolStarted(Protocol.ToolStarted(call_id: call.id, name: call.name, summary: summary)),
   )
 
+  change = Tools.change(turn.ctx, call.name, call.input)
   started = Time.monotonic_ms
   ran = checked_run(turn, call, marks)
   output = ran.output
+  diff = change
+  if output.is_error
+    diff = none
+  end
+
   finished = Protocol.ToolFinished(
     call_id: call.id,
     ok: not output.is_error,
     summary: first_line(output.text),
     duration_ms: Time.monotonic_ms - started,
+    output: Tools.shown_output(output.text),
+    diff: diff,
   )
 
   turn.link.emit.call(Protocol.Event.ToolFinished(finished))

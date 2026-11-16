@@ -1,4 +1,5 @@
 import Approval from "../src/approval/approval"
+import Diff from "../src/tools/diff"
 import Tools from "../src/tools/tools"
 
 struct Setup
@@ -503,4 +504,109 @@ def test_wildcards() -> Result[Void]
   try Test.assert(not Approval.wildcard?("ab*ba", "aba"), "no overlap")
   try Test.assert(Approval.wildcard?("abc", "abc"), "exact")
   Test.assert(not Approval.wildcard?("abc", "abcd"), "exact is whole")
+end
+
+# An edit shows its lines numbered, two lines of context around them and `...` for the lines skipped.
+def test_an_edit_is_shown_as_numbered_lines() -> Result[Void]
+  text = "a\nb\nc\nd\ne\nf\ng\n"
+  try Test.eq(
+    Diff.edit(text, "d", "D\nD2").split("\n"),
+    ["...", "  2 b", "  3 c", "- 4 d", "+ 4 D", "+ 5 D2", "  6 e", "  7 f", "..."],
+  )
+
+  try Test.eq(Diff.edit("one\ntwo", "one", "1"), "- 1 one\n+ 1 1\n  2 two")
+  try Test.eq(Diff.edit("x", "y", "z"), "")
+  try Test.eq(Diff.edit("a\nb\n", "b\n", "c\n"), "  1 a\n- 2 b\n+ 2 c")
+  try Test.eq(Diff.edit("a\nb\nc\n", "b\n", ""), "  1 a\n- 2 b\n  2 c")
+  ten = (1..10).to_a.map { |i| "l#{i}\n" }.join("")
+  try Test.eq(Diff.edit(ten, "l10\n", ""), "...\n   8 l8\n   9 l9\n- 10 l10")
+  try Test.eq(Diff.edit("x foo\n", "foo\n", "bar"), "- 1 x foo\n+ 1 x bar")
+  try Test.eq(Diff.edit("x foo\nnext\n", "foo\n", "bar"), "- 1 x foo\n- 2 next\n+ 1 x barnext")
+  try Test.eq(Diff.written("hi\n"), "+ 1 hi")
+  try Test.eq(Diff.written(""), "")
+  try Test.eq(Diff.written("a\nb"), "+ 1 a\n+ 2 b")
+  s = try setup()
+  input = JSON.from({"path": "long.txt", "content": "x" * 300_000})
+  long = Tools.change(s.ctx, "write_file", input).unwrap_or("")
+  try Test.assert(long.length > 0 and long.length < 4100, "the diff of a long line is cut: #{long.length}")
+  try File.write_text("#{s.root}/x.txt", "x y x x")
+  edit = JSON.parse(
+    "{\"path\": \"x.txt\", \"old_string\": \"x\", \"new_string\": \"z\", \"replace_all\": true}",
+  ).unwrap!
+
+  try Test.eq(Tools.change(s.ctx, "edit_file", edit), some("- 1 x y x x\n+ 1 z y x x\n... and 2 more"))
+  try File.write_text("#{s.root}/big.txt", "#{"a\n" * 70}a\n#{"a\n" * 70}")
+  olds = JSON.encode(JSON.from("a\n" * 70))
+  news = JSON.encode(JSON.from("b\n" * 70))
+  fields = "\"path\": \"big.txt\", \"old_string\": #{olds}, \"new_string\": #{news}, \"replace_all\": true"
+  block = JSON.parse("{#{fields}}").unwrap!
+  try Test.assert(
+    Tools.change(s.ctx, "edit_file", block).unwrap_or("").end_with?("\n... and 1 more"),
+    "the count stays",
+  )
+
+  try Test.eq(Diff.edit("a\r\nb\r\n", "b", "c"), "  1 a\n- 2 b\n+ 2 c")
+  # Many matches in a large file: counted at once, and the diff never holds the call long.
+  try File.write_text("#{s.root}/many.txt", "ab\n" * 340_000)
+  many = JSON.parse("{\"path\": \"many.txt\", \"old_string\": \"a\", \"new_string\": \"c\", \"replace_all\": true}")
+  started = Time.monotonic_ms
+  shown = Tools.change(s.ctx, "edit_file", many.unwrap!)
+  try Test.assert(Time.monotonic_ms - started < 3000, "the diff took #{Time.monotonic_ms - started} ms")
+  try Test.assert(shown.some?, "the diff came in time")
+  Test.assert(shown.unwrap!.end_with?("... and 339999 more"), "#{shown}")
+end
+
+# Any edit of any small file gives a diff whose `-` rows are lines of the file and `+` rows lines of the result, at
+# their numbers: a loop over every file of up to four pieces of "a", "b" and a line end, every part of it and a few
+# replacements.
+def test_every_small_edit_gives_a_diff_of_its_lines() -> Result[Void]
+  files = [""]
+  for _ in 0...4
+    files = files + files.flat_map { |f| ["a", "b", "\n"].map { |p| f + p } }
+  end
+
+  cases = 0
+  for text in files.uniq
+    for from in 0...text.length
+      for length in 1..(text.length - from)
+        old = text.slice(from, length)
+        for new in ["", "x", "\n", "x\n", "a\nb"]
+          try checked_diff(text, old, new)
+          cases += 1
+        end
+      end
+    end
+  end
+
+  Test.assert(cases > 1000, "#{cases} cases")
+end
+
+def checked_diff(text: String, old: String, new: String) -> Result[Void]
+  at = text.index_of(old).unwrap!
+  after = text.slice(0, at) + new + text.slice(at + old.length, text.length - at - old.length)
+  rows = Diff.edit(text, old, new).split("\n").select { |r| r.start_with?("- ") or r.start_with?("+ ") }
+  for row in rows
+    body = row.slice(2, row.length - 2)
+    while body.start_with?(" ")
+      body = body.slice(1, body.length - 1)
+    end
+
+    space = body.index_of(" ").unwrap!
+    number = try body.slice(0, space).to_i - 1
+    line = body.slice(space + 1, body.length - space - 1)
+    source = after
+    if row.start_with?("- ")
+      source = text
+    end
+
+    try Test.eq([lines(source)[number]], [line])
+  end
+
+  ok()
+end
+
+def lines(text: String) -> List[String]
+  return text.split("\n").take(text.split("\n").size - 1) if text.end_with?("\n")
+
+  text.split("\n")
 end

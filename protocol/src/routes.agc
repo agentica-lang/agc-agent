@@ -46,6 +46,7 @@ def shape() -> List[String]
     PROVIDERS_PATH,
     AUTH_PATH,
     LAST_EVENT_ID_HEADER,
+    session_path("ID"),
     events_path("ID"),
     messages_path("ID"),
     approval_path("ID", "A"),

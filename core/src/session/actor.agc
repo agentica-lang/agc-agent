@@ -668,7 +668,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     message_id = "#{running.id}.#{running.queued + 1}"
     Actor.reply(reply, ok(Protocol.MessageAccepted(turn_id: running.id, message_id: some(message_id))))
     queued = state.with(turn: some(running.with(queued: running.queued + 1)), queued: state.queued.push(typed))
-    event = Protocol.MessageQueued(turn_id: running.id, text: typed, message_id: message_id)
+    event = Protocol.MessageQueued(turn_id: running.id, text: typed, message_id: some(message_id))
     return emit(queued, Protocol.Event.MessageQueued(event))
   end
 

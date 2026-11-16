@@ -6,11 +6,18 @@ import Width from "width"
 FENCE = "```"
 BULLET = "• "
 
+## How a span looks: the markdown of an answer, and the parts of a tool call (its title, its argument, its output and
+## the removed and added lines of its diff).
 enum Look
   Plain
   Bold
   Heading
   Code
+  Title
+  Arg
+  Muted
+  Removed
+  Added
 end
 
 struct Span

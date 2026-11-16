@@ -247,6 +247,22 @@ def options() -> Args.Options
   )
 end
 
+# A long output is folded; a click on the call's row shows all of it.
+def test_a_click_on_a_tool_call_shows_its_whole_output() -> Result[Void] = within(80, 24, &tool_click)
+
+def tool_click(rig: Rig) -> Result[Void]
+  started = Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "seq 10")
+  output = (1..10).to_a.map { |i| "line #{i}" }.join("\n")
+  finished = Protocol.ToolFinished(call_id: "c1", ok: true, summary: "exit 0", duration_ms: 5, output: some(output))
+  try rig.feed.send(Client.Item.Event(some(1), Protocol.Event.ToolStarted(started)), 1000)
+  try rig.feed.send(Client.Item.Event(some(2), Protocol.Event.ToolFinished(finished)), 1000)
+  rows = try shows(rig, "6 more lines (click or ^O shows them)")
+  try Test.assert(not rows.any? { |row| row.include?("line 10") }, "the output is folded")
+  try click(rig, try find(rig, "$ seq 10"))
+  rows = try shows(rig, "line 10")
+  Test.assert(not rows.any? { |row| row.include?("more lines") }, "the whole output shows")
+end
+
 # Runs `body` with the app on a fake terminal of `width` by `height` and a server that records its calls, then ends
 # the app with Ctrl-C. The server answers a call with its body in `replies` ("{}" when none), and an event stream
 # with one that stays open until the end.

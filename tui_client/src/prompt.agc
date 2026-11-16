@@ -68,7 +68,8 @@ private
 # The last rows that fit, or from the cursor's row when it is above them. Only the lines around the cursor are cut
 # into rows, so a long text costs little per key.
 def window(text: String, at: Int, width: Int, height: Int) -> Window
-  columns = [width - LEAD.length, 1].max.unwrap!
+  # The last column stays free for the cursor past the end of a row.
+  columns = [width - LEAD.length - 1, 1].max.unwrap!
   fit = most(height)
   before = text.slice(0, at).split("\n")
   line = before.size - 1

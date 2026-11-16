@@ -411,7 +411,7 @@ end
 
 def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]
   options = Config.now(registry.options)
-  ctx = case Tools.context(request.cwd, options.env, options.tools, options.late_tools)
+  ctx = case Tools.context(request.cwd, options.env, options.tools, options.late_tools, options.diff)
     ok(ctx) -> ok(ctx)
     error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
   end
@@ -498,7 +498,7 @@ def read(options: Config.Options, listed: Entry) -> Result[Loaded]
     IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
   end
 
-  context = try Tools.context(saved.header.cwd, options.env, options.tools, options.late_tools)
+  context = try Tools.context(saved.header.cwd, options.env, options.tools, options.late_tools, options.diff)
   ok(Loaded(saved: saved, opened: opened(context, try approvals_of(options, context.root))))
 end
 

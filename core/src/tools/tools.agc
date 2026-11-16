@@ -13,6 +13,7 @@
 ##   is used, and bash is the only way to run something in parallel, so the check can race with a swapped link.
 ## - On a case-insensitive filesystem a rule on `.env` may not match `.ENV`.
 
+import Diff from "diff"
 import Files from "files"
 import Patch from "patch"
 import Sandbox from "sandbox"
@@ -38,9 +39,10 @@ def context(
   env: Fn[String, Result[String]],
   more: List[Spec.Tool] = [],
   late: Optional[Fn[List[Spec.Tool]]] = none,
+  diff: Optional[Fn[String, JSON.Value, String]] = none,
 ) -> Result[Spec.Context]
   root = try Sandbox.open(cwd)
-  ok(Spec.Context(root: root, env: env, tools: more, late: late))
+  ok(Spec.Context(root: root, env: env, tools: more, late: late, diff: diff))
 end
 
 ## The tools a session offers the model: the base ones, then those of its context.
@@ -163,9 +165,94 @@ def detail(name: String, input: JSON.Value) -> String
   end
 end
 
+## What a call of `edit_file` or `write_file` would change, as numbered lines, read before it runs; none for the other
+## tools, a call it cannot read, or a diff that fails or takes over DIFF_MS: it is only shown, so it never stops the
+## call.
+def change(ctx: Spec.Context, name: String, input: JSON.Value) -> Optional[String]
+  # A task that gives a Result: a crash then comes back as an error, not in this task.
+  task = Task.spawn do ok(made(ctx, name, input)) end
+  case Task.await(task, DIFF_MS)
+    Await.Done(ok(text)) -> nonempty(text)
+    Await.Done(_) -> none
+    _ ->
+      Task.cancel(task)
+      none
+  end
+end
+
+## The first lines of a result for the clients, none when it has one line at most (its summary shows it).
+def shown_output(text: String) -> Optional[String]
+  lines = text.strip.split("\n").map { |line| without_cr(line) }
+  return none if lines.size <= 1
+
+  shown = lines.take(OUTPUT_LINES)
+  if lines.size > OUTPUT_LINES
+    shown = shown.push("... #{lines.size - OUTPUT_LINES} more lines")
+  end
+
+  some(cut(shown.join("\n")))
+end
+
 private
 
 DETAIL_CHARS = 4000
+DIFF_MS = 2000
+OUTPUT_LINES = 40
+
+# The text of a file in the session folder, "" when it cannot be read.
+def text_of(ctx: Spec.Context, path: String) -> String
+  case Sandbox.resolve(ctx.root, path)
+    ok(found) -> File.read_text(found).unwrap_or("")
+    error(_) -> ""
+  end
+end
+
+def made(ctx: Spec.Context, name: String, input: JSON.Value) -> String
+  case ctx.diff
+    some(diff) -> diff.call(name, input)
+    none -> changed(ctx, name, input)
+  end
+end
+
+def changed(ctx: Spec.Context, name: String, input: JSON.Value) -> String
+  case name
+    "edit_file" ->
+      case Spec.args(input, Files.EditFileArgs.codec)
+        ok(args) ->
+          edited(text_of(ctx, args.path), args.old_string, args.new_string, args.replace_all.unwrap_or(false))
+        error(_) -> ""
+      end
+
+    "write_file" ->
+      case Spec.args(input, Files.WriteFileArgs.codec)
+        ok(args) -> cut(Diff.written(args.content))
+        error(_) -> ""
+      end
+
+    _ -> ""
+  end
+end
+
+# The diff of the first place, and with `all` how many more change, after any cut.
+def edited(text: String, old: String, new: String, all: Bool) -> String
+  shown = cut(Diff.edit(text, old, new))
+  more = Diff.occurrences(text, old) - 1
+  return shown if not all or more <= 0 or shown == ""
+
+  "#{shown}\n... and #{more} more"
+end
+
+def without_cr(line: String) -> String
+  return line.slice(0, line.length - 1) if line.end_with?("\r")
+
+  line
+end
+
+def nonempty(text: String) -> Optional[String]
+  return none if text == ""
+
+  some(text)
+end
 
 def cut(text: String) -> String
   return text if text.length <= DETAIL_CHARS
