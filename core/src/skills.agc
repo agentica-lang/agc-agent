@@ -130,8 +130,8 @@ def on_message(text: String, skills: List[Skill], marks: List[String]) -> Expand
   Expanded(text: "#{blocks.join("\n\n")}\n\n#{text}", names: names)
 end
 
-## What a compaction puts after its summary: the content of the skills of `marks`, but those an `activate_skill` call
-## of the `kept` messages loads.
+## What a compaction puts after its summary: the content of the skills of `marks`, but those whose content is in a
+## message the fold `kept`.
 def on_fold(skills: List[Skill]) -> Fn[List[String], List[LLM.Message], String]
   ->(marks: List[String], kept: List[LLM.Message]) { folded_skills(skills, marks, kept) }
 end
@@ -244,10 +244,10 @@ def activate(skills: List[Skill], input: JSON.Value, marks: List[String]) -> Res
 end
 
 def folded_skills(skills: List[Skill], marks: List[String], kept: List[LLM.Message]) -> String
-  again = kept.flat_map { |message| message.content.flat_map { |block| activated_name(block) } }
+  texts = kept.flat_map { |message| message.content.flat_map { |block| text_of(block) } }
   blocks: List[String] = []
   for name in marks
-    next if again.include?(name)
+    next if (texts.any? { |text| text.include?("#{OPEN}#{name}\">") })
 
     for skill in (skills.select { |s| s.name == name })
       loaded_skill = content(skill)
@@ -262,14 +262,10 @@ def folded_skills(skills: List[Skill], marks: List[String], kept: List[LLM.Messa
   "\n\nThe skills loaded in this session:\n\n#{blocks.join("\n\n")}"
 end
 
-def activated_name(block: LLM.Block) -> List[String]
+def text_of(block: LLM.Block) -> List[String]
   case block
-    LLM.Block.ToolUse(call) if call.name == TOOL ->
-      case Spec.args(call.input, ActivateArgs.codec)
-        ok(args) -> [args.name]
-        error(_) -> []
-      end
-
+    LLM.Block.Text(part) -> [part.text]
+    LLM.Block.ToolResult(output) -> [output.content]
     _ -> []
   end
 end

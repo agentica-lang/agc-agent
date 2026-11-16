@@ -178,7 +178,7 @@ def compacted(turn: Turn, context: Int, folded: Folded, marks: List[String]) -> 
       ok(summary) ->
         compaction = summary
         for on_fold in option_list(turn.on_fold)
-          extra = on_fold.call(marks, folded.messages.drop(summary.to))
+          extra = on_fold.call(marks, staying(folded.messages, summary))
           compaction = summary.with(summary: "#{summary.summary}#{extra}")
         end
 
@@ -192,6 +192,12 @@ def compacted(turn: Turn, context: Int, folded: Folded, marks: List[String]) -> 
   end
 
   folded
+end
+
+# The messages a fold keeps: all but its summary.
+def staying(messages: List[LLM.Message], summary: Compaction.Compaction) -> List[LLM.Message]
+  applied = Compaction.apply(messages, summary)
+  applied.take(summary.from) + applied.drop(summary.from + 1)
 end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]

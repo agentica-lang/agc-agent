@@ -100,19 +100,88 @@ def test_discovery_skips_what_it_cannot_use_with_a_warning() -> Result[Void]
   try write("#{skills}/big/SKILL.md", "---\ndescription: big\n---\n#{"x" * 1_000_000}")
   try File.append_text("#{skills}/big/SKILL.md", "x" * 100_000)
   try write("#{skills}/long/SKILL.md", "---\ndescription: #{"d" * 2000}\n---\n")
+  try write("#{skills}/n64/SKILL.md", "---\nname: #{"a" * 64}\ndescription: d\n---\n")
+  try write("#{skills}/n65/SKILL.md", "---\nname: #{"b" * 65}\ndescription: d\n---\n")
   try write("#{base}/elsewhere/linked/SKILL.md", "---\ndescription: behind a link\n---\n")
   try link("#{base}/elsewhere", "#{skills}/via-link")
   untrusted = Skills.discover("#{base}/project", "#{base}/home", false)
   trusted = Skills.discover("#{base}/project", "#{base}/home", true)
   _ = Path.remove(base)
-  try Test.eq(untrusted.skills.map { |s| s.name }, ["deep", "long", "renamed"])
-  try Test.eq(trusted.skills.map { |s| s.name }, ["deep", "lint", "long", "renamed"])
-  try Test.eq(untrusted.skills[1].description.length, 1024)
+  try Test.eq(untrusted.skills.map { |s| s.name }, ["a" * 64, "deep", "long", "renamed"])
+  try Test.eq(trusted.skills.map { |s| s.name }, ["a" * 64, "deep", "lint", "long", "renamed"])
+  try Test.eq(untrusted.skills[2].description.length, 1024)
   for problem in ["no description", "no frontmatter", "a-z, 0-9", "larger than", "is cut at"]
     try Test.assert(untrusted.warnings.any? { |w| w.include?(problem) }, "#{problem}: #{untrusted.warnings}")
   end
 
   ok()
+end
+
+# At most 100 skills are used, the first by name; a warning says how many there were.
+def test_discovery_keeps_at_most_100_skills() -> Result[Void]
+  base = try fresh()
+  for i in 0...101
+    name = "s#{(1000 + i).to_s}"
+    try write("#{base}/home/.agents/skills/#{name}/SKILL.md", "---\ndescription: d\n---\n")
+  end
+
+  found = Skills.discover(base, "#{base}/home", false)
+  _ = Path.remove(base)
+  try Test.eq([found.skills.size.to_s, found.skills.last.name], ["100", "s1099"])
+  Test.assert(found.warnings.any? { |w| w.include?("101 skills") }, "#{found.warnings}")
+end
+
+# A session reads a loaded skill's files by their absolute path, not a relative one; a `/name` marks the skill at once,
+# so the model's `activate_skill` of it in that turn is a note. After a restart the session keeps the catalog it had:
+# a skill added since is not offered to the model.
+def test_the_server_wires_skills_into_a_session() -> Result[Void]
+  replies = ["activate_skill.sse", "read_skill_file.sse", "read_relative.sse", "text.sse", "text.sse"]
+  setup = H.Setup(replies: replies, skills: true)
+  H.using(setup) do |h|
+    home = "#{h.base}/home"
+    try write("#{home}/.agents/skills/release/SKILL.md", RELEASE)
+    try write("#{home}/.agents/skills/release/references/steps.md", "1. tag\n")
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "/release go")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    _ = try H.next_request(h)
+    try Test.eq(last_content(h), ok("The skill release is already loaded in this session."))
+    try Test.eq(last_content(h), ok("1. tag\n"))
+    try Test.assert((try last_content(h)).start_with?("Error:"), "a relative path is read in the session folder")
+    try write("#{home}/.agents/skills/notes/SKILL.md", "---\ndescription: Take notes.\n---\nNotes.\n")
+    H.restarted(h, setup, "") do |r|
+      b = try H.subscribe(r, id)
+      _ = try H.send(r, id, "Hi.")
+      b = try H.until(b, Protocol.EventKind.TurnFinished)
+      H.close(b)
+      Test.eq(enum_of(try JSON.parse((try H.next_request(r)).body)), ok(["release"]))
+    end
+  end
+end
+
+# A fold of a round that loaded a skill puts its content after the summary.
+def test_a_fold_puts_back_the_skill_it_folded() -> Result[Void]
+  replies = ["activate_skill.sse", "bash_echo.sse", "summary.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, context_window: 120, skills: true)) do |h|
+    try write("#{h.base}/home/.agents/skills/release/SKILL.md", RELEASE)
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Release it, then echo.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    for _i in 1..3
+      _ = try H.next_request(h)
+    end
+
+    after = try JSON.list(try JSON.get(try JSON.parse((try H.next_request(h)).body), "messages"))
+    summary = try JSON.string(try JSON.get(after[2], "content"))
+    try Test.assert(summary.start_with?("Summary of the session so far:"), summary)
+    Test.assert(summary.include?("The skills loaded in this session:\n\n<skill_content name=\"release\">"), summary)
+  end
 end
 
 # A skills root behind a link (`~/.claude -> ~/dot`) is resolved: the skill's folder is its real path, which
@@ -141,7 +210,7 @@ def test_read_file_reads_in_a_skill_folder_behind_a_link() -> Result[Void]
 end
 
 # The catalog escapes what it shows; a saved catalog decides which skills the model has after a restart; a fold puts
-# back the skills it folded, but one an `activate_skill` call it keeps loads again.
+# back the skills it folded, but those whose content a kept message holds (not a note that it was loaded).
 def test_the_catalog_is_escaped_and_restricts_the_model_skills_and_a_fold_keeps_them() -> Result[Void]
   base = try fresh()
   try write("#{base}/home/.agents/skills/release/SKILL.md", RELEASE)
@@ -158,10 +227,17 @@ def test_the_catalog_is_escaped_and_restricts_the_model_skills_and_a_fold_keeps_
     input: JSON.object({"name": JSON.from("release")}),
   )
 
-  kept = [LLM.Message(role: LLM.Role.Assistant, content: [LLM.Block.ToolUse(call)])]
+  use = LLM.Message(role: LLM.Role.Assistant, content: [LLM.Block.ToolUse(call)])
+  noted = LLM.Message(role: LLM.Role.User, content: [result("The skill release is already loaded in this session.")])
   folded = fold.call(["release", "deploy"], [])
-  again = fold.call(["release"], kept)
+  only_noted = fold.call(["release"], [use, noted])
+  loaded = LLM.Message(role: LLM.Role.User, content: [result(folded)])
+  again = fold.call(["release"], [use, loaded])
+  first = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: "#{folded}\n\n/release go"))])
+  in_first = fold.call(["release", "deploy"], [first])
   _ = Path.remove(base)
+  try Test.assert(only_noted.include?("<skill_content name=\"release\">"), "a note is not the content: #{only_noted}")
+  try Test.eq(in_first, "")
   try Test.assert(catalog.include?("The user's &lt;lint&gt; &amp; more."), catalog)
   try Test.eq(Skills.restrict(skills, old).map { |s| s.name }, ["deploy", "release"])
   try Test.assert(folded.include?("<skill_content name=\"release\">"), folded)
@@ -186,6 +262,8 @@ def test_the_frontmatter_is_read_leniently() -> Result[Void]
   try Test.error?(Skills.parse("---\nname: x\n"))
   Test.error?(Skills.parse("---\nname x\n---\n"))
 end
+
+def result(text: String) -> LLM.Block = LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: "c", content: text))
 
 def last_content(h: H.Harness) -> Result[String]
   messages = try JSON.list(try JSON.get(try JSON.parse((try H.next_request(h)).body), "messages"))

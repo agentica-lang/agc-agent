@@ -88,9 +88,12 @@ def using(setup: Setup, body: Fn[Harness, Result[Void]]) -> Result[Void]
   result
 end
 
+# A fixture's `@BASE@` is the test's folder.
 def with_fake(setup: Setup, base: String, body: Fn[Harness, Result[Void]]) -> Result[Void]
-  fake = try Fake.start(try fixtures(setup.replies, fixture_dir(setup.api)))
-  started = start(setup, try Path.real(base), fake)
+  real = try Path.real(base)
+  replies = (try fixtures(setup.replies, fixture_dir(setup.api))).map { |reply| placed(reply, real) }
+  fake = try Fake.start(replies)
+  started = start(setup, real, fake)
   result = case started
     ok(h) -> body.call(h)
     error(e) -> error(e)
@@ -103,6 +106,13 @@ def with_fake(setup: Setup, base: String, body: Fn[Harness, Result[Void]]) -> Re
 
   _ = Fake.stop(fake)
   result
+end
+
+def placed(reply: Fake.Reply, base: String) -> Fake.Reply
+  case String.from_bytes(reply.body)
+    ok(text) if text.include?("@BASE@") -> reply.with(body: text.replace("@BASE@", base).bytes)
+    _ -> reply
+  end
 end
 
 def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
