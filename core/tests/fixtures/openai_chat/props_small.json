@@ -1,0 +1,1 @@
+{"default_generation_settings":{"params":{"seed":4294967295,"temperature":0.800000011920929,"n_predict":-1,"stream":false},"n_ctx":120},"total_slots":4,"model_alias":"qwen","model_ftype":"Q4_K - Medium","build_info":"b12426-fc504f91d"}

@@ -1,16 +1,24 @@
 import Protocol from "pkg/protocol/protocol"
+import Compaction from "../src/compaction"
 import H from "support/harness"
 
-# The window comes from `GET /models` (120 tokens). The tool round of the second turn reaches 100 tokens, past 80 per
-# cent: the compaction model summarizes what lies between the first task and the running turn, and the next call
-# carries the first task, the summary and the running turn after the same system prompt and tools. The event ids go
-# on, and a restart keeps the compacted history.
+# The window comes from llama-server's `/props` (120 tokens). The tool round of the second turn reaches 100 tokens,
+# past 80 per cent: the compaction model summarizes what lies between the first task and the running turn, and the
+# next call carries the first task, the summary and the running turn after the same system prompt and tools. The
+# event ids go on, and a restart keeps the compacted history; there `/props` fails and `GET /models` gives the window.
 def test_past_the_window_the_history_is_compacted_and_keeps_the_first_task() -> Result[Void]
   replies = [
-    "models_small.json", "text.sse", "write_file.sse", "summary.sse", "text.sse", "models_small.json", "text.sse",
+    "props_small.json",
+    "text.sse",
+    "write_file.sse",
+    "summary.sse",
+    "text.sse",
+    "404:not_found.json",
+    "models_small.json",
+    "text.sse",
   ]
 
-  setup = H.Setup(replies: replies, context_window: 0, compact_model: "cheap")
+  setup = H.Setup(replies: replies, context_window: 0, compact_model: "cheap", props: true)
   H.using(setup) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
@@ -23,8 +31,8 @@ def test_past_the_window_the_history_is_compacted_and_keeps_the_first_task() -> 
     H.close(a)
     try Test.eq(a.seen.map { |s| s.id }, (1..a.seen.size).map { |n| Protocol.format_event_id(n) })
     try Test.eq(H.stop_reason(a), "end_turn")
-    models = try H.next_request(h)
-    try Test.eq([models.method, models.path], ["GET", "/v1/models"])
+    props = try H.next_request(h)
+    try Test.eq([props.method, props.path], ["GET", "/props"])
     first = try body(h)
     _ = try body(h)
     summary_request = try body(h)
@@ -32,7 +40,7 @@ def test_past_the_window_the_history_is_compacted_and_keeps_the_first_task() -> 
     try Test.eq(string(summary_request, "model"), "cheap")
     asked = try JSON.list(try JSON.get(summary_request, "messages"))
     try Test.eq(asked.map { |m| string(m, "role") }, ["system", "user"])
-    try Test.assert(string(asked[1], "content").include?("Assistant: Hello!"), "the summary does not see the answer")
+    try Test.eq(transcript(asked[1]), ["assistant text"])
     try Test.eq(JSON.get(summary_request, "tools").ok?, false)
     try Test.eq(roles(after), ["system", "user", "assistant", "user", "assistant", "tool"])
     try Test.eq(prefix(after), prefix(first))
@@ -47,7 +55,9 @@ def test_past_the_window_the_history_is_compacted_and_keeps_the_first_task() -> 
       b = try H.until(b, Protocol.EventKind.TurnFinished)
       H.close(b)
       try Test.eq(b.seen.first.id, Protocol.format_event_id(last + 1))
-      _ = try H.next_request(r)
+      try Test.eq(failures(b.seen), [])
+      try Test.eq((try H.next_request(r)).path, "/props")
+      try Test.eq((try H.next_request(r)).path, "/v1/models")
       again = try body(r)
       try Test.eq(roles(again), ["system", "user", "assistant", "user", "assistant", "tool", "assistant", "user"])
       try Test.eq(prefix(again), prefix(first))
@@ -56,7 +66,100 @@ def test_past_the_window_the_history_is_compacted_and_keeps_the_first_task() -> 
   end
 end
 
+# The last call of a turn left the context past the limit: the next turn compacts before its first call. The summary
+# folds several messages, tool calls and results among them (as JSON data), and the answer of the turn is still shown.
+def test_a_turn_compacts_at_its_start() -> Result[Void]
+  replies = ["write_file.sse", "text.sse", "text_cached.sse", "summary.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, context_window: 120)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "Hi again.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "Go on.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    for _i in 1..3
+      _ = try H.next_request(h)
+    end
+
+    summary_request = try body(h)
+    asked = try JSON.list(try JSON.get(summary_request, "messages"))
+    try Test.eq(
+      transcript(asked[1]),
+      ["assistant text", "assistant tool_call", "user tool_result", "assistant text", "user text", "assistant text"],
+    )
+
+    after = try body(h)
+    try Test.eq(roles(after), ["system", "user", "assistant", "user"])
+    try Test.eq(contents(after).drop(1), ["Write hello.txt.", summary(), "Go on."])
+    shown = (try H.session(h, id)).history
+    try Test.eq(shown.size, 6)
+    Test.assert(shown[5].text.start_with?("Hello!"), "the answer of the compacted turn is not shown")
+  end
+end
+
+# A summary that fails, or comes back empty, is an `error` event; the turn goes on with its history whole and does not
+# ask again, and a later turn asks again.
+def test_a_failed_or_empty_summary_is_an_error_and_not_asked_again_in_the_turn() -> Result[Void]
+  replies = [
+    "text.sse",
+    "write_file.sse",
+    "400:bad_request.json",
+    "write_file.sse",
+    "text.sse",
+    "write_file.sse",
+    "summary_empty.sse",
+    "text.sse",
+  ]
+
+  H.using(H.Setup(replies: replies, context_window: 120)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Say hello.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "Write hello.txt twice.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.AllowSession)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    try Test.eq(H.stop_reason(a), "end_turn")
+    _ = try H.send(h, id, "Once more.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.stop_reason(a), "end_turn")
+    try Test.eq(failures(a.seen), [Compaction.KIND_FAILED, Compaction.KIND_FAILED])
+    systems: List[String] = []
+    for _i in 1..8
+      systems = systems.push(contents(try body(h)).first)
+    end
+
+    try Test.eq(systems.select { |s| s == Compaction.SYSTEM }.size, 2)
+    Test.eq((try H.session(h, id)).history.size, 6)
+  end
+end
+
 private
+
+def failures(seen: List[H.Seen]) -> List[String]
+  kinds: List[String] = []
+  for s in seen
+    case s.event
+      Protocol.Event.Error(failure) -> kinds = kinds.push(failure.kind)
+      _ -> nil
+    end
+  end
+
+  kinds
+end
+
+# The role and type of each item of the transcript a summary request carries.
+def transcript(message: JSON.Value) -> List[String]
+  items = JSON.list(JSON.parse(string(message, "content")).unwrap_or(JSON.null())).unwrap_or(messages(JSON.null()))
+  items.map { |item| "#{string(item, "role")} #{string(item, "type")}" }
+end
 
 def body(h: H.Harness) -> Result[JSON.Value] = JSON.parse((try H.next_request(h)).body)
 

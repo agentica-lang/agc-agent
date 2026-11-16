@@ -36,6 +36,8 @@ struct Setup
   window: Int = 0
   ## The model that writes a compaction's summary; the session's model when empty.
   compact_model: String = ""
+  props_url: String = ""
+  api_key: String = ""
 end
 
 enum Msg
@@ -375,7 +377,12 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     text: text,
     ctx: setup.ctx,
     link: link,
-    compaction: Compaction.Settings(window: state.window, model: compact_model(setup)),
+    compaction: Compaction.Settings(
+      window: state.window,
+      model: compact_model(setup),
+      props_url: setup.props_url,
+      api_key: setup.api_key,
+    ),
     last_context: state.context,
   )
 

@@ -15,4 +15,8 @@ The fake LLM of the server tests streams these, in the order a test gives.
 - `text_cached.sse` is `text.sse` with other usage: 150 prompt tokens, 120 of
   them cached, and 7 completion tokens.
 - `summary.sse` is the summary a compaction asks for, and `models_small.json` a
-  llama-server `GET /models` answer whose model has a window of 120 tokens.
+  llama-server `GET /models` answer whose only model (`qwen`, not the model the
+  tests name) has a window of 120 tokens.
+- `props_small.json` is a llama-server `b12426` `GET /props` answer, cut down,
+  with `n_ctx` 120. `summary_empty.sse` is a summary of blanks.
+  `not_found.json` and `bad_request.json` are error bodies (404 and 400).
