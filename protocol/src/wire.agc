@@ -20,6 +20,22 @@ def decode_strict[T](text: String, codec: Codec[T]) -> Result[T]
   end
 end
 
+## A field that is left out when it is none.
+def field[T](value: Optional[T]) -> JSON.Field[T]
+  case value
+    some(v) -> JSON.Field.Value(v)
+    none -> JSON.Field.Absent
+  end
+end
+
+## A field that may be left out or `null`.
+def optional[T](value: JSON.Field[T]) -> Optional[T]
+  case value
+    JSON.Field.Value(v) -> some(v)
+    _ -> none
+  end
+end
+
 def non_empty(field: String, value: String) -> Result[Void]
   return error("#{field} is empty", kind: Kinds.KIND_INVALID) if value == ""
 
