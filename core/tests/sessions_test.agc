@@ -519,6 +519,12 @@ def test_a_session_keeps_its_provider_and_model() -> Result[Void]
     _ = try H.send(h, id, "Hi.")
     _ = try H.idle(h, id)
     try Test.eq((try H.next_request(h)).path, "/other/chat/completions")
+    offered = try Protocol.decode_provider_list((try H.get(h, Protocol.PROVIDERS_PATH)).text)
+    try Test.eq(
+      offered.providers.map { |p| [p.name, p.models.join(" ")] },
+      [["anthropic", ""], ["local", "qwen2.5-0.5b-instruct"], ["other", "m1"]],
+    )
+
     shown = try H.session(h, id)
     try Test.eq([shown.provider, shown.api, shown.model], ["other", "openai", "default"])
     change = Protocol.UpdateSession(provider: some("local"), model: some("m2"))

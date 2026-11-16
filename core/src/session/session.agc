@@ -8,6 +8,7 @@
 import Actor from "std/actor"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Catalog from "../agent/catalog"
 import Extension from "../approval/extension"
 import Config from "../config/config"
 import Providers from "../config/providers"
@@ -30,6 +31,7 @@ MAX_WAITING = 64
 ## The registry, which owns the sessions.
 struct Sessions
   registry: Actor.Ref[Registry, Msg]
+  options: Config.Options
 end
 
 ## The folder of the session files.
@@ -42,12 +44,22 @@ def start(options: Config.Options) -> Sessions
     Registry(options: options, sessions: load_sessions(options), address: inbox.address)
   }
 
-  Sessions(registry: Actor.start(Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate))))
+  behaviour = Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate))
+  Sessions(registry: Actor.start(behaviour), options: options)
 end
 
 ## Stops the registry and the sessions it runs.
 def stop(sessions: Sessions) -> Void
   _ = Actor.stop(sessions.registry, CALL_MS)
+end
+
+## The providers a session may use, each with the models of the config file, then the server's model for its own
+## provider, then those of the catalog that call tools.
+def providers(sessions: Sessions) -> Protocol.ProviderList
+  options = sessions.options
+  infos = options.providers.keys.sort.map do |name| provider_info(options, name) end
+
+  Protocol.ProviderList(provider: options.provider, providers: infos)
 end
 
 ## A new session: its id.
@@ -525,6 +537,27 @@ def provider_of_api(options: Config.Options, api: Optional[String]) -> String
   options.provider
 end
 
+def provider_info(options: Config.Options, name: String) -> Protocol.ProviderInfo
+  found = options.providers[name]
+  models = found.models
+  if name == options.provider
+    models = models.push(options.model)
+  end
+
+  for catalog in option_list(options.catalog)
+    models = models + Catalog.models(catalog, catalog_of(options, found))
+  end
+
+  Protocol.ProviderInfo(name: name, api: found.api, models: models.uniq)
+end
+
+# The models.dev id of a provider.
+def catalog_of(options: Config.Options, found: Config.Provider) -> String
+  return found.catalog if not found.catalog.empty?
+
+  catalog_provider(options.models_provider, found.apis[found.api].provider)
+end
+
 # What a session on `provider` and `api` takes from them; an unknown one is an API error.
 def endpoint_of(options: Config.Options, provider: String, api: String) -> Result[SessionActor.Endpoint]
   return error("unknown provider #{provider}", kind: KIND_UNKNOWN_API) if not options.providers.has_key?(provider)
@@ -536,11 +569,6 @@ def endpoint_of(options: Config.Options, provider: String, api: String) -> Resul
   compact = ""
   if provider == options.provider and api == found.api
     compact = options.compact_model
-  end
-
-  catalog = found.catalog
-  if catalog.empty?
-    catalog = catalog_provider(options.models_provider, model_api.provider)
   end
 
   ok(
@@ -555,7 +583,7 @@ def endpoint_of(options: Config.Options, provider: String, api: String) -> Resul
       props_url: if_local(model_api, options.props_url),
       api_key: if_local(model_api, options.api_key),
       compact_model: compact,
-      catalog_provider: catalog,
+      catalog_provider: catalog_of(options, found),
     ),
   )
 end

@@ -19,6 +19,7 @@ export Http.approve
 export Http.delete_session
 export Http.stop
 export Http.list_sessions
+export Http.list_providers
 export Http.update_session
 export Http.compact
 export Http.open_events
@@ -43,3 +44,4 @@ export Commands.printable
 export Commands.listing
 export Commands.pick
 export Commands.model_warning
+export Commands.model_change

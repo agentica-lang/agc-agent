@@ -7,7 +7,7 @@ NAMES = ["/new", "/resume", "/model", "/thinking", "/compact", "/stop", "/cost",
 HELP = [
   "/new                       a new session in this folder",
   "/resume                    list the sessions; /resume N or /resume ID switches to one",
-  "/model [NAME]              the session's model, or change it from the next turn on",
+  "/model [PROVIDER/]NAME     change the model (and provider) from the next turn on; alone: pick or show it",
   "/thinking [low|medium|high|default]  the thinking level, or change it",
   "/compact                   fold the history into a summary now",
   "/stop                      stop the running turn",
@@ -49,6 +49,23 @@ end
 ## What a client says when the first turn after `/model NAME` fails: the server takes any name.
 def model_warning(model: String) -> String
   "the call failed after /model #{model}: check the name (/model NAME changes it)"
+end
+
+## The change `/model TEXT` asks for: a provider and its model when a provider of `list` has the name before the first
+## `/`, else the model alone (a model name may hold a `/`).
+def model_change(list: Protocol.ProviderList, text: String) -> Protocol.UpdateSession
+  case text.index_of("/")
+    some(at) ->
+      provider = text.slice(0, at)
+      model = text.slice(at + 1, text.length - at - 1)
+      if (not model.empty? and list.providers.any? { |p| p.name == provider })
+        return Protocol.UpdateSession(provider: some(provider), model: some(model))
+      end
+
+    none -> nil
+  end
+
+  Protocol.UpdateSession(model: some(text))
 end
 
 ## The sessions of the server, one numbered line each, for `/resume N`.

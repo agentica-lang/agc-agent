@@ -145,6 +145,8 @@ def test_replies_round_trip() -> Result[Void]
   list = try decode_fixture("session_list", &Protocol.decode_session_list, &Protocol.encode_session_list)
   try Test.eq(list.sessions.size, 1)
   try Test.eq(Protocol.decode_session_list(Protocol.encode_session_list(list)), ok(list))
+  providers = try decode_fixture("provider_list", &Protocol.decode_provider_list, &Protocol.encode_provider_list)
+  try Test.eq(providers.providers.map { |p| p.name }, ["local", "fireworks"])
 
   failure = try decode_fixture("failure", &Protocol.decode_failure, &Protocol.encode_failure)
   try Test.eq(failure.kind, Protocol.KIND_APPROVAL_RESOLVED)

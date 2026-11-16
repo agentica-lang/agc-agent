@@ -532,6 +532,7 @@ def test_session_commands() -> Result[Void]
       path: Protocol.session_path("s1"),
       replies: [Fake.Reply(body: "{}"), Fake.Reply(body: "{}")],
     ),
+    providers_route(),
     Fake.Route(
       method: "GET",
       path: Protocol.SESSIONS_PATH,
@@ -548,8 +549,8 @@ def test_session_commands() -> Result[Void]
   Driver.within(routes) do |rig|
     cli = try Driver.start(rig.dir, PLAIN)
     try Driver.read_until(cli, "[session s1]")
-    try Driver.say(cli, "/model qwen3")
-    try Driver.read_until(cli, "[model qwen3 from the next turn]")
+    try Driver.say(cli, "/model fireworks/qwen3")
+    try Driver.read_until(cli, "[model fireworks/qwen3 from the next turn]")
     try Driver.say(cli, "/thinking max")
     try Driver.read_until(cli, "[error] the thinking level is one of low, medium, high, default")
     try Driver.say(cli, "/thinking high")
@@ -566,7 +567,8 @@ def test_session_commands() -> Result[Void]
     done = try Driver.finish(cli)
     try Test.eq(done.code, 0)
     first = try Fake.request(rig.fake, "PATCH", Protocol.session_path("s1"))
-    try Test.eq(Protocol.decode_update_session(first.body), ok(Protocol.UpdateSession(model: some("qwen3"))))
+    moved = Protocol.UpdateSession(provider: some("fireworks"), model: some("qwen3"))
+    try Test.eq(Protocol.decode_update_session(first.body), ok(moved))
     second = try Fake.request(rig.fake, "PATCH", Protocol.session_path("s1"))
     try Test.eq(Protocol.decode_update_session(second.body), ok(Protocol.UpdateSession(effort: some("high"))))
     Test.eq(Fake.strays(rig.fake), 0)
@@ -581,6 +583,7 @@ def test_slash_text_busy_switches_and_the_model_warning() -> Result[Void]
     Routes.created(),
     Routes.held_events(),
     Fake.Route(method: "PATCH", path: Protocol.session_path("s1"), replies: [Fake.Reply(body: "{}")]),
+    providers_route(),
     Fake.Route(
       method: "POST",
       path: Protocol.messages_path("s1"),
@@ -617,4 +620,17 @@ def test_slash_text_busy_switches_and_the_model_warning() -> Result[Void]
 
     Test.eq(Fake.strays(rig.fake), 0)
   end
+end
+
+def providers_route() -> Fake.Route
+  list = Protocol.ProviderList(
+    provider: "local",
+    providers: [Protocol.ProviderInfo(name: "fireworks", api: "openai", models: [])],
+  )
+
+  Fake.Route(
+    method: "GET",
+    path: Protocol.PROVIDERS_PATH,
+    replies: [Fake.Reply(body: Protocol.encode_provider_list(list))],
+  )
 end

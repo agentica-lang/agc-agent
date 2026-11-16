@@ -47,6 +47,19 @@ struct SessionList
   sessions: List[SessionSummary]
 end
 
+## A provider a session may use: its own model API, and the models it offers (`/model` lists them).
+struct ProviderInfo
+  name: String
+  api: String
+  models: List[String]
+end
+
+## The answer of `GET /v1/providers`: what the server offers now, and the provider of a session that names none.
+struct ProviderList
+  provider: String
+  providers: List[ProviderInfo]
+end
+
 ## A finished message, as the text to draw.
 struct Message
   role: Role
@@ -120,6 +133,10 @@ def encode_session_list(reply: SessionList) -> String = JSON.encode(reply)
 
 def decode_session_list(text: String) -> Result[SessionList] = Wire.decode(text, SessionList.codec)
 
+def encode_provider_list(reply: ProviderList) -> String = JSON.encode(reply)
+
+def decode_provider_list(text: String) -> Result[ProviderList] = Wire.decode(text, ProviderList.codec)
+
 ## It trusts its input: it does not check what `decode_session` checks about `turn_id`, `turn_from_event_id` and
 ## `last_event_id`, so the server must build a consistent `Session`.
 def encode_session(reply: Session) -> String
@@ -180,6 +197,8 @@ def shape() -> List[String]
     Wire.record("MessageAccepted", MessageAccepted.members),
     Wire.record("SessionSummary", SessionSummary.members),
     Wire.record("SessionList", SessionList.members),
+    Wire.record("ProviderInfo", ProviderInfo.members),
+    Wire.record("ProviderList", ProviderList.members),
     Wire.record("Message", Message.members),
     Wire.record("Session", Session.members),
     Wire.record("ServerInfo", ServerInfo.members),

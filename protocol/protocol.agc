@@ -34,6 +34,7 @@ export Kinds.KIND_APPROVAL_RESOLVED
 
 export Routes.HEALTH_PATH
 export Routes.SESSIONS_PATH
+export Routes.PROVIDERS_PATH
 export Routes.LAST_EVENT_ID_HEADER
 export Routes.session_path
 export Routes.events_path
@@ -71,6 +72,8 @@ export Replies.SessionCreated
 export Replies.MessageAccepted
 export Replies.SessionSummary
 export Replies.SessionList
+export Replies.ProviderInfo
+export Replies.ProviderList
 export Replies.Message
 export Replies.Session
 export Replies.roles
@@ -86,6 +89,8 @@ export Replies.encode_message_accepted
 export Replies.decode_message_accepted
 export Replies.encode_session_list
 export Replies.decode_session_list
+export Replies.encode_provider_list
+export Replies.decode_provider_list
 export Replies.encode_session
 export Replies.decode_session
 

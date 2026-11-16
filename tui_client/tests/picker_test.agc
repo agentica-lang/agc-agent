@@ -3,7 +3,7 @@ import TUI from "pkg/tui/tui"
 import Picker from "../src/picker"
 
 def test_keys_move_filter_and_pick() -> Result[Void]
-  picker = Picker.Picker(sessions: [summary("s3", "fix the tests"), summary("s2", "write docs"), summary("s1", "")])
+  picker = Picker.sessions([summary("s3", "fix the tests"), summary("s2", "write docs"), summary("s1", "")], 1000)
   down = stay(Picker.key(stay(Picker.key(picker, key(TUI.Key.Down))), key(TUI.Key.Down)))
   try Test.eq(down.selected, 2)
   try Test.eq(stay(Picker.key(down, key(TUI.Key.Down))).selected, 2)
@@ -23,14 +23,30 @@ def test_keys_move_filter_and_pick() -> Result[Void]
   Test.eq(Picker.key(none_left, key(TUI.Key.Enter)), Picker.Step.Stay(none_left))
 end
 
+# The model picker lists every provider/model pair, starts on the one in use and gives the pair picked.
+def test_the_model_picker_offers_each_provider_and_model() -> Result[Void]
+  list = Protocol.ProviderList(
+    provider: "local",
+    providers: [
+      Protocol.ProviderInfo(name: "fireworks", api: "openai", models: ["a", "b"]),
+      Protocol.ProviderInfo(name: "local", api: "openai", models: ["q"]),
+    ],
+  )
+
+  picker = Picker.models(list, "fireworks/b")
+  try Test.eq(Picker.shown(picker).map { |item| item.id }, ["fireworks/a", "fireworks/b", "local/q"])
+  try Test.eq(Picker.key(picker, key(TUI.Key.Enter)), Picker.Step.Pick("fireworks/b"))
+  Test.eq(Picker.rows(picker, 80, 6).map { |row| row.text }.first, "pick a model (3 of 3)")
+end
+
 def test_rows_keep_the_selected_session_in_sight() -> Result[Void]
   sessions = (1..20).map { |n| summary("s#{n}", "task #{n}") }
-  picker = Picker.Picker(sessions: sessions, selected: 14)
-  rows = Picker.rows(picker, 200, 6, 1000 + 7200).map { |row| row.text }
+  picker = Picker.sessions(sessions, 1000 + 7200).with(selected: 14)
+  rows = Picker.rows(picker, 200, 6).map { |row| row.text }
   try Test.eq(rows.size, 6)
   try Test.eq(rows[0], "resume a session (20 of 20)")
   try Test.eq(rows[4], "› s15  /w/s15  m  2h  task 15")
-  try Test.eq(rows[5], Picker.KEYS.join(" · "))
+  try Test.eq(rows[5], Picker.keys(Picker.Purpose.Resume).join(" · "))
   Test.eq(
     ["now", "5m", "3h", "2d"],
     [Picker.ago(100, 90), Picker.ago(400, 100), Picker.ago(11000, 0), Picker.ago(200000, 0)],
@@ -46,7 +62,7 @@ end
 def stay(step: Picker.Step) -> Picker.Picker
   case step
     Picker.Step.Stay(picker) -> picker
-    _ -> Picker.Picker(sessions: [], filter: "not stayed")
+    _ -> Picker.Picker(purpose: Picker.Purpose.Resume, items: [], filter: "not stayed")
   end
 end
 
