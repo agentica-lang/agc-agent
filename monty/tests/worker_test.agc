@@ -54,3 +54,24 @@ def host(call: Monty.Call) -> Monty.Answer
     _ -> Monty.Answer.Value("hello")
   end
 end
+
+# Frames a broken or hostile worker could send: each ends the script with an error, never a crash of the host.
+def test_bad_frames_are_protocol_errors() -> Result[Void]
+  for name in ["negative_index.json", "negative_child.json", "expand.json", "frame_cap.json"]
+    case Monty.run(Rig.fake(name), "1", [], &host)
+      ok(outcome) -> return error("#{name} gave #{outcome}")
+      error(e) -> try Test.eq([name, e.kind], [name, "monty.protocol"])
+    end
+  end
+
+  ok()
+end
+
+def test_a_refused_session_is_fatal() -> Result[Void]
+  case Monty.run(Rig.fake("refused.json"), "1", [], &host)
+    ok(outcome) -> error("a refused session gave #{outcome}")
+    error(e) ->
+      try Test.eq(e.kind, "monty.fatal")
+      Test.assert(e.message.include?("bad limits"), e.message)
+  end
+end

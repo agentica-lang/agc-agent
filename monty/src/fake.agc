@@ -1,7 +1,8 @@
-## For the tests of this package and its users: a stand-in for `monty subprocess` that replays the frames of a fixture: for each request it reads, it checks that
-## the request is the recorded one (else a FatalError) and writes the recorded replies. Past the recorded requests it
-## answers nothing. With `MONTY_RECORD` set to a real worker it relays to it and writes the fixture instead. The
-## fixture is its one argument; `--silent` answers nothing at all.
+## For tests, here and in the users of this package: a stand-in for `monty subprocess` that replays a fixture of
+## recorded frames. For each request it reads, it checks that the request is the recorded one (else a FatalError;
+## a recorded `*` takes any request) and writes the recorded replies (a reply `raw:HEX` goes out unframed). Past the
+## recorded requests it answers nothing. With `MONTY_RECORD` set to a real worker it relays to it and writes the
+## fixture instead. A test program's `main` calls `serve_fake(fixture)`; `--silent` answers nothing at all.
 
 import Binary from "std/binary"
 
@@ -10,8 +11,7 @@ struct Recording
   replies: List[List[String]]
 end
 
-def main() -> Void
-  fixture = System.args()[0]
+def serve_fake(fixture: String) -> Void
   if fixture == "--silent"
     Task.sleep(600_000)
     return
@@ -37,13 +37,18 @@ def replay(recording: Recording, out: File.Handle) -> Void
       break
     end
 
-    if hex(request) != recording.requests[index]
+    if recording.requests[index] != "*" and hex(request) != recording.requests[index]
       write(out, fatal("request #{index} is not the recorded one: #{hex(request)}"))
       break
     end
 
     for reply in recording.replies[index]
-      write(out, unhex(reply))
+      if reply.start_with?("raw:")
+        File.write_bytes(out, unhex(reply.slice(4, reply.length - 4))).unwrap!
+        File.flush(out).unwrap!
+      else
+        write(out, unhex(reply))
+      end
     end
 
     index = index + 1

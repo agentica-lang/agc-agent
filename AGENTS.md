@@ -12,8 +12,8 @@ llm/                 client for LLM APIs; llm.agc is its public module, src/ the
 protocol/            commands, replies and events between server and clients, with JSON codecs, pure;
                      protocol.agc is its public module
 monty/               Python scripts in pydantic's Monty sandbox: the pinned `monty subprocess` worker (fetched
-                     with its sha256), its protobuf codec; monty.agc is its public module; testing/ a fake
-                     worker that replays recorded frames; real/ the tests on the real worker
+                     with its sha256), its protobuf codec, and a fake worker that replays recorded frames
+                     (`serve_fake`); monty.agc is its public module; real/ the tests on the real worker
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point
 cli/                 the line-mode client: depends only on sse and protocol; main.agc is the entry point

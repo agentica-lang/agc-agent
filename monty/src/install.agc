@@ -67,9 +67,11 @@ end
 ## `os arch` of this machine, as `wheel` takes it.
 def platform() -> Result[String]
   process = try Process.spawn_captured("uname", ["-m"])
-  _ = try Process.wait(process, 5_000)
-  output = try Process.output(process, 5_000)
-  ok("#{System.os()} #{output.stdout.strip}")
+  waited = Process.wait(process, 5_000)
+  output = Process.output(process, 5_000)
+  Process.close(process)
+  _ = try waited
+  ok("#{System.os()} #{(try output).stdout.strip}")
 end
 
 ## The worker under `cache_dir`, fetched from `wheel` when it is not there yet.
@@ -79,6 +81,11 @@ def binary(cache_dir: String, wheel: Wheel) -> Result[String]
   return ok(path) if File.stat(path).ok?
 
   try folders(cache_dir)
+  mode = (try File.stat(cache_dir)).mode
+  if mode.bit_and(63) != 0
+    return error("monty: the cache folder #{cache_dir} is open to others: chmod 700 it", kind: "monty.install")
+  end
+
   tag = "#{System.pid()}-#{Random.int(0, 999_999_999)}"
   part = try Path.join([cache_dir, "monty-#{MONTY_VERSION}-#{tag}.whl"])
   staging = try Path.join([cache_dir, "monty-#{MONTY_VERSION}-#{tag}"])

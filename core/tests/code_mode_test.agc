@@ -33,3 +33,23 @@ def started_name(event: Protocol.Event) -> String
     _ -> ""
   end
 end
+
+# A call that a config rule denies raises PermissionError without asking, and positional arguments a TypeError.
+def test_a_rule_denies_a_call_of_a_script_and_arguments_go_by_keyword() -> Result[Void]
+  setup = H.Setup(replies: ["run_script_refused.sse", "text.sse"], monty: "refused.json", deny: ["bash(*)"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Clean up with a script.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.kinds(a.seen).include?("approval_requested"), false)
+    second = try H.request_messages(h, 2)
+    content = (
+      "type: read_file() takes keyword arguments only, as read_file(path='a.txt')\n" +
+      "rule: denied by a rule of the config\n"
+    )
+
+    Test.eq(JSON.get(second.last, "content"), ok(JSON.from(content)))
+  end
+end

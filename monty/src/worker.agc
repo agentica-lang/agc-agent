@@ -145,7 +145,10 @@ def receive(process: Process, wait_ms: Int) -> Result[Wire.Event]
   return error("monty: a frame of #{size} bytes is over the limit", kind: "monty.protocol") if size > MAX_FRAME
 
   body = try read_exactly(process, size, wait_ms)
-  Wire.decode(body)
+  case Wire.decode(body)
+    ok(event) -> ok(event)
+    error(e) -> error(e.message, kind: "monty.protocol")
+  end
 end
 
 def read_exactly(process: Process, count: Int, wait_ms: Int) -> Result[Bytes]

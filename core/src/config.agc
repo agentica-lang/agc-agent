@@ -3,8 +3,8 @@
 ## `~/.local/share/finn`), and the model API: `FINN_API` (`openai`, chat completions, by default, or
 ## `openai_responses`), `FINN_BASE_URL` (a local llama-server by default), `FINN_API_KEY` and
 ## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction. `FINN_CODE_MODE=1` adds code mode,
-## whose Monty worker is `FINN_MONTY`, else the pinned one fetched on first use into `$XDG_CACHE_HOME/finn` (else
-## `~/.cache/finn`). The names of before Finn still work:
+## whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is not checked), else the pinned one
+## fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be private to the user). The names of before Finn still work:
 ## `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder is there.
 
 import LLM from "pkg/llm/llm"

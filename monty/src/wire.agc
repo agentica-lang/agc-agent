@@ -5,6 +5,8 @@
 import Proto from "proto"
 
 PROTOCOL_VERSION = 8
+## How big a value may grow once the arena's shared nodes are copied out: nodes plus characters.
+MAX_EXPANDED = 1_000_000
 
 struct Limits
   max_memory_bytes: Int
@@ -93,6 +95,12 @@ end
 
 private
 
+# A node and its size once expanded, which a node shared by others adds to each of them.
+struct Node
+  value: JSON.Value
+  size: Int
+end
+
 def event(number: Int, data: Bytes) -> Result[Event]
   fields = try Proto.fields(data)
   case number
@@ -103,10 +111,7 @@ def event(number: Int, data: Bytes) -> Result[Event]
     5 -> ok(Event.Futures)
     6 ->
       values = try nodes(Proto.data(fields, 2))
-      index = Proto.uint(fields, 1)
-      return error("monty: the result is not in its arena") if index >= values.size
-
-      ok(Event.Complete(values[index]))
+      ok(Event.Complete(try at(values, Proto.uint(fields, 1))))
     7 -> ok(Event.Raised(raised_text(Proto.data(fields, 1))))
     8 -> ok(Event.Raised("TypingError: #{Proto.text(fields, 1)}"))
     10 -> ok(Event.Ack)
@@ -118,17 +123,24 @@ end
 
 def call(fields: List[Proto.Field]) -> Result[Call]
   values = try nodes(Proto.data(fields, 7))
+  used: List[Node] = []
   args: List[JSON.Value] = []
   for index in try Proto.packed(fields, 2)
-    args = args.push(try at(values, index))
+    arg = try node_at(values, index)
+    args = args.push(arg.value)
+    used = used.push(arg)
   end
 
   kwargs: Map[String, JSON.Value] = {}
   for pair in Proto.all_data(fields, 3)
     pair_fields = try Proto.fields(pair)
-    name = try at(values, Proto.uint(pair_fields, 1))
-    kwargs = kwargs.put(key_text(name), try at(values, Proto.uint(pair_fields, 2)))
+    name = try node_at(values, Proto.uint(pair_fields, 1))
+    value = try node_at(values, Proto.uint(pair_fields, 2))
+    kwargs = kwargs.put(key_text(name.value), value.value)
+    used = used + [name, value]
   end
+
+  _ = try container(JSON.null(), used)
 
   ok(
     Call(
@@ -207,10 +219,25 @@ def arena(nodes: List[Bytes]) -> Bytes
   Bytes.concat([Proto.varint_field(1, nodes.size)] + nodes.map { |n| Proto.bytes_field(2, n) })
 end
 
-def at(values: List[JSON.Value], index: Int) -> Result[JSON.Value]
-  return error("monty: a node index is out of its arena") if index >= values.size
+def at(values: List[Node], index: Int) -> Result[JSON.Value]
+  return error("monty: a node index is out of its arena") if index < 0 or index >= values.size
 
-  ok(values[index])
+  ok(values[index].value)
+end
+
+def node_at(done: List[Node], index: Int) -> Result[Node]
+  return error("monty: a node index is out of its arena") if index < 0 or index >= done.size
+
+  ok(done[index])
+end
+
+def leaf(value: JSON.Value, chars: Int = 0) -> Result[Node] = ok(Node(value: value, size: 1 + chars))
+
+def container(value: JSON.Value, children: List[Node]) -> Result[Node]
+  size = 1 + children.map { |child| child.size }.sum
+  return error("monty: a value expands past #{MAX_EXPANDED} nodes and characters") if size > MAX_EXPANDED
+
+  ok(Node(value: value, size: size))
 end
 
 def key_text(key: JSON.Value) -> String
@@ -221,9 +248,9 @@ def key_text(key: JSON.Value) -> String
 end
 
 # The nodes of an arena as JSON, in one forward pass: a container's children come before it.
-def nodes(arena: Bytes) -> Result[List[JSON.Value]]
+def nodes(arena: Bytes) -> Result[List[Node]]
   fields = try Proto.fields(arena)
-  values: List[JSON.Value] = []
+  values: List[Node] = []
   for data in Proto.all_data(fields, 2)
     values = values.push(try node_value(data, values))
   end
@@ -231,9 +258,9 @@ def nodes(arena: Bytes) -> Result[List[JSON.Value]]
   ok(values)
 end
 
-def node_value(data: Bytes, done: List[JSON.Value]) -> Result[JSON.Value]
+def node_value(data: Bytes, done: List[Node]) -> Result[Node]
   fields = try Proto.fields(data)
-  return ok(JSON.null()) if fields.empty?
+  return leaf(JSON.null()) if fields.empty?
 
   field = fields.last
   body: List[Proto.Field] = []
@@ -242,43 +269,50 @@ def node_value(data: Bytes, done: List[JSON.Value]) -> Result[JSON.Value]
   end
 
   case field.number
-    2 -> ok(JSON.null())
-    1 -> ok(JSON.from("Ellipsis"))
-    3 -> ok(JSON.from("NotImplemented"))
-    4 -> ok(JSON.from(field.value != 0))
-    5 -> ok(JSON.from(Proto.unzigzag(field.value)))
-    6 -> ok(JSON.from("<int too large>"))
-    7 -> ok(JSON.from(Float.from_bits(field.value)))
-    8, 26, 27, 29, 30, 33 -> ok(JSON.from(Proto.utf8(field.data)))
-    9 -> ok(JSON.from(Proto.utf8(field.data)))
+    2 -> leaf(JSON.null())
+    1 -> leaf(JSON.from("Ellipsis"))
+    3 -> leaf(JSON.from("NotImplemented"))
+    4 -> leaf(JSON.from(field.value != 0))
+    5 -> leaf(JSON.from(Proto.unzigzag(field.value)))
+    6 -> leaf(JSON.from("<int too large>"))
+    7 -> leaf(JSON.from(Float.from_bits(field.value)))
+    8, 9, 26, 27, 29, 30, 33 ->
+      text = Proto.utf8(field.data)
+      leaf(JSON.from(text), text.length)
     11, 12, 15, 16 ->
-      items: List[JSON.Value] = []
+      items: List[Node] = []
       for index in try Proto.packed(body, 1)
-        items = items.push(try at(done, index))
+        items = items.push(try node_at(done, index))
       end
 
-      ok(JSON.array(items))
+      container(JSON.array(items.map { |item| item.value }), items)
     13 ->
       names = Proto.all_data(body, 2).map { |name| Proto.utf8(name) }
       indexes = try Proto.packed(body, 3)
       out: Map[String, JSON.Value] = {}
+      children: List[Node] = []
       for i in 0...[names.size, indexes.size].min.unwrap!
-        out = out.put(names[i], try at(done, indexes[i]))
+        child = try node_at(done, indexes[i])
+        out = out.put(names[i], child.value)
+        children = children.push(child)
       end
 
-      ok(JSON.object(out))
+      container(JSON.object(out), children)
     14 ->
       out: Map[String, JSON.Value] = {}
+      children: List[Node] = []
       for pair in Proto.all_data(body, 1)
         pair_fields = try Proto.fields(pair)
-        name = try at(done, Proto.uint(pair_fields, 1))
-        out = out.put(key_text(name), try at(done, Proto.uint(pair_fields, 2)))
+        name = try node_at(done, Proto.uint(pair_fields, 1))
+        child = try node_at(done, Proto.uint(pair_fields, 2))
+        out = out.put(key_text(name.value), child.value)
+        children = children + [name, child]
       end
 
-      ok(JSON.object(out))
-    22 -> ok(JSON.from("#{Proto.text(body, 1)}(#{Proto.text(body, 2).inspect})"))
-    23 -> ok(JSON.from("<class #{Proto.text(body, 1)}>"))
-    25 -> ok(JSON.from("<function #{Proto.text(body, 1)}>"))
-    _ -> ok(JSON.from("<value of kind #{field.number}>"))
+      container(JSON.object(out), children)
+    22 -> leaf(JSON.from("#{Proto.text(body, 1)}(#{Proto.text(body, 2).inspect})"))
+    23 -> leaf(JSON.from("<class #{Proto.text(body, 1)}>"))
+    25 -> leaf(JSON.from("<function #{Proto.text(body, 1)}>"))
+    _ -> leaf(JSON.from("<value of kind #{field.number}>"))
   end
 end

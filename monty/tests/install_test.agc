@@ -38,6 +38,17 @@ def test_a_wheel_with_another_hash_installs_nothing() -> Result[Void]
   Path.remove(cache)
 end
 
+# A cache folder others can write to is refused: they could swap the worker.
+def test_a_cache_folder_open_to_others_is_refused() -> Result[Void]
+  cache = try fresh_dir()
+  chmod = try Process.spawn("chmod", ["755", cache])
+  try Test.eq(Process.wait(chmod, 5_000), ok(0))
+  result = Monty.binary(cache, Monty.Wheel(url: "http://127.0.0.1:9/never", sha256: WHEEL_SHA256))
+  _ = Path.remove(cache)
+  try Test.eq(result.ok?, false)
+  Test.assert(result.message.include?("chmod 700"), result.message)
+end
+
 private
 
 struct Served
@@ -61,6 +72,6 @@ def wheel_bytes() -> Result[Bytes] = File.open(WHEEL) do |file| File.read_bytes(
 
 def fresh_dir() -> Result[String]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/monty-install-#{Random.int(0, 999_999_999)}"
-  try Dir.mkdir(dir)
+  try Dir.mkdir_private(dir)
   ok(dir)
 end

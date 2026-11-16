@@ -4,6 +4,7 @@
 ## OS call gets its no-handler default. Limits: memory, recursion, sandbox time, the number of calls, and a wall-clock
 ## wait for each answer of the worker.
 
+import Fake from "src/fake"
 import Install from "src/install"
 import Worker from "src/worker"
 
@@ -21,3 +22,4 @@ export Install.Wheel
 export Install.wheel
 export Install.platform
 export Install.binary
+export Fake.serve_fake

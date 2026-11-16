@@ -31,5 +31,9 @@ def test_a_cut_message_is_an_error() -> Result[Void]
   whole = Proto.string_field(8, "hello")
   try Test.error?(Proto.fields(whole.take(whole.length - 1)))
   try Test.error?(Proto.fields(Bytes.from_list([8, 255, 255]).unwrap!))
+  eleven = Bytes.from_list([8] + (1..10).map { |_| 255 } + [1]).unwrap!
+  try Test.error?(Proto.fields(eleven))
+  ten = Bytes.from_list([8] + (1..9).map { |_| 255 } + [1]).unwrap!
+  try Test.eq((try Proto.fields(ten))[0].value, -1)
   Test.error?(Proto.fields(Bytes.from_list([11]).unwrap!))
 end

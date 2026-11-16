@@ -6,6 +6,7 @@ import LLM from "pkg/llm/llm"
 import Monty from "pkg/monty/monty"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
+import Approval from "../../src/approval"
 import CodeMode from "../../src/code_mode"
 import Config from "../../src/config"
 import Server from "../../src/server"
@@ -59,6 +60,8 @@ struct Setup
   api: String = "openai"
   ## Code mode on a fake Monty worker that replays this fixture of `tests/fixtures/monty`.
   monty: String = ""
+  ## Deny rules of the config, as `bash(rm *)`.
+  deny: List[String] = []
 end
 
 def fake_env(name: String) -> Result[String]
@@ -106,7 +109,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     api: setup.api,
     model: "qwen2.5-0.5b-instruct",
     env: &fake_env,
-    rules: no_rules(),
+    rules: try Approval.parse_rules([], setup.deny),
     keep_events: setup.keep_events,
     approval_timeout_ms: setup.approval_timeout_ms,
     context_window: window(setup.context_window),
@@ -171,7 +174,7 @@ def code_mode(fixture: String) -> Optional[CodeMode.Settings]
   return none if fixture == ""
 
   agentica = System.env("AGENTICA").unwrap_or("agentica")
-  words = [agentica, "../monty/testing/fake_worker.agc", "tests/fixtures/monty/#{fixture}"]
+  words = [agentica, "tests/support/fake_monty.agc", "tests/fixtures/monty/#{fixture}"]
   some(CodeMode.Settings(worker: -> { ok(words) }, limits: Monty.Limits()))
 end
 
