@@ -310,6 +310,7 @@ def shape() -> List[String]
     Wire.record("ApprovalRequested", ApprovalRequested.members),
     Wire.record("ApprovalResolved", ApprovalResolved.members),
     Wire.record("Usage", Usage.members),
+    Wire.record("UsageWire", UsageWire.members),
     Wire.record("MessageQueued", MessageQueued.members),
     Wire.record("TurnFinished", TurnFinished.members),
     Wire.record("ResolvedWire", ResolvedWire.members),
