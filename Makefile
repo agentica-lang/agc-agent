@@ -32,9 +32,10 @@ LLAMA_MODEL ?= $(CURDIR)/.tools/models/qwen2.5-0.5b-instruct-q4_k_m.gguf
 # The model of `live-fireworks`.
 FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 
-# $(call tests,PACKAGE,FOLDER): runs the .agc tests of FOLDER; a run that passes no test fails, so tests that are no
+# $(call tests,PACKAGE,FOLDER[,JOBS]): runs the .agc tests of FOLDER, JOBS files at a time (one for the tests that share
+# a real server or cost money); a run that passes no test fails, so tests that are no
 # longer found never pass in silence.
-tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(JOBS) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
+tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
 .PHONY: install check coupling fmt-check unit unit-package smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
@@ -111,18 +112,18 @@ smoke-llama:
 	if [ -z "$$LLAMA_URL" ]; then scripts/fetch-llama.sh && scripts/fetch-model.sh; fi
 	mkdir -p llm/_build/llama-logs
 	export LLAMA_SERVER='$(LLAMA_SERVER)' LLAMA_MODEL='$(LLAMA_MODEL)' LLAMA_LOG_DIR='$(CURDIR)/llm/_build/llama-logs'; \
-	$(call tests,llm,smoke)
+	$(call tests,llm,smoke,1)
 
 # The monty tests against the real worker: the pinned wheel of this platform, fetched from PyPI into .tools/cache with
 # its sha256 checked, or the binary at MONTY_BIN.
 smoke-monty:
-	$(call tests,monty,real)
+	$(call tests,monty,real,1)
 
 # A real Fireworks call, which costs money: local only, with the owner's yes, never in CI. Skips without the key.
 live-fireworks:
 	@if [ -n "$$CI" ]; then echo "live-fireworks: refused in CI" >&2; exit 1; fi; \
 	if [ -z "$$FIREWORKS_API_KEY" ]; then echo "live-fireworks: FIREWORKS_API_KEY is unset, skipped"; exit 0; fi; \
-	export FIREWORKS_MODEL='$(FIREWORKS_MODEL)'; $(call tests,llm,live/fireworks_test.agc)
+	export FIREWORKS_MODEL='$(FIREWORKS_MODEL)'; $(call tests,llm,live/fireworks_test.agc,1)
 
 # Four real calls to Anthropic's cheap model (a text turn, a tool round, a cache read), which cost money: local only,
 # with the owner's yes, never in CI. Without ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN it takes the token of
@@ -136,7 +137,7 @@ smoke-anthropic:
 	  export ANTHROPIC_AUTH_TOKEN; \
 	fi; \
 	mkdir -p llm/_build; export ANTHROPIC_LIVE_REPORT='$(CURDIR)/llm/_build/anthropic-live.txt'; \
-	rm -f "$$ANTHROPIC_LIVE_REPORT"; $(call tests,llm,live/anthropic_test.agc); cat "$$ANTHROPIC_LIVE_REPORT"
+	rm -f "$$ANTHROPIC_LIVE_REPORT"; $(call tests,llm,live/anthropic_test.agc,1); cat "$$ANTHROPIC_LIVE_REPORT"
 
 # A real core session on Anthropic's cheap model (three calls: a tool round, then a second turn that must read the
 # cache), which costs money: local only, with the owner's yes, never in CI. The credential as for smoke-anthropic.
@@ -149,4 +150,4 @@ live-anthropic-core:
 	  export ANTHROPIC_AUTH_TOKEN; \
 	fi; \
 	mkdir -p core/_build; export ANTHROPIC_LIVE_REPORT='$(CURDIR)/core/_build/anthropic-live.txt'; \
-	rm -f "$$ANTHROPIC_LIVE_REPORT"; $(call tests,core,live/anthropic_test.agc); cat "$$ANTHROPIC_LIVE_REPORT"
+	rm -f "$$ANTHROPIC_LIVE_REPORT"; $(call tests,core,live/anthropic_test.agc,1); cat "$$ANTHROPIC_LIVE_REPORT"
