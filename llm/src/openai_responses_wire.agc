@@ -232,12 +232,12 @@ def stored?(extra: Map[String, JSON.Value]) -> Bool
   end
 end
 
-# A reasoning item goes back when the API can find it: by its `encrypted_content`, or by its id when the API keeps
-# the items. Otherwise it is dropped, and so are the item ids of the turn's other items, as the API refuses an item
-# whose reasoning item is missing; calls keep their `call_id`.
+# When the API keeps the items, they go back by their ids. With `store: false` it has none of them and refuses an id
+# it does not know: the items go back without their ids, a reasoning item by its `encrypted_content` (one without it
+# is dropped), and calls by their `call_id`.
 def assistant_turn(blocks: List[Types.Block], stored: Bool) -> List[JSON.Value]
   items = blocks.flat_map { |b| assistant_items(b) }
-  return items if (stored or items.all? { |i| text_at(i, "type") != "reasoning" or sealed?(i) })
+  return items if stored
 
   # A message without an id is an input message, which has no `status`.
   items.select { |i| text_at(i, "type") != "reasoning" or sealed?(i) }.map { |i| without(without(i, "id"), "status") }

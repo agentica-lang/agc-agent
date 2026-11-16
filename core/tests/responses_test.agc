@@ -3,8 +3,8 @@ import H from "support/harness"
 
 # On the OpenAI Responses format a turn runs as on chat completions: the system prompt goes as `instructions`, the
 # tools as functions, and the next request gives back the reasoning item (its encrypted content), the call and its
-# output by `call_id`. The API keeps nothing (`store: false`) and sends the reasoning back encrypted. The usage counts
-# the cached tokens, and the answer is shown.
+# output by `call_id`. The API keeps nothing (`store: false`) and sends the reasoning back encrypted, so no item goes
+# back with its id. The usage counts the cached tokens, and the answer is shown.
 def test_a_turn_runs_on_the_responses_format() -> Result[Void]
   setup = H.Setup(api: "openai_responses", replies: ["write_file.sse", "text.sse"])
   H.using(setup) do |h|
@@ -30,6 +30,7 @@ def test_a_turn_runs_on_the_responses_format() -> Result[Void]
     items = try JSON.list(try JSON.get(second, "input"))
     try Test.eq(string(items[1], "encrypted_content"), "gAAAAABcoreOpaqueReasoning==")
     try Test.eq([string(items[3], "call_id"), string(items[4], "call_id")], ["call_core_1", "call_core_1"])
+    try Test.eq(items.select { |item| JSON.get(item, "id").ok? }.size, 0)
     usage = a.seen.select { |s| Protocol.event_name(s.event) == "usage" }
     try Test.eq(usage.map { |s| s.event }.first, Protocol.Event.Usage(usage_of(100, 60)))
     shown = (try H.session(h, id)).history

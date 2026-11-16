@@ -137,6 +137,32 @@ def test_reasoning_items_and_message_phase_round_trip() -> Result[Void]
   Test.eq(JSON.get(try JSON.parse(second.body), "input"), JSON.parse(expected))
 end
 
+# With `store: false` the API has none of the items: they go back without their ids (a message without its status),
+# the reasoning by its `encrypted_content` and the call by its `call_id`.
+def test_unstored_items_go_back_without_their_ids() -> Result[Void]
+  fake = try Fake.start([
+    try Fake.sse("openai_responses/encrypted_reasoning.sse"),
+    try Fake.sse("openai_responses/text.sse"),
+  ])
+
+  ask = Ev.user("Read README.md.")
+  request = LLM.Request(model: MODEL, messages: [ask], extra: {"store": JSON.from(false)})
+  response = try LLM.response(try LLM.stream(provider(fake), request))
+  input = try second_input(fake, request.with(messages: [ask, response.message]))
+  expected = <<~JSON
+    [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Read README.md."}]},
+     {"type": "reasoning",
+      "summary": [{"type": "summary_text", "text": "Need the README first."},
+                  {"type": "summary_text", "text": "Then answer."}],
+      "encrypted_content": "gAAAAABoHandMadeOpaqueReasoning=="},
+     {"type": "message", "role": "assistant", "phase": "commentary",
+      "content": [{"type": "output_text", "text": "Reading it.", "annotations": []}]},
+     {"type": "function_call", "call_id": "call_hand_1", "name": "read_file",
+      "arguments": "{\\"path\\": \\"README.md\\"}"}]
+  JSON
+  Test.eq(ok(JSON.array(input)), JSON.parse(expected))
+end
+
 # With the items kept (no `store: false`), a reasoning item goes back by its id, less its empty `encrypted_content`.
 def test_a_stored_reasoning_item_goes_back_by_its_id() -> Result[Void]
   fake = try Fake.start([
