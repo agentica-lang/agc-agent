@@ -44,6 +44,9 @@ export Requests.Decision
 export Requests.NewSession
 export Requests.SendMessage
 export Requests.Approve
+export Requests.SessionUpdate
+export Requests.encode_session_update
+export Requests.decode_session_update
 export Requests.decisions
 export Requests.decision_name
 export Requests.parse_decision

@@ -15,6 +15,7 @@ import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import CodeMode from "code_mode"
 import Sandbox from "sandbox"
+import Permissions from "permissions"
 import Session from "session"
 import Store from "store"
 import Tools from "tools"
@@ -35,7 +36,7 @@ KIND_UNKNOWN_API = "core.unknown_api"
 MAX_WAITING = 64
 SYSTEM_PROMPT = <<~TEXT
   You are a coding agent. You work in the session folder with the tools you have: read before you change a file, keep
-  changes small, and say briefly what you did.
+  changes small, and say briefly what you did. To read, use read_file, glob and grep rather than bash.
 TEXT
 
 SSE_HEADERS = [
@@ -58,6 +59,8 @@ struct Options
   model: String
   env: Fn[String, Result[String]]
   rules: Tools.Rules
+  ## The folders whose project file (`.finn/config.json`) may add allow rules.
+  trusted_dirs: List[String] = []
   ## The tools of the MCP servers.
   tools: List[Tools.Tool] = []
   port: Int = 0
@@ -323,7 +326,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
   end
 
-  context = try ctx
+  context = try with_project(options, try ctx)
   api = request.api.unwrap_or(options.api)
   if not options.apis.has_key?(api)
     return error("unknown api #{api.inspect}: one of #{options.apis.keys.join(", ")}", kind: Protocol.KIND_INVALID)
@@ -390,7 +393,8 @@ def read(options: Options, listed: Entry) -> Result[Loaded]
     IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
   end
 
-  ok(Loaded(saved: saved, context: try Tools.context(saved.header.cwd, options.env, options.rules, options.tools)))
+  context = try Tools.context(saved.header.cwd, options.env, options.rules, options.tools)
+  ok(Loaded(saved: saved, context: try with_project(options, context)))
 end
 
 # Starts the session that a load read, and answers the requests that waited for it. A load of a session deleted since
@@ -609,6 +613,9 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
       try try deleted
       response(200, "{}")
     "GET 1" -> response(200, Protocol.encode_session(try Session.snapshot(try find(registry, parts[0]))))
+    "PATCH 1" ->
+      update = try Protocol.decode_session_update(text)
+      response(200, Protocol.encode_session(try Session.update(try find(registry, parts[0]), update)))
     "POST 2" if parts[1] == "messages" ->
       message = try Protocol.decode_send_message(text)
       turn_id = try Session.send(try find(registry, parts[0]), message.text)
@@ -695,5 +702,13 @@ def option_list[T](value: Optional[T]) -> List[T]
   case value
     some(v) -> [v]
     none -> []
+  end
+end
+
+# The rules of the project file of the session folder join the server's; a broken file is an invalid request.
+def with_project(options: Options, ctx: Tools.Context) -> Result[Tools.Context]
+  case Permissions.with_project(ctx.rules, ctx.root, options.trusted_dirs)
+    ok(rules) -> ok(ctx.with(rules: rules))
+    error(e) -> error(e.message, kind: Protocol.KIND_INVALID)
   end
 end

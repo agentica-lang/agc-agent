@@ -107,7 +107,12 @@ def test_requests_round_trip() -> Result[Void]
 
   approve = try decode_fixture("approve", &Protocol.decode_approve, &Protocol.encode_approve)
   try Test.eq(approve, Protocol.Approve(decision: Protocol.Decision.Allow))
-  Test.eq(Protocol.decode_approve(Protocol.encode_approve(approve)), ok(approve))
+  try Test.eq(Protocol.decode_approve(Protocol.encode_approve(approve)), ok(approve))
+
+  update = try decode_fixture("session_update", &Protocol.decode_session_update, &Protocol.encode_session_update)
+  try Test.eq(update, Protocol.SessionUpdate(accept_edits: some(true)))
+  try Test.eq(Protocol.decode_session_update("{}"), ok(Protocol.SessionUpdate()))
+  Test.eq(error_kind(Protocol.decode_session_update("{\"accept\": true}")), "protocol.invalid")
 end
 
 def test_replies_round_trip() -> Result[Void]

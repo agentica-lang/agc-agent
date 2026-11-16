@@ -3,6 +3,7 @@
   "new_session_default_model": {"cwd": "/home/ana/project", "model": null, "api": null},
   "send_message": {"text": "Write hello.txt, then run it."},
   "approve": {"decision": "allow"},
+  "session_update": {"accept_edits": true},
   "health": {"version": "0.0.1"},
   "server_info": {"port": 41234, "token": "3f9a0c", "pid": 4242},
   "session_created": {"id": "s1"},
@@ -19,7 +20,8 @@
     "history": [
       {"role": "user", "text": "Write hello.txt."},
       {"role": "assistant", "text": "Done."}
-    ]
+    ],
+    "accept_edits": false
   },
   "session_mid_turn": {
     "id": "s1",
@@ -29,13 +31,14 @@
     "turn_id": "t2",
     "turn_from_event_id": 50,
     "pending_approvals": [
-      {"approval_id": "a1", "call_id": "call_2", "tool": "bash", "preview": "rm -r b", "detail": ""}
+      {"approval_id": "a1", "call_id": "call_2", "tool": "bash", "preview": "rm -r b", "detail": "", "prefix": "rm"}
     ],
     "history": [
       {"role": "user", "text": "Write hello.txt."},
       {"role": "assistant", "text": "Done."},
       {"role": "user", "text": "Now delete the build folder."}
-    ]
+    ],
+    "accept_edits": true
   },
   "failure": {"kind": "approval.resolved", "message": "the approval was answered already"}
 }

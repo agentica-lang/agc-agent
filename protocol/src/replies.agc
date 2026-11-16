@@ -63,6 +63,8 @@ struct Session
   turn_from_event_id: Optional[Int]
   pending_approvals: List[Events.ApprovalRequested]
   history: List[Message]
+  ## The edits of files run without asking (`PATCH` with `accept_edits`).
+  accept_edits: Bool = false
 end
 
 ## `server.json` in the state folder, which only its user can read: where the server listens and its Bearer token.
@@ -118,6 +120,7 @@ def encode_session(reply: Session) -> String
       turn_from_event_id: reply.turn_from_event_id,
       pending_approvals: reply.pending_approvals,
       history: history,
+      accept_edits: some(reply.accept_edits),
     ),
   )
 end
@@ -142,6 +145,7 @@ def decode_session(text: String) -> Result[Session]
       turn_from_event_id: wire.turn_from_event_id,
       pending_approvals: wire.pending_approvals,
       history: history,
+      accept_edits: wire.accept_edits.unwrap_or(false),
     ),
   )
 end
@@ -162,6 +166,7 @@ struct SessionWire
   turn_from_event_id: Optional[Int]
   pending_approvals: List[Events.ApprovalRequested]
   history: List[MessageWire]
+  accept_edits: Optional[Bool] = none
 end
 
 def check_turn(wire: SessionWire) -> Result[Void]

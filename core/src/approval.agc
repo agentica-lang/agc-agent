@@ -75,7 +75,7 @@ def decide(rules: Rules, tool: String, target: String, asks: Bool, root: Optiona
   allowed = read_only or (matchable and rules.allow.any? { |rule| matches?(rule, tool, target) })
   if denied
     Verdict.Deny
-  elsif git_internals?(tool, target)
+  elsif protected?(tool, target)
     Verdict.Ask
   elsif allowed
     Verdict.Allow
@@ -84,6 +84,11 @@ def decide(rules: Rules, tool: String, target: String, asks: Bool, root: Optiona
   else
     Verdict.Allow
   end
+end
+
+## A change under `.git/`, which always asks unless a deny rule refuses it.
+def protected?(tool: String, target: String) -> Bool
+  WRITES.include?(tool) and target.split("/").any? { |name| Regex.match?(name.downcase, GIT) }
 end
 
 ## Whether a deny rule of `read_file` covers the path (relative to the session folder): `glob` and `grep` skip it too.
@@ -114,7 +119,7 @@ private
 WORD = /\A[A-Za-z0-9_]\z/
 PLAIN = /\A[A-Za-z0-9_.\/:=,+@%\- \t]*\z/
 GIT = /\A\.git\.*\z/
-WRITES = ["write_file", "edit_file"]
+WRITES = ["write_file", "edit_file", "apply_patch"]
 
 # Each command of a parsed `bash` command, its words joined by spaces, against the deny rules.
 def commands_denied?(rules: Rules, command: String) -> Bool
@@ -126,10 +131,6 @@ def commands_denied?(rules: Rules, command: String) -> Bool
 
     error(_) -> false
   end
-end
-
-def git_internals?(tool: String, target: String) -> Bool
-  WRITES.include?(tool) and target.split("/").any? { |name| Regex.match?(name.downcase, GIT) }
 end
 
 def matches?(rule: Rule, tool: String, target: String) -> Bool

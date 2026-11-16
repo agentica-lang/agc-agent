@@ -10,8 +10,8 @@
 import LLM from "pkg/llm/llm"
 import Monty from "pkg/monty/monty"
 import CodeMode from "code_mode"
+import Permissions from "permissions"
 import Server from "server"
-import Tools from "tools"
 
 STATE_DIR_ENV = "FINN_STATE_DIR"
 DATA_DIR_ENV = "FINN_DATA_DIR"
@@ -36,7 +36,8 @@ def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
       api: api,
       model: set(read, "FINN_MODEL").unwrap_or(DEFAULT_MODEL),
       env: read,
-      rules: Tools.Rules(allow: [], deny: []),
+      rules: try Permissions.user_rules(read),
+      trusted_dirs: Permissions.trusted(read),
       context_window: try context_window(read),
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(base_url),

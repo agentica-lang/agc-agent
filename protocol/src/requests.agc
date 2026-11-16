@@ -3,11 +3,15 @@
 
 import Wire from "wire"
 
-## How a client answers an approval request.
+## How a client answers an approval request. `AllowSession` also allows the same call again in the session,
+## `AllowPrefix` the `bash` commands that start with the request's `prefix` (the same call when it has none), and
+## `AllowTool` every call of the tool; none of them reaches into `.git/`.
 enum Decision
   Allow
   Deny
   AllowSession
+  AllowPrefix
+  AllowTool
 end
 
 ## `POST /v1/sessions`. `model` and `api` (the model API, by the name the server gives it) default to the server's.
@@ -27,6 +31,12 @@ struct Approve
   decision: Decision
 end
 
+## `PATCH /v1/sessions/ID`: the settings to change; a missing one stays. `accept_edits` runs the edits of files in the
+## session folder without asking.
+struct SessionUpdate
+  accept_edits: Optional[Bool] = none
+end
+
 ## Every decision, in a fixed order.
 def decisions() -> List[Decision] = Wire.chain(Decision.Allow, &following)
 
@@ -35,6 +45,8 @@ def decision_name(decision: Decision) -> String
     Decision.Allow -> "allow"
     Decision.Deny -> "deny"
     Decision.AllowSession -> "allow_session"
+    Decision.AllowPrefix -> "allow_prefix"
+    Decision.AllowTool -> "allow_tool"
   end
 end
 
@@ -65,6 +77,10 @@ def decode_approve(text: String) -> Result[Approve]
   ok(Approve(decision: try parse_decision(wire.decision)))
 end
 
+def encode_session_update(body: SessionUpdate) -> String = JSON.encode(body)
+
+def decode_session_update(text: String) -> Result[SessionUpdate] = Wire.decode_strict(text, SessionUpdate.codec)
+
 private
 
 struct ApproveWire
@@ -75,6 +91,8 @@ def following(decision: Decision) -> Optional[Decision]
   case decision
     Decision.Allow -> some(Decision.Deny)
     Decision.Deny -> some(Decision.AllowSession)
-    Decision.AllowSession -> none
+    Decision.AllowSession -> some(Decision.AllowPrefix)
+    Decision.AllowPrefix -> some(Decision.AllowTool)
+    Decision.AllowTool -> none
   end
 end
