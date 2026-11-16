@@ -23,3 +23,5 @@ The fake LLM of the server tests streams these, in the order a test gives.
   with `n_ctx` 120. `summary_empty.sse` is a summary of blanks, and
   `summary_length.sse` one cut by `finish_reason: "length"`.
   `not_found.json` and `bad_request.json` are error bodies (404 and 400).
+- `apply_patch.sse` is written by hand in the shape of `write_file.sse`: an
+  `apply_patch` call as a function, which only the Responses API is offered.

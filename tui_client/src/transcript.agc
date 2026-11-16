@@ -9,11 +9,16 @@ enum Kind
   Assistant
   Thinking
   Notice
+  ## A tool call that runs or ran well.
+  Tool
+  ToolFailed
 end
 
 struct Entry
   kind: Kind
   text: String
+  ## The call of a tool entry, which its end replaces.
+  call_id: String = ""
 end
 
 ## One drawn row of the transcript.
@@ -43,6 +48,15 @@ def add(entries: List[Entry], kind: Kind, text: String) -> List[Entry]
 end
 
 def note(entries: List[Entry], text: String) -> List[Entry] = entries.push(Entry(kind: Kind.Notice, text: text))
+
+## Puts the entry of a tool call in place of the one of the same call, or at the end.
+def tool(entries: List[Entry], call_id: String, kind: Kind, text: String) -> List[Entry]
+  entry = Entry(kind: kind, text: text, call_id: call_id)
+  case (entries.find_index { |e| e.call_id == call_id and call_id != "" })
+    some(at) -> entries.set(at, entry)
+    none -> entries.push(entry)
+  end
+end
 
 ## The entries as rows of at most `width` columns, an empty row between two entries; the answers as markdown, and the
 ## thinking only when `thinking`.
