@@ -14,8 +14,9 @@ SSE_HEADERS = [HTTP.Header(name: "Content-Type", value: "text/event-stream")]
 struct Rig
   fake: TUI.Testing.Fake
   feed: Channel[Client.Item]
-  # The method and path of each call the app made on the server.
+  # The method and path of each call the app made on the server, and the body of each, in the same order.
   requests: Channel[String]
+  bodies: Channel[String]
 end
 
 def test_a_tiny_terminal_draws_the_panel_and_a_resize_redraws_it() -> Result[Void] = within(24, 6, &tiny)
@@ -23,8 +24,6 @@ def test_a_tiny_terminal_draws_the_panel_and_a_resize_redraws_it() -> Result[Voi
 def tiny(rig: Rig) -> Result[Void]
   try ask(rig, "write_file", "hi")
   try shows(rig, "^Y allow")
-  # The guard of a new approval ends: a key before it answers nothing, whatever the size.
-  Task.sleep(Approvals.GUARD_MS + 100)
   try TUI.Testing.resize(rig.fake, 10, 3)
   # No row of the panel is on the screen: the key answers nothing.
   try press(rig, TUI.Event.Key(TUI.Key.Ctrl("y"), TUI.Mods()))
@@ -32,7 +31,7 @@ def tiny(rig: Rig) -> Result[Void]
   try shows(rig, "Tab to answer")
   try Test.error?(rig.requests.recv(0))
   try press(rig, TUI.Event.Key(TUI.Key.Ctrl("y"), TUI.Mods()))
-  Test.eq(rig.requests.recv(2000), ok("POST #{Protocol.approval_path("s1", "a1")}"))
+  answered(rig, Protocol.Decision.Allow)
 end
 
 def test_clicks_on_the_content_or_twice_on_the_tab_answer_nothing() -> Result[Void] = within(80, 24, &clicked)
@@ -69,14 +68,13 @@ def typed(rig: Rig) -> Result[Void]
   try Test.assert(rows.any? { |row| row.include?("Tab to answer") }, "the panel still waits")
   try press(rig, TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))
   try shows(rig, "y allow · n deny")
-  Task.sleep(Approvals.GUARD_MS + 100)
   try press(rig, TUI.Event.Paste("y#{String.from_code(1)}a#{String.from_code(25)}n\nnext"))
   rows = try shows(rig, " next")
   try Test.assert(rows.include?(" payyan"), "the pasted line has no control bytes: #{rows}")
   try Test.assert(rows.any? { |row| row.include?("y allow · n deny") }, "the panel still waits")
   try Test.error?(rig.requests.recv(0))
   try press(rig, TUI.Event.Char("A", TUI.Mods()))
-  Test.eq(rig.requests.recv(2000), ok("POST #{Protocol.approval_path("s1", "a1")}"))
+  answered(rig, Protocol.Decision.AllowSession)
 end
 
 def test_escape_while_idle_sends_no_stop() -> Result[Void] = within(80, 24, &idle_escape)
@@ -146,6 +144,12 @@ def tree_replies() -> Map[String, String]
   }
 end
 
+# The app sent the decision to the approval a1.
+def answered(rig: Rig, decision: Protocol.Decision) -> Result[Void]
+  try Test.eq(rig.requests.recv(2000), ok("POST #{Protocol.approval_path("s1", "a1")}"))
+  Test.eq(rig.bodies.recv(2000), ok(Protocol.encode_approve(Protocol.Approve(decision: decision))))
+end
+
 def options() -> Args.Options
   Args.Options(
     state_dir: none,
@@ -164,9 +168,11 @@ end
 def within(width: Int, height: Int, body: Fn[Rig, Result[Void]], replies: Map[String, String] = {}) -> Result[Void]
   requests: Channel[String] = Channel.new(32)
   streams: Channel[Channel[Bytes]] = Channel.new(8)
-  handler = ->(request: HTTP.Request, _body: HTTP.RequestBody) {
+  bodies: Channel[String] = Channel.new(32)
+  handler = ->(request: HTTP.Request, sent: HTTP.RequestBody) {
     call = "#{request.method} #{request.path}"
     _ = requests.send(call, 0)
+    _ = bodies.send(String.from_bytes(HTTP.read_all(sent, 4096).unwrap_or("".bytes)).unwrap_or(""), 0)
     if request.path.end_with?("/events")
       out: Channel[Bytes] = Channel.new(1)
       _ = streams.send(out, 0)
@@ -180,13 +186,21 @@ def within(width: Int, height: Int, body: Fn[Rig, Result[Void]], replies: Map[St
   feed: Channel[Client.Item] = Channel.new(16)
   server = Client.Server(url: "http://127.0.0.1:#{HTTP.local_port(http)}", token: "t")
   start = App.seed(server, options(), Channel.new(1), width, height)
-  model = start.with(id: "s1", generation: 1, feed: some(feed), effects: [App.read_feed(1, feed)])
+  # No guard time: these tests send a key right after the panel shows (the guard has its own tests).
+  model = start.with(
+    id: "s1",
+    generation: 1,
+    feed: some(feed),
+    effects: [App.read_feed(1, feed)],
+    approvals: Approvals.Panel(guard_ms: 0),
+  )
+
   fake = TUI.Testing.fake(width, height)
   runner = Task.spawn(-> { App.drive(TUI.Testing.backend(fake), model) })
-  result = body.call(Rig(fake: fake, feed: feed, requests: requests))
+  result = body.call(Rig(fake: fake, feed: feed, requests: requests, bodies: bodies))
   _ = fake.events.send(TUI.Event.Key(TUI.Key.Ctrl("c"), TUI.Mods()), 1000)
-  feed.close
   _ = Task.await(runner)
+  feed.close
   while true
     case streams.recv(0)
       ok(out) -> out.close

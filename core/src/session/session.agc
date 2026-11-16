@@ -96,11 +96,15 @@ end
 
 def compact(sessions: Sessions, id: String) -> Result[Bool] = SessionActor.compact_now(try find(sessions, id))
 
-## Stops the running turn of a session.
+## Stops the running turn or shell command of a session.
 def stop_turn(sessions: Sessions, id: String) -> Result[Bool] = SessionActor.stop(try find(sessions, id))
 
 def answer(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
   SessionActor.answer(try find(sessions, id), approval_id, decision)
+end
+
+def shell(sessions: Sessions, id: String, request: Protocol.RunShell) -> Result[Protocol.ShellAccepted]
+  SessionActor.shell(try find(sessions, id), request)
 end
 
 def tree(sessions: Sessions, id: String) -> Result[Protocol.SessionTree] = SessionActor.tree(try find(sessions, id))

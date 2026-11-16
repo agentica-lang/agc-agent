@@ -714,6 +714,39 @@ def test_a_restart_after_a_branch_resyncs_the_branch_left() -> Result[Void]
   end
 end
 
+# `!cmd` runs in the session folder and its output goes to the model with the next message, across a restart; `!!cmd`
+# does not, a deny rule refuses a command, and none runs while a turn does.
+def test_a_shell_command_runs_and_its_output_reaches_the_next_turn() -> Result[Void]
+  setup = H.Setup(replies: ["text.sse", "text.sse@hold"], deny: ["bash(rm *)"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    try Test.eq((try shell(h, id, "echo one", true)).status, 202)
+    a = try H.until(a, Protocol.EventKind.ShellFinished)
+    try Test.eq(H.kinds(a.seen), ["shell_started", "shell_finished"])
+    try Test.eq(shell_output(a), "one\n")
+    _ = try shell(h, id, "echo two", false)
+    a = try H.until(a.with(seen: []), Protocol.EventKind.ShellFinished)
+    try Test.eq(shell_output(a), "two\n")
+    denied = try shell(h, id, "rm x", true)
+    try Test.eq([denied.status.to_s, (try Protocol.decode_failure(denied.text)).kind], ["403", "shell.denied"])
+    H.close(a)
+    H.restarted(h, setup, "") do |r|
+      _ = try H.send(r, id, "Go.")
+      sent = (try H.request_messages(r, 1)).last
+      text = try JSON.string(try JSON.get(sent, "content"))
+      try Test.eq([text.include?("one"), text.include?("two"), text.end_with?("\n\nGo.")], [true, false, true])
+      _ = try H.idle(r, id)
+      _ = try H.send(r, id, "Again.")
+      busy = try shell(r, id, "echo three", true)
+      H.release(r)
+      _ = try H.idle(r, id)
+      try Test.eq(busy.status, 409)
+      Test.eq((try H.session(r, id)).history.map { |m| m.text }.select { |t| t.include?("one") }, [])
+    end
+  end
+end
+
 private
 
 WAIT_MS = 20_000
@@ -784,4 +817,19 @@ end
 
 def tree(h: H.Harness, id: String) -> Result[List[Protocol.TreeNode]]
   ok((try Protocol.decode_session_tree((try H.get(h, Protocol.tree_path(id))).text)).nodes)
+end
+
+def shell(h: H.Harness, id: String, command: String, context: Bool) -> Result[H.Answer]
+  H.post(h, Protocol.shell_path(id), Protocol.encode_run_shell(Protocol.RunShell(command: command, context: context)))
+end
+
+def shell_output(sub: H.Sub) -> String
+  for seen in sub.seen
+    case seen.event
+      Protocol.Event.ShellFinished(finished) -> return finished.output
+      _ -> nil
+    end
+  end
+
+  ""
 end

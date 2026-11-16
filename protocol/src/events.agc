@@ -24,6 +24,8 @@ enum EventKind
   Error
   Resync
   MessageQueued
+  ShellStarted
+  ShellFinished
 end
 
 ## Who resolved an approval.
@@ -129,6 +131,24 @@ struct MessageQueued
   message_id: Optional[String] = none
 end
 
+## A command a client ran with `POST /v1/sessions/ID/shell`. With `context`, its output goes to the model before the
+## next message.
+struct ShellStarted
+  shell_id: String
+  command: String
+  context: Bool
+end
+
+## `output` is what the command wrote, after its exit code when it failed, cut as a tool's output is.
+struct ShellFinished
+  shell_id: String
+  command: String
+  context: Bool
+  ok: Bool
+  output: String
+  duration_ms: Int
+end
+
 struct TurnFinished
   turn_id: String
   stop_reason: StopReason
@@ -149,6 +169,8 @@ enum Event
   Error(Errors.Failure)
   Resync
   MessageQueued(MessageQueued)
+  ShellStarted(ShellStarted)
+  ShellFinished(ShellFinished)
 end
 
 ## Every kind of event, in a fixed order.
@@ -168,6 +190,8 @@ def event_kind(event: Event) -> EventKind
     Event.Error(_) -> EventKind.Error
     Event.Resync -> EventKind.Resync
     Event.MessageQueued(_) -> EventKind.MessageQueued
+    Event.ShellStarted(_) -> EventKind.ShellStarted
+    Event.ShellFinished(_) -> EventKind.ShellFinished
   end
 end
 
@@ -185,6 +209,8 @@ def kind_name(kind: EventKind) -> String
     EventKind.Error -> "error"
     EventKind.Resync -> "resync"
     EventKind.MessageQueued -> "message_queued"
+    EventKind.ShellStarted -> "shell_started"
+    EventKind.ShellFinished -> "shell_finished"
   end
 end
 
@@ -273,6 +299,8 @@ def encode_event(event: Event) -> String
     Event.Error(data) -> Errors.encode_failure(data)
     Event.Resync -> "{}"
     Event.MessageQueued(data) -> JSON.encode(data)
+    Event.ShellStarted(data) -> JSON.encode(data)
+    Event.ShellFinished(data) -> JSON.encode(data)
   end
 end
 
@@ -292,6 +320,8 @@ def decode_event(name: String, data: String) -> Result[Event]
     EventKind.Error -> ok(Event.Error(try Errors.decode_failure(data)))
     EventKind.Resync -> decode_resync(data)
     EventKind.MessageQueued -> ok(Event.MessageQueued(try Wire.decode(data, MessageQueued.codec)))
+    EventKind.ShellStarted -> ok(Event.ShellStarted(try Wire.decode(data, ShellStarted.codec)))
+    EventKind.ShellFinished -> decode_shell_finished(data)
   end
 end
 
@@ -319,6 +349,8 @@ def shape() -> List[String]
     Wire.record("Usage", Usage.members),
     Wire.record("UsageWire", UsageWire.members),
     Wire.record("MessageQueued", MessageQueued.members),
+    Wire.record("ShellStarted", ShellStarted.members),
+    Wire.record("ShellFinished", ShellFinished.members),
     Wire.record("TurnFinished", TurnFinished.members),
     Wire.record("ResolvedWire", ResolvedWire.members),
     Wire.record("TurnStartedWire", TurnStartedWire.members),
@@ -378,7 +410,9 @@ def following_kind(kind: EventKind) -> Optional[EventKind]
     EventKind.TurnFinished -> some(EventKind.Error)
     EventKind.Error -> some(EventKind.Resync)
     EventKind.Resync -> some(EventKind.MessageQueued)
-    EventKind.MessageQueued -> none
+    EventKind.MessageQueued -> some(EventKind.ShellStarted)
+    EventKind.ShellStarted -> some(EventKind.ShellFinished)
+    EventKind.ShellFinished -> none
   end
 end
 
@@ -406,6 +440,12 @@ def decode_tool_finished(data: String) -> Result[Event]
   finished = try Wire.decode(data, ToolFinished.codec)
   try Wire.non_negative("duration_ms", finished.duration_ms)
   ok(Event.ToolFinished(finished))
+end
+
+def decode_shell_finished(data: String) -> Result[Event]
+  finished = try Wire.decode(data, ShellFinished.codec)
+  try Wire.non_negative("duration_ms", finished.duration_ms)
+  ok(Event.ShellFinished(finished))
 end
 
 def decode_usage(data: String) -> Result[Event]
