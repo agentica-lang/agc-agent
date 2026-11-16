@@ -243,6 +243,24 @@ def test_lists_the_models_with_their_context() -> Result[Void]
   Test.eq(models, ok(expected))
 end
 
+# An API key wins over a token; a token alone goes as a bearer, with the OAuth beta.
+def test_an_auth_token_is_a_bearer_with_the_oauth_beta() -> Result[Void]
+  fake = try Fake.start([try Fake.json(200, "anthropic/models.json"), try Fake.json(200, "anthropic/models.json")])
+  options = LLM.Options(timeout_ms: 5000)
+  _ = try LLM.models(LLM.anthropic(fake.url, "", options, auth_token: "oat-test"))
+  _ = try LLM.models(LLM.anthropic(fake.url, KEY, options, auth_token: "oat-test"))
+  token = try Fake.next_request(fake)
+  both = try Fake.next_request(fake)
+  try Fake.stop(fake)
+  names = ["x-api-key", "authorization", "anthropic-beta", "anthropic-version"]
+  try Test.eq(
+    names.map { |n| HTTP.header_values(token.headers, n) },
+    [[], ["Bearer oat-test"], ["oauth-2025-04-20"], ["2026-10-21"]],
+  )
+
+  Test.eq(names.map { |n| HTTP.header_values(both.headers, n) }, [[KEY], [], [], ["2026-10-21"]])
+end
+
 private
 
 def provider(fake: Fake.Fake) -> LLM.Provider

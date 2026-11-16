@@ -34,5 +34,5 @@
 - Sessions made before the API choice keep no API in their file: one made with `FINN_API=openai_responses` follows the server's current default. `GET /v1/sessions` shows the API of each session.
 - **Breaking:** the command is `finn` (`bin/finn`), the product Finn Agent: variables are `FINN_*` and folders `finn`; the `AGC_AGENT_*` names and an existing `agc-agent` folder still work.
 - The approval of an `edit_file` call marks each old line `-` and each new line `+`.
-- The `anthropic` provider (the Anthropic Messages API: adaptive thinking sent back with its signature, cache breakpoints on the system prompt or tools and the conversation, the models list); the llama smoke tests run it too.
+- The `anthropic` provider (the Anthropic Messages API: adaptive thinking sent back with its signature, cache breakpoints on the system prompt or tools and the conversation, the models list), with an API key or an OAuth token; the llama smoke tests run it too, and `make smoke-anthropic` makes a few real calls.
 - `finn -p TASK` runs one task (`-p -` reads it from stdin): the answer on stdout, the rest on stderr; it exits 0 when the turn ends normally, 130 when cancelled, 1 otherwise, and denies approvals; `--yolo` allows the tool calls of the run, in one-shot and in chat.
