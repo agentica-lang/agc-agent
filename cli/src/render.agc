@@ -49,6 +49,8 @@ def event(event: Protocol.Event, style: Style) -> Optional[Out]
     Protocol.Event.ApprovalRequested(_) -> none
     Protocol.Event.Resync -> none
     Protocol.Event.MessageQueued(queued) -> some(line("[queued] #{Client.printable(queued.text)}"))
+    Protocol.Event.ShellStarted(started) -> some(line(shell_started(started)))
+    Protocol.Event.ShellFinished(finished) -> some(line(shell_finished(finished)))
   end
 end
 
@@ -116,6 +118,27 @@ def finished(tool: Protocol.ToolFinished) -> String
   return "[tool ok] #{tool.summary} (#{tool.duration_ms} ms)" if tool.ok
 
   "[tool failed] #{tool.summary} (#{tool.duration_ms} ms)"
+end
+
+def shell_started(started: Protocol.ShellStarted) -> String
+  return "[shell] #{Client.printable(started.command)}" if started.context
+
+  "[shell] #{Client.printable(started.command)} (not for the model)"
+end
+
+# The output one printable line at a time, then whether it worked.
+def shell_finished(finished: Protocol.ShellFinished) -> String
+  lines = finished.output.split("\n").map { |text| Client.printable(text) }
+  if lines.size > 0 and lines.last == ""
+    lines = lines.take(lines.size - 1)
+  end
+
+  state = "ok"
+  if not finished.ok
+    state = "failed"
+  end
+
+  lines.push("[shell #{state}] (#{finished.duration_ms} ms)").join("\n")
 end
 
 def resolution(resolved: Protocol.ApprovalResolved) -> String

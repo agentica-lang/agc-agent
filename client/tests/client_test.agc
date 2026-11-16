@@ -61,6 +61,16 @@ def test_commands_parse_with_their_arguments() -> Result[Void]
   ok()
 end
 
+def test_a_bang_line_is_a_shell_command() -> Result[Void]
+  try Test.eq(Client.parse_shell(" !git status "), some(Protocol.RunShell(command: "git status", context: true)))
+  try Test.eq(Client.parse_shell("!! ls -a"), some(Protocol.RunShell(command: "ls -a", context: false)))
+  for text in ["!", "!! ", "hi !ls"]
+    try Test.eq(Client.parse_shell(text), none)
+  end
+
+  ok()
+end
+
 def test_resume_picks_by_number_or_id() -> Result[Void]
   sessions = ["a1", "b2"].map { |id| Protocol.SessionSummary(id: id, cwd: "/w", model: "m", api: "openai") }
   list = Protocol.SessionList(sessions: sessions)

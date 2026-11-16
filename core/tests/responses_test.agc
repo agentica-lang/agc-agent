@@ -68,6 +68,39 @@ def test_a_move_to_another_provider_leaves_the_reasoning_behind() -> Result[Void
   end
 end
 
+# Reasoning saved before providers names none: it is of the session's first provider, so it goes back to that one and
+# not to another after a move.
+def test_old_reasoning_stays_with_the_first_provider() -> Result[Void]
+  setup = H.Setup(api: "openai_responses", replies: ["text.sse", "text.sse"], providers: ["other:openai_responses"])
+  H.using(setup) do |h|
+    head = (
+      "{\"type\":\"session\",\"id\":\"old\",\"cwd\":\"#{h.work}\",\"model\":\"m\",\"created_ms\":1,\"api\":\"openai_responses\"}"
+    )
+
+    reasoning = "{\"type\":\"reasoning\",\"id\":\"rs_1\",\"summary\":[],\"encrypted_content\":\"gAAAold==\"}"
+    blocks = "[{\"type\":\"thinking\",\"text\":\"t\",\"replay\":#{reasoning}},{\"type\":\"text\",\"text\":\"Hello.\"}]"
+    answer = "{\"type\":\"messages\",\"messages\":[{\"role\":\"assistant\",\"content\":#{blocks}}]}"
+    try File.write_text(
+      H.session_file(h, "old"),
+      [head, "{\"type\":\"user\",\"text\":\"Hi.\"}", answer, ""].join("\n"),
+    )
+
+    H.restarted(h, setup, "") do |r|
+      _ = try H.send(r, "old", "Again.")
+      _ = try H.idle(r, "old")
+      change = Protocol.encode_update_session(Protocol.UpdateSession(provider: some("other"), model: some("m1")))
+      try Test.eq((try H.call(r, "PATCH", Protocol.session_path("old"), change, H.auth(r))).status, 200)
+      _ = try H.send(r, "old", "Thanks.")
+      _ = try H.idle(r, "old")
+      first = try H.next_request(r)
+      second = try H.next_request(r)
+      try Test.eq([first.path, second.path], ["/v1/responses", "/other/responses"])
+      try Test.eq(types(try JSON.parse(first.body), "input").include?("reasoning"), true)
+      Test.eq(types(try JSON.parse(second.body), "input").include?("reasoning"), false)
+    end
+  end
+end
+
 private
 
 def string(json: JSON.Value, key: String) -> String

@@ -90,15 +90,15 @@ end
 
 # The timeout runs only while no client is attached: from when the last one leaves.
 def test_an_approval_waits_for_an_attached_client_and_times_out_after_it_leaves() -> Result[Void]
-  H.using(H.Setup(replies: ["write_file.sse", "text.sse"], approval_timeout_ms: 300)) do |h|
+  H.using(H.Setup(replies: ["write_file.sse", "text.sse"], approval_timeout_ms: 800)) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Write hello.txt.")
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
-    Task.sleep(450)
+    Task.sleep(1200)
     try Test.eq((try H.session(h, id)).pending_approvals.size, 1)
     H.close(a)
-    Task.sleep(100)
+    Task.sleep(300)
     try Test.eq((try H.session(h, id)).pending_approvals.size, 1)
     _ = try H.idle(h, id)
     replay = try H.until(try H.subscribe(h, id, some(0)), Protocol.EventKind.TurnFinished)
@@ -109,15 +109,15 @@ end
 
 # A client that attaches before the timeout stops it; it starts again when that client leaves.
 def test_a_new_client_stops_the_approval_timeout() -> Result[Void]
-  H.using(H.Setup(replies: ["write_file.sse", "text.sse"], approval_timeout_ms: 400)) do |h|
+  H.using(H.Setup(replies: ["write_file.sse", "text.sse"], approval_timeout_ms: 800)) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Write hello.txt.")
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
     H.close(a)
-    Task.sleep(200)
+    Task.sleep(300)
     b = try H.subscribe(h, id)
-    Task.sleep(700)
+    Task.sleep(1200)
     try Test.eq((try H.session(h, id)).pending_approvals.size, 1)
     H.close(b)
     _ = try H.idle(h, id)

@@ -210,6 +210,15 @@ def update(model: Model, msg: Msg) -> TUI.Step[Model, Msg]
 
   cmds = app.effects
   if app.exit.some? or app.failure.some?
+    # The reader of the event stream and the command that waits on its channel end with the app.
+    for task in option_list(app.stream)
+      Task.cancel(task)
+    end
+
+    for feed in option_list(app.feed)
+      feed.close
+    end
+
     cmds = cmds.push(TUI.Cmd.Quit)
   end
 
@@ -511,18 +520,28 @@ def scrolled(app: Model, rows: Int) -> Model = app.with(scroll: [app.scroll + ro
 def send(app: Model) -> Model
   text = app.prompt.strip
   return app if text == ""
-  return noted(app, "the session is moving: wait for it") if app.moving
 
   case Client.parse_command(text)
-    some(ok(command)) -> return on_command(app.with(prompt: "", scroll: 0), command)
+    some(ok(command)) if not app.moving or local?(command) ->
+      return on_command(app.with(prompt: "", scroll: 0), command)
     some(error(e)) -> return noted(app, e.message)
     _ -> nil
   end
+
+  return noted(app, "the session is moving: wait for it") if app.moving
 
   queued = app.with(prompt: "", scroll: 0, outbox: app.outbox.push(text))
   return queued if not app.outbox.empty?
 
   sending(queued, text)
+end
+
+# A command that does not touch the session, which goes on while it moves.
+def local?(command: Client.Command) -> Bool
+  case command
+    Client.Command.Quit, Client.Command.Help, Client.Command.Cost -> true
+    _ -> false
+  end
 end
 
 def sending(app: Model, text: String) -> Model

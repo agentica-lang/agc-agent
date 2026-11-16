@@ -19,6 +19,8 @@ HELP = [
   "/stop                      stop the running turn",
   "/help                      this list",
   "/quit                      leave",
+  "!CMD                       run CMD in the session folder; the model gets its output with the next message",
+  "!!CMD                      run CMD without giving its output to the model",
   "any other /name goes to the agent as a message",
 ]
 
@@ -55,6 +57,23 @@ def parse_command(line: String) -> Optional[Result[Command]]
 
   argument = words.drop(1).join(" ")
   some(command(name, argument))
+end
+
+## The command of a line `!CMD` (its output goes to the model) or `!!CMD` (it does not); none for another line or
+## for `!` alone.
+def parse_shell(line: String) -> Optional[Protocol.RunShell]
+  text = line.strip
+  return none if not text.start_with?("!")
+
+  rest = text.slice(1, text.length - 1)
+  context = not rest.start_with?("!")
+  if not context
+    rest = rest.slice(1, rest.length - 1)
+  end
+
+  return none if rest.strip.empty?
+
+  some(Protocol.RunShell(command: rest.strip, context: context))
 end
 
 ## What a client says when the first turn after `/model NAME` fails: the server takes any name.

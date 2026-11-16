@@ -75,8 +75,10 @@ struct Turn
   refresh: Optional[Fn[Result[LLM.Provider]]] = none
   ## The session sends no thinking blocks until its next fold.
   stripped: Bool = false
-  ## The provider of the turn, which marks its thinking: the thinking of another one is not sent.
+  ## The provider of the turn, which marks its thinking: the thinking of another one is not sent. `origin` is the
+  ## provider of the thinking that names none (saved before providers): the session's first.
   source: String = ""
+  origin: String = ""
   ## `window` 0 asks the provider for it.
   compaction: Compaction.Settings
   ## The context of the session's last call.
@@ -132,7 +134,7 @@ def run(given: Turn) -> Outcome
     messages = messages + more.map { |q| LLM.Message(role: LLM.Role.User, content: [text_block(q.text)]) }
     read = read + more
     marks = marks + more.flat_map { |q| q.names }
-    asked = Compaction.own_thinking(messages, turn.source)
+    asked = Compaction.own_thinking(messages, turn.source, turn.origin)
     if stripped
       asked = Compaction.without_thinking(messages)
     end

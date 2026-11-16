@@ -28,12 +28,13 @@ def test_ids() -> list[str]:
     return ids
 
 
-def run(test_id: str) -> tuple[str, bool, float, str]:
+def run(test_id: str) -> tuple[str, str, float, str]:
     started = time.monotonic()
     done = subprocess.run(
         [sys.executable, "-m", "unittest", test_id], cwd=ROOT, capture_output=True, text=True, timeout=300
     )
-    return test_id, done.returncode == 0, time.monotonic() - started, done.stderr
+    status = "FAIL" if done.returncode else "skip" if "skipped=" in done.stderr else "ok"
+    return test_id, status, time.monotonic() - started, done.stderr
 
 
 def main() -> int:
@@ -48,16 +49,20 @@ def main() -> int:
     print(f"compiled in {time.monotonic() - compiled:.1f}s", flush=True)
     jobs = int(os.environ.get("JOBS", "4"))
     failed = []
+    skipped = []
     started = time.monotonic()
     with concurrent.futures.ThreadPoolExecutor(jobs) as pool:
-        for test_id, passed, took, errors in pool.map(run, ids):
-            print(f"{'ok' if passed else 'FAIL'} {took:5.1f}s {test_id.rsplit('.', 1)[-1]}", flush=True)
-            if not passed:
+        for test_id, status, took, errors in pool.map(run, ids):
+            print(f"{status:4} {took:5.1f}s {test_id.rsplit('.', 1)[-1]}", flush=True)
+            if status == "FAIL":
                 failed.append(test_id)
                 print(errors, file=sys.stderr)
+            elif status == "skip":
+                skipped.append(test_id)
     shutil.rmtree(build, True)
-    print(f"{len(ids) - len(failed)} passed, {len(failed)} failed in {time.monotonic() - started:.1f}s")
-    return 1 if failed or not ids else 0
+    passed = len(ids) - len(failed) - len(skipped)
+    print(f"{passed} passed, {len(failed)} failed, {len(skipped)} skipped in {time.monotonic() - started:.1f}s")
+    return 1 if failed or not passed else 0
 
 
 if __name__ == "__main__":

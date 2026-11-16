@@ -83,6 +83,8 @@ struct Setup
   provider_name: String = ""
   api: String = ""
   endpoint: Optional[Fn[String, String, Result[Endpoint]]] = none
+  ## The provider of the thinking saved before providers, which names none: the session's first, as `provider/api`.
+  origin: String = ""
   ## Why a turn cannot start (the provider is not offered now); empty when it can.
   refused: String = ""
   ## The approval extension, with what the session's answers and mode allowed so far; none runs every call.
@@ -112,6 +114,8 @@ enum Msg
   Tree(Channel[Result[Protocol.SessionTree]])
   Branch(Int, Channel[Result[Protocol.Branched]])
   Copy(Optional[Int], Copying, Channel[Result[Copied]])
+  Shell(Protocol.RunShell, Channel[Result[Protocol.ShellAccepted]])
+  ShellDone(String, Tools.Output, Int)
 end
 
 ## Where `copy` writes the new session: its header, in the folder `dir`.
@@ -149,6 +153,14 @@ struct Running
   texts: List[String] = []
   ## The messages queued into the turn so far, which number their ids.
   queued: Int = 0
+end
+
+## A command a client runs in the session folder.
+struct ShellRun
+  id: String
+  command: String
+  context: Bool
+  task: Task[Void]
 end
 
 struct State
@@ -195,6 +207,9 @@ struct State
   stripped: Bool = false
   ## The tree of the file as far as the session read it.
   entries: Optional[Store.Entries] = none
+  shell: Optional[ShellRun] = none
+  ## The output of the commands that go to the model before the next message.
+  shells: List[String] = []
 end
 
 ## Starts a session; from what its file saved when there is one.
@@ -294,7 +309,15 @@ def compact_now(address: Address[Msg]) -> Result[Bool]
   ok(found.some?)
 end
 
-## Stops the running turn; whether one ran.
+## Runs a command in the session folder as the `bash` tool would, after the approval rules: `shell.denied` when a deny
+## rule refuses it (the user typed it, so a rule that asks does not ask), `session.busy` while a turn, a compaction or
+## another command runs. Its output comes in `shell_finished`.
+def shell(address: Address[Msg], request: Protocol.RunShell) -> Result[Protocol.ShellAccepted]
+  run: Result[Result[Protocol.ShellAccepted]] = Actor.call(address, CALL_MS) do |reply| Msg.Shell(request, reply) end
+  ok(try try run)
+end
+
+## Stops the running turn or command; whether one ran.
 def stop(address: Address[Msg]) -> Result[Bool] = Actor.call(address, CALL_MS) do |reply| Msg.Stop(reply) end
 
 ## The user messages of every branch of the session.
@@ -350,16 +373,16 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Send(text, reply) -> Actor.continue(start_turn(state, text, reply))
     Msg.Answer(approval_id, decision, reply) -> Actor.continue(answer_approval(state, approval_id, decision, reply))
     Msg.Close(reply) ->
-      if state.turn.some?
-        Actor.reply(reply, error("a turn is running", kind: Protocol.KIND_SESSION_BUSY))
+      if state.turn.some? or state.shell.some?
+        Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
         return Actor.continue(state)
       end
 
       Actor.reply(reply, ok())
       Actor.done(state)
     Msg.Stop(reply) ->
-      Actor.reply(reply, state.turn.some?)
-      Actor.continue(stop_turn(state))
+      Actor.reply(reply, state.turn.some? or state.shell.some?)
+      Actor.continue(stop_shell(stop_turn(state)))
     Msg.Emit(turn_id, event) -> Actor.continue(if_current(state, turn_id, ->(s) { emit_counted(s, event) }))
     Msg.Ask(turn_id, call, reply) -> Actor.continue(if_current(state, turn_id, ->(s) { ask(s, call, reply) }))
     Msg.Expire(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { expire(s) }))
@@ -388,12 +411,18 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Copy(entry, to, reply) ->
       Actor.reply(reply, copied(state, entry, to))
       Actor.continue(state)
+    Msg.Shell(request, reply) -> Actor.continue(run_shell(state, request, reply))
+    Msg.ShellDone(id, output, duration_ms) -> Actor.continue(shell_done(state, id, output, duration_ms))
   end
 end
 
 def terminate(state: State) -> Void
   for turn in option_list(state.turn)
     Task.cancel(turn.task)
+  end
+
+  for run in option_list(state.shell)
+    Task.cancel(run.task)
   end
 
   for out in state.subscribers
@@ -606,7 +635,7 @@ end
 # A message sent while a turn runs waits in the queue, which the turn reads before its next model call. The user's
 # `/name` of a skill puts its content before the message, unless the session has it already.
 def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.MessageAccepted]]) -> State
-  if state.compacting
+  if state.compacting or state.shell.some?
     Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
     return state
   end
@@ -631,7 +660,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
   end
 
   expanded = Skills.on_message(typed, state.setup.skills, state.marks)
-  text = expanded.text
+  text = (state.shells + [expanded.text]).join("\n\n")
   case save(state, -> { Store.append_user(state.setup.file, text, typed, expanded.names) })
     ok(_) -> state = state.with(marks: state.marks + expanded.names)
     error(e) ->
@@ -672,6 +701,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     refresh: setup.refresh,
     stripped: state.stripped,
     source: "#{setup.provider_name}/#{setup.api}",
+    origin: setup.origin,
     compaction: Compaction.Settings(
       window: state.window,
       model: compact_model(setup),
@@ -700,6 +730,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     history: state.history.push(LLM.Message(role: LLM.Role.User, content: [Agent.text_block(text)])),
     display: state.display.push(Protocol.Message(role: Protocol.Role.User, text: typed)),
     broken: none,
+    shells: [],
   )
 
   Actor.reply(reply, ok(Protocol.MessageAccepted(turn_id: turn_id)))
@@ -924,8 +955,11 @@ def ended(state: State, turn_id: String, texts: List[String], reason: Protocol.S
   emit(shown, Protocol.Event.TurnFinished(finished))
 end
 
+def busy?(state: State) -> Bool = state.turn.some? or state.compacting or state.shell.some?
+
 def busy_reason(state: State) -> String
   return "a turn is running" if state.turn.some?
+  return "a shell command is running" if state.shell.some?
 
   "the history is being compacted"
 end
@@ -978,7 +1012,7 @@ def resolve_endpoint(setup: Setup, name: String) -> Result[Endpoint]
 end
 
 def start_fold(state: State, reply: Channel[Result[Fold]]) -> State
-  if state.turn.some? or state.compacting
+  if busy?(state)
     Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
     return state
   end
@@ -1091,7 +1125,7 @@ end
 
 # The branch record goes first: when the load after it fails, the session goes on from there once it loads again.
 def branch_to(state: State, entry: Int, reply: Channel[Result[Protocol.Branched]]) -> State
-  if state.turn.some? or state.compacting
+  if busy?(state)
     Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
     return state
   end
@@ -1126,6 +1160,7 @@ def moved(state: State, entry: Int) -> Result[Moved]
     marks: saved.marks,
     stripped: saved.stripped,
     context: last_usage(saved.events).context,
+    shells: saved.shells,
     counter: until,
     reserved: until,
     broken: none,
@@ -1151,7 +1186,7 @@ def indexed(state: State) -> Result[State]
 end
 
 def copied(state: State, entry: Optional[Int], to: Copying) -> Result[Copied]
-  return error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY) if state.turn.some? or state.compacting
+  return error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY) if busy?(state)
 
   point = try Store.point(try Store.entries(state.setup.file, state.entries), entry)
   file = try Store.copy(state.setup.file, to.dir, to.header, point.leaf)
@@ -1162,6 +1197,66 @@ def copied(state: State, entry: Optional[Int], to: Copying) -> Result[Copied]
 
   try settings
   ok(Copied(file: file, text: point.text))
+end
+
+def run_shell(state: State, request: Protocol.RunShell, reply: Channel[Result[Protocol.ShellAccepted]]) -> State
+  if busy?(state)
+    Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
+    return state
+  end
+
+  input = JSON.object({"command": JSON.from(request.command)})
+  verdict = gate(state.setup.approvals).map { |g| g.call(state.setup.ctx, Tools.BASH, input) }
+  if verdict == some(Tools.Verdict.Deny)
+    Actor.reply(reply, error("a rule of the config denies this command", kind: Protocol.KIND_SHELL_DENIED))
+    return state
+  end
+
+  id = "shell-#{OpenSSL.Random.hex(4)}"
+  inbox: Channel[Msg] = Actor.inbox
+  address = inbox.address
+  ctx = state.setup.ctx
+  task = Task.spawn(
+    -> {
+      started = Time.monotonic_ms
+      output = Tools.run(ctx, Tools.BASH, input)
+      _ = Actor.cast(address, Msg.ShellDone(id, output, Time.monotonic_ms - started), CALL_MS)
+    },
+  )
+
+  run = ShellRun(id: id, command: request.command, context: request.context, task: task)
+  Actor.reply(reply, ok(Protocol.ShellAccepted(shell_id: id)))
+  started = Protocol.ShellStarted(shell_id: id, command: request.command, context: request.context)
+  emit(state.with(shell: some(run)), Protocol.Event.ShellStarted(started))
+end
+
+def shell_done(state: State, id: String, output: Tools.Output, duration_ms: Int) -> State
+  case state.shell
+    some(run) if run.id == id ->
+      finished = Protocol.ShellFinished(
+        shell_id: id,
+        command: run.command,
+        context: run.context,
+        ok: not output.is_error,
+        output: output.text,
+        duration_ms: duration_ms,
+      )
+
+      done = emit(state.with(shell: none), Protocol.Event.ShellFinished(finished))
+      return done if not run.context or done.counter == state.counter
+
+      done.with(shells: done.shells.push(Store.shell_context(finished)))
+    _ -> state
+  end
+end
+
+def stop_shell(state: State) -> State
+  for run in option_list(state.shell)
+    Task.cancel(run.task)
+    return shell_done(state, run.id, Tools.Output(text: "stopped", is_error: true), 0)
+  end
+
+  state
 end
 
 def restore(setup: Setup, saved: Store.Saved) -> State
@@ -1181,6 +1276,7 @@ def restore(setup: Setup, saved: Store.Saved) -> State
     marks: saved.marks,
     stripped: saved.stripped,
     display: saved.shown,
+    shells: saved.shells,
     turns: saved.turns,
     approvals: saved.approvals,
     resolved: resolved_ids(events),

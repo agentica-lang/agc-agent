@@ -148,9 +148,9 @@ def test_the_status_shows_the_model_and_the_model_picker_closes() -> Result[Void
 end
 
 # The /tree picker lists the numbered messages and answers of every branch; Enter on one asks for the branch by a
-# command, not while a turn runs, and nothing is sent until its reply. `/tree N` names a message of the picker shown
-# last. The session the server moved to is opened with the message it went back before selected in the prompt: a
-# typed character replaces it, an arrow keeps it.
+# command, not while a turn runs, and nothing but a local command (/help) goes until its reply. `/tree N` names a
+# message of the picker shown last. The session the server moved to is opened with the message it went back before
+# selected in the prompt: a typed character replaces it, an arrow keeps it.
 def test_the_tree_picker_moves_the_session_and_fills_the_prompt() -> Result[Void]
   nodes = [
     Protocol.TreeNode(id: 1, text: "One.", answer: "A1", last: 7, active: true),
@@ -177,6 +177,10 @@ def test_the_tree_picker_moves_the_session_and_fills_the_prompt() -> Result[Void
   try Test.assert(picked.cmds.flat_map { |cmd| run(cmd) }.all? { |msg| moved?(msg) }, "the branch is asked")
   held = App.update(picked.model.with(prompt: "hi"), enter())
   try Test.eq([held.cmds.size.to_s, held.model.prompt, held.model.outbox.size.to_s], ["0", "hi", "0"])
+  helped = App.update(picked.model.with(prompt: "/help"), enter()).model
+  try Test.eq([helped.prompt, helped.entries.last.text], ["", Client.HELP.last])
+  renewed = App.update(picked.model.with(prompt: "/new"), enter()).model
+  try Test.eq([renewed.prompt, renewed.entries.last.text], ["/new", "the session is moving: wait for it"])
   typed = App.update(model.with(picker: none, prompt: "/tree 3"), enter())
   try Test.eq([typed.cmds.size.to_s, typed.model.moving.to_s], ["1", "true"])
   unlisted = App.update(model.with(picker: none, listed: none, prompt: "/tree 3"), enter())

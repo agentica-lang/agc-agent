@@ -21,6 +21,8 @@ TITLE_LINES = 64
 TITLE_BYTES = 262_144
 MAX_LINE_BYTES = 16_777_216
 MAX_WRITE_BYTES = 1_048_576
+## A node of the tree has this much of its answer.
+ANSWER_CHARS = 200
 
 struct Header
   id: String
@@ -70,6 +72,8 @@ struct Saved
   approvals: Int = 0
   turns: Int = 0
   usage: Optional[Protocol.Usage] = none
+  ## The output of the commands since the last user message that go to the model before the next one.
+  shells: List[String] = []
 end
 
 ## Where a branch or a copy starts: the entry the next record follows, and the user message it goes back before ("" at
@@ -250,17 +254,19 @@ def append_branch(path: String, leaf: Int, until: Int) -> Result[Void]
 end
 
 ## The tree of the file, reading only the lines after those `known` read when the file grew since: the session's
-## file only grows, and only its session writes it.
+## file only grows, and only its session writes it. A last line with no newline yet is left for a later read.
 def entries(path: String, known: Optional[Entries] = none) -> Result[Entries]
   size = (try File.stat(path)).size_bytes
   for old in option_list(known)
     return ok(old) if old.size == size
     if old.size < size
-      return ok(extended(old, try File.foreach(path, MAX_LINE_BYTES).drop(old.lines).to_a, false).with(size: size))
+      added = ended(try File.foreach(path, MAX_LINE_BYTES).drop(old.lines).to_a, size - old.size)
+      return ok(extended(old, added, false).with(size: old.size + bytes_of(added)))
     end
   end
 
-  ok((try entries_of(path, try File.foreach(path, MAX_LINE_BYTES).to_a, false)).with(size: size))
+  lines = ended(try File.foreach(path, MAX_LINE_BYTES).to_a, size)
+  ok((try entries_of(path, lines, false)).with(size: bytes_of(lines)))
 end
 
 ## The user messages of every branch.
@@ -344,6 +350,16 @@ def load(path: String, leaf: Optional[Int] = none) -> Result[Saved]
   end
 
   ok(totals(saved, entries))
+end
+
+## A command's output as the model gets it, before the next user message.
+def shell_context(finished: Protocol.ShellFinished) -> String
+  output = finished.output
+  if output.strip.empty?
+    output = "(no output)"
+  end
+
+  "The user ran `#{finished.command}` in the session folder:\n```\n#{output}\n```"
 end
 
 def encode_message(message: LLM.Message) -> JSON.Value
@@ -443,11 +459,23 @@ def extended(entries: Entries, lines: List[String], whole: Bool) -> Entries
   )
 end
 
-# What the tree shows of a record: the text of a user message or an answer, the name of an event.
+# The lines that end in a newline, of lines that take `bytes` with their newlines.
+def ended(lines: List[String], bytes: Int) -> List[String]
+  return lines if bytes_of(lines) == bytes
+
+  lines.take(lines.size - 1)
+end
+
+def clipped(text: String) -> String = text.slice(0, [text.length, ANSWER_CHARS].min.unwrap!)
+
+def bytes_of(lines: List[String]) -> Int = lines.map { |text| text.bytesize + 1 }.sum
+
+# What the tree keeps of a record: the text of a user message (a branch puts it back in the editor), the first line
+# of an answer cut to ANSWER_CHARS, the name of an event.
 def record_text(kind: String, json: JSON.Value) -> String
   case kind
     "user" -> optional_string(json, "typed").unwrap_or(field(json, "text").unwrap_or(""))
-    "answer" -> field(json, "text").unwrap_or("")
+    "answer" -> clipped(field(json, "text").unwrap_or("").split("\n")[0])
     "event" -> field(json, "name").unwrap_or("")
     _ -> ""
   end
@@ -717,7 +745,14 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
       event = try Protocol.decode_event(try field(json, "name"), JSON.encode(try JSON.get(json, "data")))
       logged = Logged(id: try JSON.int(try JSON.get(json, "id")), event: event)
       started = Protocol.event_kind(event) == Protocol.EventKind.TurnStarted
-      ok(saved.with(events: saved.events.push(logged), open_user: saved.open_user and not started, reserved: 0))
+      shells = saved.shells
+      case event
+        Protocol.Event.ShellFinished(finished) if finished.context -> shells = shells.push(shell_context(finished))
+        _ -> nil
+      end
+
+      events = saved.events.push(logged)
+      ok(saved.with(events: events, open_user: saved.open_user and not started, reserved: 0, shells: shells))
     "user" ->
       text = try field(json, "text")
       message = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
@@ -731,6 +766,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
           open_user: true,
           folded: none,
           marks: saved.marks + marks_of(json),
+          shells: [],
         ),
       )
     "queued" ->

@@ -70,6 +70,8 @@ struct Chat
   ## The size of the session's history the client has seen, so a resync prints only the rest.
   known: Int = 0
   turn: Bool = false
+  ## A `!` command of this client runs.
+  shell: Bool = false
   stopping: Bool = false
   pending: List[Protocol.ApprovalRequested] = []
   asked: Bool = false
@@ -265,6 +267,7 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
     Protocol.Event.ApprovalRequested(request) -> shown.with(pending: added(shown.pending, request))
     Protocol.Event.ApprovalResolved(resolved) -> forgotten(shown, resolved.approval_id)
     Protocol.Event.MessageQueued(queued) -> shown.with(yolo: Yolo.steered(shown.yolo, queued))
+    Protocol.Event.ShellFinished(_) -> shown.with(shell: false)
     _ -> shown
   end
 
@@ -283,7 +286,19 @@ def on_line(chat: Chat, raw: String) -> Result[Step]
 
   return ok(Step(chat: chat)) if text == ""
 
+  for request in option_list(Client.parse_shell(text))
+    return shell(chat, request)
+  end
+
   send(chat, text)
+end
+
+def shell(chat: Chat, request: Protocol.RunShell) -> Result[Step]
+  case Client.shell(chat.server, chat.id, request)
+    ok(_) -> ok(Step(chat: chat.with(shell: true)))
+    error(e) if e.kind == Protocol.KIND_SESSION_BUSY -> ok(Step(chat: note(chat, "[not run] #{e.message}")))
+    error(e) -> ok(Step(chat: note(chat, "[error] #{e.message}")))
+  end
 end
 
 # A line sent while a turn runs is queued: the turn reads it before its next model call. A one-shot run that cannot
@@ -336,7 +351,7 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
 end
 
 def stop_command(chat: Chat) -> Result[Step]
-  return stop(chat) if chat.turn
+  return stop(chat) if chat.turn or chat.shell
 
   said(chat, "[no turn is running]")
 end
@@ -493,7 +508,7 @@ def stop(chat: Chat) -> Result[Step]
 end
 
 def on_interrupt(chat: Chat) -> Result[Step]
-  return stop(chat) if chat.turn and not chat.stopping
+  return stop(chat) if (chat.turn or chat.shell) and not chat.stopping
 
   ok(Step(chat: note(chat, "[interrupted]"), exit: some(EXIT_INTERRUPTED)))
 end
@@ -501,7 +516,7 @@ end
 # The end of the input leaves once no turn runs; a one-shot run with the status of its turn.
 def settled(chat: Chat) -> Result[Step]
   return ok(Step(chat: chat, exit: some(chat.status))) if chat.eof and not chat.turn and chat.once
-  return ok(Step(chat: chat, exit: some(0))) if chat.eof and not chat.turn
+  return ok(Step(chat: chat, exit: some(0))) if chat.eof and not chat.turn and not chat.shell
 
   ok(Step(chat: chat))
 end
