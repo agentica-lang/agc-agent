@@ -6,8 +6,12 @@ import TUI from "pkg/tui/tui"
 enum Input
   Terminal(TUI.Event)
   Signal(System.Signal)
+  ## A note for the transcript from a task of the loop (a compaction's end).
+  Note(String)
   ## The terminal can no longer be read: the reason.
   Closed(String)
+  ## The reply of the server to the answer of an approval.
+  Answered(String, Result[Void])
   ## The first value is the generation of the stream that sent it, so the loop drops what an old stream sent.
   Stream(Int, Client.Item)
 end

@@ -17,3 +17,5 @@ def approval_path(session_id: String, approval_id: String) -> String
 end
 
 def stop_path(session_id: String) -> String = "#{session_path(session_id)}/stop"
+
+def compact_path(session_id: String) -> String = "#{session_path(session_id)}/compact"

@@ -19,11 +19,13 @@ usage() {
   cat <<'TEXT'
 usage: finn [chat] [options]      talk to the agent in this folder (starts the server when none runs)
        finn -p TASK [--yolo]      one task (- reads it from stdin): the answer on stdout, the rest on stderr
+       finn tui [options]         the same on the full screen (finn tui --help lists the options)
        finn serve [options]       run the server in the foreground
        finn --version | --help
 
 chat options: --api NAME, --model NAME (of a new session), --session ID, --thinking, --yolo (allow every call), ...
   (finn chat --help lists them all)
+in chat and tui: /new, /resume, /model, /thinking, /compact, /stop, /help, /quit
 one-shot: approvals are denied unless --yolo; exit 0 when the turn ends normally (also after a denied call),
   130 when it is cancelled, 1 otherwise (a failed or busy send, an empty task); the server keeps running after it
 serve options (each overrides its environment variable):
@@ -63,5 +65,6 @@ case ${1:-} in
     ;;
   serve) shift; serve "$@" ;;
   chat) shift; exec "$agentica" "$root/cli/main.agc" "$@" ;;
+  tui) shift; exec "$agentica" "$root/tui_client/main.agc" "$@" ;;
   *) exec "$agentica" "$root/cli/main.agc" "$@" ;;
 esac

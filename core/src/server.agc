@@ -131,6 +131,8 @@ end
 
 private
 
+TITLE_CHARS = 200
+
 struct Entry
   summary: Protocol.SessionSummary
   header: Store.Header
@@ -139,6 +141,7 @@ struct Entry
   session: Optional[Actor.Ref[Session.State, Session.Msg]]
   ## The requests that wait while the session loads; a load runs while it is not empty.
   waiting: List[Channel[Result[Address[Session.Msg]]]] = []
+  listed: Optional[Cached] = none
 end
 
 ## What the task that loads a session read from its file.
@@ -175,8 +178,18 @@ enum Msg
   Create(Protocol.NewSession, Channel[Result[String]])
   Find(String, Channel[Result[Found]])
   Delete(String, Channel[Result[Void]])
-  List(Channel[Protocol.SessionList])
+  List(Channel[List[Entry]])
   Load(String, Result[Loaded])
+  ## What a list read of session files, kept for the next list.
+  Listed(List[Cached])
+end
+
+## What a list read of one session file, valid while its size and time of change stay.
+struct Cached
+  id: String
+  size: Int
+  modified_s: Int
+  listing: Store.Listing
 end
 
 def serve(options: Options, registry: Actor.Ref[Registry, Msg], lock: File.Handle) -> Result[Server]
@@ -315,10 +328,59 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
           Actor.continue(registry)
       end
 
+    Msg.Listed(read) ->
+      sessions = registry.sessions.map { |entry| with_listed(entry, read) }
+
+      Actor.continue(registry.with(sessions: sessions))
     Msg.List(reply) ->
-      Actor.reply(reply, Protocol.SessionList(sessions: registry.sessions.map { |entry| entry.summary }))
+      Actor.reply(reply, registry.sessions)
       Actor.continue(registry)
   end
+end
+
+def with_listed(entry: Entry, read: List[Cached]) -> Entry
+  fresh = read.select { |c| c.id == entry.summary.id }
+  return entry if fresh.empty?
+
+  entry.with(listed: some(fresh[0]))
+end
+
+# The listing of a session file, read again only when its size or time of change moved. A file that cannot be read
+# keeps what its header said.
+def cached(entry: Entry) -> Cached
+  size = 0
+  modified = 0
+  case File.stat(entry.file)
+    ok(info) ->
+      size = info.size_bytes
+      modified = info.modified_seconds
+    error(_) -> nil
+  end
+
+  for old in option_list(entry.listed)
+    return old if old.size == size and old.modified_s == modified
+  end
+
+  listing = Store.listing(entry.file).unwrap_or(Store.Listing())
+  Cached(id: entry.summary.id, size: size, modified_s: modified, listing: listing)
+end
+
+# A session with its model now (a `PATCH` changes it after the header), when it last changed and its first message
+# without control characters.
+def summary_now(summary: Protocol.SessionSummary, found: Cached) -> Protocol.SessionSummary
+  title = found.listing.title.split("").map { |c| printable(c) }.join("")
+  summary.with(
+    model: found.listing.model.unwrap_or(summary.model),
+    updated_s: found.modified_s,
+    title: title.slice(0, [title.length, TITLE_CHARS].min.unwrap!),
+  )
+end
+
+def printable(c: String) -> String
+  code = c.code
+  return " " if code < 0x20 or (code >= 0x7f and code < 0xa0)
+
+  c
 end
 
 def sessions_dir(options: Options) -> String = "#{options.data_dir}/#{SESSIONS_DIR}"
@@ -616,8 +678,18 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
       id = try try created
       response(201, Protocol.encode_session_created(Protocol.SessionCreated(id: id)))
     "GET 0" ->
-      list: Result[Protocol.SessionList] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
-      response(200, Protocol.encode_session_list(try list))
+      entries: Result[List[Entry]] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
+      read = (try entries).map { |entry| cached(entry) }
+      _ = Actor.cast(registry, Msg.Listed(read), CALL_MS)
+      sessions = (try entries).map do |entry|
+        found = read.select { |c| c.id == entry.summary.id }[0]
+        summary_now(entry.summary, found)
+      end
+
+      response(
+        200,
+        Protocol.encode_session_list(Protocol.SessionList(sessions: sessions.sort_by { |s| -s.updated_s })),
+      )
     "DELETE 1" ->
       deleted: Result[Result[Void]] = Actor.call(registry, CALL_MS) do |reply| Msg.Delete(parts[0], reply) end
       try try deleted
@@ -627,6 +699,13 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
       message = try Protocol.decode_send_message(text)
       turn_id = try Session.send(try find(registry, parts[0]), message.text)
       response(202, Protocol.encode_message_accepted(Protocol.MessageAccepted(turn_id: turn_id)))
+    "PATCH 1" ->
+      change = try Protocol.decode_update_session(text)
+      try Session.update(try find(registry, parts[0]), change)
+      response(200, "{}")
+    "POST 2" if parts[1] == "compact" ->
+      compacted = try Session.compact_now(try find(registry, parts[0]))
+      response(200, Protocol.encode_compacted(Protocol.Compacted(compacted: compacted)))
     "POST 2" if parts[1] == "stop" ->
       _ = try Session.stop(try find(registry, parts[0]))
       response(200, "{}")

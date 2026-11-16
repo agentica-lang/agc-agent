@@ -27,10 +27,29 @@ def rows(text: String, width: Int) -> List[List[Span]]
     if line.strip.start_with?(FENCE)
       code = not code
     elsif code
-      out = out.push([Span(text: Width.cut(line, columns)[0], look: Look.Code)])
+      out = out + chunks(line, columns).map { |piece| [Span(text: piece, look: Look.Code)] }
     else
       out = out + block(line, columns)
     end
+  end
+
+  out
+end
+
+## A code line in rows of `columns`, cut at any character so its spaces stay.
+def chunks(line: String, columns: Int) -> List[String]
+  out: List[String] = []
+  rest = line
+  while true
+    parts = Width.cut(rest, columns)
+    if parts[0] == "" and rest != ""
+      parts = [rest.slice(0, 1), rest.slice(1, rest.length - 1)]
+    end
+
+    out = out.push(parts[0])
+    break if parts[1] == ""
+
+    rest = parts[1]
   end
 
   out

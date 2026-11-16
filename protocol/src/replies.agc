@@ -27,11 +27,15 @@ struct MessageAccepted
 end
 
 ## `api` is the model API of the session, by the name the server gives it.
+## `model` is the one the session uses now, `updated_s` when its file last changed (Unix seconds), and `title` its first
+## user message ("" before one).
 struct SessionSummary
   id: String
   cwd: String
   model: String
   api: String
+  updated_s: Int = 0
+  title: String = ""
 end
 
 ## The answer of `GET /v1/sessions`.
@@ -65,6 +69,8 @@ struct Session
   history: List[Message]
   ## What the session cost so far in USD, when the model catalog has its prices.
   cost: Optional[Float] = none
+  ## The thinking level of the session's calls; none leaves it to the model.
+  effort: Optional[String] = none
 end
 
 ## `server.json` in the state folder, which only its user can read: where the server listens and its Bearer token.
@@ -121,6 +127,7 @@ def encode_session(reply: Session) -> String
       pending_approvals: reply.pending_approvals,
       history: history,
       cost: Wire.field(reply.cost),
+      effort: reply.effort,
     ),
   )
 end
@@ -146,6 +153,7 @@ def decode_session(text: String) -> Result[Session]
       pending_approvals: wire.pending_approvals,
       history: history,
       cost: Wire.optional(wire.cost),
+      effort: wire.effort,
     ),
   )
 end
@@ -167,6 +175,7 @@ struct SessionWire
   pending_approvals: List[Events.ApprovalRequested]
   history: List[MessageWire]
   cost: JSON.Field[Float]
+  effort: Optional[String] = none
 end
 
 def check_turn(wire: SessionWire) -> Result[Void]

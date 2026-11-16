@@ -41,9 +41,10 @@ LEAVE_SCREEN = b"\x1b[?1049l"
 ESCAPE = re.compile(r"\x1b(\[[0-?]*[ -/]*[@-~]|[()][0-9A-Za-z]|.)")
 
 
-def screen_rows(output: bytes) -> list[str]:
+def screen_rows(output: bytes, rows: int = ROWS, cols: int = COLS) -> list[str]:
     """The text a terminal shows after `output`: cursor moves `ESC [ row ; col H`, clears and characters (a wide one
     takes two columns)."""
+    ROWS, COLS = rows, cols  # noqa: N806
     grid = [[" "] * COLS for _ in range(ROWS)]
     row = col = 0
     text = output.decode(errors="replace")
@@ -161,6 +162,9 @@ class Proxy:
         for step in plan:
             self.plan.put(step)
         self.paths: list[str] = []
+        # The Last-Event-ID of each event stream, and the ids each one passed on.
+        self.asked: list[int] = []
+        self.passed: list[list[int]] = []
         proxy = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -180,6 +184,8 @@ class Proxy:
 
             def forward(self) -> None:
                 proxy.paths.append(f"{self.command} {self.path}")
+                if self.path.endswith("/events"):
+                    proxy.asked.append(int(self.headers.get("Last-Event-ID", "-1")))
                 body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 upstream = http.client.HTTPConnection("127.0.0.1", port, timeout=TIMEOUT)
                 upstream.request(self.command, self.path, body, dict(self.headers.items()))
@@ -206,6 +212,8 @@ class Proxy:
                     self.chunk(b"")
                     return
                 left = step[1] if step else None
+                passed: list[int] = []
+                proxy.passed.append(passed)
                 buffer = b""
                 try:
                     while left != 0:
@@ -217,6 +225,7 @@ class Proxy:
                         while b"\n\n" in buffer and left != 0:
                             event, buffer = buffer.split(b"\n\n", 1)
                             self.chunk(event + b"\n\n")
+                            passed.extend(int(line[3:]) for line in event.split(b"\n") if line.startswith(b"id:"))
                             if left is not None:
                                 left -= 1
                 except (OSError, http.client.HTTPException):
@@ -240,10 +249,11 @@ class Proxy:
 class Terminal:
     """The client on a new pty of 80x24 with TERM=xterm."""
 
-    def __init__(self, base: Path, model: FakeModel, args: list[str]) -> None:
+    def __init__(self, base: Path, model: FakeModel, args: list[str], rows: int = ROWS, cols: int = COLS) -> None:
         self.base = base
         self.master, self.slave = os.openpty()
-        fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
+        self.rows, self.cols = rows, cols
+        fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         self.modes_before = termios.tcgetattr(self.slave)
         self.output = b""
         self.process = subprocess.Popen(
@@ -262,7 +272,13 @@ class Terminal:
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
     def screen(self) -> list[str]:
-        return screen_rows(self.output[self.output.rfind(ENTER_SCREEN) :])
+        return screen_rows(self.output[self.output.rfind(ENTER_SCREEN) :], self.rows, self.cols)
+
+    def resize(self, rows: int, cols: int) -> None:
+        """The kernel sends SIGWINCH to the client, which owns the terminal."""
+        self.output += b"\x1b[2J"
+        self.rows, self.cols = rows, cols
+        fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
     def wait_for(self, text: str) -> list[str]:
         """Reads until some row of the screen holds `text`; gives the screen."""
@@ -338,13 +354,13 @@ class PtyTest(unittest.TestCase):
         self.fake = model
         return model
 
-    def start(self, replies: list[Reply]) -> Terminal:
+    def start(self, replies: list[Reply], rows: int = ROWS, cols: int = COLS) -> Terminal:
         """The client, which starts its own server."""
         base = self.folder()
         model = self.model(replies)
         self.addCleanup(stop_server, base / "state")
         args = ["--state-dir", str(base / "state"), "--", AGENTICA, str(CORE), "serve"]
-        terminal = Terminal(base, model, args)
+        terminal = Terminal(base, model, args, rows, cols)
         self.addCleanup(terminal.close)
         terminal.wait_for("ready")
         return terminal
@@ -458,13 +474,193 @@ class PtyTest(unittest.TestCase):
         self.assertNotIn("**", text_of(rows))
         self.assertNotIn("```", text_of(rows))
 
-    def test_an_approval_request_is_noted(self) -> None:
-        term = self.start([Reply("write_file.sse")])
-        term.type("write it\r")
-        term.wait_for("waiting (write_file): answer it with finn")
+    def test_session_commands(self) -> None:
+        term = self.start([Reply("text.sse"), Reply("text.sse"), Reply("summary.sse")])
+        first = re.search(r"· session (\S+)", text_of(term.screen())).group(1)
+        term.type("hi\r")
+        term.wait_for(ANSWER)
+        term.wait_for("ready")
+        term.type("/model other-model\r")
+        term.wait_for("· model other-model from the next turn")
+        term.type("/thinking high\r")
+        term.wait_for("· thinking high from the next turn")
+        term.type("/thinking\r")
+        term.wait_for("· thinking high")
+        term.type("/thinking max\r")
+        rows = term.wait_for("· the thinking level is one of low, medium, high, default")
+        self.assertEqual(rows[-1], "> /thinking max")
+        term.type("\x7f" * len("/thinking max"))
+        term.type("again\r")
+        term.wait_for("> again")
+        term.wait_for("ready")
+        self.fake.requests.get(timeout=1)
+        self.assertEqual(self.fake.requests.get(timeout=5)["model"], "other-model")
+        term.type("/compact\r")
+        term.wait_for("· compacted")
+        self.fake.requests.get(timeout=1)
+        term.type("/new\r")
+        rows = term.wait_for("ready")
+        deadline = time.monotonic() + TIMEOUT
+        while ANSWER in text_of(rows):
+            self.assertLess(time.monotonic(), deadline, "the old session stayed on the screen")
+            rows = term.settle(0.2)
+        self.assertNotIn(first, text_of(rows))
+        term.type("/resume\r")
+        term.wait_for("resume a session (2 of 2)")
+        term.type("\x1b")
+        rows = term.settle()
+        self.assertNotIn("resume a session", text_of(rows))
+        term.type("/resume\r")
+        term.wait_for("resume a session (2 of 2)")
+        term.type(first[:8])
+        rows = term.wait_for("resume a session (1 of 2)")
+        row = next(row for row in rows if first in row)
+        self.assertTrue(row.startswith("› "), row)
+        self.assertIn("other-model", row)
+        self.assertIn("  hi", row)
+        term.type("\r")
+        rows = term.wait_for("> again")
+        self.assertIn(f"· session {first}", text_of(rows))
+        self.assertNotIn("resume a session", text_of(rows))
+        term.type("/help\r")
+        term.wait_for("leave")
+        term.type("/quit\r")
+        self.assertEqual(term.finish(), 0)
 
-    def test_term_and_hup_restore_the_terminal(self) -> None:
-        for sig, code in [(signal.SIGTERM, 143), (signal.SIGHUP, 129)]:
+    def test_a_slash_line_that_is_no_command_goes_to_the_agent(self) -> None:
+        term = self.start([Reply("text.sse"), Reply("text.sse")])
+        for text in ["/etc/hosts has a bad entry", "/"]:
+            term.type(f"{text}\r")
+            term.wait_for(ANSWER)
+            term.wait_for("ready")
+            self.assertEqual(self.fake.requests.get(timeout=5)["messages"][-1]["content"], text)
+
+    def test_a_tool_is_approved_and_its_notices_shown(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        rows = term.wait_for("Tab to answer (a: allow write_file on this exact target for the session)")
+        self.assertIn("^Y allow · ^N deny", " ".join(rows))
+        self.assertIn("approval waiting", text_of(rows))
+        self.assertIn("· write_file:", text_of(rows))
+        self.assertIn("  hi", rows)
+        term.type("\t")
+        term.wait_for("y allow · n deny · a allow write_file")
+        term.settle(0.4)
+        term.type("y")
+        term.wait_for(ANSWER)
+        rows = term.wait_for("ready")
+        shown = text_of(rows)
+        self.assertIn(": allow (client)", shown)
+        self.assertIn("✓ ", shown)
+        self.assertNotIn("⚙ ", shown)
+        self.assertNotIn("Tab to answer", shown)
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
+
+    def test_a_denied_tool_writes_nothing(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        term.wait_for("Tab to answer")
+        term.settle(0.4)
+        term.type("\x0e")
+        rows = term.wait_for("ready")
+        self.assertIn(": deny (client)", text_of(rows))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+
+    def test_typing_while_an_approval_waits_answers_nothing(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        term.wait_for("Tab to answer")
+        term.type("pay")
+        rows = term.wait_for("> pay")
+        self.assertIn("Tab to answer", text_of(term.settle()))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+        term.type("\t")
+        term.wait_for("y allow · n deny")
+        term.settle(0.4)
+        term.type("A")
+        rows = term.wait_for(": allow_session (client)")
+        self.assertIn("> pay", rows)
+        term.wait_for("ready")
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
+
+    def test_a_pasted_control_byte_answers_nothing(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        term.wait_for("Tab to answer")
+        term.settle(0.4)
+        term.type("x\x01a\x01")
+        rows = term.wait_for("> xa")
+        self.assertIn("Tab to answer", text_of(term.settle()))
+        self.assertNotIn("allow_session", text_of(rows))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+
+    def test_a_client_that_attaches_asks_the_pending_approval(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        rows = term.wait_for("Tab to answer")
+        approval_id = re.search(r"approval (\S+) · write_file", text_of(rows)).group(1)
+        term.type("\x03")
+        self.assertEqual(term.finish(), 0)
+        info = json.loads((term.base / "state" / "server.json").read_text())
+        server = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=TIMEOUT)
+        server.request("GET", "/v1/sessions", headers={"Authorization": f"Bearer {info['token']}"})
+        session_id = json.loads(server.getresponse().read())["sessions"][0]["id"]
+        server.close()
+        args = ["--state-dir", str(term.base / "state"), "--session", session_id]
+        again = Terminal(term.base, self.fake, args)
+        self.addCleanup(again.close)
+        rows = again.wait_for("Tab to answer")
+        self.assertIn(f"approval {approval_id} · write_file", text_of(rows))
+        again.settle(0.4)
+        again.type("\x19")
+        again.wait_for(ANSWER)
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
+
+    def test_an_approval_answered_by_another_client_closes_the_panel(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        rows = term.wait_for("Tab to answer")
+        approval_id = re.search(r"approval (\S+) · write_file", text_of(rows)).group(1)
+        info = json.loads((term.base / "state" / "server.json").read_text())
+        headers = {"Authorization": f"Bearer {info['token']}", "Content-Type": "application/json"}
+        server = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=TIMEOUT)
+        server.request("GET", "/v1/sessions", headers=headers)
+        session_id = json.loads(server.getresponse().read())["sessions"][0]["id"]
+        body = json.dumps({"decision": "deny"})
+        server.request("POST", f"/v1/sessions/{session_id}/approvals/{approval_id}", body, headers)
+        self.assertEqual(server.getresponse().status, 200)
+        server.close()
+        rows = term.wait_for(": deny (client)")
+        rows = term.wait_for("ready")
+        self.assertNotIn("Tab to answer", text_of(rows))
+        term.type("\t")
+        term.type("y")
+        rows = term.wait_for("> y")
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+
+    def test_a_tiny_terminal_draws_the_panel_and_a_resize_redraws_it(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")], rows=5, cols=24)
+        term.type("write it\r")
+        rows = term.wait_for("session")
+        term.settle()
+        self.assertIsNone(term.process.poll(), text_of(rows))
+        term.resize(3, 10)
+        term.settle()
+        self.assertIsNone(term.process.poll())
+        # No panel row on the screen: no key answers.
+        term.type("\x19")
+        term.settle()
+        term.resize(ROWS, COLS)
+        rows = term.wait_for("Tab to answer")
+        self.assertIn("approval waiting", text_of(rows))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+        term.type("\x19")
+        term.wait_for(ANSWER)
+        term.wait_for("ready")
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
+
+    def test_term_hup_and_int_restore_the_terminal(self) -> None:
+        for sig, code in [(signal.SIGTERM, 143), (signal.SIGHUP, 129), (signal.SIGINT, 130)]:
             with self.subTest(signal=sig.name):
                 term = self.start([])
                 term.process.send_signal(sig)
@@ -487,8 +683,8 @@ class PtyTest(unittest.TestCase):
         term.wait_for(ANSWER)
         rows = term.wait_for("ready")
         self.assertEqual(text_of(rows).count("Hello!"), 1, text_of(rows))
-        streams = [path for path in self.proxy.paths if path.endswith("/events")]
-        self.assertEqual(len(streams), 2, self.proxy.paths)
+        self.assertEqual(len(self.proxy.asked), 2, self.proxy.paths)
+        self.assertEqual(self.proxy.asked[1], self.proxy.passed[0][-1])
 
     def test_a_resync_reads_the_session_again(self) -> None:
         term = self.start_proxied([Reply("text.sse", pause=0.1)], [("cut", 3), "resync"])
@@ -501,8 +697,16 @@ class PtyTest(unittest.TestCase):
         self.assertTrue(any("/sessions/" in path for path in reads), self.proxy.paths)
 
     def test_resyncs_in_a_row_end_the_client(self) -> None:
-        term = self.start_proxied([], ["resync", "resync", "resync", "resync"])
+        # While a turn runs: the first resync replays the turn from its start, the second reads only what comes next.
+        reply = Reply("text.sse", hold=4)
+        term = self.start_proxied([reply], [("cut", 3), "resync", "resync", "resync"])
+        term.type("hi\r")
         self.assertEqual(term.finish(), 1)
+        self.assertEqual(len(self.proxy.asked), 4, self.proxy.paths)
+        cut_at = self.proxy.passed[0][-1]
+        self.assertEqual(self.proxy.asked[:2], [0, cut_at])
+        self.assertLess(self.proxy.asked[2], self.proxy.asked[3])
+        self.assertGreaterEqual(self.proxy.asked[3], cut_at)
         after = term.output[term.output.rindex(LEAVE_SCREEN) :]
         self.assertIn(b"keeps asking to read the session again", after)
 

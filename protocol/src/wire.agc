@@ -81,6 +81,13 @@ def lookup[T](all: List[T], name_of: Fn[T, String], what: String, name: String) 
   end
 end
 
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
+end
+
 private
 
 def invalid[T](result: Result[T]) -> Result[T]

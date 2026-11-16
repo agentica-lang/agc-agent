@@ -1,40 +1,27 @@
-## How many terminal columns text takes: 2 for East Asian wide characters and most emoji, 0 for combining marks and
-## zero-width characters, else 1. Pure.
+## How many terminal columns text takes, as termbox2 draws it: glibc's wcwidth(3) for each code point (the table of
+## `width_table.agc`), 0 for combining marks and zero-width joiners, 2 for wide ones; a character that is not
+## printable is drawn as U+FFFD, one column. A ZWJ emoji sequence takes the columns of each emoji, as termbox2 draws
+## it. Pure.
 
-ZERO = [0x0300..0x036f, 0x200b..0x200f, 0xfe00..0xfe0f]
-WIDE = [
-  0x1100..0x115f,
-  0x2e80..0x303e,
-  0x3041..0x33ff,
-  0x3400..0x4dbf,
-  0x4e00..0x9fff,
-  0xa000..0xa4cf,
-  0xac00..0xd7a3,
-  0xf900..0xfaff,
-  0xfe30..0xfe4f,
-  0xff00..0xff60,
-  0xffe0..0xffe6,
-  0x1f300..0x1f64f,
-  0x1f900..0x1f9ff,
-  0x20000..0x3fffd,
-]
+import Table from "width_table"
+
+FIRST_TABLED = 0x300
 
 def char(c: String) -> Int
   code = c.code
-  return 1 if code < 0x0300
-  return 0 if within?(ZERO, code)
-  return 2 if within?(WIDE, code)
+  return 1 if code < FIRST_TABLED
 
-  1
+  Table.WIDTHS[run(code)]
 end
 
 def text(s: String) -> Int = s.split("").map { |c| char(c) }.sum
 
 ## The longest start of `s` that fits in `columns`, and the rest.
 def cut(s: String, columns: Int) -> List[String]
+  chars = s.split("")
   used = 0
   count = 0
-  for c in s.split("")
+  for c in chars
     used = used + char(c)
     break if used > columns
 
@@ -46,4 +33,18 @@ end
 
 private
 
-def within?(ranges: List[Range], code: Int) -> Bool = ranges.any? { |range| range.include?(code) }
+# The index of the last start at or below `code`.
+def run(code: Int) -> Int
+  low = 0
+  high = Table.STARTS.size - 1
+  while low < high
+    middle = (low + high + 1) / 2
+    if Table.STARTS[middle] <= code
+      low = middle
+    else
+      high = middle - 1
+    end
+  end
+
+  low
+end
