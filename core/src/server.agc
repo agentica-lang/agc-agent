@@ -45,6 +45,14 @@ struct Options
   port: Int = 0
   keep_events: Int = 1000
   approval_timeout_ms: Int = 90000
+  ## The model's window in tokens; none asks the provider (`GET /models`).
+  context_window: Optional[Int] = none
+  ## The model that writes the summary of a compaction; empty is the session's model.
+  compact_model: String = ""
+  ## llama-server's `/props`, asked for the window before `GET /models`; empty for another API.
+  props_url: String = ""
+  ## The key `/props` takes, as the provider's.
+  api_key: String = ""
 end
 
 struct Server
@@ -243,6 +251,10 @@ def entry(
     keep_events: options.keep_events,
     approval_timeout_ms: options.approval_timeout_ms,
     file: file,
+    window: options.context_window.unwrap_or(0),
+    compact_model: options.compact_model,
+    props_url: options.props_url,
+    api_key: options.api_key,
   )
 
   summary = Protocol.SessionSummary(id: header.id, cwd: context.root, model: header.model)

@@ -3,17 +3,21 @@
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Compaction from "compaction"
 import Tools from "tools"
 
 MAX_ROUNDS = 50
 SAME_ROUNDS = 3
 
 ## How a turn reaches its session. `approve` waits for the answer; `commit` gets the history after each finished
-## round, so a stopped turn keeps no unfinished tool call.
+## round, so a stopped turn keeps no unfinished tool call. `compacted` gets a compaction of the history it committed,
+## and `window` the model's window once the turn asked the provider for it (-1 when it does not say).
 struct Link
   emit: Fn[Protocol.Event, Void]
   approve: Fn[Ask, Protocol.Decision]
   commit: Fn[List[LLM.Message], Void]
+  compacted: Fn[Compaction.Compaction, Void]
+  window: Fn[Int, Void]
 end
 
 ## A call that waits for an approval. `allow_session` allows the same `tool` on the same `target` again.
@@ -33,6 +37,10 @@ struct Turn
   text: String
   ctx: Tools.Context
   link: Link
+  ## `window` 0 asks the provider for it.
+  compaction: Compaction.Settings
+  ## The context of the session's last call.
+  last_context: Int = 0
   max_rounds: Int = MAX_ROUNDS
 end
 
@@ -41,9 +49,12 @@ struct Outcome
   reason: Protocol.StopReason
 end
 
-def run(turn: Turn) -> Outcome
+def run(given: Turn) -> Outcome
+  turn = given.with(compaction: given.compaction.with(window: known_window(given)))
   messages = turn.history.push(LLM.Message(role: LLM.Role.User, content: [text_block(turn.text)]))
   turn.link.commit.call(messages)
+  folded = compacted(turn, turn.last_context, Folded(messages: messages, on: true))
+  messages = folded.messages
   last_round = ""
   same = 0
   for _round in 1..turn.max_rounds
@@ -66,6 +77,9 @@ def run(turn: Turn) -> Outcome
     results = calls.map { |call| run_call(turn, call) }
     messages = messages + [response.message, LLM.Message(role: LLM.Role.User, content: results)]
     turn.link.commit.call(messages)
+    context = response.usage.input + response.usage.cache_read + response.usage.cache_write
+    folded = compacted(turn, context, Folded(messages: messages, on: folded.on))
+    messages = folded.messages
     this_round = JSON.encode(JSON.from([calls.map { |c| "#{c.name} #{c.arguments}" }, results.map { |r| text_of(r) }]))
     same = same_count(this_round, last_round, same)
     last_round = this_round
@@ -87,6 +101,49 @@ EMPTY = LLM.Response(
   stop_reason: LLM.StopReason.EndTurn,
   usage: LLM.Usage(),
 )
+
+struct Folded
+  messages: List[LLM.Message]
+  # False once a summary failed in this turn.
+  on: Bool
+end
+
+# The session keeps a window once the API answered; after a failed request a later turn asks again.
+def known_window(turn: Turn) -> Int
+  return turn.compaction.window if turn.compaction.window != 0
+
+  case Compaction.window(turn.provider, turn.model, turn.compaction)
+    ok(tokens) ->
+      turn.link.window.call(tokens)
+      if tokens < 0
+        message = "the API does not give the model's window: no compaction (set AGC_AGENT_CONTEXT_WINDOW)"
+        turn.link.emit.call(Protocol.Event.Error(Protocol.Failure(kind: Compaction.KIND_NO_WINDOW, message: message)))
+      end
+
+      tokens
+    error(_) -> 0
+  end
+end
+
+# Past the part of the window the settings give, the history from the first task to the running turn becomes a
+# summary. A summary that fails is an `error` event, and the turn tries no more.
+def compacted(turn: Turn, context: Int, folded: Folded) -> Folded
+  return folded if not folded.on or not Compaction.due?(turn.compaction, context)
+
+  for span in option_list(Compaction.span(folded.messages))
+    case Compaction.summarize(turn.provider, turn.compaction, folded.messages, span)
+      ok(compaction) ->
+        turn.link.compacted.call(compaction)
+        return folded.with(messages: Compaction.apply(folded.messages, compaction))
+      error(e) ->
+        message = "the history was not compacted: #{e.message}"
+        turn.link.emit.call(Protocol.Event.Error(Protocol.Failure(kind: Compaction.KIND_FAILED, message: message)))
+        return folded.with(on: false)
+    end
+  end
+
+  folded
+end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   tools = Tools.all().map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }

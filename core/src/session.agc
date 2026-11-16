@@ -14,6 +14,7 @@ import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
 import Agent from "agent"
+import Compaction from "compaction"
 import Store from "store"
 import Tools from "tools"
 
@@ -31,6 +32,12 @@ struct Setup
   keep_events: Int
   approval_timeout_ms: Int
   file: String
+  ## The model's window in tokens, 0 to ask the provider.
+  window: Int = 0
+  ## The model that writes a compaction's summary; the session's model when empty.
+  compact_model: String = ""
+  props_url: String = ""
+  api_key: String = ""
 end
 
 enum Msg
@@ -43,6 +50,8 @@ enum Msg
   Ask(String, Agent.Ask, Channel[Protocol.Decision])
   Expire(String)
   Commit(String, List[LLM.Message])
+  Compacted(String, Compaction.Compaction)
+  Window(Int)
   Finished(String, Protocol.StopReason)
 end
 
@@ -82,6 +91,10 @@ struct State
   broken: Optional[String] = none
   ## The output tokens of every call of the session.
   output: Int = 0
+  ## The context of the last call.
+  context: Int = 0
+  ## The model's window: 0 until it is known, -1 when the provider does not say.
+  window: Int = 0
   ## The turn that a failed write stopped, for a client that attaches from inside it.
   lost: Optional[Lost] = none
 end
@@ -91,7 +104,7 @@ def start(setup: Setup, saved: Optional[Store.Saved] = none) -> Actor.Ref[State,
   init = -> {
     case saved
       some(s) -> restore(setup, s)
-      none -> State(setup: setup)
+      none -> State(setup: setup, window: setup.window)
     end
   }
 
@@ -157,6 +170,8 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Ask(turn_id, call, reply) -> Actor.continue(if_current(state, turn_id, ->(s) { ask(s, call, reply) }))
     Msg.Expire(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { expire(s) }))
     Msg.Commit(turn_id, history) -> Actor.continue(if_current(state, turn_id, ->(s) { commit(s, history) }))
+    Msg.Compacted(turn_id, compaction) -> Actor.continue(if_current(state, turn_id, ->(s) { compact(s, compaction) }))
+    Msg.Window(window) -> Actor.continue(state.with(window: window))
     Msg.Finished(turn_id, reason) -> Actor.continue(if_current(state, turn_id, ->(s) { finish(s, reason) }))
   end
 end
@@ -256,7 +271,7 @@ def emit_counted(state: State, event: Protocol.Event) -> State
       emitted = emit(state, Protocol.Event.Usage(usage.with(output: output)))
       return emitted if emitted.counter == state.counter
 
-      emitted.with(output: output)
+      emitted.with(output: output, context: usage.context)
     _ -> emit(state, event)
   end
 end
@@ -349,6 +364,8 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     emit: ->(event) { tell(address, Msg.Emit(turn_id, event)) },
     approve: ->(call) { wait_approval(address, turn_id, call, setup.approval_timeout_ms) },
     commit: ->(history) { tell(address, Msg.Commit(turn_id, history)) },
+    compacted: ->(compaction) { tell(address, Msg.Compacted(turn_id, compaction)) },
+    window: ->(window) { tell(address, Msg.Window(window)) },
   )
 
   turn = Agent.Turn(
@@ -360,6 +377,13 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     text: text,
     ctx: setup.ctx,
     link: link,
+    compaction: Compaction.Settings(
+      window: state.window,
+      model: compact_model(setup),
+      props_url: setup.props_url,
+      api_key: setup.api_key,
+    ),
+    last_context: state.context,
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
@@ -521,6 +545,23 @@ def ended(state: State, turn_id: String, first_message: Int, reason: Protocol.St
   emit(shown, Protocol.Event.TurnFinished(Protocol.TurnFinished(turn_id: turn_id, stop_reason: reason)))
 end
 
+def compact_model(setup: Setup) -> String
+  return setup.model if setup.compact_model.empty?
+
+  setup.compact_model
+end
+
+# The running turn's user message moves with the messages after the compacted ones.
+def compact(state: State, compaction: Compaction.Compaction) -> State
+  case save(state, -> { Store.append_compaction(state.setup.file, compaction) })
+    ok(_) ->
+      moved = compaction.to - compaction.from - 1
+      turn = state.turn.map { |t| t.with(first_message: t.first_message - moved) }
+      state.with(history: Compaction.apply(state.history, compaction), turn: turn, broken: none)
+    error(e) -> broke(state, e)
+  end
+end
+
 # The history of a turn only grows, so only its new messages go to the file.
 def commit(state: State, history: List[LLM.Message]) -> State
   added = history.drop(state.history.size)
@@ -543,7 +584,9 @@ def restore(setup: Setup, saved: Store.Saved) -> State
     turns: [saved.users, count(events, Protocol.EventKind.TurnStarted)].max.unwrap!,
     approvals: count(events, Protocol.EventKind.ApprovalRequested),
     resolved: resolved_ids(events),
-    output: last_output(events),
+    output: last_usage(events).output,
+    context: last_usage(events).context,
+    window: setup.window,
   )
 
   # A user message after the last `turn_started` belongs to no turn of the events.
@@ -569,16 +612,16 @@ def count(events: List[Store.Logged], kind: Protocol.EventKind) -> Int
   events.select { |logged| Protocol.event_kind(logged.event) == kind }.size
 end
 
-def last_output(events: List[Store.Logged]) -> Int
-  output = 0
+def last_usage(events: List[Store.Logged]) -> Protocol.Usage
+  last = Protocol.Usage(input: 0, output: 0, cache_read: 0, cache_write: 0, context: 0)
   for logged in events
     case logged.event
-      Protocol.Event.Usage(usage) -> output = usage.output
+      Protocol.Event.Usage(usage) -> last = usage
       _ -> nil
     end
   end
 
-  output
+  last
 end
 
 def resolved_ids(events: List[Store.Logged]) -> List[String]

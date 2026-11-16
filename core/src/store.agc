@@ -7,6 +7,7 @@
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Compaction from "compaction"
 
 EXTENSION = ".jsonl"
 MAX_LINE_BYTES = 16_777_216
@@ -74,6 +75,19 @@ end
 ## The messages a round added to the history, in one record so that a call never goes without its result.
 def append_messages(path: String, messages: List[LLM.Message]) -> Result[Void]
   append(path, {"type": JSON.from("messages"), "messages": JSON.array(messages.map { |m| encode_message(m) })})
+end
+
+## A compaction of the history as the records before it left it.
+def append_compaction(path: String, compaction: Compaction.Compaction) -> Result[Void]
+  append(
+    path,
+    {
+      "type": JSON.from("compaction"),
+      "from": JSON.from(compaction.from),
+      "to": JSON.from(compaction.to),
+      "summary": JSON.from(compaction.summary),
+    },
+  )
 end
 
 ## The answer of a turn, as a client draws it.
@@ -206,6 +220,16 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
       end
 
       ok(saved.with(history: saved.history + messages))
+    "compaction" ->
+      compaction = Compaction.Compaction(
+        from: try JSON.int(try JSON.get(json, "from")),
+        to: try JSON.int(try JSON.get(json, "to")),
+        summary: try field(json, "summary"),
+      )
+
+      return error("a compaction outside the history") if compaction.to > saved.history.size
+
+      ok(saved.with(history: Compaction.apply(saved.history, compaction)))
     "answer" ->
       shown = Protocol.Message(role: Protocol.Role.Assistant, text: try field(json, "text"))
       ok(saved.with(shown: saved.shown.push(shown)))
