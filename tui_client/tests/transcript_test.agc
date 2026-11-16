@@ -13,7 +13,12 @@ end
 def test_width_counts_wide_and_zero_width_characters() -> Result[Void]
   try Test.eq(Width.text("aé日本"), 6)
   try Test.eq(Width.text("e" + String.from_code(0x301)), 1)
-  Test.eq(Width.cut("日本語", 5), ["日本", "語"])
+  try Test.eq(Width.cut("日本語", 5), ["日本", "語"])
+  try Test.eq(["🚀", "✅", "⚙", "🇪🇸", "🦀"].map { |text| Width.text(text) }, [2, 2, 1, 2, 2])
+  try Test.eq(Width.text("ש" + String.from_code(0x5b0) + "x" + String.from_code(0x20d7)), 2)
+  family = ["👨", "👩", "👧"].join(String.from_code(0x200d))
+  try Test.eq(Width.text(family), 2)
+  Test.eq(Width.cut("a#{family}b", 3), ["a#{family}", "b"])
 end
 
 def test_streamed_text_joins_the_last_entry_of_its_kind() -> Result[Void]

@@ -26,3 +26,5 @@ The fake LLM of the server tests streams these, in the order a test gives.
 - `activate_skill.sse` and `activate_deploy.sse` are written by hand in the
   shape of `read_file.sse`: one `activate_skill` call, of `release` and of
   `deploy`.
+- `apply_patch.sse` is written by hand in the shape of `write_file.sse`: an
+  `apply_patch` call as a function, which only the Responses API is offered.

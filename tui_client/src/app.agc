@@ -4,6 +4,7 @@
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
+import Approvals from "approvals"
 import Args from "args"
 import Inbox from "inbox"
 import Markdown from "markdown"
@@ -24,10 +25,21 @@ HINTS = "Enter send · ^J newline · ^T thinking · Esc stop · PgUp/PgDn · ^C 
 def run(screen: TUI.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
   try TUI.set_input_mode(screen, TUI.InputMode.Esc, true)
   inbox: Channel[Inbox.Input] = Channel.new(INBOX_CAPACITY)
-  signals = try System.subscribe([System.Signal.Term, System.Signal.Hup])
+  signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
   _ = Task.spawn(-> { watch_signals(signals, inbox) })
   _ = Task.spawn(-> { read_keys(screen, inbox) })
-  app = try open(App(screen: screen, server: server, id: "", inbox: inbox, thinking: options.thinking), options)
+  app = try open(
+    App(
+      screen: screen,
+      server: server,
+      id: "",
+      inbox: inbox,
+      thinking: options.thinking,
+      approvals: Approvals.Panel(),
+    ),
+    options,
+  )
+
   loop(app)
 end
 
@@ -52,9 +64,17 @@ struct App
   reconnects: Int = 0
   ## `resync` events in a row, with no other event between.
   resyncs: Int = 0
+  ## A draw failed and the transcript says so; later failures are not noted again.
+  draw_failed: Bool = false
   ## The thinking of the model is drawn.
   thinking: Bool = false
+  approvals: Approvals.Panel
   exit: Optional[Int] = none
+end
+
+struct Row
+  text: String
+  style: TUI.Style
 end
 
 def watch_signals(signals: Channel[System.Signal], inbox: Channel[Inbox.Input]) -> Void
@@ -104,6 +124,7 @@ def attach(app: App, session: Protocol.Session, skip_replay: Bool) -> App
     turn: session.turn_id.some?,
     stopping: false,
     shown_id: from,
+    approvals: Approvals.replaced(app.approvals, session.pending_approvals, Time.monotonic_ms),
   )
 
   subscribe(fresh, from)
@@ -128,7 +149,7 @@ end
 
 def loop(start: App) -> Result[Int]
   app = start
-  try draw(app)
+  app = drawn(app)
   while app.exit.none?
     case app.inbox.recv(WAIT_MS)
       ok(input) ->
@@ -140,7 +161,7 @@ def loop(start: App) -> Result[Int]
           end
         end
 
-        try draw(app)
+        app = drawn(app)
 
       error(_) -> next
     end
@@ -153,6 +174,14 @@ def handle(app: App, input: Inbox.Input) -> Result[App]
   case input
     Inbox.Input.Terminal(event) -> ok(on_key(app, event))
     Inbox.Input.Signal(signal) -> ok(app.with(exit: some(128 + System.signal_number(signal))))
+    Inbox.Input.Answered(approval_id, result) ->
+      outcome = Approvals.answered(app.approvals, approval_id, result, Time.monotonic_ms)
+      answered = app.with(approvals: outcome.panel)
+      case outcome.note
+        some(text) -> ok(noted(answered, text))
+        none -> ok(answered)
+      end
+
     Inbox.Input.Closed(reason) -> error("the terminal closed: #{reason}", kind: "tui.terminal")
     Inbox.Input.Stream(generation, item) if generation == app.generation -> on_stream(app, item)
     Inbox.Input.Stream(_, _) -> ok(app)
@@ -160,12 +189,21 @@ def handle(app: App, input: Inbox.Input) -> Result[App]
 end
 
 def on_key(app: App, event: TUI.Event) -> App
+  case Approvals.decision(app.approvals, event, Time.monotonic_ms, not panel(app).empty?)
+    some(decision) -> return answer(app, decision)
+    none -> nil
+  end
+
+  return app if Approvals.captures?(app.approvals, event)
+
   case event
     TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(exit: some(0))
     TUI.Event.Key(TUI.Key.Enter, _) -> send(app)
     TUI.Event.Key(TUI.Key.Ctrl("t"), _) -> app.with(thinking: not app.thinking)
     TUI.Event.Key(TUI.Key.Ctrl("j"), _) -> app.with(prompt: Prompt.insert(app.prompt, "\n"))
     TUI.Event.Key(TUI.Key.Backspace, _) -> app.with(prompt: Prompt.backspace(app.prompt))
+    TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals))
+    TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused -> app.with(approvals: Approvals.toggled(app.approvals))
     TUI.Event.Key(TUI.Key.Escape, _) -> stop(app)
     TUI.Event.Key(TUI.Key.PageUp, _) -> scrolled(app, page(app))
     TUI.Event.Key(TUI.Key.PageDown, _) -> scrolled(app, -page(app))
@@ -203,6 +241,26 @@ def stop(app: App) -> App
   end
 end
 
+# The answer is sent by a task, so the keys go on; its reply comes back on the inbox.
+def answer(app: App, decision: Protocol.Decision) -> App
+  server = app.server
+  id = app.id
+  inbox = app.inbox
+  approval_id = app.approvals.pending[0].approval_id
+  _ = Task.spawn(
+    -> {
+      result = Client.approve(server, id, approval_id, decision)
+      _ = inbox.send(Inbox.Input.Answered(approval_id, result), SEND_MS)
+    },
+  )
+
+  app.with(approvals: Approvals.sending(app.approvals))
+end
+
+def resolved(app: App, approval_id: String) -> App
+  app.with(approvals: Approvals.resolved(app.approvals, approval_id, Time.monotonic_ms))
+end
+
 def noted(app: App, text: String) -> App = app.with(entries: Transcript.note(app.entries, text))
 
 def on_stream(app: App, item: Client.Item) -> Result[App]
@@ -228,10 +286,24 @@ def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
     Protocol.Event.TurnStarted(_) -> shown.with(turn: true)
     Protocol.Event.TurnFinished(done) -> finished(shown.with(turn: false, stopping: false), done.stop_reason)
     Protocol.Event.ApprovalRequested(request) ->
-      noted(shown, "approval #{request.approval_id} waiting (#{request.tool}): answer it with finn")
+      shown.with(approvals: Approvals.requested(shown.approvals, request, Time.monotonic_ms))
+    Protocol.Event.ApprovalResolved(done) ->
+      decided = "approval #{done.approval_id}: #{Protocol.decision_name(done.decision)}"
+      noted(resolved(shown, done.approval_id), "#{decided} (#{Protocol.source_name(done.source)})")
+    Protocol.Event.ToolStarted(tool) ->
+      text = "⚙ #{tool.name} #{tool.summary}"
+      shown.with(entries: Transcript.tool(shown.entries, tool.call_id, Transcript.Kind.Tool, text))
+    Protocol.Event.ToolFinished(tool) -> shown.with(entries: tool_finished(shown.entries, tool))
     Protocol.Event.Error(failure) -> noted(shown, "error: #{failure.kind}: #{failure.message}")
     _ -> shown
   end
+end
+
+def tool_finished(entries: List[Transcript.Entry], tool: Protocol.ToolFinished) -> List[Transcript.Entry]
+  timing = "#{tool.summary} (#{tool.duration_ms} ms)"
+  return Transcript.tool(entries, tool.call_id, Transcript.Kind.Tool, "✓ #{timing}") if tool.ok
+
+  Transcript.tool(entries, tool.call_id, Transcript.Kind.ToolFailed, "✗ #{timing}")
 end
 
 def finished(app: App, reason: Protocol.StopReason) -> App
@@ -257,36 +329,69 @@ def reconnect(app: App, reason: String) -> Result[App]
   ok(subscribe(app.with(reconnects: reconnects), app.last_event_id))
 end
 
+# A draw that fails leaves the old screen; the client goes on, and the transcript says so once.
+def drawn(app: App) -> App
+  case draw(app)
+    ok(_) -> app
+    error(_) if app.draw_failed -> app
+    error(e) -> noted(app.with(draw_failed: true), "error: the screen was not drawn: #{e.message}")
+  end
+end
+
+# The rows of the approval panel on the screen now.
+def panel(app: App) -> List[Approvals.Row]
+  width = TUI.width(app.screen)
+  room = TUI.height(app.screen) - Prompt.rows(app.prompt, width).size - 2
+  Approvals.rows(app.approvals, width, room)
+end
+
+# Every write is clipped to the screen, which may be smaller than the panel and the prompt.
 def draw(app: App) -> Result[Void]
   screen = app.screen
   width = TUI.width(screen)
   height = TUI.height(screen)
   try TUI.clear(screen)
   prompt = Prompt.rows(app.prompt, width)
-  area = [height - prompt.size - 1, 0].max.unwrap!
+  asked = panel(app)
+  area = [height - prompt.size - asked.size - 1, 0].max.unwrap!
   lines = Transcript.lines(app.entries, width, app.thinking)
   top = [lines.size - area - [app.scroll, [lines.size - area, 0].max.unwrap!].min.unwrap!, 0].max.unwrap!
   y = 0
   for line in lines.drop(top).take(area)
     x = 0
     for span in line.spans
-      written = try TUI.write(screen, x, y, span.text, style(line.kind, span.look))
+      written = try put(screen, x, y, span.text, style(line.kind, span.look))
       x = x + written
     end
 
     y = y + 1
   end
 
-  _ = try TUI.write(screen, 0, area, status(app, width), TUI.Style(attrs: [TUI.Attr.Reverse]))
-  y = area + 1
+  y = area
+  for row in asked
+    _ = try put(screen, 0, y, row.text, row.style)
+    y = y + 1
+  end
+
+  _ = try put(screen, 0, y, status(app, width), TUI.Style(attrs: [TUI.Attr.Reverse]))
+  y = y + 1
   for row in prompt
-    _ = try TUI.write(screen, 0, y, row)
+    _ = try put(screen, 0, y, row, TUI.Style())
     y = y + 1
   end
 
   last = prompt[prompt.size - 1]
-  try TUI.set_cursor(screen, [Width.text(last), width - 1].min.unwrap!, area + prompt.size)
+  if y - 1 < height and width > 0
+    try TUI.set_cursor(screen, [Width.text(last), width - 1].min.unwrap!, y - 1)
+  end
+
   TUI.present(screen)
+end
+
+def put(screen: TUI.Screen, x: Int, y: Int, text: String, style: TUI.Style) -> Result[Int]
+  return ok(0) if y < 0 or y >= TUI.height(screen) or x >= TUI.width(screen)
+
+  TUI.write(screen, x, y, text, style)
 end
 
 def status(app: App, width: Int) -> String
@@ -297,6 +402,10 @@ def status(app: App, width: Int) -> String
     state = "working"
   end
 
+  if not app.approvals.pending.empty?
+    state = "#{state} · approval waiting"
+  end
+
   text = " #{state} · #{HINTS}"
   text + " " * [width - Width.text(text), 0].max.unwrap!
 end
@@ -305,6 +414,8 @@ def style(kind: Transcript.Kind, look: Markdown.Look) -> TUI.Style
   case kind
     Transcript.Kind.User -> TUI.Style(fg: TUI.Color.Cyan, attrs: [TUI.Attr.Bold])
     Transcript.Kind.Notice -> TUI.Style(fg: TUI.Color.Yellow)
+    Transcript.Kind.Tool -> TUI.Style(fg: TUI.Color.Blue)
+    Transcript.Kind.ToolFailed -> TUI.Style(fg: TUI.Color.Red)
     Transcript.Kind.Thinking -> TUI.Style(attrs: [TUI.Attr.Dim])
     Transcript.Kind.Assistant ->
       case look

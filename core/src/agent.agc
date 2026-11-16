@@ -8,6 +8,8 @@ import Compaction from "compaction"
 import Tools from "tools"
 
 MAX_ROUNDS = 50
+## The provider whose models are offered `apply_patch`, as a custom tool.
+RESPONSES = "openai_responses"
 SAME_ROUNDS = 3
 DENIED_BY_RULE = "denied by a rule of the config"
 DENIED_BY_USER = "the user denied this call"
@@ -194,6 +196,14 @@ end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   tools = offered(turn).map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }
+  if turn.provider.name == RESPONSES
+    patch = Tools.patch()
+    grammar = Tools.patch_grammar()
+    tools = tools.push(
+      LLM.Tool(name: patch.name, description: patch.description, input_schema: grammar, kind: LLM.ToolKind.Custom),
+    )
+  end
+
   request = LLM.Request(model: turn.model, system: turn.system, messages: messages, tools: tools, extra: turn.extra)
   stream = try LLM.stream(turn.provider, request)
   while true
@@ -241,10 +251,17 @@ end
 
 # `marks` are the session's so far, which a tool of an extension reads.
 def run_call(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Ran
-  ran = noticed_run(turn, call, marks)
+  ran = noticed_run(turn, with_input(call), marks)
   output = ran.output
   block = LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: output.text, is_error: output.is_error))
   Ran(block: block, mark: ran.mark)
+end
+
+# A custom tool's call has its text as `input`, the field its tool reads.
+def with_input(call: LLM.ToolCall) -> LLM.ToolCall
+  return call if call.kind != LLM.ToolKind.Custom
+
+  call.with(input: JSON.object({"input": JSON.from(call.arguments)}))
 end
 
 # Runs the call between its `tool_started` and `tool_finished` events.
@@ -290,6 +307,10 @@ def checked_run(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Tools.Tu
 end
 
 def base_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
+  if call.name == Tools.PATCH and (turn.provider.name != RESPONSES or call.kind != LLM.ToolKind.Custom)
+    return Tools.Output(text: "unknown tool: #{call.name}", is_error: true)
+  end
+
   if call.name == CodeMode.NAME
     for settings in option_list(turn.code_mode)
       names = Tools.offered(turn.ctx).map { |tool| tool.name }
