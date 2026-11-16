@@ -13,6 +13,7 @@ import Picker from "picker"
 import Layout from "panel"
 import Prompt from "prompt"
 import Screen from "screen"
+import Theme from "theme"
 import Transcript from "transcript"
 import Width from "width"
 import Yolo from "pkg/client/yolo"
@@ -63,6 +64,8 @@ struct Model
   ## The thinking of the model is drawn.
   thinking: Bool = false
   approvals: Approvals.Panel
+  ## The colors of the screen.
+  theme: Theme.Theme
   ## The monotonic ms and the wall clock s of the message being handled.
   now: Int = 0
   clock_s: Int = 0
@@ -126,6 +129,7 @@ def seed(
     thinking: options.thinking,
     approvals: Approvals.Panel(),
     yolo: Yolo.Yolo(on: options.yolo),
+    theme: Theme.default(),
     now: Time.monotonic_ms,
     clock_s: Time.now_ms / 1000,
   )
@@ -156,7 +160,7 @@ def update(model: Model, msg: Msg) -> TUI.Step[Model, Msg]
   TUI.Step(model: app.with(effects: []), cmds: cmds)
 end
 
-def view(model: Model) -> TUI.Node = Screen.view(framed(model))
+def view(model: Model) -> TUI.Node = Screen.view(framed(model), model.theme)
 
 def subscriptions(_model: Model) -> List[TUI.Sub[Msg]] = [TUI.Sub.Events(->(event) { Msg.Key(event) })]
 

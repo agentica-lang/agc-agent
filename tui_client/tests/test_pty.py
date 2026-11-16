@@ -823,7 +823,8 @@ class PtyTest(unittest.TestCase):
     def test_a_tiny_terminal_draws_the_panel_and_a_resize_redraws_it(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")], rows=5, cols=24)
         term.type("write it\r")
-        rows = term.wait_for("session")
+        # The panel shows before the resize: the last ^Y comes long after the guard of a new approval.
+        rows = term.wait_for("^Y allow")
         term.settle()
         self.assertIsNone(term.process.poll(), text_of(rows))
         term.resize(3, 10)
