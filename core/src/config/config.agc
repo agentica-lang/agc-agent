@@ -152,6 +152,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     read: read,
     rebuild: rebuild,
     probe: ->(name: String, key: String) { probe(customs, anthropic_url, name, key) },
+    chosen: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
   )
 
   provider = set(read, "FINN_PROVIDER").unwrap_or(default_provider(api))

@@ -152,6 +152,8 @@ def test_a_stored_key_offers_its_provider_unless_the_file_is_open() -> Result[Vo
   _ = Path.remove(dir)
   try Test.eq([private.providers.has_key?("groq"), open.providers.has_key?("groq")], [true, false])
   try Test.eq([private.warnings.size, open.warnings.size], [0, 1])
+  chosen = try Config.from_env(->(n) { located({"XDG_CONFIG_HOME": dir, "FINN_BASE_URL": "http://box/v1"}, n) })
+  try Test.eq([private.login.map { |l| l.chosen }, chosen.login.map { |l| l.chosen }], [some(false), some(true)])
   names = private.login.map { |l| l.entries.map { |e| e.name } }.unwrap_or([])
   Test.eq(names, ["anthropic", "openai", "fireworks", "openrouter", "groq", "deepseek"])
 end

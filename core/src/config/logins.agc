@@ -25,6 +25,8 @@ struct Setup
   rebuild: Fn[Map[String, String], Result[Map[String, Providers.Provider]]]
   ## The provider `name` at its base URL with `key`, for the check.
   probe: Fn[String, String, Result[LLM.Provider]]
+  ## The server's provider was chosen (`FINN_BASE_URL`, `FINN_PROVIDER` or `FINN_API` is set): no login is offered.
+  chosen: Bool = false
 end
 
 ## What a list of the logins shows of a provider. `from` is where its key comes from: `env`, `stored` or empty.
@@ -36,7 +38,8 @@ struct Status
   coming: Bool = false
 end
 
-## The logins, and `first`: no key file and no key of a provider in the environment, so a client offers a login.
+## The logins, and `first`: no key file, no key of a provider in the environment and no provider chosen for the server,
+## so a client offers a login.
 struct Listing
   providers: List[Status]
   first: Bool
@@ -69,7 +72,7 @@ def list(holder: Holder) -> Result[Listing]
   setup = state.setup.unwrap!
   shown = setup.entries.map { |entry| status_of(setup, state.stored, entry) }
   coming = Providers.coming().map { |c| Status(name: c.name, label: c.label, coming: true) }
-  first = not state.stored.found and not shown.any? { |s| s.from == FROM_ENV }
+  first = not state.stored.found and not setup.chosen and not shown.any? { |s| s.from == FROM_ENV }
   ok(Listing(providers: shown + coming, first: first))
 end
 
