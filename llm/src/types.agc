@@ -63,7 +63,8 @@ struct Request
   max_tokens: Int = 4096
   ## How hard the model thinks (`low`, `medium`, `high`), for the models that take it.
   effort: Optional[String] = none
-  ## Ask the provider to cache the stable prefix (the system prompt and the tools).
+  ## Ask the provider to cache the stable prefix (the system prompt and the tools) and, on Anthropic, the
+  ## conversation so far.
   cache: Bool = false
   tool_choice: ToolChoice = ToolChoice.Auto
   temperature: Optional[Float] = none
@@ -79,7 +80,7 @@ end
 
 ## Tokens of one call; zero when the provider does not say.
 struct Usage
-  ## Input tokens that were not read from the cache.
+  ## Input tokens neither read from the cache nor written to it.
   input: Int = 0
   ## Output tokens, the reasoning ones included.
   output: Int = 0

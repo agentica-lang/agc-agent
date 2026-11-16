@@ -6,8 +6,8 @@ READ_FILE_SCHEMA = (
   "\"required\":[\"path\"]}"
 )
 
-# Small models are not reliable: these check shapes, not words, at temperature 0 with a seed. Each test runs both
-# providers against one server.
+# Small models are not reliable: these check shapes, not words, at temperature 0 with a seed. Each test runs every
+# provider against one server.
 def test_a_real_server_streams_text() -> Result[Void]
   request = LLM.Request(
     model: "qwen",
@@ -16,6 +16,8 @@ def test_a_real_server_streams_text() -> Result[Void]
     max_tokens: 24,
     temperature: some(0.0),
     seed: some(1),
+    # Anthropic's cache breakpoints, which llama-server takes and does not use.
+    cache: true,
   )
 
   server = try Llama.start("text")
@@ -63,7 +65,7 @@ struct Answer
 end
 
 def providers(server: Llama.Server) -> List[LLM.Provider]
-  [LLM.openai_chat(server.url, ""), LLM.openai_responses(server.url, "")]
+  [LLM.openai_chat(server.url, ""), LLM.openai_responses(server.url, ""), LLM.anthropic(server.url, "")]
 end
 
 def check_text(answer: Answer) -> Result[Void]

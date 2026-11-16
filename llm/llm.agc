@@ -7,16 +7,22 @@
 ## in time), `llm.unsupported` (a feature the provider does not have). A request is tried again only before the
 ## first byte of its stream, on 429, 5xx and network errors.
 
+import Anthropic from "src/anthropic"
 import Api from "src/api"
 import OpenAIChat from "src/openai_chat"
-import Http from "src/openai_http"
+import Http from "src/http"
 import OpenAIResponses from "src/openai_responses"
 import Stop from "src/stop_reason"
 import Types from "src/types"
 
 VERSION = "0.0.1"
+## The Anthropic API, its default model and its cheap one.
+ANTHROPIC_URL = Anthropic.URL
+ANTHROPIC_MODEL = Anthropic.MODEL
+ANTHROPIC_CHEAP_MODEL = Anthropic.CHEAP_MODEL
 
 export Http.Options
+export Anthropic.anthropic
 export OpenAIChat.openai_chat
 export OpenAIResponses.openai_responses
 export Api.Provider
