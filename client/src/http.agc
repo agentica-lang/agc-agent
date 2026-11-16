@@ -6,6 +6,7 @@ import Protocol from "pkg/protocol/protocol"
 
 CALL_TIMEOUT_MS = 10_000
 PROBE_TIMEOUT_MS = 2_000
+COMPACT_TIMEOUT_MS = 600_000
 # A session can be quiet for as long as the model thinks, and the protocol has no heartbeat: the stream is read without
 # a timeout of practical size.
 EVENTS_TIMEOUT_MS = 86_400_000
@@ -62,6 +63,23 @@ end
 def delete_session(server: Server, id: String) -> Result[Void]
   _ = try call(server, "DELETE", Protocol.session_path(id), "")
   ok()
+end
+
+def list_sessions(server: Server) -> Result[Protocol.SessionList]
+  Protocol.decode_session_list(try call(server, "GET", Protocol.SESSIONS_PATH, ""))
+end
+
+def update_session(server: Server, id: String, change: Protocol.UpdateSession) -> Result[Void]
+  _ = try call(server, "PATCH", Protocol.session_path(id), Protocol.encode_update_session(change))
+  ok()
+end
+
+## Folds the history into a summary now; false when there was nothing to fold. The model writes the summary, so the
+## call may take as long as a turn.
+def compact(server: Server, id: String) -> Result[Bool]
+  body = try call_within(server, "POST", Protocol.compact_path(id), "", COMPACT_TIMEOUT_MS)
+  compacted = try Protocol.decode_compacted(body)
+  ok(compacted.compacted)
 end
 
 def stop(server: Server, id: String) -> Result[Void]

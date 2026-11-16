@@ -469,3 +469,66 @@ def test_yolo_asks_an_approval_pending_before_it_attached() -> Result[Void]
     Test.eq(done.code, 0)
   end
 end
+
+# The session commands: /model and /thinking change the session, a bad level is refused before any request,
+# /resume lists the sessions and switches to the one picked, /new makes another one, and /help lists them all.
+def test_session_commands() -> Result[Void]
+  list = Protocol.SessionList(
+    sessions: [
+      Protocol.SessionSummary(id: "s1", cwd: "/work", model: "m", api: "openai"),
+      Protocol.SessionSummary(id: "s2", cwd: "/other", model: "m2", api: "openai"),
+    ],
+  )
+
+  routes = [
+    Fake.Route(
+      method: "POST",
+      path: Protocol.SESSIONS_PATH,
+      replies: [Fake.Reply(status: 201, body: "{\"id\": \"s1\"}"), Fake.Reply(status: 201, body: "{\"id\": \"s3\"}")],
+    ),
+    Routes.held_events(),
+    Fake.Route(
+      method: "PATCH",
+      path: Protocol.session_path("s1"),
+      replies: [Fake.Reply(body: "{}"), Fake.Reply(body: "{}")],
+    ),
+    Fake.Route(
+      method: "GET",
+      path: Protocol.SESSIONS_PATH,
+      replies: [
+        Fake.Reply(body: Protocol.encode_session_list(list)),
+        Fake.Reply(body: Protocol.encode_session_list(list)),
+      ],
+    ),
+    Fake.Route(method: "GET", path: Protocol.session_path("s2"), replies: [Fake.Reply(session: "session_idle.json")]),
+    Fake.Route(method: "GET", path: Protocol.events_path("s2"), replies: [Fake.Reply(hold: true)]),
+    Fake.Route(method: "GET", path: Protocol.events_path("s3"), replies: [Fake.Reply(hold: true)]),
+  ]
+
+  Driver.within(routes) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN)
+    try Driver.read_until(cli, "[session s1]")
+    try Driver.say(cli, "/model qwen3")
+    try Driver.read_until(cli, "[model qwen3 from the next turn]")
+    try Driver.say(cli, "/thinking max")
+    try Driver.read_until(cli, "[error] the thinking level is one of low, medium, high")
+    try Driver.say(cli, "/thinking high")
+    try Driver.read_until(cli, "[thinking high from the next turn]")
+    try Driver.say(cli, "/resume")
+    try Driver.read_until(cli, "2. s2  m2  /other")
+    try Driver.say(cli, "/resume 2")
+    try Driver.read_until(cli, "[session s2]")
+    try Driver.say(cli, "/new")
+    try Driver.read_until(cli, "[session s3]")
+    try Driver.say(cli, "/help")
+    try Driver.read_until(cli, "/quit                      leave")
+    try Driver.say(cli, "/quit")
+    done = try Driver.finish(cli)
+    try Test.eq(done.code, 0)
+    first = try Fake.request(rig.fake, "PATCH", Protocol.session_path("s1"))
+    try Test.eq(Protocol.decode_update_session(first.body), ok(Protocol.UpdateSession(model: some("qwen3"))))
+    second = try Fake.request(rig.fake, "PATCH", Protocol.session_path("s1"))
+    try Test.eq(Protocol.decode_update_session(second.body), ok(Protocol.UpdateSession(effort: some("high"))))
+    Test.eq(Fake.strays(rig.fake), 0)
+  end
+end

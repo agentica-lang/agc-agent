@@ -29,7 +29,11 @@ def run(screen: TUI.Screen, server: Client.Server, options: Args.Options) -> Res
   signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
   _ = Task.spawn(-> { watch_signals(signals, inbox) })
   _ = Task.spawn(-> { read_keys(screen, inbox) })
-  app = try open(App(screen: screen, server: server, id: "", inbox: inbox, thinking: options.thinking), options)
+  app = try open(
+    App(screen: screen, server: server, id: "", inbox: inbox, options: options, thinking: options.thinking),
+    options,
+  )
+
   loop(app)
 end
 
@@ -40,6 +44,8 @@ struct App
   server: Client.Server
   id: String
   inbox: Channel[Inbox.Input]
+  ## What `/new` makes a session with.
+  options: Args.Options
   entries: List[Transcript.Entry] = []
   prompt: String = ""
   ## Rows above the bottom of the transcript, 0 to follow its end.
@@ -88,16 +94,25 @@ end
 
 def open(app: App, options: Args.Options) -> Result[App]
   case options.session
-    some(id) -> ok(attach(app.with(id: id), try Client.session(app.server, id), false))
-    none ->
-      cwd = case options.cwd
-        some(dir) -> dir
-        none -> try Path.cwd()
-      end
-
-      request = Protocol.NewSession(cwd: cwd, model: options.model, api: options.api)
-      ok(subscribe(app.with(id: try Client.create_session(app.server, request)), 0))
+    some(id) -> resume(app, id)
+    none -> create(app)
   end
+end
+
+def create(app: App) -> Result[App]
+  options = app.options
+  cwd = case options.cwd
+    some(dir) -> dir
+    none -> try Path.cwd()
+  end
+
+  request = Protocol.NewSession(cwd: cwd, model: options.model, api: options.api)
+  id = try Client.create_session(app.server, request)
+  ok(subscribe(noted(app.with(id: id), "session #{id}"), 0))
+end
+
+def resume(app: App, id: String) -> Result[App]
+  ok(noted(attach(app.with(id: id), try Client.session(app.server, id), false), "session #{id}"))
 end
 
 # Draws the history of the session and reads the events after it; while a turn runs, from the start of the turn, unless
@@ -162,6 +177,7 @@ end
 def handle(app: App, input: Inbox.Input) -> Result[App]
   case input
     Inbox.Input.Terminal(event) -> ok(on_key(app, event))
+    Inbox.Input.Note(text) -> ok(noted(app, text))
     Inbox.Input.Signal(signal) -> ok(app.with(exit: some(128 + System.signal_number(signal))))
     Inbox.Input.Closed(reason) -> error("the terminal closed: #{reason}", kind: "tui.terminal")
     Inbox.Input.Stream(generation, item) if generation == app.generation -> on_stream(app, item)
@@ -194,6 +210,13 @@ def scrolled(app: App, rows: Int) -> App = app.with(scroll: [app.scroll + rows, 
 def send(app: App) -> App
   text = app.prompt.strip
   return app if text == ""
+
+  case Client.parse_command(text)
+    some(ok(command)) -> return on_command(app.with(prompt: "", scroll: 0), command)
+    some(error(e)) -> return noted(app.with(prompt: ""), e.message)
+    _ -> nil
+  end
+
   return noted(app, "a turn is running: Esc stops it") if app.turn
 
   case Client.send_message(app.server, app.id, text)
@@ -202,6 +225,108 @@ def send(app: App) -> App
       app.with(entries: entries, prompt: "", turn: true, stopping: false, scroll: 0)
     error(e) if e.kind == Protocol.KIND_SESSION_BUSY -> noted(app.with(turn: true), "a turn is already running")
     error(e) -> noted(app, "error: #{e.message}")
+  end
+end
+
+def on_command(app: App, command: Client.Command) -> App
+  case command
+    Client.Command.Quit -> app.with(exit: some(0))
+    Client.Command.Stop -> stop_command(app)
+    Client.Command.Help -> app.with(entries: app.entries + Client.HELP.map { |line| note_entry(line) })
+    Client.Command.Cost -> noted(app, "/cost comes with the model catalog")
+    Client.Command.New -> switch_command(app, none)
+    Client.Command.Resume(none) -> tried(app, listed(app))
+    Client.Command.Resume(choice) -> switch_command(app, choice)
+    Client.Command.Model(model) -> setting_command(app, "model", model, Protocol.UpdateSession(model: model))
+    Client.Command.Thinking(level) -> setting_command(app, "thinking", level, Protocol.UpdateSession(effort: level))
+    Client.Command.Compact -> compact_command(app)
+  end
+end
+
+def note_entry(text: String) -> Transcript.Entry = Transcript.Entry(kind: Transcript.Kind.Notice, text: text)
+
+def stop_command(app: App) -> App
+  return noted(app, "no turn is running") if not app.turn
+
+  stop(app)
+end
+
+# A command that failed says why; the session goes on.
+def tried(app: App, result: Result[App]) -> App
+  case result
+    ok(next_app) -> next_app
+    error(e) -> noted(app, "error: #{e.message}")
+  end
+end
+
+# The state of no session yet, with the stream that `subscribe` replaces.
+def fresh(app: App) -> App
+  App(
+    screen: app.screen,
+    server: app.server,
+    id: "",
+    inbox: app.inbox,
+    options: app.options,
+    thinking: app.thinking,
+    stream: app.stream,
+    generation: app.generation,
+  )
+end
+
+# A new session (no choice), or the session `/resume` chose.
+def switch_command(app: App, choice: Optional[String]) -> App
+  return noted(app, "a turn is running: Esc stops it first") if app.turn
+
+  case choice
+    some(picked) -> tried(app, switched(app, picked))
+    none -> tried(app, create(fresh(app)))
+  end
+end
+
+def listed(app: App) -> Result[App]
+  lines = Client.listing(try Client.list_sessions(app.server))
+  return ok(noted(app, "no sessions")) if lines.empty?
+
+  ok(app.with(entries: app.entries + (["sessions (/resume N):"] + lines).map { |line| note_entry(line) }))
+end
+
+def switched(app: App, choice: String) -> Result[App]
+  resume(fresh(app), try Client.pick(try Client.list_sessions(app.server), choice))
+end
+
+def setting_command(app: App, name: String, value: Optional[String], change: Protocol.UpdateSession) -> App
+  case value
+    some(text) -> tried(app, changed(app, change, "#{name} #{text} from the next turn"))
+    none -> tried(app, shown_setting(app, name))
+  end
+end
+
+def shown_setting(app: App, name: String) -> Result[App]
+  session = try Client.session(app.server, app.id)
+  return ok(noted(app, "model #{session.model}")) if name == "model"
+
+  ok(noted(app, "thinking #{session.effort.unwrap_or("as the model's default")}"))
+end
+
+def changed(app: App, change: Protocol.UpdateSession, done: String) -> Result[App]
+  try Client.update_session(app.server, app.id, change)
+  ok(noted(app, done))
+end
+
+# The summary takes as long as a turn: a task asks for it and puts the outcome on the inbox.
+def compact_command(app: App) -> App
+  server = app.server
+  id = app.id
+  inbox = app.inbox
+  _ = Task.spawn(-> { _ = inbox.send(Inbox.Input.Note(compacted(server, id)), SEND_MS) })
+  noted(app, "compacting the history")
+end
+
+def compacted(server: Client.Server, id: String) -> String
+  case Client.compact(server, id)
+    ok(folded) if folded -> "compacted"
+    ok(_) -> "nothing to compact yet"
+    error(e) -> "error: #{e.message}"
   end
 end
 

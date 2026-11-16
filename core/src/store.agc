@@ -44,6 +44,9 @@ struct Saved
   reserved: Int = 0
   ## The answer of the last turn so far at its last compaction, which may have folded part of it.
   folded: Optional[Folded] = none
+  ## The model and the thinking level of the last `settings` record: what the session changed since its header.
+  model: Optional[String] = none
+  effort: Optional[String] = none
 end
 
 ## The answer texts of a turn when it was compacted, and the size of the history after: the texts of the messages
@@ -109,6 +112,11 @@ def append_compaction(path: String, compaction: Compaction.Compaction, answer: L
       "answer": JSON.from(answer),
     },
   )
+end
+
+## The model and thinking level the session uses from now on.
+def append_settings(path: String, model: String, effort: Optional[String]) -> Result[Void]
+  append(path, {"type": JSON.from("settings"), "model": JSON.from(model), "effort": JSON.from(effort)})
 end
 
 ## The answer of a turn, as a client draws it.
@@ -266,6 +274,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
 
       ok(saved.with(history: history, folded: folded))
     "ids" -> ok(saved.with(reserved: try JSON.int(try JSON.get(json, "until"))))
+    "settings" -> ok(saved.with(model: some(try field(json, "model")), effort: optional_string(json, "effort")))
     "answer" ->
       shown = Protocol.Message(role: Protocol.Role.Assistant, text: try field(json, "text"))
       ok(saved.with(shown: saved.shown.push(shown)))

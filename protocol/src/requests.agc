@@ -1,7 +1,11 @@
 ## The bodies the clients send. A decoder here refuses a key it does not know and an empty required string; the replies
 ## and events do not (see `Wire`).
 
+import Kinds from "kinds"
 import Wire from "wire"
+
+## The thinking levels a session takes (`effort`), lowest first.
+EFFORTS = ["low", "medium", "high"]
 
 ## How a client answers an approval request.
 enum Decision
@@ -25,6 +29,17 @@ end
 ## `POST /v1/sessions/ID/approvals/AID`.
 struct Approve
   decision: Decision
+end
+
+## `PATCH /v1/sessions/ID`: what to change from the next turn on; a field left out stays.
+struct UpdateSession
+  model: Optional[String] = none
+  effort: Optional[String] = none
+end
+
+## `POST /v1/sessions/ID/compact`: the answer says whether there was history to fold.
+struct Compacted
+  compacted: Bool
 end
 
 ## Every decision, in a fixed order.
@@ -64,6 +79,22 @@ def decode_approve(text: String) -> Result[Approve]
   wire = try Wire.decode_strict(text, ApproveWire.codec)
   ok(Approve(decision: try parse_decision(wire.decision)))
 end
+
+def encode_update_session(body: UpdateSession) -> String = JSON.encode(body)
+
+def decode_update_session(text: String) -> Result[UpdateSession]
+  body = try Wire.decode_strict(text, UpdateSession.codec)
+  try Wire.non_empty_if_present("model", body.model)
+  for effort in Wire.option_list(body.effort)
+    return error("unknown effort: #{effort}", kind: Kinds.KIND_UNKNOWN) if not EFFORTS.include?(effort)
+  end
+
+  ok(body)
+end
+
+def encode_compacted(body: Compacted) -> String = JSON.encode(body)
+
+def decode_compacted(text: String) -> Result[Compacted] = Wire.decode(text, Compacted.codec)
 
 private
 

@@ -611,6 +611,13 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
       message = try Protocol.decode_send_message(text)
       turn_id = try Session.send(try find(registry, parts[0]), message.text)
       response(202, Protocol.encode_message_accepted(Protocol.MessageAccepted(turn_id: turn_id)))
+    "PATCH 1" ->
+      change = try Protocol.decode_update_session(text)
+      try Session.update(try find(registry, parts[0]), change)
+      response(200, "{}")
+    "POST 2" if parts[1] == "compact" ->
+      compacted = try Session.compact_now(try find(registry, parts[0]))
+      response(200, Protocol.encode_compacted(Protocol.Compacted(compacted: compacted)))
     "POST 2" if parts[1] == "stop" ->
       _ = try Session.stop(try find(registry, parts[0]))
       response(200, "{}")
