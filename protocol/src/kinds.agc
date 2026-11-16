@@ -18,6 +18,9 @@ KIND_SESSION_NOT_FOUND = "session.not_found"
 ## A message sent while a turn runs (`409`).
 KIND_SESSION_BUSY = "session.busy"
 
+## The server cannot write the session's file (`500`): the turn stops, and no turn starts until a write works.
+KIND_SESSION_STORAGE = "session.storage"
+
 KIND_APPROVAL_NOT_FOUND = "approval.not_found"
 
 ## An answer that came after the approval was resolved: the first answer won, a rule or the timeout answered, or the

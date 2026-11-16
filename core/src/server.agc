@@ -95,6 +95,12 @@ struct Entry
   session: Actor.Ref[Session.State, Session.Msg]
 end
 
+struct Loaded
+  file: String
+  saved: Store.Saved
+  context: Tools.Context
+end
+
 struct Registry
   options: Options
   sessions: List[Entry] = []
@@ -137,7 +143,23 @@ def private_folder(given: String) -> Result[Void]
   return error("#{path} is not a folder") if info.kind != "directory"
   return error("#{path} must be private (mode 0700), it has mode #{info.mode}") if info.mode % 64 != 0
 
+  for me in option_list(owner_id())
+    return error("#{path} is not owned by you") if info.user_id != me
+  end
+
   ok()
+end
+
+# The user id of this process, from the owner of its /proc entry or of the home folder; none where neither is there.
+def owner_id() -> Optional[Int]
+  for place in ["/proc/self", System.env("HOME").unwrap_or("")]
+    case File.stat(place)
+      ok(info) if place != "" -> return some(info.user_id)
+      _ -> nil
+    end
+  end
+
+  none
 end
 
 def write_server_json(dir: String, info: Protocol.ServerInfo) -> Result[Void]
@@ -196,6 +218,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     id: "s#{registry.sessions.size + 1}-#{OpenSSL.Random.hex(4)}",
     cwd: context.root,
     model: request.model.unwrap_or(options.model),
+    created_ms: Time.now_ms,
   )
 
   file = try Store.create(sessions_dir(options), header)
@@ -225,7 +248,8 @@ def entry(
   Entry(summary: summary, session: Session.start(setup, saved))
 end
 
-# A session whose file or folder cannot be read is left out, with a warning.
+# In the order they were made. A session whose file or folder cannot be read is left out, with a warning, and so is a
+# record of a file that does not decode.
 def load_sessions(options: Options) -> List[Entry]
   dir = sessions_dir(options)
   names: List[String] = []
@@ -234,22 +258,33 @@ def load_sessions(options: Options) -> List[Entry]
     error(e) -> IO.warn("sessions not loaded: #{e.message}")
   end
 
-  entries: List[Entry] = []
+  loaded: List[Loaded] = []
   for name in names
     case load_session(options, "#{dir}/#{name}")
-      ok(loaded) -> entries = entries.push(loaded)
+      ok(one) -> loaded = loaded.push(one)
       error(e) -> IO.warn("session #{name} not loaded: #{e.message}")
     end
   end
 
-  entries
+  sorted = loaded.sort_by { |one| one.saved.header.id }.sort_by { |one| one.saved.header.created_ms }
+  sorted.map { |one| entry(options, one.saved.header, one.context, one.file, some(one.saved)) }
 end
 
-def load_session(options: Options, file: String) -> Result[Entry]
+def load_session(options: Options, file: String) -> Result[Loaded]
+  info = try File.lstat(file)
+  return error("not a regular file") if info.kind != "file"
+
   saved = try Store.load(file)
+  if saved.skipped > 0
+    IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
+  end
+
   context = try Tools.context(saved.header.cwd, options.env, options.rules)
-  try Store.reopen(file)
-  ok(entry(options, saved.header, context, file, some(saved)))
+  if saved.open_end
+    try Store.reopen(file)
+  end
+
+  ok(Loaded(file: file, saved: saved, context: context))
 end
 
 # `AGENTS.md` goes to the model only when it is a regular file inside the folder: a link out of it could be any file.
