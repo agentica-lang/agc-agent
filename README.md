@@ -34,6 +34,7 @@ Needs Agentica 0.32.0 or later.
 agentica core/main.agc --version
 agentica cli/main.agc --help
 agentica core/main.agc serve   # a llama-server at AGC_AGENT_BASE_URL (default http://127.0.0.1:8080/v1)
+AGC_AGENT_API=openai_responses agentica core/main.agc serve   # the same on /v1/responses
 make test
 make smoke-llama   # fetches llama.cpp and a 0.5B model (about 500 MB) into .tools/
 ```

@@ -24,7 +24,21 @@ def test_the_context_window_must_be_a_positive_number() -> Result[Void]
   Test.eq(options.props_url, "http://127.0.0.1:8080/props")
 end
 
+def test_the_model_api_is_chat_completions_or_responses() -> Result[Void]
+  for api in ["", "openai", "openai_responses"]
+    try Config.from_env(->(name) { api_env(name, api) })
+  end
+
+  Test.error?(Config.from_env(->(name) { api_env(name, "anthropic") }))
+end
+
 private
+
+def api_env(name: String, api: String) -> Result[String]
+  return ok(api) if name == "AGC_AGENT_API"
+
+  env(name, "")
+end
 
 def env(name: String, window: String) -> Result[String]
   case name

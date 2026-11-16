@@ -1,8 +1,8 @@
 ## The options of `serve`, from the environment: `AGC_AGENT_STATE_DIR` (else `$XDG_STATE_HOME/agc-agent`, else
 ## `~/.local/state/agc-agent`), `AGC_AGENT_DATA_DIR` for the sessions (else `$XDG_DATA_HOME/agc-agent`, else
-## `~/.local/share/agc-agent`), and the model API as `openai_chat`: `AGC_AGENT_BASE_URL` (a local llama-server by
-## default), `AGC_AGENT_API_KEY` and `AGC_AGENT_MODEL`; `AGC_AGENT_CONTEXT_WINDOW` and `AGC_AGENT_COMPACT_MODEL` for
-## compaction.
+## `~/.local/share/agc-agent`), and the model API: `AGC_AGENT_API` (`openai`, chat completions, by default, or
+## `openai_responses`), `AGC_AGENT_BASE_URL` (a local llama-server by default), `AGC_AGENT_API_KEY` and
+## `AGC_AGENT_MODEL`; `AGC_AGENT_CONTEXT_WINDOW` and `AGC_AGENT_COMPACT_MODEL` for compaction.
 
 import LLM from "pkg/llm/llm"
 import Server from "server"
@@ -12,11 +12,13 @@ STATE_DIR_ENV = "AGC_AGENT_STATE_DIR"
 DATA_DIR_ENV = "AGC_AGENT_DATA_DIR"
 DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
 DEFAULT_MODEL = "default"
+## The names `AGC_AGENT_API` takes: OpenAI chat completions, and the OpenAI Responses format.
+APIS = ["openai", "openai_responses"]
 
 def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
   base_url = set(read, "AGC_AGENT_BASE_URL").unwrap_or(DEFAULT_BASE_URL)
   api_key = set(read, "AGC_AGENT_API_KEY").unwrap_or("")
-  provider = LLM.openai_chat(base_url, api_key)
+  provider = try provider(set(read, "AGC_AGENT_API").unwrap_or(APIS[0]), base_url, api_key)
   ok(
     Server.Options(
       state_dir: try state_dir(read),
@@ -31,6 +33,20 @@ def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
       api_key: api_key,
     ),
   )
+end
+
+## The provider of the model API `api` at `base_url`.
+def provider(
+  api: String,
+  base_url: String,
+  api_key: String,
+  options: LLM.Options = LLM.Options(),
+) -> Result[LLM.Provider]
+  case api
+    "openai" -> ok(LLM.openai_chat(base_url, api_key, options))
+    "openai_responses" -> ok(LLM.openai_responses(base_url, api_key, options))
+    _ -> error("AGC_AGENT_API must be one of #{APIS.join(", ")}, not #{api.inspect}")
+  end
 end
 
 def state_dir(read: Fn[String, Result[String]]) -> Result[String]

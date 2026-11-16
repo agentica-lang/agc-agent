@@ -27,3 +27,4 @@
 - Compaction folds the older tool rounds of the running turn too, so the first turn or one long turn is compacted; the last round stays whole.
 - Compaction stops for the rest of a turn when a fold leaves the context past the limit (an `error` event), instead of folding again every round.
 - A turn that a restart cuts after a compaction keeps the text of its folded rounds in its answer.
+- `core serve` speaks the OpenAI Responses format too: `AGC_AGENT_API=openai_responses` (`openai`, chat completions, stays the default).
