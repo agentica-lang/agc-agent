@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `finn tui --yolo` allows every tool call asked during the run, as in chat; the status line shows YOLO all the time, and the approvals pending when it attaches are still asked.
+
 - The repo skeleton: a workspace with the `llm` and `core` packages, and CI.
 - The `sse` package: a Server-Sent Events parser and writer.
 - The `protocol` package: the records of the commands and events between the server and its clients, with JSON codecs.

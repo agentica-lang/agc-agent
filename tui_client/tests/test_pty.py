@@ -375,12 +375,12 @@ class PtyTest(unittest.TestCase):
         self.fake = model
         return model
 
-    def start(self, replies: list[Reply], rows: int = ROWS, cols: int = COLS) -> Terminal:
+    def start(self, replies: list[Reply], rows: int = ROWS, cols: int = COLS, extra: list[str] = []) -> Terminal:
         """The client, which starts its own server."""
         base = self.folder()
         model = self.model(replies)
         self.addCleanup(stop_server, base / "state")
-        args = ["--state-dir", str(base / "state"), "--", AGENTICA, str(CORE), "serve"]
+        args = [*extra, "--state-dir", str(base / "state"), "--", AGENTICA, str(CORE), "serve"]
         terminal = Terminal(base, model, args, rows, cols)
         self.addCleanup(terminal.close)
         terminal.wait_for("ready")
@@ -598,6 +598,35 @@ class PtyTest(unittest.TestCase):
         self.assertNotIn("· approval a1:", text_of(rows))
         self.assertIn("Tab to answer", text_of(rows))
         self.assertFalse((term.base / "work" / "hello.txt").exists())
+
+    def test_yolo_allows_the_calls_of_its_run_but_asks_the_inherited_ones(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse"), Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        term.wait_for("Tab to answer")
+        term.type("\x03")
+        self.assertEqual(term.finish(), 0)
+        info = json.loads((term.base / "state" / "server.json").read_text())
+        server = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=TIMEOUT)
+        server.request("GET", "/v1/sessions", headers={"Authorization": f"Bearer {info['token']}"})
+        session_id = json.loads(server.getresponse().read())["sessions"][0]["id"]
+        server.close()
+        args = ["--yolo", "--state-dir", str(term.base / "state"), "--session", session_id]
+        again = Terminal(term.base, self.fake, args)
+        self.addCleanup(again.close)
+        rows = again.wait_for("Tab to answer")
+        self.assertIn("YOLO · ", rows[-2])
+        self.assertIn("· --yolo: every tool call asked during this run is allowed without asking", text_of(rows))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+        again.settle(0.4)
+        again.type("\x0e")
+        again.wait_for(": deny (client)")
+        again.wait_until(lambda rows: "ready" in rows[-2], "the end of the turn")
+        (term.base / "work" / "hello.txt").unlink(missing_ok=True)
+        again.type("write it again\r")
+        rows = again.wait_for("· --yolo allows write_file:")
+        again.wait_until(lambda rows: text_of(rows).count(ANSWER) == 2 and "ready" in rows[-2], "the answer")
+        self.assertNotIn("Tab to answer", text_of(again.screen()))
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
 
     def test_a_tool_is_approved_and_its_notices_shown(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])

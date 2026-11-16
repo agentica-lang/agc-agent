@@ -21,6 +21,7 @@ RECONNECT_MS = 300
 MAX_RECONNECTS = 3
 MAX_RESYNCS = 2
 SCROLL_STEP = 3
+YOLO_WARNING = "--yolo: every tool call asked during this run is allowed without asking"
 HINTS = "Enter send · ^J newline · ^T thinking · Esc stop · PgUp/PgDn · ^C quit"
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
@@ -30,18 +31,20 @@ def run(screen: TUI.Screen, server: Client.Server, options: Args.Options) -> Res
   signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
   _ = Task.spawn(-> { watch_signals(signals, inbox) })
   _ = Task.spawn(-> { read_keys(screen, inbox) })
-  app = try open(
-    App(
-      screen: screen,
-      server: server,
-      id: "",
-      inbox: inbox,
-      options: options,
-      thinking: options.thinking,
-      approvals: Approvals.Panel(),
-    ),
-    options,
+  start = App(
+    screen: screen,
+    server: server,
+    id: "",
+    inbox: inbox,
+    options: options,
+    thinking: options.thinking,
+    approvals: Approvals.Panel(),
   )
+
+  app = try open(start, options)
+  if options.yolo
+    app = noted(app, YOLO_WARNING)
+  end
 
   loop(app)
 end
@@ -75,6 +78,12 @@ struct App
   picker: Optional[Picker.Picker] = none
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
   new_model: Optional[String] = none
+  ## The approvals that were pending when the client attached: `--yolo` leaves them to be asked.
+  inherited: List[String] = []
+  ## The requests `--yolo` allowed whose answer is on its way: one that fails goes to the panel.
+  yolo_sent: List[Protocol.ApprovalRequested] = []
+  ## The last event id when the client attached: a replayed approval request is not one of this run.
+  replay_until: Int = 0
   ## Where the last draw put each part of the screen.
   hits: Optional[Hits] = none
   ## A draw failed and the transcript says so; later failures are not noted again.
@@ -169,6 +178,8 @@ def attach(app: App, session: Protocol.Session, skip_replay: Bool) -> App
     stopping: false,
     shown_id: from,
     approvals: Approvals.replaced(app.approvals, session.pending_approvals, Time.monotonic_ms),
+    inherited: app.inherited + session.pending_approvals.map { |p| p.approval_id },
+    replay_until: session.last_event_id,
   )
 
   subscribe(fresh, from)
@@ -221,7 +232,7 @@ def handle(app: App, input: Inbox.Input) -> Result[App]
     Inbox.Input.Signal(signal) -> ok(app.with(exit: some(128 + System.signal_number(signal))))
     Inbox.Input.Answered(approval_id, result) ->
       outcome = Approvals.answered(app.approvals, approval_id, result, Time.monotonic_ms)
-      answered = app.with(approvals: outcome.panel)
+      answered = unyolo(app.with(approvals: outcome.panel), approval_id, result)
       case outcome.note
         some(text) -> ok(noted(answered, text))
         none -> ok(answered)
@@ -468,18 +479,44 @@ end
 
 # The answer is sent by a task, so the keys go on; its reply comes back on the inbox.
 def answer(app: App, decision: Protocol.Decision) -> App
+  sent(app, app.approvals.pending[0].approval_id, decision)
+  app.with(approvals: Approvals.sending(app.approvals))
+end
+
+def sent(app: App, approval_id: String, decision: Protocol.Decision) -> Void
   server = app.server
   id = app.id
   inbox = app.inbox
-  approval_id = app.approvals.pending[0].approval_id
   _ = Task.spawn(
     -> {
       result = Client.approve(server, id, approval_id, decision)
       _ = inbox.send(Inbox.Input.Answered(approval_id, result), SEND_MS)
     },
   )
+end
 
-  app.with(approvals: Approvals.sending(app.approvals))
+# With `--yolo` a request of this run is allowed without the panel; one pending when the client attached, or one a
+# replay shows again, is not.
+def yolo?(app: App, id: Int, request: Protocol.ApprovalRequested) -> Bool
+  app.options.yolo and id > app.replay_until and not app.inherited.include?(request.approval_id)
+end
+
+def allowed(app: App, request: Protocol.ApprovalRequested) -> App
+  sent(app, request.approval_id, Protocol.Decision.Allow)
+  noted(app.with(yolo_sent: app.yolo_sent.push(request)), "--yolo allows #{request.tool}: #{request.preview}")
+end
+
+# An answer of `--yolo` that was not sent leaves its approval to the panel; one another client gave first is done.
+def unyolo(app: App, approval_id: String, result: Result[Void]) -> App
+  mine = app.yolo_sent.select { |r| r.approval_id == approval_id }
+  return app if mine.empty?
+
+  rest = app.with(yolo_sent: app.yolo_sent.select { |r| r.approval_id != approval_id })
+  case result
+    ok(_) -> rest
+    error(e) if e.kind == Protocol.KIND_APPROVAL_RESOLVED or e.kind == Protocol.KIND_APPROVAL_NOT_FOUND -> rest
+    error(_) -> rest.with(approvals: Approvals.requested(rest.approvals, mine[0], Time.monotonic_ms))
+  end
 end
 
 def resolved(app: App, approval_id: String) -> App
@@ -511,6 +548,7 @@ def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
     Protocol.Event.TurnStarted(_) -> shown.with(turn: true)
     Protocol.Event.TurnFinished(done) ->
       finished(shown.with(turn: false, stopping: false, new_model: none), done.stop_reason)
+    Protocol.Event.ApprovalRequested(request) if yolo?(shown, seen, request) -> allowed(shown, request)
     Protocol.Event.ApprovalRequested(request) ->
       shown.with(approvals: Approvals.requested(shown.approvals, request, Time.monotonic_ms))
     Protocol.Event.ApprovalResolved(done) ->
@@ -654,6 +692,10 @@ def status(app: App, width: Int) -> String
 
   if not app.approvals.pending.empty?
     state = "#{state} · approval waiting"
+  end
+
+  if app.options.yolo
+    state = "YOLO · #{state}"
   end
 
   text = " #{state} · #{HINTS}"
