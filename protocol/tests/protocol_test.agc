@@ -364,3 +364,20 @@ def test_the_wire_shape_has_every_record_enum_and_kind() -> Result[Void]
 
   Test.assert(found.size > 40, "the scan found #{found.size} names")
 end
+
+# Every constant of routes.agc is in the wire shape, and one path of a session for each `def *_path`.
+def test_the_wire_shape_has_every_path() -> Result[Void]
+  shape = Protocol.wire_shape()
+  defs = 0
+  for line in (try File.read_text("src/routes.agc")).split("\n")
+    words = line.split(" ")
+    if words.size > 2 and words[1] == "=" and words[0] == words[0].upcase
+      try Test.assert(shape.include?(words[2].replace("\"", "")), words[0])
+    elsif words.size > 1 and words[0] == "def" and words[1].include?("_path(")
+      defs += 1
+    end
+  end
+
+  try Test.assert(defs > 5, "the scan found #{defs} paths")
+  Test.eq(shape.select { |s| s.start_with?("/v1/sessions/ID") }.size, defs)
+end

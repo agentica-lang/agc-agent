@@ -75,11 +75,16 @@ struct ToolStarted
   summary: String
 end
 
+## `summary` is the first line of the result; `output` its first lines (none when it has one line at most), cut to a
+## few KB; `diff` what an edit changed, as numbered lines (`- 6 old`, `+ 6 new`, `  5 context`, `...` for the lines
+## skipped), none for a call that changes no file.
 struct ToolFinished
   call_id: String
   ok: Bool
   summary: String
   duration_ms: Int
+  output: Optional[String] = none
+  diff: Optional[String] = none
 end
 
 ## `preview` is what the call touches: the path, or the command for `bash`; an `allow_session` answer allows the same
@@ -119,11 +124,11 @@ struct Usage
 end
 
 ## A message sent while the turn `turn_id` runs: the turn reads it before its next model call. `message_id` is the one
-## the `202` of its sender has.
+## the `202` of its sender has (none in the events a server older than it saved).
 struct MessageQueued
   turn_id: String
   text: String
-  message_id: String
+  message_id: Optional[String] = none
 end
 
 ## A command a client ran with `POST /v1/sessions/ID/shell`. With `context`, its output goes to the model before the

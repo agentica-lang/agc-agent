@@ -19,6 +19,8 @@ struct Context
   late: Optional[Fn[List[Tool]]] = none
   ## Folders outside `root` that `read_file` reads too: those of the session's skills.
   read_roots: List[String] = []
+  ## A test seam: makes the diff a client shows for a call (the tool and its input) in place of the real one.
+  diff: Optional[Fn[String, JSON.Value, String]] = none
 end
 
 struct Output
