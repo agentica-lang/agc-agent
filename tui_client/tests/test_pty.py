@@ -417,6 +417,12 @@ class PtyTest(unittest.TestCase):
         term.type("\x03")
         self.assertEqual(term.finish(), 0)
 
+    def test_a_slash_name_the_client_does_not_know_goes_to_the_agent(self) -> None:
+        term = self.start([Reply("text.sse")])
+        term.type("/review-pr 12\r")
+        term.wait_for(ANSWER)
+        self.assertEqual(self.fake.requests.get(timeout=1)["messages"][-1]["content"], "/review-pr 12")
+
     def test_ctrl_j_adds_a_line_to_the_prompt(self) -> None:
         term = self.start([Reply("text.sse")])
         term.type("one\ntwo")

@@ -42,4 +42,6 @@
 - The `anthropic` provider (the Anthropic Messages API: adaptive thinking sent back with its signature, cache breakpoints on the system prompt or tools and the conversation, the models list), with an API key or an OAuth token; the llama smoke tests run it too, and `make smoke-anthropic` makes a few real calls.
 - `finn -p TASK` runs one task (`-p -` reads it from stdin): the answer on stdout, the rest on stderr; it exits 0 when the turn ends normally, 130 when cancelled, 1 otherwise, and denies approvals; `--yolo` allows the tool calls of the run, in one-shot and in chat.
 - Session commands in `finn chat` and `finn tui`: `/new`, `/resume` (lists the sessions; `/resume N` or an id switches), `/model`, `/thinking low|medium|high`, `/compact`, `/stop`, `/help`, `/quit`.
+- `finn chat` and `finn tui`: a `/name` that is not a client command goes to the agent as a message.
+- `finn tui`: character widths follow glibc's wcwidth, as the terminal library draws them (emoji, flags, combining marks; a ZWJ sequence takes the columns of each emoji), and long code lines wrap instead of being cut.
 - `core serve`: `PATCH /v1/sessions/ID` changes a session's model and thinking level (kept in its file), and `POST /v1/sessions/ID/compact` folds the history into a summary on demand; the session snapshot has `effort`.

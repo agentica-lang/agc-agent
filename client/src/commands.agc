@@ -3,6 +3,7 @@
 import Protocol from "pkg/protocol/protocol"
 
 KIND_COMMAND = "client.command"
+NAMES = ["/new", "/resume", "/model", "/thinking", "/compact", "/stop", "/cost", "/help", "/quit"]
 HELP = [
   "/new                       a new session in this folder",
   "/resume                    list the sessions; /resume N or /resume ID switches to one",
@@ -12,6 +13,7 @@ HELP = [
   "/stop                      stop the running turn",
   "/help                      this list",
   "/quit                      leave",
+  "any other /name goes to the agent as a message",
 ]
 
 enum Command
@@ -30,14 +32,16 @@ enum Command
   Quit
 end
 
-## The command of a line, none when the line is not one (it does not start with `/`); an error for an unknown command
-## or a bad argument.
+## The command of a line, none when the line is not one of the client's: it goes to the server as text, so a `/name`
+## the server knows (a skill) still works. An error for a bad argument.
 def parse_command(line: String) -> Optional[Result[Command]]
   text = line.strip
   return none if not text.start_with?("/")
 
   words = text.split(" ").select { |word| word != "" }
   name = words[0]
+  return none if not NAMES.include?(name)
+
   argument = words.drop(1).join(" ")
   some(command(name, argument))
 end
@@ -74,8 +78,8 @@ def command(name: String, argument: String) -> Result[Command]
     "/stop" -> bare(Command.Stop, name, argument)
     "/cost" -> bare(Command.Cost, name, argument)
     "/help" -> bare(Command.Help, name, argument)
-    "/quit" -> bare(Command.Quit, name, argument)
-    _ -> error("unknown command #{name}: /help lists them", kind: KIND_COMMAND)
+    # Only `/quit` is left of NAMES.
+    _ -> bare(Command.Quit, name, argument)
   end
 end
 
