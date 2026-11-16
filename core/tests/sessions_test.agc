@@ -203,6 +203,57 @@ def test_a_session_is_loaded_when_first_used() -> Result[Void]
   end
 end
 
+# A load that crashes answers 503, without the detail, to the requests that wait for it; the next request loads again.
+def test_a_load_that_crashes_is_tried_again() -> Result[Void]
+  crash: Channel[Bool] = Channel.new(1)
+  setup = H.Setup(replies: [], before_load: some(->(_id) { crash_once(crash) }))
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    _ = crash.send(true, 0)
+    H.restarted(h, setup, "") do |r|
+      failed = try H.get(r, Protocol.session_path(id))
+      failure = try Protocol.decode_failure(failed.text)
+      try Test.eq([failed.status.to_s, failure.kind], ["503", Protocol.KIND_SESSION_UNAVAILABLE])
+      try Test.assert(not failure.message.include?("crash"), "the detail is logged, not sent: #{failure.message}")
+      Test.eq((try H.get(r, Protocol.session_path(id))).status, 200)
+    end
+  end
+end
+
+# At most 64 requests wait for one load; one more answers 503 at once, and the 64 get the session.
+def test_a_load_takes_at_most_64_waiting_requests() -> Result[Void]
+  gate: Channel[Bool] = Channel.new(1)
+  setup = H.Setup(replies: [], before_load: some(->(_id) { _ = gate.recv(WAIT_MS) }))
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    H.restarted(h, setup, "") do |r|
+      path = Protocol.session_path(id)
+      requests: List[Task[Int]] = []
+      for _ in 1..64
+        requests = requests.push(Task.spawn do status(H.get(r, path)) end)
+      end
+
+      refused = false
+      for _ in 1..20
+        probe = Task.spawn do status(H.get(r, path)) end
+        requests = requests.push(probe)
+        case Task.await(probe, PROBE_MS)
+          Await.Done(code) if code == 503 ->
+            refused = true
+            break
+          _ -> nil
+        end
+      end
+
+      try Test.assert(refused, "no request was refused while 64 waited")
+      _ = gate.send(true, 0)
+      codes = requests.map { |request| Task.await(request) }
+      try Test.eq(codes.select { |code| code == 200 }.size, 64)
+      Test.eq(codes.select { |code| code != 200 and code != 503 }, [])
+    end
+  end
+end
+
 # A session is deleted with its file, but not while a turn runs; one whose file stays loads again; one not loaded
 # since a restart is deleted too.
 def test_a_session_is_deleted() -> Result[Void]
@@ -319,6 +370,23 @@ def test_a_failed_write_stops_the_turn_and_reuses_no_id() -> Result[Void]
 end
 
 private
+
+WAIT_MS = 20_000
+PROBE_MS = 300
+
+def crash_once(crash: Channel[Bool]) -> Void
+  if crash.recv(0).ok?
+    missing: Optional[Int] = none
+    _ = missing.unwrap!
+  end
+end
+
+def status(answer: Result[H.Answer]) -> Int
+  case answer
+    ok(got) -> got.status
+    error(_) -> 0
+  end
+end
 
 def chmod(mode: String, path: String) -> Result[Void]
   code = try H.run("chmod", [mode, path])
