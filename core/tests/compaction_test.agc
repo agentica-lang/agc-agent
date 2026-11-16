@@ -1,3 +1,4 @@
+import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Compaction from "../src/compaction"
 import H from "support/harness"
@@ -105,6 +106,60 @@ def test_a_turn_compacts_at_its_start() -> Result[Void]
   end
 end
 
+# One long turn of tool rounds compacts too: past the limit, its older rounds become the summary, and the last round
+# stays whole, its tool call with its result, after a user message that goes on with the task. After a restart the
+# history is the same.
+def test_the_older_rounds_of_the_running_turn_are_compacted() -> Result[Void]
+  replies = ["write_file.sse", "bash_echo.sse", "summary.sse", "text.sse", "text.sse"]
+  setup = H.Setup(replies: replies, context_window: 120)
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt, then echo.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq([H.stop_reason(a), failures(a.seen).size.to_s], ["end_turn", "0"])
+    _ = try body(h)
+    _ = try body(h)
+    asked = try JSON.list(try JSON.get(try body(h), "messages"))
+    try Test.eq(transcript(asked[1]), ["assistant text", "assistant tool_call", "user tool_result"])
+    after = try body(h)
+    try Test.eq(roles(after), ["system", "user", "assistant", "user", "assistant", "tool"])
+    try Test.eq(contents(after).take(4).drop(1), ["Write hello.txt, then echo.", summary(), Compaction.GO_ON])
+    try Test.assert(JSON.get(messages(after)[4], "tool_calls").ok?, "the last tool call is not kept")
+    shown = (try H.session(h, id)).history
+    try Test.eq(shown.map { |m| Protocol.role_name(m.role) }, ["user", "assistant"])
+    try Test.assert(shown[1].text.start_with?("Hello!"), "the answer of the turn is not shown")
+    H.restarted(h, setup, "") do |r|
+      _ = try H.send(r, id, "Again.")
+      _ = try H.idle(r, id)
+      again = try body(r)
+      Test.eq(contents(again).take(4).drop(1), ["Write hello.txt, then echo.", summary(), Compaction.GO_ON])
+    end
+  end
+end
+
+# When the span takes the task of the running turn, that task goes after the summary, word for word; a later
+# compaction folds the summary again.
+def test_a_span_into_a_later_turn_keeps_its_task_after_the_summary() -> Result[Void]
+  history = [user("first"), said("hi"), user("second"), said("call 1"), result("1"), said("call 2"), result("2")]
+  span = try Compaction.span(history).to_result("no span")
+  try Test.eq([span.from, span.to], [1, 5])
+  folded = Compaction.apply(history, span.with(summary: "S"))
+  try Test.eq(
+    folded.map { |m| m.content },
+    [history[0], said(Compaction.summary_text("S")), history[2], history[5], history[6]].map { |m| m.content },
+  )
+
+  try Test.eq(Compaction.turn_start(2, span), 2)
+  try Test.eq(Compaction.span(history.take(5)).map { |c| c.to }, some(2))
+  Test.eq(Compaction.span([user("only"), said("call"), result("1")]), none)
+end
+
 # A summary that fails, comes back empty or is cut at the token limit is an `error` event; the turn goes on with its
 # history whole and does not
 # ask again, and a later turn asks again.
@@ -190,6 +245,18 @@ def contents(request: JSON.Value) -> List[String] = messages(request).map { |m| 
 # The system message and the tools, as sent.
 def prefix(request: JSON.Value) -> String
   "#{JSON.encode(messages(request)[0])}\n#{JSON.encode(JSON.get(request, "tools").unwrap_or(JSON.null()))}"
+end
+
+def user(text: String) -> LLM.Message
+  LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
+end
+
+def said(text: String) -> LLM.Message
+  LLM.Message(role: LLM.Role.Assistant, content: [LLM.Block.Text(LLM.TextPart(text: text))])
+end
+
+def result(text: String) -> LLM.Message
+  LLM.Message(role: LLM.Role.User, content: [LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: "c", content: text))])
 end
 
 def summary() -> String = "Summary of the session so far:\n\nThe user said hello and the agent greeted back."

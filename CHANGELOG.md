@@ -24,3 +24,4 @@
 - `protocol`: `turn_started` and `turn_finished` carry `history_size`, the size of the session's history after the event. `cli`: after a resync, the client prints the part of the history it missed (the end of a turn a restart cut, a later turn), and says when the turn ended while the stream was away.
 - `core serve` loads a session file in a task of its own: a big file no longer holds up the list, new sessions or other sessions while it loads.
 - `core serve`: the 503 of a session that cannot load no longer shows the error behind it (a path, a crash); the server logs it.
+- Compaction folds the older tool rounds of the running turn too, so the first turn or one long turn is compacted; the last round stays whole.

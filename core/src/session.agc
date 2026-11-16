@@ -608,12 +608,10 @@ def compact_model(setup: Setup) -> String
   setup.compact_model
 end
 
-# The running turn's user message moves with the messages after the compacted ones.
 def compact(state: State, compaction: Compaction.Compaction) -> State
   case save(state, -> { Store.append_compaction(state.setup.file, compaction) })
     ok(_) ->
-      moved = compaction.to - compaction.from - 1
-      turn = state.turn.map { |t| t.with(first_message: t.first_message - moved) }
+      turn = state.turn.map { |t| t.with(first_message: Compaction.turn_start(t.first_message, compaction)) }
       state.with(history: Compaction.apply(state.history, compaction), turn: turn, broken: none)
     error(e) -> broke(state, e)
   end
