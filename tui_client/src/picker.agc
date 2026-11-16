@@ -1,6 +1,6 @@
-## The picker of `/resume`, `/tree`, `/fork` and `/model`: the sessions newest first, one row each with its id, folder,
-## model, last change and first message; the messages of the session's tree, a branch a step in; or the
-## `provider/model` pairs. Up and Down (or the wheel) move, typing filters, Enter picks, Esc closes. Pure.
+## The picker of `/resume`, `/tree`, `/fork`, `/model` and `/login`: the sessions newest first, one row each with its
+## id, folder, model, last change and first message; the messages of the session's tree, a branch a step in; the
+## `provider/model` pairs; or the providers a login sets up. Up and Down (or the wheel) move, typing filters, Enter picks, Esc closes. Pure.
 
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
@@ -12,18 +12,21 @@ import Width from "width"
 KEYS = ["↑↓ move", "Enter resume", "Esc close", "type to filter"]
 
 ## What the picker lists: the sessions, the messages and answers of the tree (a message picks going back before it,
-## an answer going on after it), the messages of the tree to fork from, or the `provider/model` pairs.
+## an answer going on after it), the messages of the tree to fork from, the `provider/model` pairs, or the providers a
+## login sets up.
 enum Kind
   Sessions
   Tree
   Fork
   Models
+  Logins
 end
 
 struct Picker
   sessions: List[Protocol.SessionSummary] = []
   tree: List[Client.TreeRow] = []
   models: List[String] = []
+  logins: List[Protocol.LoginStatus] = []
   kind: Kind = Kind.Sessions
   filter: String = ""
   ## The index in `shown`.
@@ -66,6 +69,9 @@ def models(list: Protocol.ProviderList, current: String) -> Picker
   pairs = list.providers.flat_map { |p| p.models.map { |m| "#{p.name}/#{m}" } }
   Picker(models: pairs, kind: Kind.Models, selected: pairs.index(current).unwrap_or(0))
 end
+
+## The picker of `/login`: the providers, with where the key of each comes from now.
+def logins(list: Protocol.LoginList) -> Picker = Picker(logins: list.providers, kind: Kind.Logins)
 
 ## The rows the filter keeps, in any case: of a session its id, folder, model or first message; of the tree the text.
 ## `now_s` dates the last changes of the sessions.
@@ -119,6 +125,7 @@ def title(kind: Kind) -> String
     Kind.Tree -> "go back to a message, or on after an answer"
     Kind.Fork -> "fork a new session from a message"
     Kind.Models -> "pick a model"
+    Kind.Logins -> "set up a provider"
   end
 end
 
@@ -128,6 +135,7 @@ def keys(kind: Kind) -> List[String]
     Kind.Tree -> ["↑↓ move", "Enter go there", "Esc close", "type to filter"]
     Kind.Fork -> ["↑↓ move", "Enter fork", "Esc close", "type to filter"]
     Kind.Models -> ["↑↓ move", "Enter use", "Esc close", "type to filter"]
+    Kind.Logins -> ["↑↓ move", "Enter give its key", "Esc close", "type to filter"]
   end
 end
 
@@ -137,7 +145,20 @@ def choices(picker: Picker, now_s: Int) -> List[Choice]
     Kind.Tree -> (0...picker.tree.size).to_a.flat_map { |i| tree_choices(picker.tree[i], i + 1, true) }
     Kind.Fork -> (0...picker.tree.size).to_a.flat_map { |i| tree_choices(picker.tree[i], i + 1, false) }
     Kind.Models -> picker.models.map { |pair| Choice(key: pair, search: pair, text: pair) }
+    Kind.Logins -> picker.logins.map(&login_choice)
   end
+end
+
+def login_choice(login: Protocol.LoginStatus) -> Choice
+  Choice(key: login.name, search: "#{login.name} #{login.label}", text: "#{login.name}  #{login_state(login)}")
+end
+
+def login_state(login: Protocol.LoginStatus) -> String
+  return "#{login.label}: coming" if login.coming
+  return "set up: #{login.key_env} is set" if login.from == "env"
+  return "set up: key stored" if login.from == "stored"
+
+  "key (or #{login.key_env})"
 end
 
 def session_choice(session: Protocol.SessionSummary, now_s: Int) -> Choice

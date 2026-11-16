@@ -5,6 +5,8 @@ import HTTP from "std/http"
 import Protocol from "pkg/protocol/protocol"
 
 CALL_TIMEOUT_MS = 10_000
+## A login waits for the check of the key at the provider (at most 10 s on the server).
+LOGIN_TIMEOUT_MS = 20_000
 PROBE_TIMEOUT_MS = 2_000
 COMPACT_TIMEOUT_MS = 600_000
 # A session can be quiet for as long as the model thinks, and the protocol has no heartbeat: the stream is read without
@@ -71,6 +73,23 @@ end
 
 def list_providers(server: Server) -> Result[Protocol.ProviderList]
   Protocol.decode_provider_list(try call(server, "GET", Protocol.PROVIDERS_PATH, ""))
+end
+
+def list_logins(server: Server) -> Result[Protocol.LoginList]
+  Protocol.decode_login_list(try call(server, "GET", Protocol.AUTH_PATH, ""))
+end
+
+## Checks `key` at the provider and stores it on the server.
+def login(server: Server, provider: String, key: String) -> Result[Protocol.LoginStatus]
+  body = Protocol.encode_login(Protocol.Login(key: key))
+  Protocol.decode_login_status(try call_within(server, "POST", Protocol.auth_path(provider), body, LOGIN_TIMEOUT_MS))
+end
+
+## Removes the stored key of `provider`, or every stored key when none.
+def logout(server: Server, provider: Optional[String]) -> Result[Void]
+  path = provider.map { |p| Protocol.auth_path(p) }.unwrap_or(Protocol.AUTH_PATH)
+  _ = try call(server, "DELETE", path, "")
+  ok()
 end
 
 def update_session(server: Server, id: String, change: Protocol.UpdateSession) -> Result[Void]

@@ -306,6 +306,16 @@ def test_a_shell_command_round_trips() -> Result[Void]
   Test.eq(Protocol.decode_shell_accepted(Protocol.encode_shell_accepted(accepted)), ok(accepted))
 end
 
+def test_a_login_round_trips() -> Result[Void]
+  login = Protocol.Login(key: "sk-1")
+  try Test.eq(Protocol.decode_login(Protocol.encode_login(login)), ok(login))
+  try Test.eq(error_kind(Protocol.decode_login("{\"key\": \"\"}")), "protocol.invalid")
+  status = Protocol.LoginStatus(name: "groq", label: "", key_env: "GROQ_API_KEY", from: "stored", coming: false)
+  list = Protocol.LoginList(providers: [status], first: false)
+  try Test.eq(Protocol.decode_login_status(Protocol.encode_login_status(status)), ok(status))
+  Test.eq(Protocol.decode_login_list(Protocol.encode_login_list(list)), ok(list))
+end
+
 def test_session_settings_round_trip_and_refuse_unknown_levels() -> Result[Void]
   both = Protocol.UpdateSession(provider: some("fireworks"), model: some("qwen3"), effort: some("high"))
   try Test.eq(Protocol.decode_update_session(Protocol.encode_update_session(both)), ok(both))

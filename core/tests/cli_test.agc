@@ -138,6 +138,33 @@ def test_providers_come_from_presets_with_a_key_and_the_config_file() -> Result[
   Test.eq([missing.ok?, broken.ok?, slash.ok?], [false, false, false])
 end
 
+# A key a login stored offers its provider; a key file that others may read is not used, with a warning. The login
+# entries are `anthropic` and the presets.
+def test_a_stored_key_offers_its_provider_unless_the_file_is_open() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-auth-#{Random.int(0, 999999999)}"
+  try Dir.mkdir("#{dir}/finn")
+  file = "#{dir}/finn/auth.json"
+  try File.write_text(file, "{\"keys\": {\"groq\": \"sk-g\"}}")
+  try chmod("600", file)
+  private = try Config.from_env(->(n) { located({"XDG_CONFIG_HOME": dir}, n) })
+  try chmod("644", file)
+  open = try Config.from_env(->(n) { located({"XDG_CONFIG_HOME": dir}, n) })
+  _ = Path.remove(dir)
+  try Test.eq([private.providers.has_key?("groq"), open.providers.has_key?("groq")], [true, false])
+  try Test.eq([private.warnings.size, open.warnings.size], [0, 1])
+  names = private.login.map { |l| l.entries.map { |e| e.name } }.unwrap_or([])
+  Test.eq(names, ["anthropic", "openai", "fireworks", "openrouter", "groq", "deepseek"])
+end
+
+def chmod(mode: String, path: String) -> Result[Void]
+  process = try Process.spawn("chmod", [mode, path])
+  code = Process.wait(process, 5000)
+  Process.close(process)
+  return error("chmod failed") if code != ok(0)
+
+  ok()
+end
+
 # No trusted folder when `FINN_TRUSTED_DIRS` is unset or empty; empty parts are skipped.
 def test_the_trusted_folders_come_from_finn_trusted_dirs() -> Result[Void]
   for value in ["", ":"]

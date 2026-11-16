@@ -26,6 +26,8 @@ enum Command
   Run(Options)
   ## Deletes the session of that id, on the server of the options.
   Delete(Options, String)
+  ## Removes the stored key of that provider, or every one when none, on the server of the options.
+  Logout(Options, Optional[String])
   Version
   Help(String)
 end
@@ -60,6 +62,7 @@ def parse(args: List[String]) -> Result[Command]
         help: "allow the tool calls of the turns this client starts without asking (also in one-shot)",
       ),
       Opt(name: "delete", help: "id of a session to delete (with its file), then exit"),
+      Opt(name: "logout", help: "remove the stored key of this provider (all: every stored key), then exit"),
       Opt(name: "version", kind: Kind.Flag, help: "print the version"),
     ],
     "SERVER_COMMAND",
@@ -100,7 +103,17 @@ def command(parsed: Parsed) -> Result[Command]
     return ok(Command.Delete(options, id))
   end
 
+  for name in option_list(OP.optional_string(parsed, "logout"))
+    return ok(Command.Logout(options, logout_of(name)))
+  end
+
   ok(Command.Run(options))
+end
+
+def logout_of(name: String) -> Optional[String]
+  return none if name == "all"
+
+  some(name)
 end
 
 def server_command(parsed: Parsed) -> Result[Optional[List[String]]]

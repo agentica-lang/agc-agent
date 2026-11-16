@@ -36,6 +36,12 @@ KIND_APPROVAL_RESOLVED = "approval.resolved"
 ## A shell command that a deny rule of the config refuses (`403`).
 KIND_SHELL_DENIED = "shell.denied"
 
+## A key the provider refused at its check, or a check that got no answer (`400`).
+KIND_LOGIN_REJECTED = "login.rejected"
+
+## The key file cannot be read (its mode or owner) or written (`500`).
+KIND_LOGIN_STORAGE = "login.storage"
+
 ## The kinds, for `Protocol.wire_shape`.
 def shape() -> List[String]
   [
@@ -51,5 +57,7 @@ def shape() -> List[String]
     KIND_APPROVAL_NOT_FOUND,
     KIND_APPROVAL_RESOLVED,
     KIND_SHELL_DENIED,
+    KIND_LOGIN_REJECTED,
+    KIND_LOGIN_STORAGE,
   ]
 end

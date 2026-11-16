@@ -4,7 +4,8 @@ import Protocol from "pkg/protocol/protocol"
 
 KIND_COMMAND = "client.command"
 NAMES = [
-  "/new", "/resume", "/tree", "/fork", "/clone", "/model", "/thinking", "/compact", "/stop", "/cost", "/help", "/quit",
+  "/new", "/resume", "/tree", "/fork", "/clone", "/model", "/thinking", "/compact", "/stop", "/cost", "/login",
+  "/logout", "/help", "/quit",
 ]
 HELP = [
   "/new                       a new session in this folder",
@@ -16,6 +17,8 @@ HELP = [
   "                           a model the session's provider lists stays on it: openrouter/anthropic/x forces one",
   "/thinking [low|medium|high|default]  the thinking level, or change it",
   "/compact                   fold the history into a summary now",
+  "/login [PROVIDER]          set up a provider with its key (finn tui); alone: pick one",
+  "/logout [PROVIDER]         remove a stored key; alone: every one",
   "/stop                      stop the running turn",
   "/help                      this list",
   "/quit                      leave",
@@ -41,6 +44,10 @@ enum Command
   Stop
   ## The cost of the session, once the model catalog gives prices (#88).
   Cost
+  ## Picks a provider without an argument; then asks for its key.
+  Login(Optional[String])
+  ## Every stored key without an argument.
+  Logout(Optional[String])
   Help
   Quit
 end
@@ -146,6 +153,8 @@ def command(name: String, argument: String) -> Result[Command]
     "/compact" -> bare(Command.Compact, name, argument)
     "/stop" -> bare(Command.Stop, name, argument)
     "/cost" -> bare(Command.Cost, name, argument)
+    "/login" -> ok(Command.Login(try provider(argument)))
+    "/logout" -> ok(Command.Logout(try provider(argument)))
     "/help" -> bare(Command.Help, name, argument)
     # Only `/quit` is left of NAMES.
     _ -> bare(Command.Quit, name, argument)
@@ -162,6 +171,13 @@ def given(argument: String) -> Optional[String]
   return none if argument == ""
 
   some(argument)
+end
+
+# One word: a key typed after the name would be shown and kept as the line.
+def provider(argument: String) -> Result[Optional[String]]
+  return error("give the provider alone: the key is asked for next", kind: KIND_COMMAND) if argument.include?(" ")
+
+  ok(given(argument))
 end
 
 def model(argument: String) -> Result[Command]

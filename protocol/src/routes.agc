@@ -3,6 +3,7 @@
 HEALTH_PATH = "/v1/health"
 SESSIONS_PATH = "/v1/sessions"
 PROVIDERS_PATH = "/v1/providers"
+AUTH_PATH = "/v1/auth"
 
 ## The header a client sends to resume an event stream.
 LAST_EVENT_ID_HEADER = "Last-Event-ID"
@@ -29,12 +30,16 @@ def fork_path(session_id: String) -> String = "#{session_path(session_id)}/fork"
 
 def shell_path(session_id: String) -> String = "#{session_path(session_id)}/shell"
 
+## A login to a provider (`POST`), or its logout (`DELETE`).
+def auth_path(provider: String) -> String = "#{AUTH_PATH}/#{provider}"
+
 ## The paths and the header, for `Protocol.wire_shape`.
 def shape() -> List[String]
   [
     HEALTH_PATH,
     SESSIONS_PATH,
     PROVIDERS_PATH,
+    AUTH_PATH,
     LAST_EVENT_ID_HEADER,
     events_path("ID"),
     messages_path("ID"),
@@ -45,5 +50,6 @@ def shape() -> List[String]
     branch_path("ID"),
     fork_path("ID"),
     shell_path("ID"),
+    auth_path("P"),
   ]
 end

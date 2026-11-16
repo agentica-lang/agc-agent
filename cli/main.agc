@@ -18,6 +18,7 @@ def dispatch(command: Args.Command) -> Void
     Args.Command.Help(text) -> puts(text)
     Args.Command.Run(options) -> finish(App.run(options))
     Args.Command.Delete(options, id) -> finish(App.delete(options, id))
+    Args.Command.Logout(options, name) -> finish(App.logout(options, name))
   end
 end
 

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- `finn login` and `/login` in `finn tui` set up a provider: pick it (the first start offers it), type its key hidden, and the server checks it with `GET /models` at the provider and stores it in `~/.config/finn/auth.json` (mode 0600; a file others may read is not used); its key variable still wins. `anthropic` takes an API key too; Claude Pro/Max and ChatGPT are listed as coming. `finn logout` and `/logout` remove stored keys (`GET /v1/auth`, `POST` and `DELETE /v1/auth/PROVIDER`).
 - Providers by name: `local` (FINN_BASE_URL) and `anthropic`, the presets openai, fireworks, openrouter, groq and deepseek once their key variable is set, and custom ones under `providers` in the config file; `FINN_PROVIDER` or `finn serve --provider` picks the default, `finn --provider` and `finn tui --provider` a new session's, and a session keeps its provider (`GET /v1/providers`, `provider` in `POST` and `PATCH /v1/sessions`); one whose provider is no longer offered still opens and names the key to set.
 - `/model provider/model` moves the session to another provider; in `finn tui`, `/model` alone opens a picker of every provider's models, and the status line shows `(provider) model`.
 - `finn chat` and `finn tui` have `/tree` (go back before an earlier message, or on after an answer, in the same session), `/fork` (a new session from a message) and `/clone` (a copy of the session); `finn tui` picks from a list, and the message gone back before waits in the prompt.
