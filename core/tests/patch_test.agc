@@ -128,22 +128,64 @@ def test_bad_patches_are_refused() -> Result[Void]
   Test.eq([files, [ok(new.to_s)]], [[ok("one\n"), ok("two\n")], [ok("false")]])
 end
 
-# A write that fails midway puts back the files written before it.
-def test_a_failed_write_restores_the_files() -> Result[Void]
+# A write or a delete that fails midway puts back the files written before it, removes the files and folders it
+# added, and gives a deleted file back with its mode.
+def test_a_failed_step_restores_the_files() -> Result[Void]
   dir = try fresh()
   ctx = try plain(dir)
   try File.write_text("#{dir}/a.txt", "one\n")
+  try File.write_text("#{dir}/run.sh", "echo hi\n")
+  _ = try H.run("chmod", ["754", "#{dir}/run.sh"])
   try Dir.mkdir("#{dir}/ro")
+  try File.write_text("#{dir}/ro/keep.txt", "keep\n")
   _ = try H.run("chmod", ["555", "#{dir}/ro"])
   writable = File.write_text("#{dir}/ro/probe", "x").ok?
-  out = run(ctx, "*** Begin Patch\n*** Update File: a.txt\n-one\n+ONE\n*** Add File: ro/new.txt\n+x\n*** End Patch")
-  a = File.read_text("#{dir}/a.txt")
+  changes = "*** Update File: a.txt\n-one\n+ONE\n*** Add File: new/deep/x.txt\n+x\n*** Delete File: run.sh\n"
+  outputs = [
+    run(ctx, "*** Begin Patch\n#{changes}*** Add File: ro/new.txt\n+x\n*** End Patch"),
+    run(ctx, "*** Begin Patch\n#{changes}*** Delete File: ro/keep.txt\n*** End Patch"),
+  ]
+
+  files = [File.read_text("#{dir}/a.txt"), File.read_text("#{dir}/run.sh"), File.read_text("#{dir}/ro/keep.txt")]
+  mode = (try File.stat("#{dir}/run.sh")).mode
+  entries = Dir.list(dir)
   _ = H.run("chmod", ["755", "#{dir}/ro"])
   _ = Path.remove(dir)
   return ok() if writable
 
-  try Test.assert(out.is_error and out.text.include?("no file was changed"), out.text)
-  Test.eq(a, ok("one\n"))
+  try Test.eq(outputs.select { |o| not (o.is_error and o.text.include?("no file was changed")) }, [])
+  try Test.eq(files, [ok("one\n"), ok("echo hi\n"), ok("keep\n")])
+  try Test.eq(mode, 0o754)
+  Test.eq(entries, ok(["a.txt", "ro", "run.sh"]))
+end
+
+# The caps that keep one call short: the size of the patch, the old lines of a change, and the line comparisons of
+# the search, counted over the whole patch, so files that each fit can still be too much together.
+def test_a_patch_over_a_cap_is_refused() -> Result[Void]
+  dir = try fresh()
+  ctx = try plain(dir)
+  long = (0...2000).map { |i| "l#{i}" }
+  names = ["f0.txt", "f1.txt", "f2.txt"]
+  for name in names
+    try File.write_text("#{dir}/#{name}", "#{long.join("\n")}\n")
+  end
+
+  tail = "#{long.drop(1400).take(599).map { |line| " #{line}" }.join("\n")}\n-l1999\n+END"
+  each = names.map { |name| "*** Update File: #{name}\n#{tail}" }
+  many = (0..1000).map { |_i| "-x" }.join("\n")
+  outputs = [
+    run(ctx, "*** Begin Patch\n*** Add File: big.txt\n+#{"x" * 1_048_576}\n*** End Patch"),
+    run(ctx, update("f0.txt", many)),
+    run(ctx, "*** Begin Patch\n#{each.join("\n")}\n*** End Patch"),
+  ]
+
+  untouched = names.map { |name| File.read_text("#{dir}/#{name}") == ok("#{long.join("\n")}\n") }
+  one = run(ctx, "*** Begin Patch\n#{each.first}\n*** End Patch")
+  _ = Path.remove(dir)
+  wanted = ["is longer than 1048576 characters", "more than 1000 old lines", "more than 2000000 line comparisons"]
+  try Test.eq((0...3).select { |i| not (outputs[i].is_error and outputs[i].text.include?(wanted[i])) }, [])
+  try Test.eq(untouched, [true, true, true])
+  Test.eq(one.is_error, false)
 end
 
 # Each path decides as `edit_file` would: a path out of the folder or denied refuses the patch, `.git` asks.
@@ -161,11 +203,12 @@ def test_each_path_of_a_patch_is_approved_as_an_edit() -> Result[Void]
   Test.eq(asked, Tools.Verdict.Ask)
 end
 
-# An added file and a move target are writes, a deleted file asks unless an `apply_patch` rule allows it.
+# An added file and a move target are writes (also denied by a deny rule of `edit_file`), a deleted file asks unless an
+# `apply_patch` rule allows it.
 def test_writes_and_deletes_follow_their_own_rules() -> Result[Void]
   dir = try fresh()
   try File.write_text("#{dir}/a.txt", "one\n")
-  edits = try Approval.parse_rules(["edit_file(*)", "write_file(*)"], ["write_file(secret*)"])
+  edits = try Approval.parse_rules(["edit_file(*)", "write_file(*)"], ["write_file(secret*)", "edit_file(frozen*)"])
   ctx = try Tools.context(dir, ->(_n: String) { error("unset") }, edits)
   patches = [
     "*** Add File: secret.txt\n+x",
@@ -173,6 +216,7 @@ def test_writes_and_deletes_follow_their_own_rules() -> Result[Void]
     "*** Delete File: a.txt",
     "*** Add File: b.txt\n+x",
     "*** Update File: a.txt\n-one\n+ONE",
+    "*** Add File: frozen.txt\n+x",
   ]
 
   verdicts = patches.map { |p| Tools.verdict(ctx, "apply_patch", input("*** Begin Patch\n#{p}\n*** End Patch")) }
@@ -183,7 +227,7 @@ def test_writes_and_deletes_follow_their_own_rules() -> Result[Void]
     verdicts.push(removed),
     [
       Tools.Verdict.Deny, Tools.Verdict.Deny, Tools.Verdict.Ask, Tools.Verdict.Allow, Tools.Verdict.Allow,
-      Tools.Verdict.Allow,
+      Tools.Verdict.Deny, Tools.Verdict.Allow,
     ],
   )
 end

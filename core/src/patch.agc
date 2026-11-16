@@ -16,8 +16,8 @@ MOVE = "*** Move to: "
 END_OF_FILE = "*** End of File"
 MAX_PATCH_CHARS = 1_048_576
 MAX_CHUNK_LINES = 1000
-## The most line comparisons one chunk's search may take, so a patch cannot hold the session for long.
-MAX_SEEK = 20_000_000
+## The most line comparisons the search of a whole patch may take, so a patch cannot hold the session for long.
+MAX_SEARCH = 2_000_000
 
 DESCRIPTION = <<~TEXT
   Add, delete, update or move files with a patch:
@@ -33,7 +33,8 @@ DESCRIPTION = <<~TEXT
   +an added line
   *** End Patch
   `@@ text` names a line before the change, to tell repeated lines apart; give about 3 lines of context around
-  each change. `*** Move to:` is optional. Paths are relative to the session folder.
+  each change. A change of only + lines goes right after its `@@ text` line, or at the end of the file after a bare
+  `@@`. `*** Move to:` is optional. Paths are relative to the session folder.
 TEXT
 
 ## The grammar of the patch, for a model API that takes a custom tool with a Lark grammar (OpenAI Responses).
@@ -131,32 +132,42 @@ def combined(verdicts: List[Approval.Verdict]) -> Approval.Verdict
   Approval.Verdict.Allow
 end
 
-## Applies the patch whole: every hunk is checked first, and when a write fails the files written before it get their
-## old content back.
+## Applies the patch whole: every hunk is checked first, then the files are written, and the deleted files are set
+## aside last and removed once every step worked. When a step fails, every file and new folder is put back.
 def apply(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   hunks = try parse(try args(input))
   _ = try paths(ctx, hunks)
   changes: List[Change] = []
+  left = MAX_SEARCH
   for hunk in hunks
-    changes = changes.push(try planned(ctx, hunk))
+    plan = try planned(ctx, hunk, left)
+    changes = changes.push(plan.change)
+    left = left - plan.spent
   end
 
-  before: List[Saved] = []
+  undo = Undo(saved: [], folders: new_folders(ctx.root, changes), aside: [])
   for change in changes
-    for path in option_list(change.write) + option_list(change.remove)
-      before = before.push(Saved(path: path, content: present(path)))
+    for path in option_list(change.write)
+      undo = undo.with(saved: undo.saved.push(Saved(path: path, content: present(path))))
+      case written(path, change.content)
+        ok(_) -> nil
+        error(e) -> return failed(ctx.root, e.message, undo)
+      end
     end
   end
 
   for change in changes
-    case done(change)
-      ok(_) -> nil
-      error(e) ->
-        restored = restore(before)
-        return error("#{e.message}; no file was changed") if restored.ok?
-
-        return error("#{e.message}; restoring the files failed too: #{restored.message}")
+    for path in option_list(change.remove)
+      aside = "#{Sandbox.parent(path)}/.#{path.split("/").last}.finn-patch-#{Random.int(0, 999_999_999)}"
+      case Path.rename(path, aside)
+        ok(_) -> undo = undo.with(aside: undo.aside.push(Aside(path: path, aside: aside)))
+        error(e) -> return failed(ctx.root, e.message, undo)
+      end
     end
+  end
+
+  for each in undo.aside
+    _ = Path.remove(each.aside)
   end
 
   ok("Done. The files changed:\n#{changes.map { |change| change.summary }.join("\n")}")
@@ -205,20 +216,24 @@ def parse(text: String) -> Result[List[Hunk]]
   ok(hunks)
 end
 
-## The lines of a file after the chunks of an update, or an error when a chunk's lines are not found.
-def updated(lines: List[String], chunks: List[Chunk], path: String) -> Result[List[String]]
+## The lines of a file after the chunks of an update, and the line comparisons its search took (at most `budget`), or
+## an error when a chunk's lines are not found.
+def updated(lines: List[String], chunks: List[Chunk], path: String, budget: Int) -> Result[Placed]
   at = 0
+  spent = 0
   edits: List[Edit] = []
   for chunk in chunks
     for context in option_list(chunk.context)
-      found = seek(lines, [context], at, false)
-      return error("#{path}: the context line is not found: #{context}") if found.none?
+      search = try seek(lines, [context], at, false, budget - spent)
+      spent = spent + search.spent
+      return error("#{path}: the context line is not found: #{context}") if search.at.none?
 
-      at = found.unwrap! + 1
+      at = search.at.unwrap! + 1
     end
 
     return error("#{path}: a change has more than #{MAX_CHUNK_LINES} old lines") if chunk.old.size > MAX_CHUNK_LINES
 
+    # Codex appends a change of only + lines at the end of the file; here it goes after its context line.
     if chunk.old.empty?
       start = lines.size
       if chunk.context.some?
@@ -231,24 +246,23 @@ def updated(lines: List[String], chunks: List[Chunk], path: String) -> Result[Li
 
     old = chunk.old
     new = chunk.new
-    if lines.size * old.size > MAX_SEEK
-      return error("#{path}: the file is too long to place a change of #{old.size} lines")
-    end
-
-    found = seek(lines, old, at, chunk.at_end)
-    if found.none? and old.last == ""
+    search = try seek(lines, old, at, chunk.at_end, budget - spent)
+    spent = spent + search.spent
+    if search.at.none? and old.last == ""
       old = old.take(old.size - 1)
       if not new.empty? and new.last == ""
         new = new.take(new.size - 1)
       end
 
-      found = seek(lines, old, at, chunk.at_end)
+      search = try seek(lines, old, at, chunk.at_end, budget - spent)
+      spent = spent + search.spent
     end
 
-    return error("#{path}: these lines are not found:\n#{old.join("\n")}") if found.none?
+    return error("#{path}: these lines are not found:\n#{old.join("\n")}") if search.at.none?
 
-    edits = edits.push(Edit(start: found.unwrap!, size: old.size, new: new))
-    at = found.unwrap! + old.size
+    found = search.at.unwrap!
+    edits = edits.push(Edit(start: found, size: old.size, new: new))
+    at = found + old.size
   end
 
   # The edits by place, in order for the same place, applied from the end so each start still holds.
@@ -258,7 +272,7 @@ def updated(lines: List[String], chunks: List[Chunk], path: String) -> Result[Li
     out = out.take(edit.start) + edit.new + out.drop(edit.start + edit.size)
   end
 
-  ok(out)
+  ok(Placed(lines: out, spent: spent))
 end
 
 private
@@ -278,6 +292,34 @@ struct Saved
   path: String
   ## None when the file was not there.
   content: Optional[String]
+end
+
+## A deleted file, renamed out of the way until the patch is done, so a rollback gives it back with its mode.
+struct Aside
+  path: String
+  aside: String
+end
+
+struct Undo
+  saved: List[Saved]
+  ## The folders that the writes may create, deepest first.
+  folders: List[String]
+  aside: List[Aside]
+end
+
+struct Placed
+  lines: List[String]
+  spent: Int
+end
+
+struct Plan
+  change: Change
+  spent: Int
+end
+
+struct Search
+  at: Optional[Int]
+  spent: Int
 end
 
 enum Touch
@@ -410,18 +452,20 @@ def path_verdict(rules: Approval.Rules, t: Touched) -> Approval.Verdict
   Approval.Verdict.Ask
 end
 
-# What a hunk will do, checked against the files as they are now; nothing is written yet.
-def planned(ctx: Spec.Context, hunk: Hunk) -> Result[Change]
+# What a hunk will do, checked against the files as they are now, and the line comparisons its search took (at most
+# `budget`); nothing is written yet.
+def planned(ctx: Spec.Context, hunk: Hunk, budget: Int) -> Result[Plan]
   path = try Sandbox.resolve(ctx.root, hunk.path)
   relative = Sandbox.relative(ctx.root, path)
   case hunk.kind
     Kind.Add ->
       return error("#{relative} exists: update it instead") if File.lstat(path).ok?
 
-      ok(Change(write: some(path), content: text_of(hunk.lines, "\n"), remove: none, summary: "A #{relative}"))
+      add = Change(write: some(path), content: text_of(hunk.lines, "\n"), remove: none, summary: "A #{relative}")
+      ok(Plan(change: add, spent: 0))
     Kind.Delete ->
       _ = try read(path, relative)
-      ok(Change(write: none, content: "", remove: some(path), summary: "D #{relative}"))
+      ok(Plan(change: Change(write: none, content: "", remove: some(path), summary: "D #{relative}"), spent: 0))
     Kind.Update ->
       text = try read(path, relative)
       lines = text.split("\n").map { |line| trim_cr(line) }
@@ -429,30 +473,93 @@ def planned(ctx: Spec.Context, hunk: Hunk) -> Result[Change]
         lines = lines.take(lines.size - 1)
       end
 
-      content = text_of(try updated(lines, hunk.chunks, relative), line_end(text))
+      placed = try updated(lines, hunk.chunks, relative, budget)
+      content = text_of(placed.lines, line_end(text))
       case hunk.move_to
         some(to) ->
           moved = try Sandbox.resolve(ctx.root, to)
           shown = Sandbox.relative(ctx.root, moved)
           return error("#{shown} exists: the move would replace it") if File.lstat(moved).ok?
 
-          ok(Change(write: some(moved), content: content, remove: some(path), summary: "M #{relative} -> #{shown}"))
-        none -> ok(Change(write: some(path), content: content, remove: none, summary: "M #{relative}"))
+          change = Change(
+            write: some(moved),
+            content: content,
+            remove: some(path),
+            summary: "M #{relative} -> #{shown}",
+          )
+
+          ok(Plan(change: change, spent: placed.spent))
+        none ->
+          change = Change(write: some(path), content: content, remove: none, summary: "M #{relative}")
+          ok(Plan(change: change, spent: placed.spent))
       end
   end
 end
 
-def done(change: Change) -> Result[Void]
-  for path in option_list(change.write)
-    try Dir.mkdir(Sandbox.parent(path))
-    try File.write_text(path, change.content)
+def written(path: String, content: String) -> Result[Void]
+  try Dir.mkdir(Sandbox.parent(path))
+  File.write_text(path, content)
+end
+
+# The folders above the written files that are not there yet, inside the session folder, deepest first.
+def new_folders(root: String, changes: List[Change]) -> List[String]
+  out: List[String] = []
+  for change in changes
+    for path in option_list(change.write)
+      folder = Sandbox.parent(path)
+      while Sandbox.inside?(root, folder) and folder != root and not File.lstat(folder).ok?
+        if not out.include?(folder)
+          out = out.push(folder)
+        end
+
+        folder = Sandbox.parent(folder)
+      end
+    end
   end
 
-  for path in option_list(change.remove)
-    try Path.remove(path)
+  out.sort_by { |folder| 0 - folder.length }
+end
+
+def failed(root: String, message: String, undo: Undo) -> Result[String]
+  lost = rolled_back(undo).map { |path| Sandbox.relative(root, path) }
+  return error("#{message}; no file was changed") if lost.empty?
+
+  error("#{message}; these files could not be restored: #{lost.join(", ")}")
+end
+
+# Puts back the files and removes the new folders, going on past a step that fails; the paths it could not restore.
+def rolled_back(undo: Undo) -> List[String]
+  lost: List[String] = []
+  for each in undo.aside.reverse
+    if not Path.rename(each.aside, each.path).ok?
+      lost = lost.push(each.path)
+    end
   end
 
-  ok()
+  for each in undo.saved.reverse
+    restored = case each.content
+      some(text) -> File.write_text(each.path, text)
+      none -> gone(each.path)
+    end
+
+    if not restored.ok?
+      lost = lost.push(each.path)
+    end
+  end
+
+  for folder in undo.folders
+    if Dir.list(folder).unwrap_or(["?"]).empty? and not Path.remove(folder).ok?
+      lost = lost.push(folder)
+    end
+  end
+
+  lost
+end
+
+def gone(path: String) -> Result[Void]
+  return ok() if not File.lstat(path).ok?
+
+  Path.remove(path)
 end
 
 def read(path: String, relative: String) -> Result[String]
@@ -483,39 +590,32 @@ def present(path: String) -> Optional[String]
   end
 end
 
-def restore(saved: List[Saved]) -> Result[Void]
-  for each in saved.reverse
-    case each.content
-      some(text) -> try File.write_text(each.path, text)
-      none ->
-        if File.lstat(each.path).ok?
-          try Path.remove(each.path)
-        end
-    end
-  end
-
-  ok()
-end
-
 # Where `wanted` starts in `lines` from `from`: an exact match first, then one that ignores the spaces at the end of
-# each line, then at both ends. A change at the end of the file is looked for there first.
-def seek(lines: List[String], wanted: List[String], from: Int, at_end: Bool) -> Optional[Int]
-  return none if wanted.size > lines.size
+# each line, then at both ends. A change at the end of the file is looked for there first. Each place tried counts
+# `wanted.size` comparisons, and more than `budget` is an error.
+def seek(lines: List[String], wanted: List[String], from: Int, at_end: Bool, budget: Int) -> Result[Search]
+  return ok(Search(at: none, spent: 0)) if wanted.size > lines.size
 
+  over = "the patch needs more than #{MAX_SEARCH} line comparisons to place its changes"
+  spent = 0
   last_start = lines.size - wanted.size
   if at_end and last_start >= from
     for compare in [0, 1, 2]
-      return some(last_start) if same?(lines, wanted, last_start, compare)
+      spent = spent + wanted.size
+      return error(over) if spent > budget
+      return ok(Search(at: some(last_start), spent: spent)) if same?(lines, wanted, last_start, compare)
     end
   end
 
   for compare in [0, 1, 2]
     for start in from..last_start
-      return some(start) if same?(lines, wanted, start, compare)
+      spent = spent + wanted.size
+      return error(over) if spent > budget
+      return ok(Search(at: some(start), spent: spent)) if same?(lines, wanted, start, compare)
     end
   end
 
-  none
+  ok(Search(at: none, spent: spent))
 end
 
 def same?(lines: List[String], wanted: List[String], start: Int, compare: Int) -> Bool
