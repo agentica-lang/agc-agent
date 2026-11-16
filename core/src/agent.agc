@@ -42,6 +42,8 @@ struct Turn
   link: Link
   ## Fields of every request in the format of the API.
   extra: Map[String, JSON.Value] = {}
+  ## Ask the provider for its prompt cache: the system prompt and the tools, and the conversation so far.
+  cache: Bool = false
   ## `window` 0 asks the provider for it.
   compaction: Compaction.Settings
   ## The context of the session's last call.
@@ -166,7 +168,15 @@ end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   tools = offered(turn).map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }
-  request = LLM.Request(model: turn.model, system: turn.system, messages: messages, tools: tools, extra: turn.extra)
+  request = LLM.Request(
+    model: turn.model,
+    system: turn.system,
+    messages: messages,
+    tools: tools,
+    extra: turn.extra,
+    cache: turn.cache,
+  )
+
   stream = try LLM.stream(turn.provider, request)
   while true
     case stream.events.recv(60000)

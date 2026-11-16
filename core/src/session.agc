@@ -45,6 +45,8 @@ struct Setup
   api_key: String = ""
   extra: Map[String, JSON.Value] = {}
   code_mode: Optional[CodeMode.Settings] = none
+  ## Ask the provider for its prompt cache.
+  cache: Bool = false
 end
 
 enum Msg
@@ -435,6 +437,7 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     ctx: setup.ctx,
     link: link,
     extra: setup.extra,
+    cache: setup.cache,
     compaction: Compaction.Settings(
       window: state.window,
       model: compact_model(setup),

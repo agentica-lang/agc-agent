@@ -266,6 +266,32 @@ def test_a_span_into_a_later_turn_keeps_its_task_after_the_summary() -> Result[V
   Test.eq(Compaction.span([user("only"), said("call"), result("1")]), none)
 end
 
+# The kept round loses its thinking blocks, which were bound to the history the fold replaced; its text and tool
+# call stay, and the thinking of the first task, before the fold, stays too (#81).
+def test_a_fold_drops_the_thinking_of_the_kept_messages() -> Result[Void]
+  thought = LLM.Block.Thinking(LLM.ThinkingPart(text: "t", replay: some(JSON.from("signed"))))
+  call = LLM.Block.ToolUse(LLM.ToolCall(id: "c", name: "read_file", arguments: "{}", input: JSON.object({})))
+  thinking = ->(text: String) {
+    LLM.Message(role: LLM.Role.Assistant, content: [thought, said(text).content[0], call])
+  }
+
+  history = [
+    user("first"),
+    thinking.call("hi"),
+    user("second"),
+    thinking.call("one"),
+    result("1"),
+    thinking.call("two"),
+    result("2"),
+  ]
+
+  span = try Compaction.span(history).to_result("no span")
+  folded = Compaction.apply(history, span.with(summary: "S"))
+  try Test.eq(folded[1], said(Compaction.summary_text("S")))
+  try Test.eq(folded[3].content, [said("two").content[0], call])
+  Test.eq(folded.take(1), history.take(1))
+end
+
 # A summary that fails, comes back empty or is cut at the token limit is an `error` event; the turn goes on with its
 # history whole and does not
 # ask again, and a later turn asks again.

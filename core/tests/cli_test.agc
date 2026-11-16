@@ -24,21 +24,53 @@ def test_the_context_window_must_be_a_positive_number() -> Result[Void]
   Test.eq(options.props_url, "http://127.0.0.1:8080/props")
 end
 
-def test_the_model_api_is_chat_completions_or_responses() -> Result[Void]
+def test_the_model_api_is_chat_completions_responses_or_anthropic() -> Result[Void]
   for api in ["", "openai", "openai_responses"]
     try Config.from_env(->(name) { api_env(name, api) })
   end
 
-  try Test.error?(Config.from_env(->(name) { api_env(name, "anthropic") }))
+  try Test.error?(Config.from_env(->(name) { api_env(name, "gemini") }))
   chat = try Config.from_env(->(name) { api_env(name, "") })
   try Test.eq(chat.api, "openai")
   responses = try Config.from_env(->(name) { api_env(name, "openai_responses") })
   try Test.eq(responses.api, "openai_responses")
   names = responses.apis.keys.map { |name| "#{name} #{responses.apis[name].provider.name}" }
-  try Test.eq(names.sort, ["openai openai_chat", "openai_responses openai_responses"])
+  try Test.eq(names.sort, ["anthropic anthropic", "openai openai_chat", "openai_responses openai_responses"])
   try Test.eq(JSON.encode(JSON.object(responses.apis["openai"].extra)), "{}")
   stateless = responses.apis["openai_responses"].extra
   Test.eq(JSON.encode(JSON.object(stateless)), "{\"include\":[\"reasoning.encrypted_content\"],\"store\":false}")
+end
+
+# The Anthropic credential: `ANTHROPIC_API_KEY`, else `ANTHROPIC_AUTH_TOKEN`, else, only when `FINN_API` is
+# `anthropic`, the token of `ant`; with none, `FINN_API=anthropic` is an error that does not show what `ant` printed.
+# Anthropic never gets `FINN_API_KEY`, and its default model is Claude Opus 5.5.
+def test_the_anthropic_credential_comes_in_its_order() -> Result[Void]
+  both = {"FINN_API": "anthropic", "ANTHROPIC_API_KEY": "k", "ANTHROPIC_AUTH_TOKEN": "t", "FINN_API_KEY": "openai"}
+  token = {"FINN_API": "anthropic", "ANTHROPIC_AUTH_TOKEN": "t"}
+  bare = {"FINN_API": "anthropic", "FINN_API_KEY": "openai"}
+  given: Fn[Result[String]] = -> { ok("from-ant") }
+  refused: Fn[Result[String]] = -> { error("ant auth print-credentials failed: run ant auth login") }
+  never: Fn[Result[String]] = -> { error("ant was asked") }
+  try Test.eq(Config.anthropic_access(->(n) { from_map(both, n) }, true, never), ok(access(api_key: "k")))
+  try Test.eq(Config.anthropic_access(->(n) { from_map(token, n) }, true, never), ok(access(auth_token: "t")))
+  try Test.eq(Config.anthropic_access(->(n) { from_map(bare, n) }, true, given), ok(access(auth_token: "from-ant")))
+  try Test.eq(Config.anthropic_access(->(n) { from_map(bare, n) }, false, never), ok(access()))
+  failed = Config.from_env_with(->(n) { located(bare, n) }, refused)
+  try Test.assert(not failed.ok? and failed.message.include?("ANTHROPIC_API_KEY"), failed.message)
+  options = try Config.from_env_with(->(n) { located(token, n) }, never)
+  try Test.eq([options.api, options.model], ["anthropic", LLM.ANTHROPIC_MODEL])
+  Test.eq(options.apis["anthropic"].cache, true)
+end
+
+def access(api_key: String = "", auth_token: String = "") -> Config.AnthropicAccess
+  Config.AnthropicAccess(url: LLM.ANTHROPIC_URL, api_key: api_key, auth_token: auth_token, inherit: false)
+end
+
+def located(values: Map[String, String], name: String) -> Result[String]
+  return ok("/state") if name == "FINN_STATE_DIR"
+  return ok("/data") if name == "FINN_DATA_DIR"
+
+  from_map(values, name)
 end
 
 # The names of before Finn still work: `AGC_AGENT_` variables, and an `agc-agent` folder while no `finn` folder

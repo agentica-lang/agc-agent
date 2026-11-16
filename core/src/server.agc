@@ -47,6 +47,13 @@ SSE_HEADERS = [
 struct ModelApi
   provider: LLM.Provider
   extra: Map[String, JSON.Value] = {}
+  ## The model of a session that picks this API without a model, when it is not the server's API; empty for the
+  ## server's model.
+  model: String = ""
+  ## Ask for the prompt cache (Anthropic).
+  cache: Bool = false
+  ## A local server whose `/props` may give the window (llama-server).
+  local: Bool = true
 end
 
 struct Options
@@ -332,7 +339,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   header = Store.Header(
     id: "s#{registry.sessions.size + 1}-#{OpenSSL.Random.hex(4)}",
     cwd: context.root,
-    model: request.model.unwrap_or(options.model),
+    model: request.model.unwrap_or(default_model(options, api)),
     created_ms: Time.now_ms,
     system: some(system_prompt(context.root)),
     api: some(api),
@@ -455,9 +462,10 @@ def entry(
     file: file,
     window: options.context_window.unwrap_or(0),
     compact_model: options.compact_model,
-    props_url: options.props_url,
+    props_url: if_local(api, options.props_url),
     api_key: options.api_key,
     extra: api.extra,
+    cache: api.cache,
     code_mode: options.code_mode,
   )
 
@@ -469,6 +477,19 @@ def entry(
       session: some(Session.start(setup, saved)),
     ),
   )
+end
+
+# A session on another API than the server's takes that API's model, when it names one.
+def default_model(options: Options, api: String) -> String
+  return options.model if api == options.api or options.apis[api].model == ""
+
+  options.apis[api].model
+end
+
+def if_local(api: ModelApi, url: String) -> String
+  return "" if not api.local
+
+  url
 end
 
 def summary_of(options: Options, header: Store.Header) -> Protocol.SessionSummary

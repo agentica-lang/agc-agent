@@ -106,14 +106,15 @@ def summarize(
 end
 
 ## The history with the span as one assistant message. When a round of the running turn follows, a user message goes
-## between them, so the roles still take turns: the task of the turn when it was folded, else `GO_ON`.
+## between them, so the roles still take turns: the task of the turn when it was folded, else `GO_ON`. The kept
+## messages lose their thinking blocks, which were bound to the history the fold replaced.
 def apply(history: List[LLM.Message], compaction: Compaction) -> List[LLM.Message]
   summary = LLM.Message(
     role: LLM.Role.Assistant,
     content: [LLM.Block.Text(LLM.TextPart(text: summary_text(compaction.summary)))],
   )
 
-  kept = history.drop(compaction.to)
+  kept = history.drop(compaction.to).map { |message| without_thinking(message) }
   folded = history.take(compaction.to).drop(compaction.from)
   start = history.take(compaction.from).push(summary)
   return start + kept if kept.empty? or kept[0].role != LLM.Role.Assistant
@@ -125,6 +126,22 @@ def apply(history: List[LLM.Message], compaction: Compaction) -> List[LLM.Messag
   end
 
   start.push(bridge) + kept
+end
+
+# A thinking block is bound to the history before it (Anthropic checks it): after a fold that history is gone, so the
+# kept messages go on without theirs; their text and tool calls stay.
+def without_thinking(message: LLM.Message) -> LLM.Message
+  kept = message.content.select { |block| not thinking?(block) }
+  return message if kept.empty?
+
+  message.with(content: kept)
+end
+
+def thinking?(block: LLM.Block) -> Bool
+  case block
+    LLM.Block.Thinking(_) -> true
+    _ -> false
+  end
 end
 
 def summary_text(summary: String) -> String = "Summary of the session so far:\n\n#{summary}"
