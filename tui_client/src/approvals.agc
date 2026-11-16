@@ -5,7 +5,7 @@
 
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
-import Transcript from "transcript"
+import Layout from "panel"
 import Width from "width"
 
 GUARD_MS = 300
@@ -20,11 +20,6 @@ struct Panel
   shown_at: Int = 0
   ## The approval whose answer is being sent.
   answering: Optional[String] = none
-end
-
-struct Row
-  text: String
-  style: TUI.Style
 end
 
 ## A panel after an answer was sent, and the note to show.
@@ -93,19 +88,13 @@ end
 
 ## The panel in at most `room` rows: what the call is, what it would write (MAX_DETAIL_ROWS at most), and the keys.
 ## The keys stay when rows are cut; the detail goes first, then the head.
-def rows(panel: Panel, width: Int, room: Int) -> List[Row]
-  return [] if panel.pending.empty? or room <= 0
+def rows(panel: Panel, width: Int, room: Int) -> List[Layout.Row]
+  return [] if panel.pending.empty?
 
   request = panel.pending[0]
-  strong = TUI.Style(fg: TUI.Color.Yellow, attrs: [TUI.Attr.Bold])
-  keys = Transcript.wrap(keys_text(panel), width).map { |text| Row(text: text, style: strong) }
-  keys = keys.drop([keys.size - room, 0].max.unwrap!)
-  left = room - keys.size
-  head = Transcript.wrap("approval #{request.approval_id} · #{request.tool}: #{request.preview}", width)
-  head_rows = head.take(left).map { |text| Row(text: text, style: strong) }
-  left = left - head_rows.size
-  detail_rows = detail(request.detail, width, [left, MAX_DETAIL_ROWS].min.unwrap!)
-  head_rows + detail_rows + keys
+  head = "approval #{request.approval_id} · #{request.tool}: #{request.preview}"
+  body = ->(left: Int) { detail(request.detail, width, [left, MAX_DETAIL_ROWS].min.unwrap!) }
+  Layout.fit(head, keys_text(panel), body, width, room)
 end
 
 private
@@ -150,7 +139,7 @@ def keys_text(panel: Panel) -> String
   "Tab to answer (a: #{session}) · ^Y allow · ^N deny#{more}"
 end
 
-def detail(text: String, width: Int, room: Int) -> List[Row]
+def detail(text: String, width: Int, room: Int) -> List[Layout.Row]
   lines = text.split("\n").select { |line| line != "" }
   return [] if room <= 0
 
@@ -159,10 +148,10 @@ def detail(text: String, width: Int, room: Int) -> List[Row]
     shown = lines.take(room - 1)
   end
 
-  rows = shown.map { |line| Row(text: Width.cut("  #{line}", width)[0], style: detail_style(line)) }
+  rows = shown.map { |line| Layout.Row(text: Width.cut("  #{line}", width)[0], style: detail_style(line)) }
   return rows if shown.size == lines.size
 
-  rows.push(Row(text: Width.cut("  … #{lines.size - shown.size} more lines", width)[0], style: TUI.Style()))
+  rows.push(Layout.Row(text: Width.cut("  … #{lines.size - shown.size} more lines", width)[0], style: TUI.Style()))
 end
 
 def detail_style(line: String) -> TUI.Style

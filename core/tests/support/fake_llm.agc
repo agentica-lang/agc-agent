@@ -16,6 +16,8 @@ struct Reply
   piece_bytes: Int = 0
   ## Announces a longer body than it sends, then closes: a cut connection.
   cut: Bool = false
+  ## The answer waits this long first.
+  delay_ms: Int = 0
 end
 
 ## A request the fake got.
@@ -108,6 +110,7 @@ def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Res
   text = try String.from_bytes(bytes)
   try script.seen.send(Seen(method: request.method, path: request.path, headers: request.headers, body: text), WAIT_MS)
   reply = script.replies.recv(0).unwrap_or(Reply(status: 500, body: "{\"error\": \"no reply left\"}".bytes))
+  Task.sleep(reply.delay_ms)
   if reply.piece_bytes == 0 and not reply.cut
     return ok(HTTP.Answer.Whole(HTTP.Response(status: reply.status, headers: reply.headers, body: reply.body)))
   end

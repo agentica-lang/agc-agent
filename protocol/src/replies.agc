@@ -27,11 +27,15 @@ struct MessageAccepted
 end
 
 ## `api` is the model API of the session, by the name the server gives it.
+## `model` is the one the session uses now, `updated_s` when its file last changed (Unix seconds), and `title` its first
+## user message ("" before one).
 struct SessionSummary
   id: String
   cwd: String
   model: String
   api: String
+  updated_s: Int = 0
+  title: String = ""
 end
 
 ## The answer of `GET /v1/sessions`.
@@ -63,6 +67,8 @@ struct Session
   turn_from_event_id: Optional[Int]
   pending_approvals: List[Events.ApprovalRequested]
   history: List[Message]
+  ## The thinking level of the session's calls; none leaves it to the model.
+  effort: Optional[String] = none
 end
 
 ## `server.json` in the state folder, which only its user can read: where the server listens and its Bearer token.
@@ -118,6 +124,7 @@ def encode_session(reply: Session) -> String
       turn_from_event_id: reply.turn_from_event_id,
       pending_approvals: reply.pending_approvals,
       history: history,
+      effort: reply.effort,
     ),
   )
 end
@@ -142,6 +149,7 @@ def decode_session(text: String) -> Result[Session]
       turn_from_event_id: wire.turn_from_event_id,
       pending_approvals: wire.pending_approvals,
       history: history,
+      effort: wire.effort,
     ),
   )
 end
@@ -162,6 +170,7 @@ struct SessionWire
   turn_from_event_id: Optional[Int]
   pending_approvals: List[Events.ApprovalRequested]
   history: List[MessageWire]
+  effort: Optional[String] = none
 end
 
 def check_turn(wire: SessionWire) -> Result[Void]

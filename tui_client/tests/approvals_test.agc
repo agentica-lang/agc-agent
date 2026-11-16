@@ -1,6 +1,7 @@
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Approvals from "../src/approvals"
+import Layout from "../src/panel"
 
 AFTER = 1000 + Approvals.GUARD_MS
 
@@ -109,4 +110,4 @@ def char(c: String) -> TUI.Event = TUI.Event.Char(c, TUI.Mods())
 
 def ctrl(c: String) -> TUI.Event = TUI.Event.Key(TUI.Key.Ctrl(c), TUI.Mods(ctrl: true))
 
-def texts(rows: List[Approvals.Row]) -> List[String] = rows.map { |row| row.text }
+def texts(rows: List[Layout.Row]) -> List[String] = rows.map { |row| row.text }
