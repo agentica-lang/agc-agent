@@ -88,7 +88,13 @@ end
 
 def test_requests_round_trip() -> Result[Void]
   new_session = try decode_fixture("new_session", &Protocol.decode_new_session, &Protocol.encode_new_session)
-  expected = Protocol.NewSession(cwd: "/home/ana/project", model: some("qwen2.5-0.5b"), api: some("openai_responses"))
+  expected = Protocol.NewSession(
+    cwd: "/home/ana/project",
+    model: some("qwen2.5-0.5b"),
+    api: some("openai_responses"),
+    provider: some("fireworks"),
+  )
+
   try Test.eq(new_session, expected)
   try Test.eq(Protocol.decode_new_session(Protocol.encode_new_session(new_session)), ok(new_session))
 
@@ -268,7 +274,7 @@ def test_routes() -> Result[Void]
 end
 
 def test_session_settings_round_trip_and_refuse_unknown_levels() -> Result[Void]
-  both = Protocol.UpdateSession(model: some("qwen3"), effort: some("high"))
+  both = Protocol.UpdateSession(provider: some("fireworks"), model: some("qwen3"), effort: some("high"))
   try Test.eq(Protocol.decode_update_session(Protocol.encode_update_session(both)), ok(both))
   try Test.eq(Protocol.decode_update_session("{\"effort\": \"low\"}"), ok(Protocol.UpdateSession(effort: some("low"))))
   try Test.eq(Protocol.decode_update_session("{}"), ok(Protocol.UpdateSession()))

@@ -27,6 +27,8 @@ struct Header
   system: Optional[String] = none
   ## The model API of the session, by its `FINN_API` name; none in a file made before the choice.
   api: Optional[String] = none
+  ## The provider of the session; none in a file made before providers.
+  provider: Optional[String] = none
 end
 
 struct Logged
@@ -53,14 +55,28 @@ struct Saved
   stripped: Bool = false
   ## The names that extensions noted in the session (the skills it loaded), in order.
   marks: List[String] = []
-  ## The model and the thinking level of the last `settings` record: what the session changed since its header.
+  ## The model, the thinking level, the provider and the model API of the last `settings` record: what the session
+  ## changed since its header (an older record has no provider and API).
   model: Optional[String] = none
   effort: Optional[String] = none
+  provider: Optional[String] = none
+  api: Optional[String] = none
 end
 
-## What a list of the sessions shows of one file: the model of its last `settings` record, and its first user message.
+## What a `settings` record changes.
+struct Settings
+  model: String
+  effort: Optional[String]
+  provider: String
+  api: String
+end
+
+## What a list of the sessions shows of one file: the model, provider and API of its last `settings` record, and its
+## first user message.
 struct Listing
   model: Optional[String] = none
+  provider: Optional[String] = none
+  api: Optional[String] = none
   title: String = ""
 end
 
@@ -85,6 +101,7 @@ def create(dir: String, header: Header) -> Result[String]
     "created_ms": JSON.from(header.created_ms),
     "system": JSON.from(header.system),
     "api": JSON.from(header.api),
+    "provider": JSON.from(header.provider),
   }
 
   written = File.write(handle, try line(fields))
@@ -150,9 +167,15 @@ def append_stripped(path: String) -> Result[Void] = append(path, {"type": JSON.f
 ## The model and thinking level the session uses from now on, also in the file beside it (0600, replaced whole). The
 ## record goes first: the session restores from it, and the side file only feeds the list of the sessions, so a side
 ## file that cannot be written leaves the list with the model before while the change holds.
-def append_settings(path: String, model: String, effort: Optional[String]) -> Result[Void]
-  try append(path, {"type": JSON.from("settings"), "model": JSON.from(model), "effort": JSON.from(effort)})
-  _ = write_side(settings_file(path), JSON.encode(JSON.object({"model": JSON.from(model)})))
+def append_settings(path: String, settings: Settings) -> Result[Void]
+  chosen = {
+    "model": JSON.from(settings.model),
+    "provider": JSON.from(settings.provider),
+    "api": JSON.from(settings.api),
+  }
+
+  try append(path, chosen.put("type", JSON.from("settings")).put("effort", JSON.from(settings.effort)))
+  _ = write_side(settings_file(path), JSON.encode(JSON.object(chosen)))
   ok()
 end
 
@@ -182,7 +205,15 @@ def reopen(path: String) -> Result[Void] = write(path, "\n")
 def listing(path: String) -> Result[Listing]
   start = try File.open(path, "read") do |handle| File.read_bytes(handle, TITLE_BYTES) end
   title = first_user(decoded(start))
-  ok(Listing(model: settings_model(path), title: title))
+  side = side_settings(path)
+  ok(
+    Listing(
+      model: side_field(side, "model"),
+      provider: side_field(side, "provider"),
+      api: side_field(side, "api"),
+      title: title,
+    ),
+  )
 end
 
 ## The first line of a file: the session, without reading the rest.
@@ -246,15 +277,14 @@ end
 
 private
 
-def settings_model(path: String) -> Optional[String]
-  text = File.read_text(settings_file(path)).unwrap_or("")
-  case JSON.parse(text)
-    ok(json) ->
-      case field(json, "model")
-        ok(model) -> some(model)
-        error(_) -> none
-      end
+# An empty object when the file is missing or broken.
+def side_settings(path: String) -> JSON.Value
+  JSON.parse(File.read_text(settings_file(path)).unwrap_or("")).unwrap_or(JSON.object({}))
+end
 
+def side_field(side: JSON.Value, name: String) -> Optional[String]
+  case field(side, name)
+    ok(value) -> some(value)
     error(_) -> none
   end
 end
@@ -359,6 +389,7 @@ def decode_header(json: JSON.Value) -> Result[Header]
       created_ms: try JSON.int(try JSON.get(json, "created_ms")),
       system: optional_string(json, "system"),
       api: optional_string(json, "api"),
+      provider: optional_string(json, "provider"),
     ),
   )
 end
@@ -422,7 +453,14 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
         return error("unknown effort #{level}") if not Protocol.EFFORTS.include?(level)
       end
 
-      ok(saved.with(model: some(try field(json, "model")), effort: effort))
+      ok(
+        saved.with(
+          model: some(try field(json, "model")),
+          effort: effort,
+          provider: optional_string(json, "provider"),
+          api: optional_string(json, "api"),
+        ),
+      )
     "answer" ->
       shown = Protocol.Message(role: Protocol.Role.Assistant, text: try field(json, "text"))
       ok(saved.with(shown: saved.shown.push(shown)))

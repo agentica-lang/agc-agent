@@ -510,6 +510,38 @@ def test_a_session_keeps_its_model_api() -> Result[Void]
   end
 end
 
+# A session picks a provider of the config, and a PATCH moves it to another with a model; both survive a restart, and
+# an unknown provider is refused.
+def test_a_session_keeps_its_provider_and_model() -> Result[Void]
+  setup = H.Setup(replies: ["text.sse", "text.sse", "text.sse"], providers: ["other"])
+  H.using(setup) do |h|
+    id = try H.new_session_in(h, h.work, none, some("other"))
+    _ = try H.send(h, id, "Hi.")
+    _ = try H.idle(h, id)
+    try Test.eq((try H.next_request(h)).path, "/other/chat/completions")
+    shown = try H.session(h, id)
+    try Test.eq([shown.provider, shown.api, shown.model], ["other", "openai", "default"])
+    change = Protocol.UpdateSession(provider: some("local"), model: some("m2"))
+    patched = try H.call(h, "PATCH", Protocol.session_path(id), Protocol.encode_update_session(change), H.auth(h))
+    try Test.eq(patched.status, 200)
+    nope = Protocol.encode_update_session(Protocol.UpdateSession(provider: some("nope")))
+    try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), nope, H.auth(h))).status, 400)
+    unknown = Protocol.NewSession(cwd: h.work, model: none, provider: some("nope"))
+    try Test.eq((try H.post(h, Protocol.SESSIONS_PATH, Protocol.encode_new_session(unknown))).status, 400)
+    H.restarted(h, setup, "") do |r|
+      listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
+      try Test.eq(listed.sessions.map { |s| [s.provider, s.model] }, [["local", "m2"]])
+      _ = try H.send(r, id, "Again.")
+      _ = try H.idle(r, id)
+      seen = try H.next_request(r)
+      try Test.eq(seen.path, "/v1/chat/completions")
+      try Test.eq(JSON.get(try JSON.parse(seen.body), "model"), ok(JSON.from("m2")))
+      again = try H.session(r, id)
+      Test.eq([again.provider, again.api, again.model], ["local", "openai", "m2"])
+    end
+  end
+end
+
 # A session is deleted with its file, but not while a turn runs; one whose file stays loads again; one not loaded
 # since a restart is deleted too.
 def test_a_session_is_deleted() -> Result[Void]

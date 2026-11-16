@@ -294,8 +294,8 @@ def test_requests_need_the_token_a_local_host_and_no_foreign_origin() -> Result[
       Config.Options(
         state_dir: h.state_dir,
         data_dir: h.data_dir,
-        apis: h.apis,
-        api: "openai",
+        providers: h.providers,
+        provider: h.provider,
         model: "m",
         env: &H.fake_env,
       ),
@@ -309,8 +309,8 @@ def test_requests_need_the_token_a_local_host_and_no_foreign_origin() -> Result[
     options = Config.Options(
       state_dir: "#{h.base}/other-state",
       data_dir: open_data,
-      apis: h.apis,
-      api: "openai",
+      providers: h.providers,
+      provider: h.provider,
       model: "m",
       env: &H.fake_env,
     )
@@ -330,8 +330,8 @@ def foreign_owner(h: H.Harness) -> Result[Void]
   options = Config.Options(
     state_dir: "/root",
     data_dir: "#{h.base}/data",
-    apis: h.apis,
-    api: "openai",
+    providers: h.providers,
+    provider: h.provider,
     model: "m",
     env: &H.fake_env,
   )
