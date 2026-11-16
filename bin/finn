@@ -63,5 +63,6 @@ case ${1:-} in
     ;;
   serve) shift; serve "$@" ;;
   chat) shift; exec "$agentica" "$root/cli/main.agc" "$@" ;;
+  tui) shift; exec "$agentica" "$root/tui_client/main.agc" "$@" ;;
   *) exec "$agentica" "$root/cli/main.agc" "$@" ;;
 esac
