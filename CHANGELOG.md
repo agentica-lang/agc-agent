@@ -15,20 +15,21 @@
 - `protocol`: `ServerInfo`, the record of `server.json`; `ApprovalRequested.detail`, the content a call would write.
 - `read_file`: a line over 1 MiB in a file over 1 MiB keeps the lines before it and adds a note; a clamped `limit` adds the "continue with offset" note.
 - `cli`: the state folder is resolved with its symlinks, and a symlink that is not yours is refused.
-- `core serve` keeps each session in a JSON Lines file of the data folder (`AGC_AGENT_DATA_DIR`): a session resumes after a restart with its history and event ids, and a turn the restart cut ends as `cancelled`. The files are plain text (tool output and file contents included), keep the events and messages until the session is deleted. When a file cannot be written, the turn stops with a `session.storage` error.
+- `core serve` keeps each session in a JSON Lines file of the data folder (`FINN_DATA_DIR`): a session resumes after a restart with its history and event ids, and a turn the restart cut ends as `cancelled`. The files are plain text (tool output and file contents included), keep the events and messages until the session is deleted. When a file cannot be written, the turn stops with a `session.storage` error.
 - `usage` events: `output` is the sum over the session (kept across a restart), and `context` is the prompt size of the call (input and cache counts, without the output).
 - Session files no longer keep text and thinking deltas; after a restart, a `Last-Event-ID` that would need one gets `resync`, and ids may skip.
 - `core serve` lists the sessions from the first line of their files at start and loads a session on its first request; one that cannot be loaded now answers 503 `session.unavailable`.
-- `DELETE /v1/sessions/ID` deletes a session and its file (`session.busy` while a turn runs); `agc --delete ID` does it from the cli.
-- Compaction: past 80 % of the model's window (`AGC_AGENT_CONTEXT_WINDOW`, else llama-server's `/props`, else `GET /models`), the history between the first task and the running turn becomes a summary by `AGC_AGENT_COMPACT_MODEL` (else the session's model), saved in the session file; the system prompt and tools stay the same. The running turn is never compacted, the summary's tokens are not in `usage`, and a failed summary or an unknown window is an `error` event.
+- `DELETE /v1/sessions/ID` deletes a session and its file (`session.busy` while a turn runs); `finn --delete ID` does it from the cli.
+- Compaction: past 80 % of the model's window (`FINN_CONTEXT_WINDOW`, else llama-server's `/props`, else `GET /models`), the history between the first task and the running turn becomes a summary by `FINN_COMPACT_MODEL` (else the session's model), saved in the session file; the system prompt and tools stay the same. The running turn is never compacted, the summary's tokens are not in `usage`, and a failed summary or an unknown window is an `error` event.
 - `protocol`: `turn_started` and `turn_finished` carry `history_size`, the size of the session's history after the event. `cli`: after a resync, the client prints the part of the history it missed (the end of a turn a restart cut, a later turn), and says when the turn ended while the stream was away.
 - `core serve` loads a session file in a task of its own: a big file no longer holds up the list, new sessions or other sessions while it loads.
 - `core serve`: the 503 of a session that cannot load no longer shows the error behind it (a path, a crash); the server logs it.
 - Compaction folds the older tool rounds of the running turn too, so the first turn or one long turn is compacted; the last round stays whole.
 - Compaction stops for the rest of a turn when a fold leaves the context past the limit (an `error` event), instead of folding again every round.
 - A turn that a restart cuts after a compaction keeps the text of its folded rounds in its answer.
-- `core serve` speaks the OpenAI Responses format too: `AGC_AGENT_API=openai_responses` (`openai`, chat completions, stays the default); it sends `store: false` and asks for the encrypted reasoning to replay it.
+- `core serve` speaks the OpenAI Responses format too: `FINN_API=openai_responses` (`openai`, chat completions, stays the default); it sends `store: false` and asks for the encrypted reasoning to replay it.
 - `llm` `openai_responses`: with `store: false`, replayed items go back without their ids (the API refuses ids it did not keep).
-- `bin/agc`: one command for everything, from any folder: `agc` (chat), `agc serve` (with `--api`, `--model`, `--base-url`), `agc --version`, `agc --help`.
-- A session names its model API (`agc --api openai_responses`, `api` of `POST /v1/sessions`) and keeps it in its file; an older session uses the server's.
-- Sessions made before the API choice keep no API in their file: one made with `AGC_AGENT_API=openai_responses` follows the server's current default. `GET /v1/sessions` shows the API of each session.
+- `bin/finn`: one command for everything, from any folder: `finn` (chat), `finn serve` (with `--api`, `--model`, `--base-url`), `finn --version`, `finn --help`.
+- A session names its model API (`finn --api openai_responses`, `api` of `POST /v1/sessions`) and keeps it in its file; an older session uses the server's.
+- Sessions made before the API choice keep no API in their file: one made with `FINN_API=openai_responses` follows the server's current default. `GET /v1/sessions` shows the API of each session.
+- **Breaking:** the command is `finn` (`bin/finn`), the product Finn Agent: variables are `FINN_*` and folders `finn`; the `AGC_AGENT_*` names and an existing `agc-agent` folder still work.

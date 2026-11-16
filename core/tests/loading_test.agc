@@ -101,7 +101,7 @@ def write_session(path: String, id: String, cwd: String, events: Int, tail: Stri
 end
 
 def start(base: String, sessions: String) -> Result[Remote]
-  env = {"AGC_AGENT_STATE_DIR": "#{base}/state", "AGC_AGENT_DATA_DIR": "#{base}/data"}
+  env = {"FINN_STATE_DIR": "#{base}/state", "FINN_DATA_DIR": "#{base}/data"}
   process = try Process.spawn_captured(binary(), ["main.agc", "serve"], Process.Options(env: env, timeout_ms: 60_000))
   line = try Process.read_line(process, WAIT_MS)
   return error("the server did not start: #{line}") if not line.include?("listening")

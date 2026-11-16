@@ -4,7 +4,7 @@ import Config from "../src/config"
 
 def test_version_names_core_and_llm() -> Result[Void]
   try Test.eq(Cli.parse(["--version"]), ok(Cli.Command.Version))
-  Test.eq(Cli.output(Cli.Command.Version), "agc-agent core #{Cli.VERSION} (llm #{LLM.VERSION})")
+  Test.eq(Cli.output(Cli.Command.Version), "Finn Agent core #{Cli.VERSION} (llm #{LLM.VERSION})")
 end
 
 def test_no_arguments_shows_help() -> Result[Void]
@@ -41,19 +41,52 @@ def test_the_model_api_is_chat_completions_or_responses() -> Result[Void]
   Test.eq(JSON.encode(JSON.object(stateless)), "{\"include\":[\"reasoning.encrypted_content\"],\"store\":false}")
 end
 
+# The names of before Finn still work: `AGC_AGENT_` variables, and an `agc-agent` folder while no `finn` folder
+# is there.
+def test_the_names_before_finn_still_work() -> Result[Void]
+  base = "#{System.env("TMPDIR").unwrap_or("/tmp")}/finn-config-#{Random.int(0, 999_999_999)}"
+  try Dir.mkdir(base)
+  try Dir.mkdir("#{base}/agc-agent")
+  old = {
+    "AGC_AGENT_API": "openai_responses",
+    "AGC_AGENT_MODEL": "m",
+    "FINN_MODEL": "",
+    "XDG_STATE_HOME": base,
+    "XDG_DATA_HOME": base,
+  }
+
+  options = try Config.from_env(->(name) { from_map(old, name) })
+  try Test.eq(
+    [options.api, options.model, options.state_dir, options.data_dir],
+    ["openai_responses", "m", "#{base}/agc-agent", "#{base}/agc-agent"],
+  )
+
+  try Dir.mkdir("#{base}/finn")
+  options = try Config.from_env(->(name) { from_map({"XDG_STATE_HOME": base, "XDG_DATA_HOME": base}, name) })
+  try Test.eq([options.state_dir, options.data_dir], ["#{base}/finn", "#{base}/finn"])
+  Path.remove(base)
+end
+
 private
 
+def from_map(values: Map[String, String], name: String) -> Result[String]
+  case values.get(name)
+    some(value) -> ok(value)
+    none -> error("not set")
+  end
+end
+
 def api_env(name: String, api: String) -> Result[String]
-  return ok(api) if name == "AGC_AGENT_API"
+  return ok(api) if name == "FINN_API"
 
   env(name, "")
 end
 
 def env(name: String, window: String) -> Result[String]
   case name
-    "AGC_AGENT_CONTEXT_WINDOW" -> ok(window)
-    "AGC_AGENT_STATE_DIR" -> ok("/state")
-    "AGC_AGENT_DATA_DIR" -> ok("/data")
+    "FINN_CONTEXT_WINDOW" -> ok(window)
+    "FINN_STATE_DIR" -> ok("/state")
+    "FINN_DATA_DIR" -> ok("/data")
     _ -> error("not set")
   end
 end
