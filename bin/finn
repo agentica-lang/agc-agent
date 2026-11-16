@@ -18,10 +18,11 @@ agentica=${AGENTICA:-agentica}
 usage() {
   cat <<'TEXT'
 usage: finn [chat] [options]      talk to the agent in this folder (starts the server when none runs)
+       finn -p TASK [--yolo]      one task: print the turn, exit with its status (- reads TASK from stdin)
        finn serve [options]       run the server in the foreground
        finn --version | --help
 
-chat options: --api NAME, --model NAME (of a new session), --session ID, --thinking, --delete ID, ...
+chat options: --api NAME, --model NAME (of a new session), --session ID, --thinking, --yolo (allow every call), ...
   (finn chat --help lists them all)
 serve options (each overrides its environment variable):
   --api NAME       model API: openai (chat completions) or openai_responses (default: FINN_API, else openai)

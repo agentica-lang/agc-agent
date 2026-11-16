@@ -16,14 +16,31 @@ MAX_RECONNECTS = 3
 MAX_RESYNCS = 2
 EXIT_INTERRUPTED = 130
 EXIT_TERMINATED = 143
+EXIT_FAILED = 1
 
-## Runs the session until the user leaves: the exit code, or an error when the session cannot go on.
+## Runs the session until the user leaves: the exit code, or an error when the session cannot go on. With a prompt it
+## sends that one task, reads no line, and gives the status of the turn.
 def run(server: Client.Server, options: Args.Options, style: Render.Style) -> Result[Int]
   inbox: Channel[Inbox.Input] = Channel.new(INBOX_CAPACITY)
-  _ = Task.spawn(&read_lines, inbox)
+  if options.prompt.none?
+    _ = Task.spawn(&read_lines, inbox)
+  end
+
   _ = Task.spawn(&watch_signals, inbox)
-  chat = try open(Chat(server: server, id: "", style: style, inbox: inbox), options)
-  loop(chat)
+  chat = Chat(server: server, id: "", style: style, inbox: inbox, yolo: options.yolo)
+  for prompt in option_list(options.prompt)
+    task = prompt
+    if prompt == "-"
+      task = stdin_text()
+    end
+
+    sent = try send(try open(chat.with(eof: true, once: true), options), task)
+    return ok(EXIT_FAILED) if not sent.chat.turn
+
+    return loop(sent.chat)
+  end
+
+  loop(try open(chat, options))
 end
 
 private
@@ -52,6 +69,11 @@ struct Chat
   reconnects: Int = 0
   ## `resync` events in a row, with no other event between.
   resyncs: Int = 0
+  ## Every approval is allowed without asking.
+  yolo: Bool = false
+  ## One task from the command line: the exit code is the status of its turn.
+  once: Bool = false
+  status: Int = 0
 end
 
 struct Step
@@ -208,7 +230,12 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
     Protocol.Event.TurnStarted(started) ->
       shown.with(turn: true, stopping: false, known: started.history_size.unwrap_or(shown.known))
     Protocol.Event.TurnFinished(finished) ->
-      shown.with(turn: false, stopping: false, known: finished.history_size.unwrap_or(shown.known))
+      shown.with(
+        turn: false,
+        stopping: false,
+        known: finished.history_size.unwrap_or(shown.known),
+        status: exit_status(finished.stop_reason),
+      )
     Protocol.Event.ApprovalRequested(request) -> shown.with(pending: added(shown.pending, request))
     Protocol.Event.ApprovalResolved(resolved) -> forgotten(shown, resolved.approval_id)
     _ -> shown
@@ -272,11 +299,32 @@ def on_interrupt(chat: Chat) -> Result[Step]
   ok(Step(chat: note(chat, "[interrupted]"), exit: some(EXIT_INTERRUPTED)))
 end
 
-# The end of the input leaves once no turn runs.
+# The end of the input leaves once no turn runs; a one-shot run with the status of its turn.
 def settled(chat: Chat) -> Result[Step]
+  return ok(Step(chat: chat, exit: some(chat.status))) if chat.eof and not chat.turn and chat.once
   return ok(Step(chat: chat, exit: some(0))) if chat.eof and not chat.turn
 
   ok(Step(chat: chat))
+end
+
+def exit_status(reason: Protocol.StopReason) -> Int
+  case reason
+    Protocol.StopReason.EndTurn -> 0
+    Protocol.StopReason.Cancelled -> EXIT_INTERRUPTED
+    _ -> EXIT_FAILED
+  end
+end
+
+def stdin_text() -> String
+  lines: List[String] = []
+  while true
+    case IO.gets
+      ok(line) -> lines = lines.push(line)
+      error(_) -> break
+    end
+  end
+
+  lines.join("\n").strip
 end
 
 def resync(chat: Chat) -> Result[Step]
@@ -315,21 +363,22 @@ def forgotten(chat: Chat, approval_id: String) -> Chat
   chat.with(pending: rest)
 end
 
-# Asks the first pending approval once the replay is over. With the input at its end nobody can answer: every
-# pending approval is denied, however many come.
+# Asks the first pending approval once the replay is over. With `--yolo` every one is allowed. With the input at its
+# end nobody can answer: every pending approval is denied, however many come.
 def prompted(chat: Chat) -> Chat
   return chat if chat.pending.empty? or chat.last_event_id < chat.replay_until
-  return denied(chat) if chat.eof
+  return decided(chat, Protocol.Decision.Allow) if chat.yolo
+  return decided(chat, Protocol.Decision.Deny) if chat.eof
   return chat if chat.asked
 
   show(chat, some(Render.prompt(chat.pending[0]))).with(asked: true)
 end
 
-def denied(chat: Chat) -> Chat
+def decided(chat: Chat, decision: Protocol.Decision) -> Chat
   state = chat
   while not state.pending.empty?
     head = state.pending[0]
-    state = answer_head(state, Protocol.Decision.Deny)
+    state = answer_head(state, decision)
     if not state.pending.empty? and state.pending[0].approval_id == head.approval_id
       state = forgotten(state, head.approval_id)
     end
@@ -354,4 +403,11 @@ end
 def print_line(text: String) -> Void
   puts(text)
   IO.flush()
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
 end

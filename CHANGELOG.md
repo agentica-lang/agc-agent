@@ -34,3 +34,4 @@
 - Sessions made before the API choice keep no API in their file: one made with `FINN_API=openai_responses` follows the server's current default. `GET /v1/sessions` shows the API of each session.
 - **Breaking:** the command is `finn` (`bin/finn`), the product Finn Agent: variables are `FINN_*` and folders `finn`; the `AGC_AGENT_*` names and an existing `agc-agent` folder still work.
 - The approval of an `edit_file` call marks each old line `-` and each new line `+`.
+- `finn -p TASK` runs one task and exits with the status of its turn (`-p -` reads it from stdin), denying approvals; `--yolo` allows every tool call, in one-shot and in chat.

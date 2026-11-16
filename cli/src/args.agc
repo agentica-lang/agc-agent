@@ -14,6 +14,10 @@ struct Options
   model: Optional[String]
   api: Optional[String] = none
   thinking: Bool
+  ## One-shot: the task to send; the client prints the turn and exits with its status.
+  prompt: Optional[String] = none
+  ## Every approval is allowed without asking.
+  yolo: Bool = false
 end
 
 enum Command
@@ -40,6 +44,12 @@ def parse(args: List[String]) -> Result[Command]
       Opt(name: "model", help: "model of a new session (default: the server's)"),
       Opt(name: "api", help: "model API of a new session: openai or openai_responses (default: the server's)"),
       Opt(name: "thinking", kind: Kind.Flag, help: "show the model's thinking, dimmed"),
+      Opt(
+        name: "prompt",
+        short: "p",
+        help: "send this task (- reads it from stdin), print the turn and exit with its status; approvals are denied",
+      ),
+      Opt(name: "yolo", kind: Kind.Flag, help: "allow every tool call without asking (also in one-shot)"),
       Opt(name: "delete", help: "id of a session to delete (with its file), then exit"),
       Opt(name: "version", kind: Kind.Flag, help: "print the version"),
     ],
@@ -67,6 +77,8 @@ def command(parsed: Parsed) -> Result[Command]
     model: OP.optional_string(parsed, "model"),
     api: OP.optional_string(parsed, "api"),
     thinking: OP.flag(parsed, "thinking"),
+    prompt: OP.optional_string(parsed, "prompt"),
+    yolo: OP.flag(parsed, "yolo"),
   )
 
   for id in option_list(OP.optional_string(parsed, "delete"))

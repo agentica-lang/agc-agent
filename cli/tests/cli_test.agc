@@ -354,3 +354,68 @@ def deletes(rig: Driver.Rig) -> Result[Void]
   try Test.assert(refused.errors.include?("a turn is running"), refused.errors)
   Test.eq(Fake.strays(rig.fake), 0)
 end
+
+# `-p` sends one task, reads no line, prints the turn and exits with its status.
+def test_one_shot_prints_the_turn_and_exits_with_its_status() -> Result[Void]
+  Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["turn.sse"])]) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN + ["-p", "hello"])
+    done = try Driver.exited(cli)
+    message = try Fake.request(rig.fake, "POST", Protocol.messages_path("s1"))
+    try Test.eq(Protocol.decode_send_message(message.body), ok(Protocol.SendMessage(text: "hello")))
+    try Test.eq([done.lines[0], done.lines.last], ["[session s1]", "[turn finished] end_turn"])
+    Test.eq(done.code, 0)
+  end
+end
+
+def test_one_shot_denies_approvals_and_yolo_allows_them() -> Result[Void]
+  for yolo in [false, true]
+    end_pushes = ["denied_end.sse"]
+    decision = Protocol.Decision.Deny
+    args = PLAIN + ["--prompt", "clean up"]
+    if yolo
+      end_pushes = ["approval_elsewhere.sse"]
+      decision = Protocol.Decision.Allow
+      args = args + ["--yolo"]
+    end
+
+    routes = [
+      Routes.created(),
+      Routes.held_events(),
+      Routes.accepting(["approval_1.sse"]),
+      Routes.answering("a1", Fake.Reply(push: end_pushes)),
+    ]
+
+    try Driver.within(routes) do |rig|
+      done = try Driver.exited(try Driver.start(rig.dir, args))
+      answer = try Fake.request(rig.fake, "POST", Protocol.approval_path("s1", "a1"))
+      try Test.eq(Protocol.decode_approve(answer.body), ok(Protocol.Approve(decision: decision)))
+      try Test.assert(not done.lines.include?(PROMPT), "nothing is asked: #{done.lines}")
+      Test.eq(done.code, 0)
+    end
+  end
+
+  ok()
+end
+
+def test_a_cancelled_one_shot_turn_exits_130() -> Result[Void]
+  Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["cancelled.sse"])]) do |rig|
+    done = try Driver.exited(try Driver.start(rig.dir, PLAIN + ["-p", "start"]))
+    Test.eq(done.code, 130)
+  end
+end
+
+def test_one_shot_reads_the_task_from_stdin_with_a_dash() -> Result[Void]
+  Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["turn.sse"])]) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN + ["-p", "-"])
+    try Driver.say(cli, "read the README")
+    try Driver.say(cli, "and sum it up")
+    done = try Driver.finish(cli)
+    message = try Fake.request(rig.fake, "POST", Protocol.messages_path("s1"))
+    try Test.eq(
+      Protocol.decode_send_message(message.body),
+      ok(Protocol.SendMessage(text: "read the README\nand sum it up")),
+    )
+
+    Test.eq(done.code, 0)
+  end
+end
