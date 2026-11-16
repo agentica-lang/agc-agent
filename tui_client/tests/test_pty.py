@@ -41,9 +41,10 @@ LEAVE_SCREEN = b"\x1b[?1049l"
 ESCAPE = re.compile(r"\x1b(\[[0-?]*[ -/]*[@-~]|[()][0-9A-Za-z]|.)")
 
 
-def screen_rows(output: bytes) -> list[str]:
+def screen_rows(output: bytes, rows: int = ROWS, cols: int = COLS) -> list[str]:
     """The text a terminal shows after `output`: cursor moves `ESC [ row ; col H`, clears and characters (a wide one
     takes two columns)."""
+    ROWS, COLS = rows, cols  # noqa: N806
     grid = [[" "] * COLS for _ in range(ROWS)]
     row = col = 0
     text = output.decode(errors="replace")
@@ -248,10 +249,11 @@ class Proxy:
 class Terminal:
     """The client on a new pty of 80x24 with TERM=xterm."""
 
-    def __init__(self, base: Path, model: FakeModel, args: list[str]) -> None:
+    def __init__(self, base: Path, model: FakeModel, args: list[str], rows: int = ROWS, cols: int = COLS) -> None:
         self.base = base
         self.master, self.slave = os.openpty()
-        fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", ROWS, COLS, 0, 0))
+        self.rows, self.cols = rows, cols
+        fcntl.ioctl(self.slave, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
         self.modes_before = termios.tcgetattr(self.slave)
         self.output = b""
         self.process = subprocess.Popen(
@@ -270,7 +272,13 @@ class Terminal:
         fcntl.ioctl(0, termios.TIOCSCTTY, 0)
 
     def screen(self) -> list[str]:
-        return screen_rows(self.output[self.output.rfind(ENTER_SCREEN) :])
+        return screen_rows(self.output[self.output.rfind(ENTER_SCREEN) :], self.rows, self.cols)
+
+    def resize(self, rows: int, cols: int) -> None:
+        """The kernel sends SIGWINCH to the client, which owns the terminal."""
+        self.output += b"\x1b[2J"
+        self.rows, self.cols = rows, cols
+        fcntl.ioctl(self.master, termios.TIOCSWINSZ, struct.pack("HHHH", rows, cols, 0, 0))
 
     def wait_for(self, text: str) -> list[str]:
         """Reads until some row of the screen holds `text`; gives the screen."""
@@ -346,13 +354,13 @@ class PtyTest(unittest.TestCase):
         self.fake = model
         return model
 
-    def start(self, replies: list[Reply]) -> Terminal:
+    def start(self, replies: list[Reply], rows: int = ROWS, cols: int = COLS) -> Terminal:
         """The client, which starts its own server."""
         base = self.folder()
         model = self.model(replies)
         self.addCleanup(stop_server, base / "state")
         args = ["--state-dir", str(base / "state"), "--", AGENTICA, str(CORE), "serve"]
-        terminal = Terminal(base, model, args)
+        terminal = Terminal(base, model, args, rows, cols)
         self.addCleanup(terminal.close)
         terminal.wait_for("ready")
         return terminal
@@ -469,9 +477,13 @@ class PtyTest(unittest.TestCase):
     def test_a_tool_is_approved_and_its_notices_shown(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")
-        rows = term.wait_for("y allow · n deny · a allow for the session")
+        rows = term.wait_for("Tab to answer · ^Y allow · ^N deny")
+        self.assertIn("^A allow write_file on this exact target for the session", " ".join(rows))
         self.assertIn("· write_file:", text_of(rows))
         self.assertIn("  hi", rows)
+        term.type("\t")
+        term.wait_for("y allow · n deny · a allow write_file")
+        term.settle(0.4)
         term.type("y")
         term.wait_for(ANSWER)
         rows = term.wait_for("ready")
@@ -479,17 +491,73 @@ class PtyTest(unittest.TestCase):
         self.assertIn(": allow (client)", shown)
         self.assertIn("✓ ", shown)
         self.assertNotIn("⚙ ", shown)
-        self.assertNotIn("y allow", shown)
+        self.assertNotIn("Tab to answer", shown)
         self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
 
     def test_a_denied_tool_writes_nothing(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")
-        term.wait_for("y allow")
-        term.type("n")
+        term.wait_for("Tab to answer")
+        term.settle(0.4)
+        term.type("\x0e")
         rows = term.wait_for("ready")
         self.assertIn(": deny (client)", text_of(rows))
         self.assertFalse((term.base / "work" / "hello.txt").exists())
+
+    def test_typing_while_an_approval_waits_answers_nothing(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        term.wait_for("Tab to answer")
+        term.type("pay")
+        rows = term.wait_for("> pay")
+        self.assertIn("Tab to answer", text_of(term.settle()))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+        term.type("\t")
+        term.wait_for("y allow · n deny")
+        term.settle(0.4)
+        term.type("A")
+        rows = term.wait_for(": allow_session (client)")
+        self.assertIn("> pay", rows)
+        term.wait_for("ready")
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
+
+    def test_an_approval_answered_by_another_client_closes_the_panel(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        rows = term.wait_for("Tab to answer")
+        approval_id = re.search(r"approval (\S+) · write_file", text_of(rows)).group(1)
+        info = json.loads((term.base / "state" / "server.json").read_text())
+        headers = {"Authorization": f"Bearer {info['token']}", "Content-Type": "application/json"}
+        server = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=TIMEOUT)
+        server.request("GET", "/v1/sessions", headers=headers)
+        session_id = json.loads(server.getresponse().read())["sessions"][0]["id"]
+        body = json.dumps({"decision": "deny"})
+        server.request("POST", f"/v1/sessions/{session_id}/approvals/{approval_id}", body, headers)
+        self.assertEqual(server.getresponse().status, 200)
+        server.close()
+        rows = term.wait_for(": deny (client)")
+        rows = term.wait_for("ready")
+        self.assertNotIn("Tab to answer", text_of(rows))
+        term.type("\t")
+        term.type("y")
+        rows = term.wait_for("> y")
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+
+    def test_a_tiny_terminal_draws_the_panel_and_a_resize_redraws_it(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")], rows=5, cols=24)
+        term.type("write it\r")
+        rows = term.wait_for("session")
+        term.settle()
+        self.assertIsNone(term.process.poll(), text_of(rows))
+        term.resize(3, 10)
+        term.settle()
+        self.assertIsNone(term.process.poll())
+        term.resize(ROWS, COLS)
+        term.wait_for("Tab to answer · ^Y allow")
+        term.type("\x19")
+        term.wait_for(ANSWER)
+        term.wait_for("ready")
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
 
     def test_term_hup_and_int_restore_the_terminal(self) -> None:
         for sig, code in [(signal.SIGTERM, 143), (signal.SIGHUP, 129), (signal.SIGINT, 130)]:
