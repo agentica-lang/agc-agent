@@ -28,6 +28,8 @@ MAX_READ_BYTES = 1_048_576
 CALL_MS = 5000
 ## A request for a session that is not loaded yet waits for its load.
 LOAD_MS = 60_000
+## A session whose file names a model API this server does not have; its 503 says so.
+KIND_UNKNOWN_API = "core.unknown_api"
 ## The requests that may wait for one load; past them a request answers 503.
 MAX_WAITING = 64
 SYSTEM_PROMPT = <<~TEXT
@@ -402,8 +404,13 @@ def registered(registry: Registry, id: String, read: Result[Loaded]) -> Registry
       registry.with(sessions: registry.sessions.map { |e| replaced(e, entry) })
     error(e) ->
       IO.warn("session #{id} cannot be loaded now: #{e.message}")
+      message = "session #{id} cannot be loaded now"
+      if e.kind == KIND_UNKNOWN_API
+        message = "#{message}: #{e.message}"
+      end
+
       for waiting in listed.waiting
-        Actor.reply(waiting, error("session #{id} cannot be loaded now", kind: Protocol.KIND_SESSION_UNAVAILABLE))
+        Actor.reply(waiting, error(message, kind: Protocol.KIND_SESSION_UNAVAILABLE))
       end
 
       registry.with(sessions: registry.sessions.map { |other| replaced(other, listed.with(waiting: [])) })
@@ -427,7 +434,10 @@ def entry(
   saved: Optional[Store.Saved],
 ) -> Result[Entry]
   name = header.api.unwrap_or(options.api)
-  api = try options.apis.get(name).to_result("the session's api #{name.inspect} is not one of this server")
+  return error("unknown API #{name}", kind: KIND_UNKNOWN_API) if not options.apis.has_key?(name)
+
+  api = options.apis[name]
+
   setup = Session.Setup(
     id: header.id,
     cwd: context.root,
@@ -445,11 +455,18 @@ def entry(
     extra: api.extra,
   )
 
-  ok(Entry(summary: summary_of(header), header: header, file: file, session: some(Session.start(setup, saved))))
+  ok(
+    Entry(
+      summary: summary_of(options, header),
+      header: header,
+      file: file,
+      session: some(Session.start(setup, saved)),
+    ),
+  )
 end
 
-def summary_of(header: Store.Header) -> Protocol.SessionSummary
-  Protocol.SessionSummary(id: header.id, cwd: header.cwd, model: header.model)
+def summary_of(options: Options, header: Store.Header) -> Protocol.SessionSummary
+  Protocol.SessionSummary(id: header.id, cwd: header.cwd, model: header.model, api: header.api.unwrap_or(options.api))
 end
 
 # In the order they were made, not loaded yet. A file whose first line is not a session is left out, with a warning.
@@ -471,7 +488,9 @@ def load_sessions(options: Options) -> List[Entry]
   end
 
   sorted = listed.sort_by { |one| one.header.id }.sort_by { |one| one.header.created_ms }
-  sorted.map { |one| Entry(summary: summary_of(one.header), header: one.header, file: one.file, session: none) }
+  sorted.map { |one|
+    Entry(summary: summary_of(options, one.header), header: one.header, file: one.file, session: none)
+  }
 end
 
 def listed_session(file: String) -> Result[Store.Header]

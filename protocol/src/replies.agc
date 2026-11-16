@@ -26,10 +26,12 @@ struct MessageAccepted
   turn_id: String
 end
 
+## `api` is the model API of the session, by the name the server gives it.
 struct SessionSummary
   id: String
   cwd: String
   model: String
+  api: String
 end
 
 ## The answer of `GET /v1/sessions`.
