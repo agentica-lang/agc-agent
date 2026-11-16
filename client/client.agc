@@ -39,3 +39,4 @@ export Commands.KIND_COMMAND
 export Commands.parse_command
 export Commands.listing
 export Commands.pick
+export Commands.model_warning

@@ -49,6 +49,12 @@ struct Saved
   effort: Optional[String] = none
 end
 
+## What a list of the sessions shows of one file: the model of its last `settings` record, and its first user message.
+struct Listing
+  model: Optional[String] = none
+  title: String = ""
+end
+
 ## The answer texts of a turn when it was compacted, and the size of the history after: the texts of the messages
 ## from there on follow them.
 struct Folded
@@ -125,6 +131,26 @@ def append_answer(path: String, text: String) -> Result[Void]
 end
 
 def reopen(path: String) -> Result[Void] = write(path, "\n")
+
+## Reads only the records a listing needs.
+def listing(path: String) -> Result[Listing]
+  found = Listing()
+  for text in try File.foreach(path, MAX_LINE_BYTES).to_a
+    settings = text.include?("\"settings\"")
+    user = found.title == "" and text.include?("\"user\"")
+    next if not settings and not user
+
+    case JSON.parse(text)
+      ok(json) if field(json, "type") == ok("settings") ->
+        found = found.with(model: some(field(json, "model").unwrap_or("")))
+      ok(json) if user and field(json, "type") == ok("user") ->
+        found = found.with(title: field(json, "text").unwrap_or(""))
+      _ -> nil
+    end
+  end
+
+  ok(found)
+end
 
 ## The first line of a file: the session, without reading the rest.
 def header(path: String) -> Result[Header]
@@ -274,7 +300,13 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
 
       ok(saved.with(history: history, folded: folded))
     "ids" -> ok(saved.with(reserved: try JSON.int(try JSON.get(json, "until"))))
-    "settings" -> ok(saved.with(model: some(try field(json, "model")), effort: optional_string(json, "effort")))
+    "settings" ->
+      effort = optional_string(json, "effort")
+      for level in option_list(effort)
+        return error("unknown effort #{level}") if not Protocol.EFFORTS.include?(level)
+      end
+
+      ok(saved.with(model: some(try field(json, "model")), effort: effort))
     "answer" ->
       shown = Protocol.Message(role: Protocol.Role.Assistant, text: try field(json, "text"))
       ok(saved.with(shown: saved.shown.push(shown)))

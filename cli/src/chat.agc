@@ -80,6 +80,8 @@ struct Chat
   resyncs: Int = 0
   ## Every approval of this run is allowed without asking.
   yolo: Bool = false
+  ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
+  new_model: Optional[String] = none
   ## The approvals that were pending when the client attached: `--yolo` leaves them to be asked.
   inherited: List[String] = []
   ## One task from the command line: the exit code is the status of its turn.
@@ -213,6 +215,7 @@ def handle(chat: Chat, input: Inbox.Input) -> Result[Step]
     Inbox.Input.Eof -> settled(prompted(chat.with(eof: true)))
     Inbox.Input.Interrupt -> on_interrupt(chat)
     Inbox.Input.Terminate -> ok(Step(chat: chat, exit: some(EXIT_TERMINATED)))
+    Inbox.Input.Note(text) -> settled(prompted(note(chat, text)))
     Inbox.Input.Stream(generation, item) -> on_stream(chat, generation, item)
   end
 end
@@ -242,8 +245,11 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
   changed = case event
     Protocol.Event.TurnStarted(started) ->
       shown.with(turn: true, stopping: false, known: started.history_size.unwrap_or(shown.known))
+    Protocol.Event.Error(_) if not repeated and shown.new_model.some? ->
+      note(shown.with(new_model: none), "[warning] #{Client.model_warning(shown.new_model.unwrap!)}")
     Protocol.Event.TurnFinished(finished) ->
       shown.with(
+        new_model: none,
         turn: false,
         stopping: false,
         known: finished.history_size.unwrap_or(shown.known),
@@ -315,7 +321,7 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Resume(choice) -> resume_command(chat, choice)
     Client.Command.Model(model) -> setting_command(chat, "model", model, Protocol.UpdateSession(model: model))
     Client.Command.Thinking(level) -> setting_command(chat, "thinking", level, Protocol.UpdateSession(effort: level))
-    Client.Command.Compact -> tried(chat, compacted(note(chat, "[compacting the history]")))
+    Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
   end
 end
 
@@ -393,13 +399,27 @@ end
 
 def changed(chat: Chat, change: Protocol.UpdateSession, done: String) -> Result[Chat]
   try Client.update_session(chat.server, chat.id, change)
-  ok(note(chat, done))
+  shown = note(chat, done)
+  return ok(shown) if change.model.none?
+
+  ok(shown.with(new_model: change.model))
 end
 
-def compacted(chat: Chat) -> Result[Chat]
-  return ok(note(chat, "[compacted]")) if try Client.compact(chat.server, chat.id)
+# The summary takes as long as a turn: a task asks for it and puts the outcome on the inbox.
+def compact_command(chat: Chat) -> Chat
+  server = chat.server
+  id = chat.id
+  inbox = chat.inbox
+  _ = Task.spawn(-> { _ = inbox.send(Inbox.Input.Note(compacted(server, id)), SEND_MS) })
+  chat
+end
 
-  ok(note(chat, "[nothing to compact yet]"))
+def compacted(server: Client.Server, id: String) -> String
+  case Client.compact(server, id)
+    ok(folded) if folded -> "[compacted]"
+    ok(_) -> "[nothing to compact yet]"
+    error(e) -> "[error] #{e.message}"
+  end
 end
 
 def stop(chat: Chat) -> Result[Step]

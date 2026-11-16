@@ -48,6 +48,7 @@ export Requests.Approve
 export Requests.UpdateSession
 export Requests.Compacted
 export Requests.EFFORTS
+export Requests.EFFORT_DEFAULT
 export Requests.decisions
 export Requests.decision_name
 export Requests.parse_decision

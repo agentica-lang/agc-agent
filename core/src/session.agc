@@ -665,8 +665,10 @@ end
 
 def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Result[Void]]) -> State
   setup = state.setup.with(model: change.model.unwrap_or(state.setup.model))
-  if change.effort.some?
-    setup = setup.with(effort: change.effort)
+  case change.effort
+    some(level) if level == Protocol.EFFORT_DEFAULT -> setup = setup.with(effort: none)
+    some(level) -> setup = setup.with(effort: some(level))
+    none -> nil
   end
 
   case save(state, -> { Store.append_settings(state.setup.file, setup.model, setup.effort) })

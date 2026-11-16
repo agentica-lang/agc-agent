@@ -511,7 +511,7 @@ def test_session_commands() -> Result[Void]
     try Driver.say(cli, "/model qwen3")
     try Driver.read_until(cli, "[model qwen3 from the next turn]")
     try Driver.say(cli, "/thinking max")
-    try Driver.read_until(cli, "[error] the thinking level is one of low, medium, high")
+    try Driver.read_until(cli, "[error] the thinking level is one of low, medium, high, default")
     try Driver.say(cli, "/thinking high")
     try Driver.read_until(cli, "[thinking high from the next turn]")
     try Driver.say(cli, "/resume")
@@ -529,6 +529,51 @@ def test_session_commands() -> Result[Void]
     try Test.eq(Protocol.decode_update_session(first.body), ok(Protocol.UpdateSession(model: some("qwen3"))))
     second = try Fake.request(rig.fake, "PATCH", Protocol.session_path("s1"))
     try Test.eq(Protocol.decode_update_session(second.body), ok(Protocol.UpdateSession(effort: some("high"))))
+    Test.eq(Fake.strays(rig.fake), 0)
+  end
+end
+
+# A line that starts with `/` but is no client command (a path, a skill, `/` alone) goes to the agent as text. While a
+# turn runs, /new and /resume are refused; a call that fails after /model warns about the name.
+def test_slash_text_busy_switches_and_the_model_warning() -> Result[Void]
+  accepted = Fake.Reply(status: 202, body: "{\"turn_id\": \"t1\"}")
+  routes = [
+    Routes.created(),
+    Routes.held_events(),
+    Fake.Route(method: "PATCH", path: Protocol.session_path("s1"), replies: [Fake.Reply(body: "{}")]),
+    Fake.Route(
+      method: "POST",
+      path: Protocol.messages_path("s1"),
+      replies: [accepted.with(push: ["working.sse"]), accepted],
+    ),
+    Routes.stopping(Fake.Reply(status: 202, push: ["model_failed.sse"])),
+  ]
+
+  Driver.within(routes) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN)
+    try Driver.read_until(cli, "[session s1]")
+    try Driver.say(cli, "/model qwen3")
+    try Driver.read_until(cli, "[model qwen3 from the next turn]")
+    try Driver.say(cli, "/")
+    try Driver.read_until(cli, "Working on it...")
+    for command in ["/new", "/resume 2"]
+      try Driver.say(cli, command)
+      try Driver.read_until(cli, "[a turn is running: /stop it first]")
+    end
+
+    try Driver.say(cli, "/stop")
+    try Driver.read_until(cli, "[warning] the call failed after /model qwen3")
+    try Driver.say(cli, "/etc/hosts has a bad entry")
+    try Driver.say(cli, "/quit")
+    done = try Driver.finish(cli)
+    try Test.eq(done.code, 0)
+    first = try Fake.request(rig.fake, "POST", Protocol.messages_path("s1"))
+    second = try Fake.request(rig.fake, "POST", Protocol.messages_path("s1"))
+    try Test.eq(
+      [Protocol.decode_send_message(first.body), Protocol.decode_send_message(second.body)],
+      [ok(Protocol.SendMessage(text: "/")), ok(Protocol.SendMessage(text: "/etc/hosts has a bad entry"))],
+    )
+
     Test.eq(Fake.strays(rig.fake), 0)
   end
 end

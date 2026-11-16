@@ -186,9 +186,17 @@ end
 
 def no_rules() -> Tools.Rules = Tools.Rules(allow: [], deny: [])
 
+## A name is a fixture under `dir`, `STATUS:name.json`, or a path; `name@MS` answers after MS milliseconds.
 def fixtures(names: List[String], dir: String = "openai_chat") -> Result[List[Fake.Reply]]
   replies: List[Fake.Reply] = []
-  for name in names
+  for timed in names
+    name = timed.split("@")[0]
+    if timed.include?("@")
+      later = try fixtures([name], dir)
+      replies = replies.push(later[0].with(delay_ms: try timed.split("@")[1].to_i))
+      next
+    end
+
     parts = name.split(":")
     if name.include?("/")
       replies = replies.push(try Fake.sse(name))
