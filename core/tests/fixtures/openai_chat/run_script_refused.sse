@@ -1,0 +1,10 @@
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"role":"assistant","content":null}}],"id":"chatcmpl-core-10","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_script","type":"function","function":{"name":"run_script","arguments":"{\"code\": \"try:\\n    read_file('hello.txt')\\nexcept TypeError as e:\\n    print('type:', e)\\ntry:\\n    bash(command='rm hello.txt')\\nexcept PermissionError as e:\\n    print('rule:', e)\\n\"}"}}]}}],"id":"chatcmpl-core-10","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[{"finish_reason":"tool_calls","index":0,"delta":{}}],"id":"chatcmpl-core-10","model":"m","object":"chat.completion.chunk"}
+
+data: {"choices":[],"id":"chatcmpl-core-10","model":"m","object":"chat.completion.chunk","usage":{"completion_tokens":40,"prompt_tokens":200,"total_tokens":240}}
+
+data: [DONE]
+

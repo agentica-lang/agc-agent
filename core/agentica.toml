@@ -7,5 +7,6 @@ blank_line_after_end = true
 
 [dependencies]
 llm = { git = "https://github.com/agentica-lang/agc-agent", subdir = "llm", tag = "llm-0.0.1" }
+monty = { git = "https://github.com/agentica-lang/agc-agent", subdir = "monty", tag = "monty-0.0.1" }
 protocol = { git = "https://github.com/agentica-lang/agc-agent", subdir = "protocol", tag = "protocol-0.0.1" }
 sse = { git = "https://github.com/agentica-lang/agc-agent", subdir = "sse", tag = "sse-0.0.1" }

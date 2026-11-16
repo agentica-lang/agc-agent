@@ -13,6 +13,7 @@ import Actor from "std/actor"
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import CodeMode from "code_mode"
 import Sandbox from "sandbox"
 import Session from "session"
 import Store from "store"
@@ -70,6 +71,8 @@ struct Options
   api_key: String = ""
   ## Runs in the task that loads a session, with its id, before the file is read: a seam for the tests.
   before_load: Optional[Fn[String, Void]] = none
+  ## Code mode: the model may also call the tools from a Python script (`run_script`).
+  code_mode: Optional[CodeMode.Settings] = none
 end
 
 struct Server
@@ -453,6 +456,7 @@ def entry(
     props_url: options.props_url,
     api_key: options.api_key,
     extra: api.extra,
+    code_mode: options.code_mode,
   )
 
   ok(
