@@ -56,6 +56,10 @@ struct Model
   reconnects: Int = 0
   ## `resync` events in a row, with no other event between.
   resyncs: Int = 0
+  ## Messages sent whose reply has not come: the stream waits in `held` until then, so its events meet the state the
+  ## replies give (the turn this client started, the message it queued).
+  sends: Int = 0
+  held: List[Client.Item] = []
   ## The session picker of `/resume`, open over the prompt.
   picker: Optional[Picker.Picker] = none
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
@@ -88,6 +92,10 @@ enum Msg
   Note(String)
   ## The server was checked again before the stream of a generation is read again.
   Rechecked(Int, Result[Void])
+  ## The reply to a message sent to a session: the session and the text.
+  Sent(String, String, Result[Protocol.MessageAccepted])
+  ## The reply to a stop.
+  Stopped(Result[Void])
 end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
@@ -180,8 +188,13 @@ def handled(app: Model, msg: Msg) -> Model
         none -> answered
       end
 
+    Msg.Stream(generation, items) if generation == app.generation and app.sends > 0 -> app.with(held: app.held + items)
     Msg.Stream(generation, items) if generation == app.generation -> streamed(app, items)
     Msg.Stream(_, _) -> app
+    Msg.Sent(id, text, result) if id == app.id ->
+      released(sent_reply(app.with(sends: [app.sends - 1, 0].max.unwrap!), text, result))
+    Msg.Sent(_, _, _) -> app
+    Msg.Stopped(result) -> stop_reply(app, result)
     Msg.Rechecked(generation, result) if generation == app.generation -> rechecked(app, result)
     Msg.Rechecked(_, _) -> app
   end
@@ -323,7 +336,14 @@ def subscribe(app: Model, from: Int) -> Model
     tell: ->(item) { feed.send(item, SEND_MS) },
   )
 
-  started = app.with(stream: some(Client.start(reader)), feed: some(feed), generation: generation, last_event_id: from)
+  started = app.with(
+    stream: some(Client.start(reader)),
+    feed: some(feed),
+    generation: generation,
+    last_event_id: from,
+    held: [],
+  )
+
   effect(started, read_feed(generation, feed))
 end
 
@@ -425,16 +445,37 @@ def send(app: Model) -> Model
     _ -> nil
   end
 
-  # A message sent while a turn runs is queued; its `message_queued` event shows it.
-  case Client.send_message(app.server, app.id, text)
-    ok(accepted) if accepted.message_id.some? ->
-      app.with(prompt: "", scroll: 0, yolo: Yolo.accepted(app.yolo, accepted))
+  server = app.server
+  id = app.id
+  sending = app.with(prompt: "", scroll: 0, sends: app.sends + 1)
+  effect(sending, TUI.Cmd.Run(-> { Msg.Sent(id, text, Client.send_message(server, id, text)) }))
+end
+
+# A message sent while a turn runs is queued; its `message_queued` event shows it. A message that was not sent goes
+# back to an empty prompt.
+def sent_reply(app: Model, text: String, result: Result[Protocol.MessageAccepted]) -> Model
+  case result
+    ok(accepted) if accepted.message_id.some? -> app.with(yolo: Yolo.accepted(app.yolo, accepted))
     ok(accepted) ->
       entries = Transcript.add(app.entries, Transcript.Kind.User, text)
-      yolo = Yolo.accepted(app.yolo, accepted)
-      app.with(entries: entries, prompt: "", turn: true, stopping: false, scroll: 0, yolo: yolo)
+      app.with(entries: entries, turn: true, stopping: false, yolo: Yolo.accepted(app.yolo, accepted))
+    error(e) if app.prompt == "" -> noted(app.with(prompt: text, cursor: text.length), "error: #{e.message}")
     error(e) -> noted(app, "error: #{e.message}")
   end
+end
+
+def stop_reply(app: Model, result: Result[Void]) -> Model
+  case result
+    ok(_) -> app
+    error(e) -> noted(app.with(stopping: false), "error: the stop was not sent: #{e.message}")
+  end
+end
+
+# The stream held while messages were sent goes on once every reply came.
+def released(app: Model) -> Model
+  return app if app.sends > 0 or app.held.empty?
+
+  streamed(app.with(held: []), app.held)
 end
 
 def on_command(app: Model, command: Client.Command) -> Model
@@ -542,10 +583,12 @@ end
 def stop(app: Model) -> Model
   return app if not app.turn or app.stopping
 
-  case Client.stop(app.server, app.id)
-    ok(_) -> noted(app.with(stopping: true), "stopping the turn")
-    error(e) -> noted(app, "error: the stop was not sent: #{e.message}")
-  end
+  server = app.server
+  id = app.id
+  effect(
+    noted(app.with(stopping: true), "stopping the turn"),
+    TUI.Cmd.Run(-> { Msg.Stopped(Client.stop(server, id)) }),
+  )
 end
 
 # The answer is sent by a command, so the keys go on; its reply comes back as a message.

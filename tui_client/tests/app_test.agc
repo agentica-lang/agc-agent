@@ -31,6 +31,24 @@ def test_the_stream_of_the_current_generation_is_drawn_and_read_again() -> Resul
   Test.eq(old.cmds.size, 0)
 end
 
+# Enter sends from a command; the stream waits until the reply, so the message is drawn before its answer, and a
+# message that was not sent goes back to the prompt.
+def test_a_message_is_sent_by_a_command_and_the_stream_waits_for_its_reply() -> Result[Void]
+  feed: Channel[Client.Item] = Channel.new(4)
+  model = model_of(30, 8).with(id: "s1", generation: 1, feed: some(feed), prompt: "hi")
+  sending = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Enter, TUI.Mods())))
+  try Test.eq([sending.model.prompt, "#{sending.model.sends}", "#{sending.cmds.size}"], ["", "1", "1"])
+  text = Protocol.Event.TextDelta(Protocol.TextDelta(text: "hello"))
+  held = App.update(sending.model, App.Msg.Stream(1, [Client.Item.Event(some(1), text)]))
+  try Test.eq([held.model.entries.size, held.cmds.size], [0, 0])
+  replied = App.update(held.model, App.Msg.Sent("s1", "hi", ok(Protocol.MessageAccepted(turn_id: "t1"))))
+  try Test.eq(replied.model.entries.map { |entry| entry.text }, ["hi", "hello"])
+  try Test.eq([replied.model.turn, replied.model.held.empty?], [true, true])
+  try Test.eq(replied.cmds.size, 1)
+  failed = App.update(sending.model, App.Msg.Sent("s1", "hi", error("down", kind: "client.unreachable")))
+  Test.eq([failed.model.prompt, failed.model.entries.last.text], ["hi", "error: down"])
+end
+
 def test_ctrl_c_and_a_signal_quit_with_their_codes() -> Result[Void]
   model = model_of(30, 6)
   quit = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Ctrl("c"), TUI.Mods())))

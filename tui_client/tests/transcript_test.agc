@@ -97,6 +97,19 @@ def test_the_tail_matches_the_lines_and_a_change_cuts_again() -> Result[Void]
   Test.eq(Transcript.tail(kept, 8, true, 9), Transcript.lines(entries, 8, true))
 end
 
+# An entry with no rows (an answer that only called tools) takes no empty row, at the start or between.
+def test_an_entry_without_rows_adds_no_empty_row() -> Result[Void]
+  empty = Transcript.Entry(kind: Transcript.Kind.Assistant, text: "")
+  entries = [empty] + Transcript.note([], "one") + [empty] + Transcript.note([], "two")
+  all = Transcript.lines(entries, 20, false)
+  try Test.eq(all.map { |line| Markdown.plain(line.spans) }, ["· one", "", "· two"])
+  for count in 0..4
+    try Test.eq(Transcript.tail(entries, 20, false, count), all.drop([all.size - count, 0].max.unwrap!))
+  end
+
+  ok()
+end
+
 def test_thinking_is_folded_unless_shown_or_clicked_open() -> Result[Void]
   entries = Transcript.add([], Transcript.Kind.Thinking, "hmm")
   entries = Transcript.add(entries, Transcript.Kind.Assistant, "yes")
