@@ -1,9 +1,9 @@
 ## The file of a session in the data folder: JSON Lines, appended as the session goes. The first line is the session;
-## then one line per event (with its id), per user message, per round of the model's history and per answer a client
+## then one line per event but the deltas (with its id), per block of ids the deltas take, per user message, per round of the model's history and per answer a client
 ## draws. A record is one line, written whole or cut by a crash: loading skips a line that does not parse or decode,
 ## and `reopen` ends a line that a crash left open.
 ##
-## The file keeps every event and message in plain text, tool output and file contents included, until it is removed.
+## The file keeps the events and messages in plain text, tool output and file contents included, until it is removed.
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
@@ -38,6 +38,8 @@ struct Saved
   open_end: Bool
   users: Int = 0
   open_user: Bool = false
+  ## After the last saved event, the ids up to this one may have gone to events that are not saved; 0 when none.
+  reserved: Int = 0
 end
 
 def file_of(dir: String, id: String) -> String = "#{dir}/#{id}#{EXTENSION}"
@@ -75,6 +77,12 @@ end
 ## The messages a round added to the history, in one record so that a call never goes without its result.
 def append_messages(path: String, messages: List[LLM.Message]) -> Result[Void]
   append(path, {"type": JSON.from("messages"), "messages": JSON.array(messages.map { |m| encode_message(m) })})
+end
+
+## Ids up to `until` may go to events that are not saved (deltas), so a restart starts after them. A saved event
+## after it ends the reservation.
+def append_reserved(path: String, until: Int) -> Result[Void]
+  append(path, {"type": JSON.from("ids"), "until": JSON.from(until)})
 end
 
 ## A compaction of the history as the records before it left it.
@@ -199,7 +207,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
       event = try Protocol.decode_event(try field(json, "name"), JSON.encode(try JSON.get(json, "data")))
       logged = Logged(id: try JSON.int(try JSON.get(json, "id")), event: event)
       started = Protocol.event_kind(event) == Protocol.EventKind.TurnStarted
-      ok(saved.with(events: saved.events.push(logged), open_user: saved.open_user and not started))
+      ok(saved.with(events: saved.events.push(logged), open_user: saved.open_user and not started, reserved: 0))
     "user" ->
       text = try field(json, "text")
       message = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
@@ -230,6 +238,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
       return error("a compaction outside the history") if compaction.to > saved.history.size
 
       ok(saved.with(history: Compaction.apply(saved.history, compaction)))
+    "ids" -> ok(saved.with(reserved: try JSON.int(try JSON.get(json, "until"))))
     "answer" ->
       shown = Protocol.Message(role: Protocol.Role.Assistant, text: try field(json, "text"))
       ok(saved.with(shown: saved.shown.push(shown)))
