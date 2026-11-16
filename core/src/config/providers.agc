@@ -58,7 +58,7 @@ end
 def from_file(path: String) -> Result[List[Custom]]
   text = try File.read_text(path)
   case JSON.decode(text, ProvidersFile)
-    ok(file) -> checked(path, file.providers)
+    ok(file) -> checked(path, file.providers.unwrap_or([]).map(&custom_of))
     error(e) -> error("#{path}: #{e.message}")
   end
 end
@@ -91,8 +91,27 @@ private
 ## The catalog id of a preset, where it differs from its name.
 CATALOG = {"fireworks": "fireworks-ai"}
 
+# Every field but the name and the URL may be left out (Optional: a default does not make a field optional in JSON).
 struct ProvidersFile
-  providers: List[Custom] = []
+  providers: Optional[List[CustomWire]] = none
+end
+
+struct CustomWire
+  name: String
+  api: Optional[String] = none
+  base_url: String
+  key_env: Optional[String] = none
+  models: Optional[List[String]] = none
+end
+
+def custom_of(wire: CustomWire) -> Custom
+  Custom(
+    name: wire.name,
+    api: wire.api.unwrap_or("openai"),
+    base_url: wire.base_url,
+    key_env: wire.key_env.unwrap_or(""),
+    models: wire.models.unwrap_or([]),
+  )
 end
 
 def checked(path: String, customs: List[Custom]) -> Result[List[Custom]]

@@ -154,8 +154,8 @@ def encode_session(reply: Session) -> String
       accept_edits: some(reply.accept_edits),
       cost: Wire.field(reply.cost),
       effort: reply.effort,
-      provider: reply.provider,
-      api: reply.api,
+      provider: some(reply.provider),
+      api: some(reply.api),
     ),
   )
 end
@@ -183,8 +183,8 @@ def decode_session(text: String) -> Result[Session]
       accept_edits: wire.accept_edits.unwrap_or(false),
       cost: Wire.optional(wire.cost),
       effort: wire.effort,
-      provider: wire.provider,
-      api: wire.api,
+      provider: wire.provider.unwrap_or(""),
+      api: wire.api.unwrap_or(""),
     ),
   )
 end
@@ -228,8 +228,8 @@ struct SessionWire
   accept_edits: Optional[Bool] = none
   cost: JSON.Field[Float]
   effort: Optional[String] = none
-  provider: String = ""
-  api: String = ""
+  provider: Optional[String] = none
+  api: Optional[String] = none
 end
 
 def check_turn(wire: SessionWire) -> Result[Void]

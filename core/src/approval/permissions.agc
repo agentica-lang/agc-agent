@@ -144,9 +144,10 @@ end
 
 private
 
+# Optional, so a file without rules (only `providers`) reads.
 struct RulesFile
-  allow: List[String] = []
-  deny: List[String] = []
+  allow: Optional[List[String]] = none
+  deny: Optional[List[String]] = none
 end
 
 def key(tool: String, target: String) -> String = "#{tool}\n#{target}"
@@ -173,7 +174,7 @@ def rules_of(path: String) -> Result[Approval.Rules]
   end
 
   parsed = try file
-  case Approval.parse_rules(parsed.allow, parsed.deny)
+  case Approval.parse_rules(parsed.allow.unwrap_or([]), parsed.deny.unwrap_or([]))
     ok(rules) -> ok(rules)
     error(e) -> error("#{path}: #{e.message}")
   end
