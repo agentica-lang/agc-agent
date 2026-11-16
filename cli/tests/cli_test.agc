@@ -207,27 +207,42 @@ def stopped(rig: Driver.Rig) -> Result[Void]
   Test.eq(done.code, 0)
 end
 
-# `!cmd` and `!!cmd` go to the shell route: the output is printed, and a refusal is shown.
+# `!cmd` and `!!cmd` go to the shell route: the output is printed, `/stop` stops a command, and a refusal is shown.
 def test_a_bang_line_runs_a_shell_command() -> Result[Void]
   busy = Protocol.Failure(kind: Protocol.KIND_SESSION_BUSY, message: "a turn is running")
   replies = [
     Fake.Reply(status: 202, body: "{\"shell_id\": \"sh1\"}", push: ["shell.sse"]),
+    Fake.Reply(status: 202, body: "{\"shell_id\": \"sh2\"}", push: ["shell_running.sse"]),
     Fake.Reply(status: 409, body: Protocol.encode_failure(busy)),
   ]
 
   running = Fake.Route(method: "POST", path: Protocol.shell_path("s1"), replies: replies)
-  Driver.within([Routes.created(), Routes.held_events(), running]) do |rig|
+  stop = Routes.stopping(Fake.Reply(push: ["shell_stopped.sse"]))
+  Driver.within([Routes.created(), Routes.held_events(), running, stop]) do |rig|
     cli = try Driver.start(rig.dir, PLAIN)
     try Driver.say(cli, "!echo one")
     shown = try Driver.read_until(cli, "[shell ok] (5 ms)")
     try Test.eq(shown.drop(shown.size - 3), ["[shell] echo one", "one", "[shell ok] (5 ms)"])
+    try Driver.say(cli, "!sleep 9")
+    try Driver.read_until(cli, "[shell] sleep 9")
+    try Driver.say(cli, "/stop")
+    stopped = try Driver.read_until(cli, "[shell failed] (0 ms)")
+    try Test.eq(
+      stopped,
+      ["[stopping the command: Ctrl+C again leaves]", "stopped by the user", "[shell failed] (0 ms)"],
+    )
+
     try Driver.say(cli, "!! ls")
     try Driver.read_until(cli, "[not run] a turn is running")
     _ = try Driver.finish(cli)
-    sent = [try Fake.request(rig.fake, "POST", Protocol.shell_path("s1"))]
-    sent = sent.push(try Fake.request(rig.fake, "POST", Protocol.shell_path("s1")))
+    sent: List[Fake.Seen] = []
+    for _i in 1..3
+      sent = sent.push(try Fake.request(rig.fake, "POST", Protocol.shell_path("s1")))
+    end
+
     expected = [
       Protocol.RunShell(command: "echo one", context: true),
+      Protocol.RunShell(command: "sleep 9", context: true),
       Protocol.RunShell(command: "ls", context: false),
     ]
 

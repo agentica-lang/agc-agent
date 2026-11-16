@@ -146,11 +146,22 @@ def append_event(path: String, logged: Logged) -> Result[Void]
 end
 
 ## The message that starts a turn, the first of the turn's history; `typed` is what is shown when not empty (the text
-## without what extensions put before it) and `marks` the names they noted.
-def append_user(path: String, text: String, typed: String = "", marks: List[String] = []) -> Result[Void]
+## without what extensions put before it) and `marks` the names they noted. With `shells`, the model's message starts
+## with the output of the commands since the last user message, which their `shell_finished` events hold.
+def append_user(
+  path: String,
+  text: String,
+  typed: String = "",
+  marks: List[String] = [],
+  shells: Bool = false,
+) -> Result[Void]
   fields = {"type": JSON.from("user"), "text": JSON.from(text)}
   if typed != "" and typed != text
     fields = fields.put("typed", JSON.from(typed))
+  end
+
+  if shells
+    fields = fields.put("shells", JSON.from(true))
   end
 
   append(path, with_marks(fields, marks))
@@ -320,6 +331,9 @@ def load(path: String, leaf: Optional[Int] = none) -> Result[Saved]
 
   ok(totals(saved, entries))
 end
+
+## The text of a user message after the output of the commands before it.
+def with_shells(shells: List[String], text: String) -> String = (shells + [text]).join("\n\n")
 
 ## A command's output as the model gets it, before the next user message.
 def shell_context(finished: Protocol.ShellFinished) -> String
@@ -732,8 +746,12 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
       ok(saved.with(events: events, open_user: saved.open_user and not started, reserved: 0, shells: shells))
     "user" ->
       text = try field(json, "text")
-      message = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
       shown = Protocol.Message(role: Protocol.Role.User, text: optional_string(json, "typed").unwrap_or(text))
+      if JSON.bool(JSON.get(json, "shells").unwrap_or(JSON.from(false))).unwrap_or(false)
+        text = with_shells(saved.shells, text)
+      end
+
+      message = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
       users = saved.users + 1
       ok(
         saved.with(

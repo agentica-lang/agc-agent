@@ -62,8 +62,8 @@ struct Fork
   entry: Optional[Int] = none
 end
 
-## `POST /v1/sessions/ID/shell`: runs `command` in the session folder as the `bash` tool would, while no turn runs.
-## With `context`, its output goes to the model before the next message.
+## `POST /v1/sessions/ID/shell`: runs `command` in the session folder as the `bash` tool would, while no turn runs, for
+## up to 10 minutes. With `context`, its output goes to the model before the next message.
 struct RunShell
   command: String
   context: Bool
