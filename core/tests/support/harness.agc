@@ -55,6 +55,7 @@ struct Setup
   replies: List[String]
   keep_events: Int = 1000
   approval_timeout_ms: Int = 90000
+  drain_ms: Int = 60000
   ## 0 asks the fake (`GET /models`), which takes a reply.
   context_window: Int = 1_000_000
   compact_model: String = ""
@@ -216,6 +217,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     approvals: try approval_rules(setup),
     keep_events: setup.keep_events,
     approval_timeout_ms: setup.approval_timeout_ms,
+    drain_ms: setup.drain_ms,
     context_window: window(setup.context_window),
     compact_model: setup.compact_model,
     props_url: props_url(setup, fake),

@@ -1,5 +1,6 @@
 import App from "src/app"
 import Args from "src/args"
+import ServerCmd from "src/server_cmd"
 
 def main() -> Void
   case Args.parse(System.args())
@@ -17,6 +18,7 @@ def dispatch(command: Args.Command) -> Void
     Args.Command.Version -> puts("Finn Agent cli #{Args.VERSION}")
     Args.Command.Help(text) -> puts(text)
     Args.Command.Run(options) -> finish(App.run(options))
+    Args.Command.Server(options) -> finish(ServerCmd.run(options))
     Args.Command.Delete(options, id) -> finish(App.delete(options, id))
     Args.Command.Logout(options, name) -> finish(App.logout(options, name))
   end

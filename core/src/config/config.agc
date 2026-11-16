@@ -2,7 +2,8 @@
 ## `~/.local/state/finn`), `FINN_DATA_DIR` for the sessions (else `$XDG_DATA_HOME/finn`, else
 ## `~/.local/share/finn`), and the model API: `FINN_API` (`openai`, chat completions, by default, or
 ## `openai_responses`), `FINN_BASE_URL` (a local llama-server by default), `FINN_API_KEY` and
-## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction; `FINN_MODELS_URL` (the models.dev
+## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction; `FINN_DRAIN_MS` (how long a stop waits for the turns,
+## 60000); `FINN_MODELS_URL` (the models.dev
 ## catalog of prices and windows, `off` for none) and `FINN_MODELS_PROVIDER` (the provider of the model there).
 ## `FINN_CODE_MODE=1` adds code mode, whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is
 ## not checked), else the pinned one fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be private to the user). Skills:
@@ -66,6 +67,8 @@ struct Options
   port: Int = 0
   keep_events: Int = 1000
   approval_timeout_ms: Int = 90000
+  ## How long a stop of the server waits for the running turns before it cancels them.
+  drain_ms: Int = 60000
   ## The model's window in tokens; none asks the provider (`GET /models`).
   context_window: Optional[Int] = none
   ## The model that writes the summary of a compaction; empty is the session's model.
@@ -175,6 +178,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       env: read,
       approvals: some(try Permissions.user_rules(read)),
       context_window: try context_window(read),
+      drain_ms: try drain_ms(read),
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(base_url),
       api_key: api_key,
@@ -413,6 +417,17 @@ def set(read: Fn[String, Result[String]], name: String) -> Optional[String]
   end
 
   none
+end
+
+def drain_ms(read: Fn[String, Result[String]]) -> Result[Int]
+  for text in option_list(set(read, "FINN_DRAIN_MS"))
+    case text.to_i
+      ok(ms) if ms >= 0 -> return ok(ms)
+      _ -> return error("FINN_DRAIN_MS must be a number of milliseconds, not #{text.inspect}")
+    end
+  end
+
+  ok(60000)
 end
 
 def context_window(read: Fn[String, Result[String]]) -> Result[Optional[Int]]

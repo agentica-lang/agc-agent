@@ -2,6 +2,8 @@
 
 HEALTH_PATH = "/v1/health"
 SESSIONS_PATH = "/v1/sessions"
+SERVER_PATH = "/v1/server"
+SERVER_STOP_PATH = "/v1/server/stop"
 PROVIDERS_PATH = "/v1/providers"
 AUTH_PATH = "/v1/auth"
 
@@ -38,6 +40,8 @@ def shape() -> List[String]
   [
     HEALTH_PATH,
     SESSIONS_PATH,
+    SERVER_PATH,
+    SERVER_STOP_PATH,
     PROVIDERS_PATH,
     AUTH_PATH,
     LAST_EVENT_ID_HEADER,

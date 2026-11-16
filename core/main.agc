@@ -1,9 +1,11 @@
-import HTTP from "std/http"
 import Catalog from "src/agent/catalog"
 import Cli from "src/config/cli"
 import Config from "src/config/config"
 import McpTools from "src/ext/mcp"
 import Server from "src/http/server"
+
+## How long the task of the signals waits for one before it waits again.
+SIGNAL_POLL_MS = 3_600_000
 
 def main() -> Void
   case Cli.parse(System.args())
@@ -18,8 +20,30 @@ def serve() -> Void
     ok(server) ->
       puts("Finn Agent core listening on 127.0.0.1:#{server.port}")
       IO.flush()
-      _ = HTTP.wait(server.http)
+      stop_on_signals(server)
+      Server.shutdown(server, Server.stop_requested(server))
+      puts("Finn Agent core stopped")
+      IO.flush()
     error(e) -> fail(e.message, "")
+  end
+end
+
+# A signal that ends a container (SIGTERM, or Ctrl-C) stops the server as `finn server stop --now` does; each one asks
+# again, so a second signal cancels the turns of a stop that waits for them.
+def stop_on_signals(server: Server.Server) -> Void
+  case System.subscribe([System.Signal.Term, System.Signal.Int])
+    ok(signals) ->
+      _ = Task.spawn(
+        -> {
+          while true
+            case signals.recv(SIGNAL_POLL_MS)
+              ok(_) -> Server.request_stop(server, true)
+              error(_) -> nil
+            end
+          end
+        },
+      )
+    error(e) -> IO.warn("no signal handling: #{e.message}")
   end
 end
 

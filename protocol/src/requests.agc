@@ -66,6 +66,12 @@ struct Fork
   entry: Optional[Int] = none
 end
 
+## `POST /v1/server/stop`: the server stops starting work and goes once its turns end; `now` cancels them first (none
+## is false). A second request with `now` while it waits makes it cancel.
+struct StopServer
+  now: Optional[Bool] = none
+end
+
 ## `POST /v1/sessions/ID/shell`: runs `command` in the session folder as the `bash` tool would, while no turn runs.
 ## With `context`, its output goes to the model before the next message.
 struct RunShell
@@ -153,6 +159,10 @@ def decode_fork(text: String) -> Result[Fork]
   ok(body)
 end
 
+def encode_stop_server(body: StopServer) -> String = JSON.encode(body)
+
+def decode_stop_server(text: String) -> Result[StopServer] = Wire.decode_strict(text, StopServer.codec)
+
 def encode_run_shell(body: RunShell) -> String = JSON.encode(body)
 
 def decode_run_shell(text: String) -> Result[RunShell]
@@ -179,6 +189,7 @@ def shape() -> List[String]
     Wire.record("Compacted", Compacted.members),
     Wire.record("Branch", Branch.members),
     Wire.record("Fork", Fork.members),
+    Wire.record("StopServer", StopServer.members),
     Wire.record("RunShell", RunShell.members),
     Wire.record("Login", Login.members),
     Wire.record("ApproveWire", ApproveWire.members),

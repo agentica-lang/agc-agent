@@ -50,8 +50,13 @@ bin/finn login                         # set up a provider with its key, checked
 bin/finn --version
 ```
 
+`finn server status`, `stop` (waits for the running turns and ends when the server has gone; `--now` cancels them),
+`restart`, `start` and `logs [-f]` manage the server a
+client started in the background.
+
 The flags of `finn serve` (`--api`, `--model`, `--base-url`) override their environment variables (`FINN_API`,
 `FINN_MODEL`, `FINN_BASE_URL`); `finn serve --help` lists them all.
 
 Development: `make test` and `make smoke-llama` (the second fetches llama.cpp and a 0.5B model, about 500 MB, into
-`.tools/`).
+`.tools/`). The tests against a real model (`make smoke-llama` and the targets that call a paid API) run only on your
+machine, never in CI.

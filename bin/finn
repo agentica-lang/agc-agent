@@ -23,6 +23,8 @@ usage: finn [chat] [options]      talk to the agent in this folder (starts the s
        finn serve [options]       run the server in the foreground
        finn login [PROVIDER]      set up a provider with its key: checked, then stored (pick one when none is given)
        finn logout [PROVIDER]     remove the stored key of a provider, or every stored key
+       finn server ACTION         status, start, stop, restart or logs of the server of the state folder
+                                  (stop waits for the running turns, --now cancels them; finn server --help)
        finn --version | --help
 
 chat options: --provider NAME, --api NAME, --model NAME (of a new session), --session ID, --thinking, --yolo, ...

@@ -2,6 +2,7 @@
 ## protocol, the task that reads the event stream of a session, and the commands a user types.
 
 import Commands from "src/commands"
+import Control from "src/control"
 import Discovery from "src/discovery"
 import Events from "src/feed"
 import Http from "src/http"
@@ -13,6 +14,8 @@ export Http.Server
 export Http.KIND_UNREACHABLE
 export Http.KIND_TIMEOUT
 export Http.health
+export Http.server_status
+export Http.stop_server
 export Http.create_session
 export Http.session
 export Http.send_message
@@ -38,7 +41,15 @@ export Discovery.KIND_SERVER
 export Discovery.KIND_VERSION
 export Discovery.state_dir
 export Discovery.connect
+export Discovery.Found
+export Discovery.find
+export Discovery.log_file
+export Discovery.server_pid
+export Discovery.exited?
 export Discovery.recheck
+
+export Control.stop_and_wait
+export Control.restart
 
 export Events.Feed
 export Events.Item

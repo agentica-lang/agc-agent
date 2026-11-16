@@ -6,6 +6,24 @@ import Fake from "fake_server"
 READ_MS = 10_000
 EXIT_MS = 15_000
 ENTRIES = ["main.agc", "cli/main.agc"]
+CORES = ["../core/main.agc", "core/main.agc"]
+SETTINGS = [
+  "FINN_CONFIG",
+  "FINN_MCP_CONFIG",
+  "FINN_TRUSTED_DIRS",
+  "FINN_CODE_MODE",
+  "FINN_MONTY",
+  "FINN_API",
+  "FINN_BASE_URL",
+  "FINN_API_KEY",
+  "FINN_MODEL",
+  "FINN_CONTEXT_WINDOW",
+  "FINN_COMPACT_MODEL",
+  "FINN_MODELS_PROVIDER",
+  "FINN_DRAIN_MS",
+]
+
+OTHER_SETTINGS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
 FAKE_MAINS = ["tests/support/fake_main.agc", "cli/tests/support/fake_main.agc"]
 
 ## A fake server and the state folder that points at it.
@@ -76,8 +94,34 @@ def start(
   Process.spawn_captured(
     program[0],
     program.drop(1) + ["--state-dir", dir] + args,
-    Process.Options(env: {"NO_COLOR": no_color, "FINN_SERVER_COMMAND": ""}, chdir: chdir),
+    Process.Options(env: environment(no_color, dir), chdir: chdir),
   )
+end
+
+## `finn server ACTION` on `dir`; `command` is the server command it starts a server with (none: the action starts none).
+def start_server(
+  dir: String,
+  action: List[String],
+  command: List[String] = [],
+  extra: Map[String, String] = {},
+) -> Result[Process]
+  program = try program_words(ENTRIES, "CLI_BYTECODE", true)
+  tail = ["--state-dir", dir]
+  if not command.empty?
+    tail = tail + ["--"] + command
+  end
+
+  Process.spawn_captured(
+    program[0],
+    program.drop(1) + ["server"] + action + tail,
+    Process.Options(env: with_extra(environment("1", dir), extra)),
+  )
+end
+
+## The words that start the real server: the bytecode `make` compiled once (CORE_BYTECODE), else the source.
+def core_command() -> Result[List[String]]
+  words = try program_words(CORES, "CORE_BYTECODE", true)
+  ok(words + ["serve"])
 end
 
 ## The words that start the fake server program.
@@ -141,6 +185,44 @@ def program_words(paths: List[String], bytecode_env: String, compiled: Bool) -> 
   end
 end
 
+# The settings of the host never reach a client or the real server it starts: those a test does not set are empty (the
+# programs take an empty value as none), home and the XDG folders are the state folder, no model catalog is fetched and
+# the data of a real server goes into it too.
+def environment(no_color: String, dir: String) -> Map[String, String]
+  blank = SETTINGS.flat_map { |name| [name, "AGC_AGENT_#{name.slice(5, name.length - 5)}"] }
+  env: Map[String, String] = {}
+  for name in blank + OTHER_SETTINGS
+    env = env.put(name, "")
+  end
+
+  set = {
+    "NO_COLOR": no_color,
+    "FINN_SERVER_COMMAND": "",
+    "FINN_MODELS_URL": "off",
+    "FINN_DATA_DIR": "#{dir}/data",
+    "HOME": "#{dir}/home",
+    "XDG_CONFIG_HOME": "#{dir}/home/.config",
+    "XDG_DATA_HOME": "#{dir}/home/.local/share",
+    "XDG_STATE_HOME": "#{dir}/home/.local/state",
+    "XDG_CACHE_HOME": "#{dir}/home/.cache",
+  }
+
+  for name in set.keys
+    env = env.put(name, set[name])
+  end
+
+  env
+end
+
+def with_extra(env: Map[String, String], extra: Map[String, String]) -> Map[String, String]
+  merged = env
+  for name in extra.keys
+    merged = merged.put(name, extra[name])
+  end
+
+  merged
+end
+
 def binary() -> String
   case System.env("AGENTICA")
     ok(path) if path != "" -> path
@@ -160,5 +242,6 @@ def make_dir() -> Result[String]
   base = System.env("TMPDIR").unwrap_or("/tmp")
   dir = try Path.join([base, "agc-cli-#{System.pid()}-#{Random.int(0, 999_999_999)}"])
   try Dir.mkdir_private(dir)
+  try Dir.mkdir("#{dir}/home")
   ok(dir)
 end

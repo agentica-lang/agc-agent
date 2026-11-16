@@ -297,6 +297,25 @@ def test_the_tree_and_its_branches_round_trip() -> Result[Void]
   Test.eq(error_kind(Protocol.decode_fork("{\"entri\": 1}")), "protocol.invalid")
 end
 
+def test_the_server_status_and_its_stop_round_trip() -> Result[Void]
+  status = Protocol.ServerStatus(
+    pid: 42,
+    version: "0.0.1",
+    started_s: 1000,
+    sessions: 3,
+    running_turns: 1,
+    stopping: true,
+  )
+
+  try Test.eq(Protocol.decode_server_status(Protocol.encode_server_status(status)), ok(status))
+  stop = Protocol.StopServer(now: some(true))
+  try Test.eq(Protocol.decode_stop_server(Protocol.encode_stop_server(stop)), ok(stop))
+  try Test.eq(Protocol.decode_stop_server("{}"), ok(Protocol.StopServer()))
+  try Test.eq(error_kind(Protocol.decode_stop_server("{\"later\": true}")), "protocol.invalid")
+  try Test.eq(Protocol.SERVER_PATH, "/v1/server")
+  Test.eq(Protocol.SERVER_STOP_PATH, "/v1/server/stop")
+end
+
 def test_a_shell_command_round_trips() -> Result[Void]
   run = Protocol.RunShell(command: "ls", context: false)
   try Test.eq(Protocol.decode_run_shell(Protocol.encode_run_shell(run)), ok(run))

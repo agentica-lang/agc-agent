@@ -17,6 +17,17 @@ struct Health
   wire: Optional[String] = none
 end
 
+## `GET /v1/server`: `started_s` is when the process started (Unix seconds); `running_turns` counts the sessions that
+## have a turn or a shell command running now; `stopping` says a stop waits for them.
+struct ServerStatus
+  pid: Int
+  version: String
+  started_s: Int
+  sessions: Int
+  running_turns: Int
+  stopping: Bool
+end
+
 ## The answer of `POST /v1/sessions`.
 struct SessionCreated
   id: String
@@ -183,6 +194,10 @@ def encode_session_tree(reply: SessionTree) -> String = JSON.encode(reply)
 
 def decode_session_tree(text: String) -> Result[SessionTree] = Wire.decode(text, SessionTree.codec)
 
+def encode_server_status(reply: ServerStatus) -> String = JSON.encode(reply)
+
+def decode_server_status(text: String) -> Result[ServerStatus] = Wire.decode(text, ServerStatus.codec)
+
 def encode_branched(reply: Branched) -> String = JSON.encode(reply)
 
 def decode_branched(text: String) -> Result[Branched] = Wire.decode(text, Branched.codec)
@@ -271,6 +286,7 @@ def shape() -> List[String]
     Wire.record("TreeNode", TreeNode.members),
     Wire.record("SessionTree", SessionTree.members),
     Wire.record("Branched", Branched.members),
+    Wire.record("ServerStatus", ServerStatus.members),
     Wire.record("ShellAccepted", ShellAccepted.members),
     Wire.record("LoginStatus", LoginStatus.members),
     Wire.record("LoginList", LoginList.members),

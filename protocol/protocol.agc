@@ -31,12 +31,15 @@ export Kinds.KIND_SESSION_STORAGE
 export Kinds.KIND_SESSION_UNAVAILABLE
 export Kinds.KIND_APPROVAL_NOT_FOUND
 export Kinds.KIND_APPROVAL_RESOLVED
+export Kinds.KIND_SERVER_STOPPING
 export Kinds.KIND_SHELL_DENIED
 export Kinds.KIND_LOGIN_REJECTED
 export Kinds.KIND_LOGIN_STORAGE
 
 export Routes.HEALTH_PATH
 export Routes.SESSIONS_PATH
+export Routes.SERVER_PATH
+export Routes.SERVER_STOP_PATH
 export Routes.PROVIDERS_PATH
 export Routes.AUTH_PATH
 export Routes.LAST_EVENT_ID_HEADER
@@ -60,6 +63,7 @@ export Requests.UpdateSession
 export Requests.Compacted
 export Requests.Branch
 export Requests.Fork
+export Requests.StopServer
 export Requests.RunShell
 export Requests.Login
 export Requests.EFFORTS
@@ -79,6 +83,8 @@ export Requests.encode_compacted
 export Requests.decode_compacted
 export Requests.encode_branch
 export Requests.decode_branch
+export Requests.encode_stop_server
+export Requests.decode_stop_server
 export Requests.encode_fork
 export Requests.decode_fork
 export Requests.encode_run_shell
@@ -100,6 +106,7 @@ export Replies.Session
 export Replies.TreeNode
 export Replies.SessionTree
 export Replies.Branched
+export Replies.ServerStatus
 export Replies.ShellAccepted
 export Replies.LoginStatus
 export Replies.LoginList
@@ -124,6 +131,8 @@ export Replies.encode_session_tree
 export Replies.decode_session_tree
 export Replies.encode_branched
 export Replies.decode_branched
+export Replies.encode_server_status
+export Replies.decode_server_status
 export Replies.encode_shell_accepted
 export Replies.decode_shell_accepted
 export Replies.encode_login_status
