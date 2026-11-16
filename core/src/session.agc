@@ -47,6 +47,8 @@ struct Setup
   extra: Map[String, JSON.Value] = {}
   code_mode: Optional[CodeMode.Settings] = none
   skills: List[Skills.Skill] = []
+  ## The thinking level of the calls; none leaves it to the model.
+  effort: Optional[String] = none
 end
 
 enum Msg
@@ -63,6 +65,17 @@ enum Msg
   Compacted(String, Compaction.Compaction)
   Window(Int)
   Finished(String, Protocol.StopReason)
+  Update(Protocol.UpdateSession, Channel[Result[Void]])
+  Fold(Channel[Result[Fold]])
+  Folded(Optional[Compaction.Compaction], Channel[Result[Void]])
+end
+
+## What a compaction that a client asked for needs, taken from the session while no turn runs.
+struct Fold
+  provider: LLM.Provider
+  settings: Compaction.Settings
+  history: List[LLM.Message]
+  span: Optional[Compaction.Compaction]
 end
 
 struct Waiting
@@ -114,6 +127,8 @@ struct State
   lost_below: Int = 0
   ## The turn that a failed write stopped, for a client that attaches from inside it.
   lost: Optional[Lost] = none
+  ## A compaction that a client asked for runs: no turn starts meanwhile.
+  compacting: Bool = false
 end
 
 ## Starts a session; from what its file saved when there is one.
@@ -154,6 +169,35 @@ def end_session(address: Address[Msg]) -> Result[Void]
   closed: Result[Result[Void]] = Actor.call(address, CALL_MS) do |reply| Msg.Close(reply) end
   try try closed
   ok()
+end
+
+## Changes the model or the thinking level from the next turn on, and keeps them in the session's file.
+def update(address: Address[Msg], change: Protocol.UpdateSession) -> Result[Void]
+  updated: Result[Result[Void]] = Actor.call(address, CALL_MS) do |reply| Msg.Update(change, reply) end
+  try try updated
+  ok()
+end
+
+## Folds the history into a summary now, as a turn past the limit would; false when there is nothing to fold.
+## `session.busy` while a turn or another compaction runs. The summary is asked outside the session, which only
+## refuses new turns meanwhile.
+def compact_now(address: Address[Msg]) -> Result[Bool]
+  taken: Result[Result[Fold]] = Actor.call(address, CALL_MS) do |reply| Msg.Fold(reply) end
+  fold = try try taken
+  summary: Result[Optional[Compaction.Compaction]] = ok(none)
+  for span in option_list(fold.span)
+    summary = case Compaction.summarize(fold.provider, fold.settings, fold.history, span)
+      ok(compaction) -> ok(some(compaction))
+      error(e) -> error("the history was not compacted: #{e.message}", kind: Compaction.KIND_FAILED, cause: e)
+    end
+  end
+
+  nothing: Optional[Compaction.Compaction] = none
+  found = summary.unwrap_or(nothing)
+  done: Result[Result[Void]] = Actor.call(address, CALL_MS) do |reply| Msg.Folded(found, reply) end
+  _ = try summary
+  try try done
+  ok(found.some?)
 end
 
 ## Stops the running turn; whether one ran.
@@ -206,6 +250,9 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Compacted(turn_id, compaction) -> Actor.continue(if_current(state, turn_id, ->(s) { compact(s, compaction) }))
     Msg.Window(window) -> Actor.continue(state.with(window: window))
     Msg.Finished(turn_id, reason) -> Actor.continue(if_current(state, turn_id, ->(s) { finish(s, reason) }))
+    Msg.Update(change, reply) -> Actor.continue(update_setup(state, change, reply))
+    Msg.Fold(reply) -> Actor.continue(start_fold(state, reply))
+    Msg.Folded(found, reply) -> Actor.continue(end_fold(state, found, reply))
   end
 end
 
@@ -244,6 +291,7 @@ def session(state: State) -> Protocol.Session
     turn_from_event_id: state.turn.map { |t| t.from_event_id },
     pending_approvals: state.pending.map { |w| w.request },
     history: state.display,
+    effort: state.setup.effort,
   )
 end
 
@@ -403,8 +451,8 @@ end
 
 # The user's `/name` of a skill puts its content before the message, unless the session has it already.
 def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> State
-  if state.turn.some?
-    Actor.reply(reply, error("a turn is running", kind: Protocol.KIND_SESSION_BUSY))
+  if state.turn.some? or state.compacting
+    Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
     return state
   end
 
@@ -455,6 +503,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
     turn_tools: Skills.tools(setup.skills),
     marks: state.marks,
     on_fold: some(Skills.on_fold(setup.skills)),
+    effort: setup.effort,
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
@@ -619,6 +668,78 @@ def ended(state: State, turn_id: String, texts: List[String], reason: Protocol.S
   emit(shown, Protocol.Event.TurnFinished(finished))
 end
 
+def busy_reason(state: State) -> String
+  return "a turn is running" if state.turn.some?
+
+  "the history is being compacted"
+end
+
+def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Result[Void]]) -> State
+  setup = state.setup.with(model: change.model.unwrap_or(state.setup.model))
+  case change.effort
+    some(level) if level == Protocol.EFFORT_DEFAULT -> setup = setup.with(effort: none)
+    some(level) -> setup = setup.with(effort: some(level))
+    none -> nil
+  end
+
+  case save(state, -> { Store.append_settings(state.setup.file, setup.model, setup.effort) })
+    ok(_) ->
+      Actor.reply(reply, ok())
+      state.with(setup: setup, broken: none)
+    error(e) ->
+      Actor.reply(
+        reply,
+        error("the session file cannot be written: #{e.message}", kind: Protocol.KIND_SESSION_STORAGE),
+      )
+
+      state.with(broken: some(e.message))
+  end
+end
+
+def start_fold(state: State, reply: Channel[Result[Fold]]) -> State
+  if state.turn.some? or state.compacting
+    Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
+    return state
+  end
+
+  setup = state.setup
+  settings = Compaction.Settings(
+    window: state.window,
+    model: compact_model(setup),
+    props_url: setup.props_url,
+    api_key: setup.api_key,
+    extra: setup.extra,
+  )
+
+  fold = Fold(
+    provider: setup.provider,
+    settings: settings,
+    history: state.history,
+    span: Compaction.span(state.history),
+  )
+
+  Actor.reply(reply, ok(fold))
+  state.with(compacting: true)
+end
+
+def end_fold(state: State, found: Optional[Compaction.Compaction], reply: Channel[Result[Void]]) -> State
+  done = state.with(compacting: false)
+  for summary in option_list(found)
+    extra = Skills.on_fold(done.setup.skills).call(done.marks, Compaction.staying(done.history, summary))
+    folded = compact(done, summary.with(summary: "#{summary.summary}#{extra}"))
+    if folded.broken.some?
+      Actor.reply(reply, error("the session file cannot be written", kind: Protocol.KIND_SESSION_STORAGE))
+      return folded
+    end
+
+    Actor.reply(reply, ok())
+    return folded
+  end
+
+  Actor.reply(reply, ok())
+  done
+end
+
 def compact_model(setup: Setup) -> String
   return setup.model if setup.compact_model.empty?
 
@@ -649,8 +770,13 @@ end
 def restore(setup: Setup, saved: Store.Saved) -> State
   events = saved.events
   last_saved = events.map { |logged| logged.id }.max.unwrap_or(0)
+  changed = setup.with(model: saved.model.unwrap_or(setup.model))
+  if saved.model.some?
+    changed = changed.with(effort: saved.effort)
+  end
+
   state = State(
-    setup: setup,
+    setup: changed,
     counter: [last_saved, saved.reserved].max.unwrap!,
     reserved: [last_saved, saved.reserved].max.unwrap!,
     lost_below: lost_below(events),

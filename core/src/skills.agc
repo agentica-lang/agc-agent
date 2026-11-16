@@ -130,8 +130,8 @@ def on_message(text: String, skills: List[Skill], marks: List[String]) -> Expand
   Expanded(text: "#{blocks.join("\n\n")}\n\n#{text}", names: names)
 end
 
-## What a compaction puts after its summary: the content of the skills of `marks`, but those whose content is in a
-## message the fold `kept`.
+## What a compaction puts after its summary: the content of the skills of `marks`, but those that a message the fold
+## `kept` loads: the result of an `activate_skill` call of the skill, or a user message that starts with skill content.
 def on_fold(skills: List[Skill]) -> Fn[List[String], List[LLM.Message], String]
   ->(marks: List[String], kept: List[LLM.Message]) { folded_skills(skills, marks, kept) }
 end
@@ -244,10 +244,9 @@ def activate(skills: List[Skill], input: JSON.Value, marks: List[String]) -> Res
 end
 
 def folded_skills(skills: List[Skill], marks: List[String], kept: List[LLM.Message]) -> String
-  texts = kept.flat_map { |message| message.content.flat_map { |block| text_of(block) } }
   blocks: List[String] = []
   for name in marks
-    next if (texts.any? { |text| text.include?("#{OPEN}#{name}\">") })
+    next if loaded_in(kept, name)
 
     for skill in (skills.select { |s| s.name == name })
       loaded_skill = content(skill)
@@ -262,10 +261,33 @@ def folded_skills(skills: List[Skill], marks: List[String], kept: List[LLM.Messa
   "\n\nThe skills loaded in this session:\n\n#{blocks.join("\n\n")}"
 end
 
-def text_of(block: LLM.Block) -> List[String]
+# A quote of the marker elsewhere (a file that `read_file` read) does not count.
+def loaded_in(kept: List[LLM.Message], name: String) -> Bool
+  head = "#{OPEN}#{name}\">"
+  calls = kept.flat_map { |message| message.content.flat_map { |block| activation_id(block, name) } }
+  for message in kept
+    for block in message.content
+      case block
+        LLM.Block.ToolResult(output) if calls.include?(output.tool_use_id) ->
+          return true if output.content.start_with?(head)
+        LLM.Block.Text(part) if message.role == LLM.Role.User and part.text.start_with?(OPEN) ->
+          return true if part.text.include?(head)
+        _ -> nil
+      end
+    end
+  end
+
+  false
+end
+
+def activation_id(block: LLM.Block, name: String) -> List[String]
   case block
-    LLM.Block.Text(part) -> [part.text]
-    LLM.Block.ToolResult(output) -> [output.content]
+    LLM.Block.ToolUse(call) if call.name == TOOL ->
+      case Spec.args(call.input, ActivateArgs.codec)
+        ok(args) if args.name == name -> [call.id]
+        _ -> []
+      end
+
     _ -> []
   end
 end

@@ -46,6 +46,15 @@ struct Saved
   folded: Optional[Folded] = none
   ## The names that extensions noted in the session (the skills it loaded), in order.
   marks: List[String] = []
+  ## The model and the thinking level of the last `settings` record: what the session changed since its header.
+  model: Optional[String] = none
+  effort: Optional[String] = none
+end
+
+## What a list of the sessions shows of one file: the model of its last `settings` record, and its first user message.
+struct Listing
+  model: Optional[String] = none
+  title: String = ""
 end
 
 ## The answer texts of a turn when it was compacted, and the size of the history after: the texts of the messages
@@ -121,12 +130,20 @@ def append_compaction(path: String, compaction: Compaction.Compaction, answer: L
   )
 end
 
+## The model and thinking level the session uses from now on.
+def append_settings(path: String, model: String, effort: Optional[String]) -> Result[Void]
+  append(path, {"type": JSON.from("settings"), "model": JSON.from(model), "effort": JSON.from(effort)})
+end
+
 ## The answer of a turn, as a client draws it.
 def append_answer(path: String, text: String) -> Result[Void]
   append(path, {"type": JSON.from("answer"), "text": JSON.from(text)})
 end
 
 def reopen(path: String) -> Result[Void] = write(path, "\n")
+
+## Reads the file a line at a time and parses only the records a listing needs.
+def listing(path: String) -> Result[Listing] = File.open(path, "read") do |handle| ok(listed_lines(handle)) end
 
 ## The first line of a file: the session, without reading the rest.
 def header(path: String) -> Result[Header]
@@ -188,6 +205,30 @@ def decode_message(json: JSON.Value) -> Result[LLM.Message]
 end
 
 private
+
+def listed_lines(handle: File.Handle) -> Listing
+  found = Listing()
+  while true
+    read = File.read_line(handle)
+    break if not read.ok?
+
+    text = read.unwrap!
+
+    settings = text.include?("\"settings\"")
+    user = found.title == "" and text.include?("\"user\"")
+    next if not settings and not user
+
+    case JSON.parse(text)
+      ok(json) if field(json, "type") == ok("settings") ->
+        found = found.with(model: some(field(json, "model").unwrap_or("")))
+      ok(json) if user and field(json, "type") == ok("user") ->
+        found = found.with(title: field(json, "text").unwrap_or(""))
+      _ -> nil
+    end
+  end
+
+  found
+end
 
 # A line longer than a load reads is refused.
 def line(fields: Map[String, JSON.Value]) -> Result[String]
@@ -277,6 +318,13 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
 
       ok(saved.with(history: history, folded: folded))
     "ids" -> ok(saved.with(reserved: try JSON.int(try JSON.get(json, "until"))))
+    "settings" ->
+      effort = optional_string(json, "effort")
+      for level in option_list(effort)
+        return error("unknown effort #{level}") if not Protocol.EFFORTS.include?(level)
+      end
+
+      ok(saved.with(model: some(try field(json, "model")), effort: effort))
     "answer" ->
       shown = Protocol.Message(role: Protocol.Role.Assistant, text: try field(json, "text"))
       ok(saved.with(shown: saved.shown.push(shown)))

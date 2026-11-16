@@ -52,6 +52,8 @@ struct Turn
   max_rounds: Int = MAX_ROUNDS
   ## Adds `run_script`, which calls the tools from a Python script.
   code_mode: Optional[CodeMode.Settings] = none
+  ## The thinking level of the calls; none leaves it to the model.
+  effort: Optional[String] = none
   ## The tools of extensions, after the base tools.
   turn_tools: List[Tools.TurnTool] = []
   ## The names the session's extensions noted so far (the skills it loaded).
@@ -178,7 +180,7 @@ def compacted(turn: Turn, context: Int, folded: Folded, marks: List[String]) -> 
       ok(summary) ->
         compaction = summary
         for on_fold in option_list(turn.on_fold)
-          extra = on_fold.call(marks, staying(folded.messages, summary))
+          extra = on_fold.call(marks, Compaction.staying(folded.messages, summary))
           compaction = summary.with(summary: "#{summary.summary}#{extra}")
         end
 
@@ -194,12 +196,6 @@ def compacted(turn: Turn, context: Int, folded: Folded, marks: List[String]) -> 
   folded
 end
 
-# The messages a fold keeps: all but its summary.
-def staying(messages: List[LLM.Message], summary: Compaction.Compaction) -> List[LLM.Message]
-  applied = Compaction.apply(messages, summary)
-  applied.take(summary.from) + applied.drop(summary.from + 1)
-end
-
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   tools = offered(turn).map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }
   if turn.provider.name == RESPONSES
@@ -210,7 +206,15 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
     )
   end
 
-  request = LLM.Request(model: turn.model, system: turn.system, messages: messages, tools: tools, extra: turn.extra)
+  request = LLM.Request(
+    model: turn.model,
+    system: turn.system,
+    messages: messages,
+    tools: tools,
+    extra: turn.extra,
+    effort: turn.effort,
+  )
+
   stream = try LLM.stream(turn.provider, request)
   while true
     case stream.events.recv(60000)

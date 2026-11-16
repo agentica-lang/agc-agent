@@ -10,6 +10,7 @@ import H from "support/harness"
 RELEASE = "---\nname: release\ndescription: Cut a release: tag, notes, publish.\n---\n\n# Release\n\nRun the steps.\n"
 LINT_HOME = "---\nname: lint\ndescription: The user's <lint> & more.\n---\nUser lint.\n"
 LINT_PROJECT = "---\nname: lint\ndescription: The project's lint.\n---\nProject lint.\n"
+HEADING = "\n\nThe skills loaded in this session:\n\n"
 DEPLOY = "---\nname: deploy\ndescription: Deploy it.\ndisable-model-invocation: true\n---\nDeploy steps.\n"
 
 # A skill loads once a session, by the model or by the user, and stays loaded after a restart; the model cannot load
@@ -210,7 +211,7 @@ def test_read_file_reads_in_a_skill_folder_behind_a_link() -> Result[Void]
 end
 
 # The catalog escapes what it shows; a saved catalog decides which skills the model has after a restart; a fold puts
-# back the skills it folded, but those whose content a kept message holds (not a note that it was loaded).
+# back the skills it folded, but those a kept message loads: not a note that it was loaded, nor a file that quotes it.
 def test_the_catalog_is_escaped_and_restricts_the_model_skills_and_a_fold_keeps_them() -> Result[Void]
   base = try fresh()
   try write("#{base}/home/.agents/skills/release/SKILL.md", RELEASE)
@@ -231,12 +232,25 @@ def test_the_catalog_is_escaped_and_restricts_the_model_skills_and_a_fold_keeps_
   noted = LLM.Message(role: LLM.Role.User, content: [result("The skill release is already loaded in this session.")])
   folded = fold.call(["release", "deploy"], [])
   only_noted = fold.call(["release"], [use, noted])
-  loaded = LLM.Message(role: LLM.Role.User, content: [result(folded)])
+  blocks = folded.slice(HEADING.length, folded.length - HEADING.length)
+  loaded = LLM.Message(role: LLM.Role.User, content: [result(blocks)])
   again = fold.call(["release"], [use, loaded])
-  first = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: "#{folded}\n\n/release go"))])
+  first = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: "#{blocks}\n\n/release go"))])
   in_first = fold.call(["release", "deploy"], [first])
+  read = LLM.ToolCall(id: "r", name: "read_file", arguments: "", input: JSON.object({"path": JSON.from("notes.md")}))
+  quoting = [
+    LLM.Message(role: LLM.Role.Assistant, content: [LLM.Block.ToolUse(read)]),
+    LLM.Message(
+      role: LLM.Role.User,
+      content: [LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: "r", content: blocks))],
+    ),
+  ]
+
+  quoted = fold.call(["release"], quoting)
   _ = Path.remove(base)
+  try Test.assert(folded.start_with?(HEADING), folded)
   try Test.assert(only_noted.include?("<skill_content name=\"release\">"), "a note is not the content: #{only_noted}")
+  try Test.assert(quoted.include?("<skill_content name=\"release\">"), "a quote of the marker is not the content")
   try Test.eq(in_first, "")
   try Test.assert(catalog.include?("The user's &lt;lint&gt; &amp; more."), catalog)
   try Test.eq(Skills.restrict(skills, old).map { |s| s.name }, ["deploy", "release"])
