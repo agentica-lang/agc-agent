@@ -42,21 +42,21 @@ def test_streamed_text_joins_the_last_entry_of_its_kind() -> Result[Void]
   texts = entries.map { |entry| entry.text }
   try Test.eq(texts, ["hi", "Hello", "stopped", "again"])
   rows = Transcript.lines(entries, 20, false).map { |line| Markdown.plain(line.spans) }
-  Test.eq(rows, ["> hi", "", "Hello", "", "· stopped", "", "again"])
+  Test.eq(rows, [" hi", "", " Hello", "", " stopped", "", " again"])
 end
 
 def test_the_prompt_shows_its_last_rows_with_a_lead() -> Result[Void]
   text = Prompt.backspace(Prompt.insert(Prompt.insert("one", 3, "\n"), 4, "twoo"), 8)
-  try Test.eq(Prompt.rows(text, 20), ["> one", "  two"])
-  try Test.eq(Prompt.rows("", 20), ["> "])
+  try Test.eq(Prompt.rows(text, 20), [" one", " two"])
+  try Test.eq(Prompt.rows("", 20), [" "])
   try Test.eq(Prompt.rows("1\n2\n3\n4\n5\n6\n7", 20).size, Prompt.MAX_ROWS)
-  try Test.eq(Prompt.view("1\n2\n3", 5, 20, 3).rows, ["  2", "  3"])
-  try Test.eq(Prompt.view("a" * 25, 25, 12, 24).rows, ["> aaaaaaaaaa", "  aaaaaaaaaa", "  aaaaa"])
+  try Test.eq(Prompt.view("1\n2\n3", 5, 20, 5).rows, [" 2", " 3"])
+  try Test.eq(Prompt.view("a" * 25, 25, 12, 24).rows, [" aaaaaaaaaaa", " aaaaaaaaaaa", " aaa"])
   numbers = (1..20).map { |n| n.to_s }.join("\n")
   middle = Prompt.view(numbers, 4, 20, 24)
-  try Test.eq([middle.rows, [middle.cursor_y.to_s]], [["  3", "  4", "  5", "  6", "  7", "  8"], ["0"]])
+  try Test.eq([middle.rows, [middle.cursor_y.to_s]], [[" 3", " 4", " 5", " 6", " 7", " 8"], ["0"]])
   last = Prompt.view(numbers, numbers.length - 1, 20, 24)
-  Test.eq([last.rows, [last.cursor_y.to_s]], [["  15", "  16", "  17", "  18", "  19", "  20"], ["5"]])
+  Test.eq([last.rows, [last.cursor_y.to_s]], [[" 15", " 16", " 17", " 18", " 19", " 20"], ["5"]])
 end
 
 def test_a_paste_keeps_line_ends_and_tabs_but_no_other_control() -> Result[Void]
@@ -70,14 +70,14 @@ def test_the_prompt_cursor_and_clicks() -> Result[Void]
   try Test.eq(Prompt.backspace("held", 2), "hld")
   try Test.eq(Prompt.backspace("held", 0), "held")
   text = "abcdefgh\n日本語"
-  view = Prompt.view(text, 3, 7, 24)
-  try Test.eq(view.rows, ["> abcde", "  fgh", "  日本", "  語"])
-  try Test.eq([view.cursor_x, view.cursor_y], [5, 0])
-  end_view = Prompt.view(text, text.length, 7, 24)
-  try Test.eq([end_view.cursor_x, end_view.cursor_y], [4, 3])
-  try Test.eq(Prompt.index_at(text, 0, 7, 24, 4, 1), 7)
-  try Test.eq(Prompt.index_at(text, 0, 7, 24, 5, 2), 10)
-  try Test.eq(Prompt.index_at(text, 0, 7, 24, 50, 1), 8)
+  view = Prompt.view(text, 3, 6, 24)
+  try Test.eq(view.rows, [" abcde", " fgh", " 日本", " 語"])
+  try Test.eq([view.cursor_x, view.cursor_y], [4, 0])
+  end_view = Prompt.view(text, text.length, 6, 24)
+  try Test.eq([end_view.cursor_x, end_view.cursor_y], [3, 3])
+  try Test.eq(Prompt.index_at(text, 0, 6, 24, 3, 1), 7)
+  try Test.eq(Prompt.index_at(text, 0, 6, 24, 4, 2), 10)
+  try Test.eq(Prompt.index_at(text, 0, 6, 24, 50, 1), 8)
   Test.eq(Prompt.index_at(text, 0, 7, 24, 0, 0), 0)
 end
 
@@ -102,7 +102,7 @@ def test_an_entry_without_rows_adds_no_empty_row() -> Result[Void]
   empty = Transcript.Entry(kind: Transcript.Kind.Assistant, text: "")
   entries = [empty] + Transcript.note([], "one") + [empty] + Transcript.note([], "two")
   all = Transcript.lines(entries, 20, false)
-  try Test.eq(all.map { |line| Markdown.plain(line.spans) }, ["· one", "", "· two"])
+  try Test.eq(all.map { |line| Markdown.plain(line.spans) }, [" one", "", " two"])
   for count in 0..4
     try Test.eq(Transcript.tail(entries, 20, false, count), all.drop([all.size - count, 0].max.unwrap!))
   end
@@ -161,5 +161,5 @@ def test_a_long_code_line_wraps_and_keeps_its_spaces() -> Result[Void]
 end
 
 def texts(entries: List[Transcript.Entry], thinking: Bool) -> List[String]
-  Transcript.lines(entries, 40, thinking).map { |line| Markdown.plain(line.spans) }
+  Transcript.lines(entries, 40, thinking).map { |line| Markdown.plain(line.spans).strip }
 end

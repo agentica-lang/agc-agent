@@ -11,7 +11,7 @@ def test_keys_edit_the_prompt_and_the_view_draws_it() -> Result[Void]
   end
 
   try Test.eq(model.prompt, "hi")
-  try Test.eq(rows(model).last, "> hi")
+  try Test.eq(rows(model).drop(2).take(3), ["─" * 30, "hi", "─" * 30])
   resized = App.update(model, App.Msg.Key(TUI.Event.Resize(20, 4))).model
   try Test.eq([resized.width, resized.height], [20, 4])
   Test.eq(rows(resized).size, 4)
@@ -73,6 +73,19 @@ def test_messages_go_in_order_and_an_early_stop_waits_for_the_turn() -> Result[V
   Test.eq(sent.size, 1)
 end
 
+# Shift+Tab sets the next thinking level by a command; a running turn spins in the top rule.
+def test_shift_tab_cycles_the_level_and_a_turn_spins_in_the_rule() -> Result[Void]
+  model = model_of(30, 6)
+  low = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.BackTab, TUI.Mods())))
+  try Test.eq([low.model.effort, some("#{low.cmds.size}")], [some("low"), some("1")])
+  back = App.update(low.model, App.Msg.Leveled(none, error("down", kind: "client.unreachable")))
+  try Test.eq(back.model.effort, none)
+  turn = model.with(turn: true)
+  try Test.eq(App.subscriptions(turn).size, 2)
+  spun = App.update(turn, App.Msg.Spin).model
+  Test.eq(rows(spun)[2].slice(0, 12), "── ⠙ Working")
+end
+
 def test_ctrl_c_and_a_signal_quit_with_their_codes() -> Result[Void]
   model = model_of(30, 6)
   quit = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Ctrl("c"), TUI.Mods())))
@@ -87,7 +100,7 @@ def test_an_update_keeps_the_wrapped_rows_of_the_entries() -> Result[Void]
   model = model_of(30, 6).with(entries: [])
   step = App.update(model, App.Msg.Note("one two three"))
   try Test.assert(step.model.entries.all? { |entry| entry.wrapped.some? }, "every entry is wrapped")
-  Test.assert(rows(step.model).include?("· one two three"), "the note is drawn")
+  Test.assert(rows(step.model).include?("one two three"), "the note is drawn")
 end
 
 def model_of(width: Int, height: Int) -> App.Model

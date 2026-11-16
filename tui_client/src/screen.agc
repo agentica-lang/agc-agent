@@ -1,5 +1,5 @@
-## What the screen shows, top to bottom, each region apart: the transcript, the panel over the prompt (an approval or
-## the session picker), the status line and the prompt. `frame` places them on a screen of a size, `view` draws a
+## What the screen shows, top to bottom, each region apart: the transcript, the prompt between two rules (or the
+## session picker in its place), the panel under it (an approval) and the status line. `frame` places them on a screen of a size, `view` draws a
 ## frame as a view tree, and `hit` tells what a click at a cell of the same frame is on, so a click meets what was
 ## drawn. Pure.
 
@@ -11,16 +11,37 @@ import Theme from "theme"
 import Transcript from "transcript"
 import Width from "width"
 
-## Where each region is: `area` transcript rows (the `transcript` lines shown, from the top), the `panel` rows after
-## them, the status line, then the prompt rows.
+## The rows around the transcript: the editor between two rules, the panel under it, then the status line.
+CHROME = 3
+RULE = "─"
+LEAD = "── "
+
+## What goes around the transcript.
+struct Parts
+  prompt: Prompt.View
+  ## A picker in the editor's place, in the rows it gets; no rows shows the prompt.
+  picker: Fn[Int, List[Layout.Row]]
+  ## The panel under the editor (an approval), in the rows it gets.
+  panel: Fn[Int, List[Layout.Row]]
+  ## What the top rule says ("" when idle), and the thinking level its color shows (none for the model's default).
+  label: String
+  level: Optional[String]
+  status: String
+end
+
+## Where each region is: `area` transcript rows (the `transcript` lines shown, from the top), the top rule, the
+## picker or else the prompt, the bottom rule, the `panel` rows and the status line.
 struct Frame
   width: Int
   height: Int
   transcript: List[Transcript.Line]
   area: Int
+  label: String
+  level: Optional[String]
+  picker: List[Layout.Row]
+  prompt: Prompt.View
   panel: List[Layout.Row]
   status: String
-  prompt: Prompt.View
 end
 
 ## What a click is on.
@@ -34,22 +55,20 @@ enum Hit
   Nothing
 end
 
-## The rows the panel may take over a prompt of `prompt_rows` rows, leaving the status line and one transcript row.
-def panel_room(height: Int, prompt_rows: Int) -> Int = height - prompt_rows - 2
+## The rows the panel may take under an editor of `editor_rows` rows, leaving the rules and the status line (the
+## transcript may get none).
+def panel_room(height: Int, editor_rows: Int) -> Int = height - editor_rows - CHROME
 
-## The regions on a screen of `width` by `height`: `panel` gives the panel rows for the room it has; the transcript
-## shows the end of `lines`, `scroll` rows up from it.
-def frame(
-  width: Int,
-  height: Int,
-  lines: List[Transcript.Line],
-  scroll: Int,
-  panel: Fn[Int, List[Layout.Row]],
-  status: String,
-  prompt: Prompt.View,
-) -> Frame
-  asked = panel.call(panel_room(height, prompt.rows.size))
-  area = [height - prompt.rows.size - asked.size - 1, 0].max.unwrap!
+## The regions on a screen of `width` by `height`; the transcript shows the end of `lines`, `scroll` rows up from it.
+def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, parts: Parts) -> Frame
+  picker = parts.picker.call([height - CHROME - 1, 0].max.unwrap!)
+  editor = parts.prompt.rows.size
+  if not picker.empty?
+    editor = picker.size
+  end
+
+  asked = parts.panel.call(panel_room(height, editor))
+  area = [height - editor - asked.size - CHROME, 0].max.unwrap!
   hidden = [lines.size - area, 0].max.unwrap!
   top = [hidden - [scroll, hidden].min.unwrap!, 0].max.unwrap!
   Frame(
@@ -57,36 +76,46 @@ def frame(
     height: height,
     transcript: lines.drop(top).take(area),
     area: area,
+    label: parts.label,
+    level: parts.level,
+    picker: picker,
+    prompt: parts.prompt,
     panel: asked,
-    status: status,
-    prompt: prompt,
+    status: parts.status,
   )
 end
 
 def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
   rows = frame.transcript.map { |line| transcript_row(line, theme.transcript) }
   blank = (rows.size...frame.area).to_a.map { |_| TUI.line([]) }
-  panel = frame.panel.map { |row| TUI.line([TUI.span(row.text, panel_style(row.look, theme.panel))]) }
-  footer = [TUI.line([TUI.span(frame.status, theme.footer.status)])]
-  editor = (0...frame.prompt.rows.size).to_a.map { |y| prompt_row(frame.prompt, y, frame.width, theme.editor) }
-  TUI.col(rows + blank + panel + footer + editor)
+  rule = rule_style(frame.level, theme.rules)
+  editor = frame.picker.map { |row| panel_row(row, theme.panel) }
+  if frame.picker.empty?
+    editor = (0...frame.prompt.rows.size).to_a.map { |y| prompt_row(frame.prompt, y, frame.width, theme.editor) }
+  end
+
+  top = TUI.line([TUI.span(rule_text(frame.label, frame.width), rule)])
+  bottom = TUI.line([TUI.span(rule_text("", frame.width), rule)])
+  panel = frame.panel.map { |row| panel_row(row, theme.panel) }
+  footer = TUI.line([TUI.span(frame.status, theme.footer.status)])
+  TUI.col(rows + blank + [top] + editor + [bottom] + panel + [footer])
 end
 
 def hit(frame: Frame, x: Int, y: Int) -> Hit
   return Hit.Entry(frame.transcript[y].entry) if y >= 0 and y < frame.transcript.size
 
-  panel_top = frame.area
-  if y >= panel_top and y < panel_top + frame.panel.size
-    case Layout.hit(frame.panel[y - panel_top], x)
-      some(event) -> return Hit.Key(event)
-      none -> return Hit.Nothing
-    end
+  editor_top = frame.area + 1
+  editor = editor_rows(frame)
+  if y >= editor_top and y < editor_top + editor
+    return Hit.Prompt(x, y - editor_top) if frame.picker.empty?
+
+    return button(frame.picker[y - editor_top], x)
   end
 
-  prompt_top = panel_top + frame.panel.size + 1
-  return Hit.Nothing if y < prompt_top
+  panel_top = editor_top + editor + 1
+  return button(frame.panel[y - panel_top], x) if y >= panel_top and y < panel_top + frame.panel.size
 
-  Hit.Prompt(x, y - prompt_top)
+  Hit.Nothing
 end
 
 def style(kind: Transcript.Kind, look: Markdown.Look, colors: Theme.TranscriptColors) -> TUI.Style
@@ -107,6 +136,42 @@ def style(kind: Transcript.Kind, look: Markdown.Look, colors: Theme.TranscriptCo
 end
 
 private
+
+def editor_rows(frame: Frame) -> Int
+  return frame.prompt.rows.size if frame.picker.empty?
+
+  frame.picker.size
+end
+
+def button(row: Layout.Row, x: Int) -> Hit
+  case Layout.hit(row, x)
+    some(event) -> Hit.Key(event)
+    none -> Hit.Nothing
+  end
+end
+
+# A full-width rule, with `label` after its lead when there is one.
+def rule_text(label: String, width: Int) -> String
+  text = RULE * width
+  if label != ""
+    text = "#{LEAD}#{label} #{text}"
+  end
+
+  Width.cut(text, width)[0]
+end
+
+def rule_style(level: Optional[String], colors: Theme.RuleColors) -> TUI.Style
+  case level.unwrap_or("")
+    "low" -> colors.low
+    "medium" -> colors.medium
+    "high" -> colors.high
+    _ -> colors.default
+  end
+end
+
+def panel_row(row: Layout.Row, colors: Theme.PanelColors) -> TUI.Node
+  TUI.line([TUI.span(row.text, panel_style(row.look, colors))])
+end
 
 def transcript_row(line: Transcript.Line, colors: Theme.TranscriptColors) -> TUI.Node
   TUI.line(line.spans.map { |span| TUI.span(span.text, style(line.kind, span.look, colors)) })
