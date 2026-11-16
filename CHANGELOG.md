@@ -29,3 +29,4 @@
 - A turn that a restart cuts after a compaction keeps the text of its folded rounds in its answer.
 - `core serve` speaks the OpenAI Responses format too: `AGC_AGENT_API=openai_responses` (`openai`, chat completions, stays the default); it sends `store: false` and asks for the encrypted reasoning to replay it.
 - `llm` `openai_responses`: with `store: false`, replayed items go back without their ids (the API refuses ids it did not keep).
+- A session names its model API (`agc --api openai_responses`, `api` of `POST /v1/sessions`) and keeps it in its file; an older session uses the server's.

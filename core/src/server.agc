@@ -40,10 +40,18 @@ SSE_HEADERS = [
   HTTP.Header(name: "Cache-Control", value: "no-cache"),
 ]
 
+## A model API a session can use: its provider, and the fields every request to it carries.
+struct ModelApi
+  provider: LLM.Provider
+  extra: Map[String, JSON.Value] = {}
+end
+
 struct Options
   state_dir: String
   data_dir: String
-  provider: LLM.Provider
+  ## The model APIs by name (`Config.apis`), and the one of a session that names none.
+  apis: Map[String, ModelApi]
+  api: String
   model: String
   env: Fn[String, Result[String]]
   rules: Tools.Rules
@@ -58,8 +66,6 @@ struct Options
   props_url: String = ""
   ## The key `/props` takes, as the provider's.
   api_key: String = ""
-  ## Fields every request to the model API carries, in the format of that API (`Config.request_extra`).
-  extra: Map[String, JSON.Value] = {}
   ## Runs in the task that loads a session, with its id, before the file is read: a seam for the tests.
   before_load: Optional[Fn[String, Void]] = none
 end
@@ -311,16 +317,22 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   end
 
   context = try ctx
+  api = request.api.unwrap_or(options.api)
+  if not options.apis.has_key?(api)
+    return error("unknown api #{api.inspect}: one of #{options.apis.keys.join(", ")}", kind: Protocol.KIND_INVALID)
+  end
+
   header = Store.Header(
     id: "s#{registry.sessions.size + 1}-#{OpenSSL.Random.hex(4)}",
     cwd: context.root,
     model: request.model.unwrap_or(options.model),
     created_ms: Time.now_ms,
     system: some(system_prompt(context.root)),
+    api: some(api),
   )
 
   file = try Store.create(sessions_dir(options), header)
-  ok(entry(options, header, context, file, none))
+  entry(options, header, context, file, none)
 end
 
 # The entry with its session ended, refused while a turn runs; it loads again on its next use.
@@ -404,7 +416,7 @@ def started(options: Options, listed: Entry, read: Result[Loaded]) -> Result[Ent
     try Store.reopen(listed.file)
   end
 
-  ok(entry(options, loaded.saved.header, loaded.context, listed.file, some(loaded.saved)))
+  entry(options, loaded.saved.header, loaded.context, listed.file, some(loaded.saved))
 end
 
 def entry(
@@ -413,12 +425,14 @@ def entry(
   context: Tools.Context,
   file: String,
   saved: Optional[Store.Saved],
-) -> Entry
+) -> Result[Entry]
+  name = header.api.unwrap_or(options.api)
+  api = try options.apis.get(name).to_result("the session's api #{name.inspect} is not one of this server")
   setup = Session.Setup(
     id: header.id,
     cwd: context.root,
     model: header.model,
-    provider: options.provider,
+    provider: api.provider,
     system: header.system.unwrap_or(system_prompt(context.root)),
     ctx: context,
     keep_events: options.keep_events,
@@ -428,10 +442,10 @@ def entry(
     compact_model: options.compact_model,
     props_url: options.props_url,
     api_key: options.api_key,
-    extra: options.extra,
+    extra: api.extra,
   )
 
-  Entry(summary: summary_of(header), header: header, file: file, session: some(Session.start(setup, saved)))
+  ok(Entry(summary: summary_of(header), header: header, file: file, session: some(Session.start(setup, saved))))
 end
 
 def summary_of(header: Store.Header) -> Protocol.SessionSummary

@@ -254,6 +254,42 @@ def test_a_load_takes_at_most_64_waiting_requests() -> Result[Void]
   end
 end
 
+# A session keeps the model API it was made with, in its file, across a restart; a session whose file names none (made
+# before the choice) uses the server's; an API the server does not know is refused.
+def test_a_session_keeps_its_model_api() -> Result[Void]
+  replies = ["openai_responses/text.sse", "openai_chat/text.sse", "openai_responses/text.sse", "openai_chat/text.sse"]
+  setup = H.Setup(replies: replies)
+  H.using(setup) do |h|
+    responses = try H.new_session_in(h, h.work, some("openai_responses"))
+    chat = try H.new_session(h)
+    _ = try H.send(h, responses, "Hi.")
+    _ = try H.idle(h, responses)
+    _ = try H.send(h, chat, "Hi.")
+    _ = try H.idle(h, chat)
+    try Test.eq(
+      [(try H.next_request(h)).path, (try H.next_request(h)).path],
+      ["/v1/responses", "/v1/chat/completions"],
+    )
+
+    asked = Protocol.NewSession(cwd: h.work, model: none, api: some("nope"))
+    refused = try H.post(h, Protocol.SESSIONS_PATH, Protocol.encode_new_session(asked))
+    try Test.eq(
+      [refused.status.to_s, (try Protocol.decode_failure(refused.text)).kind],
+      ["400", Protocol.KIND_INVALID],
+    )
+
+    old = "{\"type\":\"session\",\"id\":\"old\",\"cwd\":\"#{h.work}\",\"model\":\"m\",\"created_ms\":1}\n"
+    try File.write_text(H.session_file(h, "old"), old)
+    H.restarted(h, setup, "") do |r|
+      _ = try H.send(r, responses, "Again.")
+      _ = try H.idle(r, responses)
+      _ = try H.send(r, "old", "Hi.")
+      _ = try H.idle(r, "old")
+      Test.eq([(try H.next_request(r)).path, (try H.next_request(r)).path], ["/v1/responses", "/v1/chat/completions"])
+    end
+  end
+end
+
 # A session is deleted with its file, but not while a turn runs; one whose file stays loads again; one not loaded
 # since a restart is deleted too.
 def test_a_session_is_deleted() -> Result[Void]

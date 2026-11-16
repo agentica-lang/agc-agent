@@ -14,6 +14,17 @@ def test_a_turn_streams_text_tools_and_usage() -> Result[Void]
   Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["turn.sse"])], &a_turn)
 end
 
+def test_a_new_session_names_its_model_and_api() -> Result[Void]
+  Driver.within([Routes.created(), Routes.held_events()]) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN + ["--model", "m", "--api", "openai_responses"])
+    try Driver.read_until(cli, "[session")
+    _ = try Driver.finish(cli)
+    create = try Fake.request(rig.fake, "POST", Protocol.SESSIONS_PATH)
+    asked = Protocol.NewSession(cwd: "/work", model: some("m"), api: some("openai_responses"))
+    Test.eq(Protocol.decode_new_session(create.body), ok(asked))
+  end
+end
+
 def a_turn(rig: Driver.Rig) -> Result[Void]
   cli = try Driver.start(rig.dir, PLAIN)
   try Driver.say(cli, "hello")

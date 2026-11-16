@@ -10,10 +10,11 @@ enum Decision
   AllowSession
 end
 
-## `POST /v1/sessions`.
+## `POST /v1/sessions`. `model` and `api` (the model API, by the name the server gives it) default to the server's.
 struct NewSession
   cwd: String
   model: Optional[String]
+  api: Optional[String] = none
 end
 
 ## `POST /v1/sessions/ID/messages`.
@@ -45,6 +46,7 @@ def decode_new_session(text: String) -> Result[NewSession]
   body = try Wire.decode_strict(text, NewSession.codec)
   try Wire.non_empty("cwd", body.cwd)
   try Wire.non_empty_if_present("model", body.model)
+  try Wire.non_empty_if_present("api", body.api)
   ok(body)
 end
 
