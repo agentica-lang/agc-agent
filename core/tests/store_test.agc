@@ -80,6 +80,38 @@ end
 
 private
 
+# The answer a compaction keeps belongs to its turn: the next turn starts without it. An `answer` of the wrong type is
+# left out, not the compaction.
+def test_a_folded_answer_belongs_to_its_turn() -> Result[Void]
+  dir = try temp_dir()
+  result = folded_answers(dir)
+  _ = Path.remove(dir)
+  result
+end
+
+def folded_answers(dir: String) -> Result[Void]
+  path = try Store.create(dir, Store.Header(id: "s1-cd", cwd: "/work", model: "m", created_ms: 7))
+  try Store.append_user(path, "one")
+  try Store.append_event(path, started(1))
+  try Store.append_messages(path, [said("first answer")])
+  try Store.append_compaction(path, Compaction.Compaction(from: 1, to: 2, summary: "s"), ["first answer"])
+  folded = try Store.load(path)
+  try Test.eq(folded.folded, some(Store.Folded(texts: ["first answer"], at: 2)))
+  try Store.append_answer(path, "first answer")
+  try Store.append_user(path, "two")
+  try Store.append_event(path, started(2))
+  try Test.eq((try Store.load(path)).folded, none)
+  try File.append_text(path, "{\"type\":\"compaction\",\"from\":1,\"to\":2,\"summary\":\"again\",\"answer\":5}\n")
+  again = try Store.load(path)
+  try Test.eq([again.skipped, again.history.size], [0, 3])
+  try Test.assert(Compaction.transcript([again.history[1]]).include?("again"), "the compaction was left out")
+  Test.eq(again.folded, none)
+end
+
+def said(text: String) -> LLM.Message
+  LLM.Message(role: LLM.Role.Assistant, content: [LLM.Block.Text(LLM.TextPart(text: text))])
+end
+
 def too_long(dir: String) -> Result[Void]
   path = try Store.create(dir, Store.Header(id: "s1-ab", cwd: "/work", model: "m", created_ms: 7))
   try Test.error?(Store.append_user(path, "x" * Store.MAX_LINE_BYTES))

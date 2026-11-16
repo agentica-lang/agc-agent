@@ -255,9 +255,9 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
 
       history = Compaction.apply(saved.history, compaction)
       folded = saved.folded
-      case JSON.get(json, "answer")
-        ok(texts) -> folded = some(Folded(texts: try JSON.decode(texts, List[String]), at: history.size))
-        error(_) -> nil
+      # An `answer` that is missing or not a list of texts leaves the answer as it was.
+      for texts in answer_texts(json)
+        folded = some(Folded(texts: texts, at: history.size))
       end
 
       ok(saved.with(history: history, folded: folded))
@@ -266,6 +266,18 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
       shown = Protocol.Message(role: Protocol.Role.Assistant, text: try field(json, "text"))
       ok(saved.with(shown: saved.shown.push(shown)))
     _ -> error("unknown record #{kind}")
+  end
+end
+
+def answer_texts(json: JSON.Value) -> List[List[String]]
+  case JSON.get(json, "answer")
+    ok(value) ->
+      case JSON.decode(value, List[String])
+        ok(texts) -> [texts]
+        error(_) -> []
+      end
+
+    error(_) -> []
   end
 end
 
