@@ -144,7 +144,7 @@ def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) ->
     output: output,
   )
 
-  last = try TUI.Raw.program(screen, app)
+  last = try TUI.Raw.program(TUI.Raw.backend(screen), app)
   case last.failure
     some(reason) -> error(reason, kind: "tui.session")
     none -> ok(last.exit.unwrap_or(0))
