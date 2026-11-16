@@ -33,6 +33,9 @@ MAX_QUEUED_BYTES = 1_048_576
 ## Room in a subscriber's channel past its replay; a client that falls this far behind is dropped.
 LIVE_ROOM = 1024
 RESERVE = 1000
+## The command outputs that wait for the next message, and their size together.
+MAX_SHELLS = 20
+MAX_SHELL_BYTES = 1_048_576
 
 ## What a session takes from its provider and model API, by their names; `model` is the provider's default.
 struct Endpoint
@@ -673,8 +676,9 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
   end
 
   expanded = Skills.on_message(typed, state.setup.skills, state.marks)
-  text = (state.shells + [expanded.text]).join("\n\n")
-  case save(state, -> { Store.append_user(state.setup.file, text, typed, expanded.names) })
+  shells = not state.shells.empty?
+  text = Store.with_shells(state.shells, expanded.text)
+  case save(state, -> { Store.append_user(state.setup.file, expanded.text, typed, expanded.names, shells) })
     ok(_) -> state = state.with(marks: state.marks + expanded.names)
     error(e) ->
       Actor.reply(
@@ -1218,7 +1222,8 @@ def run_shell(state: State, request: Protocol.RunShell, reply: Channel[Result[Pr
     return state
   end
 
-  input = JSON.object({"command": JSON.from(request.command)})
+  # The user can stop the command, so it may run as long as a `bash` call can.
+  input = JSON.object({"command": JSON.from(request.command), "timeout_ms": JSON.from(Tools.MAX_BASH_TIMEOUT_MS)})
   verdict = gate(state.setup.approvals).map { |g| g.call(state.setup.ctx, Tools.BASH, input) }
   if verdict == some(Tools.Verdict.Deny)
     Actor.reply(reply, error("a rule of the config denies this command", kind: Protocol.KIND_SHELL_DENIED))
@@ -1243,22 +1248,35 @@ def run_shell(state: State, request: Protocol.RunShell, reply: Channel[Result[Pr
   emit(state.with(shell: some(run)), Protocol.Event.ShellStarted(started))
 end
 
-def shell_done(state: State, id: String, output: Tools.Output, duration_ms: Int) -> State
+# The output goes to the model unless the command was stopped or the outputs waiting would pass the limits; the event
+# says whether it does.
+def shell_done(state: State, id: String, output: Tools.Output, duration_ms: Int, stopped: Bool = false) -> State
   case state.shell
     some(run) if run.id == id ->
       finished = Protocol.ShellFinished(
         shell_id: id,
         command: run.command,
-        context: run.context,
+        context: false,
         ok: not output.is_error,
         output: output.text,
         duration_ms: duration_ms,
       )
 
-      done = emit(state.with(shell: none), Protocol.Event.ShellFinished(finished))
-      return done if not run.context or done.counter == state.counter
+      text = Store.shell_context(finished)
+      fits = state.shells.size < MAX_SHELLS and (state.shells + [text]).join("\n\n").bytesize <= MAX_SHELL_BYTES
+      if run.context and not stopped and fits
+        finished = finished.with(context: true)
+      end
 
-      done.with(shells: done.shells.push(Store.shell_context(finished)))
+      if run.context and not stopped and not fits
+        note = "[not given to the model: #{MAX_SHELLS} outputs or #{MAX_SHELL_BYTES} bytes wait for the next message]"
+        finished = finished.with(output: "#{output.text}\n#{note}")
+      end
+
+      done = emit(state.with(shell: none), Protocol.Event.ShellFinished(finished))
+      return done if not finished.context or done.counter == state.counter
+
+      done.with(shells: done.shells.push(text))
     _ -> state
   end
 end
@@ -1266,7 +1284,7 @@ end
 def stop_shell(state: State) -> State
   for run in option_list(state.shell)
     Task.cancel(run.task)
-    return shell_done(state, run.id, Tools.Output(text: "stopped", is_error: true), 0)
+    return shell_done(state, run.id, Tools.Output(text: "stopped by the user", is_error: true), 0, true)
   end
 
   state

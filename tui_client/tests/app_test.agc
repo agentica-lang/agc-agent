@@ -120,6 +120,41 @@ def test_a_turn_spins_in_the_rule() -> Result[Void]
   Test.eq(rows(spun)[2].slice(0, 12), "── ⠙ Working")
 end
 
+# `!cmd` goes to the shell route from a command and draws as a `$` line with its output; Esc stops it, and a refused
+# command goes back to the prompt.
+def test_a_bang_line_runs_a_shell_command() -> Result[Void]
+  model = model_of(40, 10).with(id: "s1", generation: 1, prompt: "!echo one")
+  sending = App.update(model, enter())
+  try Test.eq([sending.model.prompt, "#{sending.model.outbox}", "#{sending.cmds.size}"], ["", "[]", "1"])
+  started = Protocol.Event.ShellStarted(Protocol.ShellStarted(shell_id: "sh1", command: "echo one", context: true))
+  running = App.update(sending.model, App.Msg.Stream(1, [Client.Item.Event(some(1), started)])).model
+  try Test.eq([running.shell, App.subscriptions(running).size == 2], [true, true])
+  try Test.assert(rows(running).include?("$ echo one"), "the command is drawn: #{rows(running)}")
+  stopping = App.update(running, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods())))
+  try Test.eq([stopping.model.stopping, stopping.model.entries.last.text == "stopping the command"], [true, true])
+  done = Protocol.ShellFinished(
+    shell_id: "sh1",
+    command: "echo one",
+    context: true,
+    ok: true,
+    output: "one\n",
+    duration_ms: 200,
+  )
+
+  finished = App.update(
+    stopping.model,
+    App.Msg.Stream(1, [Client.Item.Event(some(2), Protocol.Event.ShellFinished(done))]),
+  )
+
+  try Test.eq([finished.model.shell, finished.model.stopping], [false, false])
+  try Test.assert(rows(finished.model).include?("one"), "the output is drawn: #{rows(finished.model)}")
+  refused = App.update(model_of(40, 10), App.Msg.ShellSent("ls", error("a turn is running", kind: "session.busy")))
+  Test.eq(
+    [refused.model.prompt, refused.model.entries.last.text],
+    ["!ls", "the command did not run: a turn is running: ls"],
+  )
+end
+
 # Ctrl+O shows or folds the output of every tool call, and says so.
 def test_ctrl_o_folds_every_tool_output() -> Result[Void]
   shown = App.update(model_of(40, 8), App.Msg.Key(TUI.Event.Key(TUI.Key.Ctrl("o"), TUI.Mods()))).model

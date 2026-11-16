@@ -1,0 +1,4 @@
+id: 4
+event: shell_finished
+data: {"shell_id":"sh2","command":"sleep 9","context":false,"ok":false,"output":"stopped by the user","duration_ms":0}
+
