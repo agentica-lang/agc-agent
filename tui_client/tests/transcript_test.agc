@@ -81,6 +81,22 @@ def test_the_prompt_cursor_and_clicks() -> Result[Void]
   Test.eq(Prompt.index_at(text, 0, 7, 24, 0, 0), 0)
 end
 
+# The end of the rows comes from the wrapped rows the entries keep, and a change of an entry drops its own.
+def test_the_tail_matches_the_lines_and_a_change_cuts_again() -> Result[Void]
+  entries = Transcript.add(Transcript.note([], "one two three four"), Transcript.Kind.Thinking, "hmm")
+  entries = Transcript.add(entries, Transcript.Kind.Assistant, "the answer")
+  kept = Transcript.wrapped(entries, 8, false)
+  all = Transcript.lines(entries, 8, false)
+  for count in [0, 2, 5, all.size, all.size + 3]
+    try Test.eq(Transcript.tail(kept, 8, false, count), all.drop([all.size - count, 0].max.unwrap!))
+  end
+
+  grown = Transcript.add(kept, Transcript.Kind.Assistant, " grows")
+  try Test.eq(grown.last.wrapped, none)
+  try Test.eq(Transcript.tail(grown, 8, false, 3), Transcript.lines(grown, 8, false).drop(all.size - 2))
+  Test.eq(Transcript.tail(kept, 8, true, 9), Transcript.lines(entries, 8, true))
+end
+
 def test_thinking_is_folded_unless_shown_or_clicked_open() -> Result[Void]
   entries = Transcript.add([], Transcript.Kind.Thinking, "hmm")
   entries = Transcript.add(entries, Transcript.Kind.Assistant, "yes")

@@ -1,12 +1,14 @@
-## One session on the full screen: the loop that reads the keys and the events of the server, keeps the state in one
-## immutable `App` and draws it after each batch of inputs.
+## One session on the full screen, as an Elm program of agentica-tui: the `Model` holds the whole state, `update`
+## takes the keys and the events of the server as messages and gives the next model with the work to start, and
+## `view` draws a model. The event stream, the signals, the answers of approvals and the compactions run as commands,
+## each giving one message, which `update` arms again. The short calls to the server (send, stop, session, list,
+## update) run inside `update`, so the loop waits at most the client's call timeout (10 s) for each of them.
 
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
 import Args from "args"
-import Inbox from "inbox"
 import Picker from "picker"
 import Layout from "panel"
 import Prompt from "prompt"
@@ -15,7 +17,9 @@ import Transcript from "transcript"
 import Width from "width"
 import Yolo from "pkg/client/yolo"
 
-INBOX_CAPACITY = 1024
+FEED_CAPACITY = 1024
+## The most stream items one message carries, so a long stream still lets the keys in between draws.
+FEED_BATCH = 256
 WAIT_MS = 3_600_000
 SEND_MS = 30_000
 RECONNECT_MS = 300
@@ -25,41 +29,14 @@ SCROLL_STEP = 3
 YOLO_WARNING = "--yolo: the tool calls of turns sent from here run without asking"
 HINTS = "Enter send · ^J newline · ^T thinking · Esc stop · PgUp/PgDn · ^C quit"
 
-## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
-def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
-  try TUI.Raw.set_input_mode(screen, TUI.InputMode.Esc, true)
-  inbox: Channel[Inbox.Input] = Channel.new(INBOX_CAPACITY)
-  signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
-  _ = Task.spawn(-> { watch_signals(signals, inbox) })
-  _ = Task.spawn(-> { read_keys(screen, inbox) })
-  start = App(
-    screen: screen,
-    server: server,
-    id: "",
-    inbox: inbox,
-    options: options,
-    thinking: options.thinking,
-    approvals: Approvals.Panel(),
-    yolo: Yolo.Yolo(on: options.yolo),
-  )
-
-  app = try open(start, options)
-  if options.yolo
-    app = noted(app, YOLO_WARNING)
-  end
-
-  loop(app)
-end
-
-private
-
-struct App
-  screen: TUI.Raw.Screen
+struct Model
   server: Client.Server
   id: String
-  inbox: Channel[Inbox.Input]
   ## What `/new` makes a session with.
   options: Args.Options
+  signals: Channel[System.Signal]
+  width: Int
+  height: Int
   entries: List[Transcript.Entry] = []
   prompt: String = ""
   ## The cursor in the prompt, a character index (clamped to the text when used).
@@ -68,7 +45,9 @@ struct App
   scroll: Int = 0
   turn: Bool = false
   stopping: Bool = false
+  ## The reader of the event stream and the channel it fills.
   stream: Optional[Task[Void]] = none
+  feed: Optional[Channel[Client.Item]] = none
   generation: Int = 0
   last_event_id: Int = 0
   ## The highest event id already drawn, so a replay draws nothing twice.
@@ -81,46 +60,211 @@ struct App
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
   new_model: Optional[String] = none
   yolo: Yolo.Yolo
-  ## The regions of the last draw, which the clicks are matched against: what the user saw.
-  drawn: Optional[Screen.Frame] = none
-  ## What the screen shows after the last draw, so the next one writes only the cells that changed.
-  grid: Optional[TUI.Raw.Grid] = none
-  ## A draw failed and the transcript says so; later failures are not noted again.
-  draw_failed: Bool = false
   ## The thinking of the model is drawn.
   thinking: Bool = false
   approvals: Approvals.Panel
+  ## The monotonic ms and the wall clock s of the message being handled.
+  now: Int = 0
+  clock_s: Int = 0
+  ## The commands the message being handled starts.
+  effects: List[TUI.Cmd[Msg]] = []
   exit: Optional[Int] = none
+  ## Why the client ends with an error.
+  failure: Optional[String] = none
 end
 
-def watch_signals(signals: Channel[System.Signal], inbox: Channel[Inbox.Input]) -> Void
-  while true
-    case signals.recv(WAIT_MS)
-      ok(signal) -> _ = inbox.send(Inbox.Input.Signal(signal), SEND_MS)
-      error(_) -> break if signals.closed?
-    end
+enum Msg
+  Key(TUI.Event)
+  ## A signal, none when the wait ended without one.
+  Signal(Optional[System.Signal])
+  ## The items of the stream of a generation, so the messages of an old stream are dropped.
+  Stream(Int, List[Client.Item])
+  ## The reply of the server to the answer of an approval.
+  Answered(String, Result[Void])
+  ## A note for the transcript (a compaction's end).
+  Note(String)
+  ## The server was checked again before the stream of a generation is read again.
+  Rechecked(Int, Result[Void])
+end
+
+## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
+def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
+  signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
+  start = try opened(seed(server, options, signals, TUI.Raw.width(screen), TUI.Raw.height(screen)))
+  app = TUI.App(
+    model: start.with(effects: []),
+    update: &update,
+    view: &view,
+    subscriptions: &subscriptions,
+    cmds: start.effects,
+    input: TUI.InputMode.Esc,
+    mouse: true,
+  )
+
+  last = try TUI.Raw.program(screen, app)
+  case last.failure
+    some(reason) -> error(reason, kind: "tui.session")
+    none -> ok(last.exit.unwrap_or(0))
   end
 end
 
-def read_keys(screen: TUI.Raw.Screen, inbox: Channel[Inbox.Input]) -> Void
-  while true
-    case TUI.Raw.poll_event(screen)
-      ok(event) -> break if not inbox.send(Inbox.Input.Terminal(event), SEND_MS).ok?
-      error(e) ->
-        _ = inbox.send(Inbox.Input.Closed(e.message), SEND_MS)
-        break
-    end
+## The model before the session is opened.
+def seed(
+  server: Client.Server,
+  options: Args.Options,
+  signals: Channel[System.Signal],
+  width: Int,
+  height: Int,
+) -> Model
+  Model(
+    server: server,
+    id: "",
+    options: options,
+    signals: signals,
+    width: width,
+    height: height,
+    thinking: options.thinking,
+    approvals: Approvals.Panel(),
+    yolo: Yolo.Yolo(on: options.yolo),
+    now: Time.monotonic_ms,
+    clock_s: Time.now_ms / 1000,
+  )
+end
+
+## The session of the options opened, with the signals listened to.
+def opened(model: Model) -> Result[Model]
+  app = try open(model, model.options)
+  if model.options.yolo
+    app = noted(app, YOLO_WARNING)
+  end
+
+  ok(effect(app, listen(app.signals)))
+end
+
+def update(model: Model, msg: Msg) -> TUI.Step[Model, Msg]
+  app = handled(model.with(now: Time.monotonic_ms, clock_s: Time.now_ms / 1000), msg)
+  # The answer that streams changes on every delta: it is cut again when the stream rests.
+  if not stream?(msg)
+    app = app.with(entries: Transcript.wrapped(app.entries, app.width, app.thinking))
+  end
+
+  cmds = app.effects
+  if app.exit.some? or app.failure.some?
+    cmds = cmds.push(TUI.Cmd.Quit)
+  end
+
+  TUI.Step(model: app.with(effects: []), cmds: cmds)
+end
+
+def view(model: Model) -> TUI.Node = Screen.view(framed(model))
+
+def subscriptions(_model: Model) -> List[TUI.Sub[Msg]] = [TUI.Sub.Events(->(event) { Msg.Key(event) })]
+
+private
+
+def handled(app: Model, msg: Msg) -> Model
+  case msg
+    Msg.Key(TUI.Event.Resize(width, height)) -> app.with(width: width, height: height)
+    Msg.Key(event) -> on_key(app, event)
+    Msg.Signal(signal) -> signalled(app, signal)
+    Msg.Note(text) -> noted(app, text)
+    Msg.Answered(approval_id, result) ->
+      outcome = Approvals.answered(app.approvals, approval_id, result, app.now)
+      answered = unyolo(app.with(approvals: outcome.panel), approval_id, result)
+      case outcome.note
+        some(text) -> noted(answered, text)
+        none -> answered
+      end
+
+    Msg.Stream(generation, items) if generation == app.generation -> streamed(app, items)
+    Msg.Stream(_, _) -> app
+    Msg.Rechecked(generation, result) if generation == app.generation -> rechecked(app, result)
+    Msg.Rechecked(_, _) -> app
   end
 end
 
-def open(app: App, options: Args.Options) -> Result[App]
+# A signal ends the client; a wait that ended without one waits again.
+def signalled(app: Model, signal: Optional[System.Signal]) -> Model
+  case signal
+    some(got) -> app.with(exit: some(128 + System.signal_number(got)))
+    none if app.signals.closed? -> app
+    none -> effect(app, listen(app.signals))
+  end
+end
+
+def rechecked(app: Model, result: Result[Void]) -> Model
+  case result
+    ok(_) -> subscribe(app, app.last_event_id)
+    error(e) -> app.with(failure: some(e.message))
+  end
+end
+
+def stream?(msg: Msg) -> Bool
+  case msg
+    Msg.Stream(_, _) -> true
+    _ -> false
+  end
+end
+
+def effect(app: Model, cmd: TUI.Cmd[Msg]) -> Model = app.with(effects: app.effects.push(cmd))
+
+def listen(signals: Channel[System.Signal]) -> TUI.Cmd[Msg]
+  TUI.Cmd.Run(
+    -> {
+      case signals.recv(WAIT_MS)
+        ok(signal) -> Msg.Signal(some(signal))
+        error(_) -> Msg.Signal(none)
+      end
+    },
+  )
+end
+
+# The next items of the stream: the first that comes, and those that wait after it.
+def read_feed(generation: Int, feed: Channel[Client.Item]) -> TUI.Cmd[Msg]
+  TUI.Cmd.Run(-> { Msg.Stream(generation, drained(feed)) })
+end
+
+def drained(feed: Channel[Client.Item]) -> List[Client.Item]
+  items: List[Client.Item] = []
+  got = feed.recv(WAIT_MS)
+  while got.ok? and items.size < FEED_BATCH
+    items = items.push(got.unwrap!)
+    got = feed.recv(0)
+  end
+
+  items
+end
+
+# The items of the current stream, then the next read of it while it goes on.
+def streamed(app: Model, items: List[Client.Item]) -> Model
+  generation = app.generation
+  done = app
+  for item in items
+    done = on_stream(done, item)
+    break if done.failure.some? or done.generation != generation
+  end
+
+  ended = items.any? { |item| ended?(item) }
+  return done if ended or done.failure.some? or done.generation != generation or done.feed.none?
+
+  effect(done, read_feed(generation, done.feed.unwrap!))
+end
+
+def ended?(item: Client.Item) -> Bool
+  case item
+    Client.Item.Ended(_) -> true
+    _ -> false
+  end
+end
+
+def open(app: Model, options: Args.Options) -> Result[Model]
   case options.session
     some(id) -> resume(app, id)
     none -> create(app)
   end
 end
 
-def create(app: App) -> Result[App]
+def create(app: Model) -> Result[Model]
   options = app.options
   cwd = case options.cwd
     some(dir) -> dir
@@ -132,13 +276,13 @@ def create(app: App) -> Result[App]
   ok(subscribe(noted(app.with(id: id), "session #{id}"), 0))
 end
 
-def resume(app: App, id: String) -> Result[App]
+def resume(app: Model, id: String) -> Result[Model]
   ok(noted(attach(app.with(id: id), try Client.session(app.server, id), false), "session #{id}"))
 end
 
 # Draws the history of the session and reads the events after it; while a turn runs, from the start of the turn, unless
 # `skip_replay` (a server that no longer has that start).
-def attach(app: App, session: Protocol.Session, skip_replay: Bool) -> App
+def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
   from = session.last_event_id
   if not skip_replay
     from = session.turn_from_event_id.unwrap_or(session.last_event_id)
@@ -149,78 +293,42 @@ def attach(app: App, session: Protocol.Session, skip_replay: Bool) -> App
     turn: session.turn_id.some?,
     stopping: false,
     shown_id: from,
-    approvals: Approvals.replaced(app.approvals, session.pending_approvals, Time.monotonic_ms),
+    approvals: Approvals.replaced(app.approvals, session.pending_approvals, app.now),
     yolo: Yolo.attached(app.yolo, session.turn_id, not skip_replay),
   )
 
   subscribe(fresh, from)
 end
 
-def subscribe(app: App, from: Int) -> App
-  if app.stream.some?
-    Task.cancel(app.stream.unwrap!)
+# A new reader of the stream from `from`; the old one stops, and its channel is closed so its last read ends.
+def subscribe(app: Model, from: Int) -> Model
+  for task in option_list(app.stream)
+    Task.cancel(task)
+  end
+
+  for old in option_list(app.feed)
+    old.close
   end
 
   generation = app.generation + 1
-  inbox = app.inbox
-  feed = Client.Feed(
+  feed: Channel[Client.Item] = Channel.new(FEED_CAPACITY)
+  reader = Client.Feed(
     server: app.server,
     session_id: app.id,
     last_event_id: from,
-    tell: ->(item) { inbox.send(Inbox.Input.Stream(generation, item), SEND_MS) },
+    tell: ->(item) { feed.send(item, SEND_MS) },
   )
 
-  app.with(stream: some(Client.start(feed)), generation: generation, last_event_id: from)
+  started = app.with(stream: some(Client.start(reader)), feed: some(feed), generation: generation, last_event_id: from)
+  effect(started, read_feed(generation, feed))
 end
 
-def loop(start: App) -> Result[Int]
-  app = start
-  app = drawn(app)
-  while app.exit.none?
-    case app.inbox.recv(WAIT_MS)
-      ok(input) ->
-        app = try handle(app, input)
-        while app.exit.none?
-          case app.inbox.recv(0)
-            ok(more) -> app = try handle(app, more)
-            error(_) -> break
-          end
-        end
-
-        app = drawn(app)
-
-      error(_) -> next
-    end
-  end
-
-  ok(app.exit.unwrap!)
-end
-
-def handle(app: App, input: Inbox.Input) -> Result[App]
-  case input
-    Inbox.Input.Terminal(event) -> ok(on_key(app, event))
-    Inbox.Input.Note(text) -> ok(noted(app, text))
-    Inbox.Input.Signal(signal) -> ok(app.with(exit: some(128 + System.signal_number(signal))))
-    Inbox.Input.Answered(approval_id, result) ->
-      outcome = Approvals.answered(app.approvals, approval_id, result, Time.monotonic_ms)
-      answered = unyolo(app.with(approvals: outcome.panel), approval_id, result)
-      case outcome.note
-        some(text) -> ok(noted(answered, text))
-        none -> ok(answered)
-      end
-
-    Inbox.Input.Closed(reason) -> error("the terminal closed: #{reason}", kind: "tui.terminal")
-    Inbox.Input.Stream(generation, item) if generation == app.generation -> on_stream(app, item)
-    Inbox.Input.Stream(_, _) -> ok(app)
-  end
-end
-
-def on_key(app: App, event: TUI.Event) -> App
+def on_key(app: Model, event: TUI.Event) -> Model
   for picker in option_list(app.picker)
     return on_picker_key(app, picker, event) if not ctrl_c?(event)
   end
 
-  case Approvals.decision(app.approvals, event, Time.monotonic_ms, not panel(app).empty?)
+  case Approvals.decision(app.approvals, event, app.now, not panel(app).empty?)
     some(decision) -> return answer(app, decision)
     none -> nil
   end
@@ -241,9 +349,9 @@ def on_key(app: App, event: TUI.Event) -> App
     TUI.Event.Key(TUI.Key.Home, _) -> app.with(cursor: 0)
     TUI.Event.Key(TUI.Key.End, _) -> app.with(cursor: app.prompt.length)
     TUI.Event.Mouse(TUI.Mouse.Left, x, y, mods) if not mods.motion -> clicked(app, x, y)
-    TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals, Time.monotonic_ms))
+    TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals, app.now))
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
-      app.with(approvals: Approvals.toggled(app.approvals, Time.monotonic_ms))
+      app.with(approvals: Approvals.toggled(app.approvals, app.now))
     TUI.Event.Key(TUI.Key.Escape, _) -> stop(app)
     TUI.Event.Key(TUI.Key.PageUp, _) -> scrolled(app, page(app))
     TUI.Event.Key(TUI.Key.PageDown, _) -> scrolled(app, -page(app))
@@ -255,24 +363,19 @@ def on_key(app: App, event: TUI.Event) -> App
   end
 end
 
-def cursor(app: App) -> Int = Prompt.clamp(app.prompt, app.cursor)
+def cursor(app: Model) -> Int = Prompt.clamp(app.prompt, app.cursor)
 
-def typed(app: App, piece: String) -> App
+def typed(app: Model, piece: String) -> Model
   at = cursor(app)
   app.with(prompt: Prompt.insert(app.prompt, at, piece), cursor: at + piece.length)
 end
 
 # A click on the transcript opens or closes a thinking block or a tool call; on a key of the approval panel it is
 # that key (with the same rules); in the prompt it moves the cursor. The click is matched against the regions of the
-# last draw, which is what the user saw.
-def clicked(app: App, x: Int, y: Int) -> App
-  case app.drawn
-    some(frame) -> clicked_on(app, frame, x, y)
-    none -> app
-  end
-end
+# model as drawn.
+def clicked(app: Model, x: Int, y: Int) -> Model = clicked_on(app, framed(app), x, y)
 
-def clicked_on(app: App, frame: Screen.Frame, x: Int, y: Int) -> App
+def clicked_on(app: Model, frame: Screen.Frame, x: Int, y: Int) -> Model
   case Screen.hit(frame, x, y)
     Screen.Hit.Entry(index) -> app.with(entries: Transcript.toggle(app.entries, index, app.thinking))
     Screen.Hit.Key(event) -> on_key(app, event)
@@ -289,7 +392,7 @@ def ctrl_c?(event: TUI.Event) -> Bool
   end
 end
 
-def on_picker_key(app: App, picker: Picker.Picker, event: TUI.Event) -> App
+def on_picker_key(app: Model, picker: Picker.Picker, event: TUI.Event) -> Model
   case Picker.key(picker, event)
     Picker.Step.Stay(next_picker) -> app.with(picker: some(next_picker))
     Picker.Step.Close -> app.with(picker: none)
@@ -304,11 +407,11 @@ def option_list[T](value: Optional[T]) -> List[T]
   end
 end
 
-def page(app: App) -> Int = [TUI.Raw.height(app.screen) / 2, 1].max.unwrap!
+def page(app: Model) -> Int = [app.height / 2, 1].max.unwrap!
 
-def scrolled(app: App, rows: Int) -> App = app.with(scroll: [app.scroll + rows, 0].max.unwrap!)
+def scrolled(app: Model, rows: Int) -> Model = app.with(scroll: [app.scroll + rows, 0].max.unwrap!)
 
-def send(app: App) -> App
+def send(app: Model) -> Model
   text = app.prompt.strip
   return app if text == ""
 
@@ -330,7 +433,7 @@ def send(app: App) -> App
   end
 end
 
-def on_command(app: App, command: Client.Command) -> App
+def on_command(app: Model, command: Client.Command) -> Model
   case command
     Client.Command.Quit -> app.with(exit: some(0))
     Client.Command.Stop -> stop_command(app)
@@ -347,14 +450,14 @@ end
 
 def note_entry(text: String) -> Transcript.Entry = Transcript.Entry(kind: Transcript.Kind.Notice, text: text)
 
-def stop_command(app: App) -> App
+def stop_command(app: Model) -> Model
   return noted(app, "no turn is running") if not app.turn
 
   stop(app)
 end
 
 # A command that failed says why; the session goes on.
-def tried(app: App, result: Result[App]) -> App
+def tried(app: Model, result: Result[Model]) -> Model
   case result
     ok(next_app) -> next_app
     error(e) -> noted(app, "error: #{e.message}")
@@ -362,23 +465,20 @@ def tried(app: App, result: Result[App]) -> App
 end
 
 # The state of no session yet, with the stream that `subscribe` replaces.
-def fresh(app: App) -> App
-  App(
-    screen: app.screen,
-    server: app.server,
-    id: "",
-    inbox: app.inbox,
-    options: app.options,
+def fresh(app: Model) -> Model
+  seed(app.server, app.options, app.signals, app.width, app.height).with(
     thinking: app.thinking,
-    approvals: Approvals.Panel(),
-    yolo: Yolo.Yolo(on: app.options.yolo),
     stream: app.stream,
+    feed: app.feed,
     generation: app.generation,
+    now: app.now,
+    clock_s: app.clock_s,
+    effects: app.effects,
   )
 end
 
 # A new session (no choice), or the session `/resume` chose.
-def switch_command(app: App, choice: Optional[String]) -> App
+def switch_command(app: Model, choice: Optional[String]) -> Model
   return noted(app, "a turn is running: Esc stops it first") if app.turn
 
   case choice
@@ -387,32 +487,32 @@ def switch_command(app: App, choice: Optional[String]) -> App
   end
 end
 
-def picking(app: App) -> Result[App]
+def picking(app: Model) -> Result[Model]
   list = try Client.list_sessions(app.server)
   return ok(noted(app, "no sessions")) if list.sessions.empty?
 
   ok(app.with(picker: some(Picker.Picker(sessions: list.sessions))))
 end
 
-def switched(app: App, choice: String) -> Result[App]
+def switched(app: Model, choice: String) -> Result[Model]
   resume(fresh(app), try Client.pick(try Client.list_sessions(app.server), choice))
 end
 
-def setting_command(app: App, name: String, value: Optional[String], change: Protocol.UpdateSession) -> App
+def setting_command(app: Model, name: String, value: Optional[String], change: Protocol.UpdateSession) -> Model
   case value
     some(text) -> tried(app, changed(app, change, "#{name} #{text} from the next turn"))
     none -> tried(app, shown_setting(app, name))
   end
 end
 
-def shown_setting(app: App, name: String) -> Result[App]
+def shown_setting(app: Model, name: String) -> Result[Model]
   session = try Client.session(app.server, app.id)
   return ok(noted(app, "model #{session.model}")) if name == "model"
 
   ok(noted(app, "thinking #{session.effort.unwrap_or("as the model's default")}"))
 end
 
-def changed(app: App, change: Protocol.UpdateSession, done: String) -> Result[App]
+def changed(app: Model, change: Protocol.UpdateSession, done: String) -> Result[Model]
   try Client.update_session(app.server, app.id, change)
   shown = noted(app, done)
   return ok(shown) if change.model.none?
@@ -420,13 +520,11 @@ def changed(app: App, change: Protocol.UpdateSession, done: String) -> Result[Ap
   ok(shown.with(new_model: change.model))
 end
 
-# The summary takes as long as a turn: a task asks for it and puts the outcome on the inbox.
-def compact_command(app: App) -> App
+# The summary takes as long as a turn: a command asks for it and gives the outcome as a note.
+def compact_command(app: Model) -> Model
   server = app.server
   id = app.id
-  inbox = app.inbox
-  _ = Task.spawn(-> { _ = inbox.send(Inbox.Input.Note(compacted(server, id)), SEND_MS) })
-  noted(app, "compacting the history")
+  noted(effect(app, TUI.Cmd.Run(-> { Msg.Note(compacted(server, id)) })), "compacting the history")
 end
 
 def compacted(server: Client.Server, id: String) -> String
@@ -437,7 +535,7 @@ def compacted(server: Client.Server, id: String) -> String
   end
 end
 
-def stop(app: App) -> App
+def stop(app: Model) -> Model
   return app if not app.turn or app.stopping
 
   case Client.stop(app.server, app.id)
@@ -446,59 +544,52 @@ def stop(app: App) -> App
   end
 end
 
-# The answer is sent by a task, so the keys go on; its reply comes back on the inbox.
-def answer(app: App, decision: Protocol.Decision) -> App
-  sent(app, app.approvals.pending[0].approval_id, decision)
-  app.with(approvals: Approvals.sending(app.approvals))
+# The answer is sent by a command, so the keys go on; its reply comes back as a message.
+def answer(app: Model, decision: Protocol.Decision) -> Model
+  sent(app, app.approvals.pending[0].approval_id, decision).with(approvals: Approvals.sending(app.approvals))
 end
 
-def sent(app: App, approval_id: String, decision: Protocol.Decision) -> Void
+def sent(app: Model, approval_id: String, decision: Protocol.Decision) -> Model
   server = app.server
   id = app.id
-  inbox = app.inbox
-  _ = Task.spawn(
-    -> {
-      result = Client.approve(server, id, approval_id, decision)
-      _ = inbox.send(Inbox.Input.Answered(approval_id, result), SEND_MS)
-    },
-  )
+  effect(app, TUI.Cmd.Run(-> { Msg.Answered(approval_id, Client.approve(server, id, approval_id, decision)) }))
 end
 
-def allowed(app: App, request: Protocol.ApprovalRequested) -> App
-  sent(app, request.approval_id, Protocol.Decision.Allow)
-  noted(app.with(yolo: Yolo.allowing(app.yolo, request)), "--yolo allows #{request.tool}: #{request.preview}")
+def allowed(app: Model, request: Protocol.ApprovalRequested) -> Model
+  allowing = sent(app, request.approval_id, Protocol.Decision.Allow).with(yolo: Yolo.allowing(app.yolo, request))
+  noted(allowing, "--yolo allows #{request.tool}: #{request.preview}")
 end
 
 # An allow of `--yolo` that was not sent leaves its approval to the panel.
-def unyolo(app: App, approval_id: String, result: Result[Void]) -> App
+def unyolo(app: Model, approval_id: String, result: Result[Void]) -> Model
   back = Yolo.unsent(app.yolo, approval_id, result)
   rest = app.with(yolo: Yolo.resolved(app.yolo, approval_id))
   case back
-    some(request) -> rest.with(approvals: Approvals.requested(rest.approvals, request, Time.monotonic_ms))
+    some(request) -> rest.with(approvals: Approvals.requested(rest.approvals, request, app.now))
     none -> rest
   end
 end
 
-def resolved(app: App, approval_id: String) -> App
+def resolved(app: Model, approval_id: String) -> Model
   app.with(
-    approvals: Approvals.resolved(app.approvals, approval_id, Time.monotonic_ms),
+    approvals: Approvals.resolved(app.approvals, approval_id, app.now),
     yolo: Yolo.resolved(app.yolo, approval_id),
   )
 end
 
-def noted(app: App, text: String) -> App = app.with(entries: Transcript.note(app.entries, text))
+def noted(app: Model, text: String) -> Model = app.with(entries: Transcript.note(app.entries, text))
 
-def on_stream(app: App, item: Client.Item) -> Result[App]
+def on_stream(app: Model, item: Client.Item) -> Model
   case item
-    Client.Item.Opened -> ok(app.with(reconnects: 0))
+    Client.Item.Opened -> app.with(reconnects: 0)
     Client.Item.Event(_, Protocol.Event.Resync) -> resync(app)
-    Client.Item.Event(id, event) -> ok(on_event(app.with(resyncs: 0), id, event))
-    Client.Item.Skipped(reason) -> ok(noted(app, reason))
+    Client.Item.Event(id, event) -> on_event(app.with(resyncs: 0), id, event)
+    Client.Item.Skipped(reason) -> noted(app, reason)
     Client.Item.Ended(reason) -> reconnect(app, reason)
   end
 end
 
-def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
+def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
   seen = id.unwrap_or(app.last_event_id)
   return app.with(last_event_id: seen) if id.some? and seen <= app.shown_id
 
@@ -515,7 +606,7 @@ def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
       finished(ended, done.stop_reason)
     Protocol.Event.ApprovalRequested(request) if Yolo.allows?(shown.yolo) -> allowed(shown, request)
     Protocol.Event.ApprovalRequested(request) ->
-      shown.with(approvals: Approvals.requested(shown.approvals, request, Time.monotonic_ms))
+      shown.with(approvals: Approvals.requested(shown.approvals, request, app.now))
     Protocol.Event.ApprovalResolved(done) ->
       decided = "approval #{done.approval_id}: #{Protocol.decision_name(done.decision)}"
       noted(resolved(shown, done.approval_id), "#{decided} (#{Protocol.source_name(done.source)})")
@@ -544,7 +635,7 @@ def tool_finished(entries: List[Transcript.Entry], tool: Protocol.ToolFinished) 
   Transcript.tool(entries, tool.call_id, Transcript.Kind.ToolFailed, "✗ #{timing}")
 end
 
-def finished(app: App, reason: Protocol.StopReason) -> App
+def finished(app: Model, reason: Protocol.StopReason) -> Model
   case reason
     Protocol.StopReason.EndTurn -> app
     Protocol.StopReason.Cancelled -> noted(app, "stopped")
@@ -552,64 +643,61 @@ def finished(app: App, reason: Protocol.StopReason) -> App
   end
 end
 
-def resync(app: App) -> Result[App]
-  return error("the server keeps asking to read the session again", kind: "tui.resync") if app.resyncs >= MAX_RESYNCS
+def resync(app: Model) -> Model
+  return app.with(failure: some("the server keeps asking to read the session again")) if app.resyncs >= MAX_RESYNCS
 
-  session = try Client.session(app.server, app.id)
-  ok(attach(app.with(resyncs: app.resyncs + 1), session, app.resyncs >= 1))
-end
-
-def reconnect(app: App, reason: String) -> Result[App]
-  reconnects = app.reconnects + 1
-  return error("lost the event stream: #{reason}", kind: "tui.stream") if reconnects > MAX_RECONNECTS
-
-  Task.sleep(RECONNECT_MS * reconnects)
-  try Client.recheck(app.server)
-  ok(subscribe(app.with(reconnects: reconnects), app.last_event_id))
-end
-
-# A draw that fails leaves the old screen; the client goes on, and the transcript says so once. The next draw after a
-# failure writes every cell.
-def drawn(app: App) -> App
-  frame = framed(app)
-  case TUI.Raw.render(app.screen, Screen.view(frame), app.grid)
-    ok(grid) -> app.with(drawn: some(frame), grid: some(grid))
-    error(_) if app.draw_failed -> app.with(drawn: none, grid: none)
-    error(e) ->
-      noted(app.with(draw_failed: true, drawn: none, grid: none), "error: the screen was not drawn: #{e.message}")
+  case Client.session(app.server, app.id)
+    ok(session) -> attach(app.with(resyncs: app.resyncs + 1), session, app.resyncs >= 1)
+    error(e) -> app.with(failure: some(e.message))
   end
 end
 
-def framed(app: App) -> Screen.Frame
-  width = TUI.Raw.width(app.screen)
-  height = TUI.Raw.height(app.screen)
+# The stream is read again after a pause that grows, once the server is checked to be the same version.
+def reconnect(app: Model, reason: String) -> Model
+  reconnects = app.reconnects + 1
+  return app.with(failure: some("lost the event stream: #{reason}")) if reconnects > MAX_RECONNECTS
+
+  server = app.server
+  generation = app.generation
+  pause = RECONNECT_MS * reconnects
+  back = TUI.Cmd.Run(
+    -> {
+      Task.sleep(pause)
+      Msg.Rechecked(generation, Client.recheck(server))
+    },
+  )
+
+  effect(app.with(reconnects: reconnects), back)
+end
+
+def framed(app: Model) -> Screen.Frame
+  prompt = Prompt.view(app.prompt, cursor(app), app.width, app.height)
   Screen.frame(
-    width,
-    height,
-    Transcript.lines(app.entries, width, app.thinking),
+    app.width,
+    app.height,
+    Transcript.tail(app.entries, app.width, app.thinking, app.height + app.scroll),
     app.scroll,
-    ->(room: Int) { panel_rows(app, width, room) },
-    status(app, width),
-    Prompt.view(app.prompt, cursor(app), width, height),
+    ->(room: Int) { panel_rows(app, app.width, room) },
+    status(app, app.width),
+    prompt,
   )
 end
 
 # The rows of the panel over the prompt, without the transcript: a key needs only these.
-def panel(app: App) -> List[Layout.Row]
-  width = TUI.Raw.width(app.screen)
-  height = TUI.Raw.height(app.screen)
-  panel_rows(app, width, Screen.panel_room(height, Prompt.view(app.prompt, cursor(app), width, height).rows.size))
+def panel(app: Model) -> List[Layout.Row]
+  rows = Prompt.view(app.prompt, cursor(app), app.width, app.height).rows.size
+  panel_rows(app, app.width, Screen.panel_room(app.height, rows))
 end
 
 # The panel over the prompt: the session picker, else the approval asked.
-def panel_rows(app: App, width: Int, room: Int) -> List[Layout.Row]
+def panel_rows(app: Model, width: Int, room: Int) -> List[Layout.Row]
   case app.picker
-    some(picker) -> Picker.rows(picker, width, room, Time.now_ms / 1000)
+    some(picker) -> Picker.rows(picker, width, room, app.clock_s)
     none -> Approvals.rows(app.approvals, width, room)
   end
 end
 
-def status(app: App, width: Int) -> String
+def status(app: Model, width: Int) -> String
   state = "ready"
   if app.stopping
     state = "stopping"
