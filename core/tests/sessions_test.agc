@@ -433,7 +433,8 @@ def test_a_session_is_loaded_when_first_used() -> Result[Void]
       )
 
       after = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
-      try Test.eq(after.sessions.map { |s| s.id }, [id, gone, "a-late"])
+      # The list is newest first by the second a file changed, and the three files may fall on different seconds.
+      try Test.eq(after.sessions.map { |s| s.id }.sort, [id, gone, "a-late"].sort)
       try Dir.mkdir(gone_cwd)
       Test.eq((try H.get(r, Protocol.session_path(gone))).status, 200)
     end
