@@ -9,6 +9,7 @@ and its phases are issue #1 and its sub-issues.
 agentica.toml        the workspace: its members are the packages below
 sse/                 Server-Sent Events: parser and writer, pure; sse.agc is its public module
 llm/                 client for LLM APIs; llm.agc is its public module, src/ the rest
+mcp/                 client for MCP servers on stdio; mcp.agc is its public module
 protocol/            commands, replies and events between server and clients, with JSON codecs, pure;
                      protocol.agc is its public module
 monty/               Python scripts in pydantic's Monty sandbox: the pinned `monty subprocess` worker (fetched
@@ -82,8 +83,8 @@ A package is added by the phase that needs it, never as an empty folder.
   - Names are Ruby style: short, lowercase, `snake_case`.
   - A package depends on another with a normal entry: `git` is this repo,
     `subdir` the folder, `tag` `NAME-VERSION`. The workspace reads it in place.
-  - Keep them loosely coupled, so one can move to its own repo: `llm`, `sse`
-    and `protocol` never depend on `core` or a client, and a package imports
+  - Keep them loosely coupled, so one can move to its own repo: `llm`, `mcp`,
+    `sse` and `protocol` never depend on `core` or a client, and a package imports
     another only through its public module (`pkg/llm/llm`), never its `src/`.
     `make coupling` checks both. A client (`cli`, `tui_client`) reaches
     the server only through `client`, `protocol` and `sse`: it never depends
