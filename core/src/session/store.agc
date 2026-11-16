@@ -762,7 +762,13 @@ end
 def encode_block(block: LLM.Block) -> JSON.Value
   case block
     LLM.Block.Text(part) -> with_replay({"type": JSON.from("text"), "text": JSON.from(part.text)}, part.replay)
-    LLM.Block.Thinking(part) -> with_replay({"type": JSON.from("thinking"), "text": JSON.from(part.text)}, part.replay)
+    LLM.Block.Thinking(part) ->
+      fields = {"type": JSON.from("thinking"), "text": JSON.from(part.text)}
+      if not part.source.empty?
+        fields = fields.put("source", JSON.from(part.source))
+      end
+
+      with_replay(fields, part.replay)
     LLM.Block.ToolUse(call) ->
       kind = case call.kind
         LLM.ToolKind.Function -> "function"
@@ -805,7 +811,9 @@ def decode_block(json: JSON.Value) -> Result[LLM.Block]
   kind = try field(json, "type")
   case kind
     "text" -> ok(LLM.Block.Text(LLM.TextPart(text: try field(json, "text"), replay: replay)))
-    "thinking" -> ok(LLM.Block.Thinking(LLM.ThinkingPart(text: try field(json, "text"), replay: replay)))
+    "thinking" ->
+      source = optional_string(json, "source").unwrap_or("")
+      ok(LLM.Block.Thinking(LLM.ThinkingPart(text: try field(json, "text"), replay: replay, source: source)))
     "tool_use" ->
       call = LLM.ToolCall(
         id: try field(json, "id"),

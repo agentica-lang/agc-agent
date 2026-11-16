@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- Providers by name: `local` (FINN_BASE_URL) and `anthropic`, the presets openai, fireworks, openrouter, groq and deepseek once their key variable is set, and custom ones under `providers` in the config file; `FINN_PROVIDER` or `finn serve --provider` picks the default, `finn --provider` and `finn tui --provider` a new session's, and a session keeps its provider (`GET /v1/providers`, `provider` in `POST` and `PATCH /v1/sessions`).
+- Providers by name: `local` (FINN_BASE_URL) and `anthropic`, the presets openai, fireworks, openrouter, groq and deepseek once their key variable is set, and custom ones under `providers` in the config file; `FINN_PROVIDER` or `finn serve --provider` picks the default, `finn --provider` and `finn tui --provider` a new session's, and a session keeps its provider (`GET /v1/providers`, `provider` in `POST` and `PATCH /v1/sessions`); one whose provider is no longer offered still opens and names the key to set.
 - `/model provider/model` moves the session to another provider; in `finn tui`, `/model` alone opens a picker of every provider's models, and the status line shows `(provider) model`.
 - `finn chat` and `finn tui` have `/tree` (go back before an earlier message, or on after an answer, in the same session), `/fork` (a new session from a message) and `/clone` (a copy of the session); `finn tui` picks from a list, and the message gone back before waits in the prompt.
 - A session file is a tree: `GET /v1/sessions/ID/tree` lists the user messages of every branch, `POST /v1/sessions/ID/branch` goes on from an earlier message in the same session, and `POST /v1/sessions/ID/fork` starts a new session from one (or copies the session); older session files still load.

@@ -76,6 +76,8 @@ struct Turn
   refresh: Optional[Fn[Result[LLM.Provider]]] = none
   ## The session sends no thinking blocks until its next fold.
   stripped: Bool = false
+  ## The provider of the turn, which marks its thinking: the thinking of another one is not sent.
+  source: String = ""
   ## `window` 0 asks the provider for it.
   compaction: Compaction.Settings
   ## The context of the session's last call.
@@ -129,7 +131,7 @@ def run(given: Turn) -> Outcome
     messages = messages + more.map { |q| LLM.Message(role: LLM.Role.User, content: [text_block(q.text)]) }
     read = read + more
     marks = marks + more.flat_map { |q| q.names }
-    asked = messages
+    asked = Compaction.own_thinking(messages, turn.source)
     if stripped
       asked = Compaction.without_thinking(messages)
     end
@@ -145,6 +147,7 @@ def run(given: Turn) -> Outcome
     called = renewal.result
 
     response = called.unwrap_or(EMPTY)
+    response = response.with(message: Compaction.tagged(response.message, turn.source))
     case called
       ok(_) -> nil
       error(e) ->

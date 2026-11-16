@@ -67,8 +67,11 @@ struct Setup
   late_tools: Optional[Fn[List[Tools.Tool]]] = none
   ## Code mode on a fake Monty worker that replays this fixture of `tests/fixtures/monty`.
   monty: String = ""
-  ## Providers of the config file, each at `/NAME` of the fake with the OpenAI chat API.
+  ## Providers of the config file, each at `/NAME` of the fake with the OpenAI chat API (`NAME:openai_responses` for
+  ## the Responses API), the server's provider (empty for that of `api`) and the key variables of providers.
   providers: List[String] = []
+  provider: String = ""
+  key_envs: Map[String, String] = {}
   ## The approval extension, with the deny rules of the config, as `bash(rm *)`.
   approvals: Bool = true
   deny: List[String] = []
@@ -137,7 +140,11 @@ end
 def providers(setup: Setup, fake: Fake.Fake) -> Map[String, Config.Provider]
   all = Config.builtin(apis(setup, fake), setup.api)
   root = fake.url.slice(0, fake.url.length - "/v1".length)
-  customs = setup.providers.map { |name| Providers.Custom(name: name, base_url: "#{root}/#{name}", models: ["m1"]) }
+  customs = setup.providers.map do |given|
+    parts = given.split(":").push("openai")
+    Providers.Custom(name: parts[0], api: parts[1], base_url: "#{root}/#{parts[0]}", models: ["m1"])
+  end
+
   more = Providers.offered(customs, &fake_env, LLM.Options(timeout_ms: 5000, retry_base_ms: 1))
   for name in more.keys
     all = all.put(name, more[name])
@@ -160,7 +167,8 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
     providers: providers(setup, fake),
-    provider: Config.default_provider(setup.api),
+    provider: server_provider(setup),
+    key_envs: setup.key_envs,
     model: setup.model,
     env: &fake_env,
     approvals: try approval_rules(setup),
@@ -211,6 +219,12 @@ def restarted(h: Harness, setup: Setup, cut: String, body: Fn[Harness, Result[Vo
   result = body.call(again)
   Server.stop(again.server)
   result
+end
+
+def server_provider(setup: Setup) -> String
+  return Config.default_provider(setup.api) if setup.provider.empty?
+
+  setup.provider
 end
 
 def approval_rules(setup: Setup) -> Result[Optional[Approval.Rules]]

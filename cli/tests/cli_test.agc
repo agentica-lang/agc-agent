@@ -533,6 +533,7 @@ def test_session_commands() -> Result[Void]
       replies: [Fake.Reply(body: "{}"), Fake.Reply(body: "{}")],
     ),
     providers_route(),
+    Fake.Route(method: "GET", path: Protocol.session_path("s1"), replies: [Fake.Reply(session: "session_idle.json")]),
     Fake.Route(
       method: "GET",
       path: Protocol.SESSIONS_PATH,
@@ -658,6 +659,7 @@ def test_slash_text_busy_switches_and_the_model_warning() -> Result[Void]
     Routes.held_events(),
     Fake.Route(method: "PATCH", path: Protocol.session_path("s1"), replies: [Fake.Reply(body: "{}")]),
     providers_route(),
+    Fake.Route(method: "GET", path: Protocol.session_path("s1"), replies: [Fake.Reply(session: "session_idle.json")]),
     Fake.Route(
       method: "POST",
       path: Protocol.messages_path("s1"),

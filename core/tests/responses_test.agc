@@ -39,6 +39,35 @@ def test_a_turn_runs_on_the_responses_format() -> Result[Void]
   end
 end
 
+# The reasoning of one provider does not go to another: after a move (and a restart), the next request has none.
+def test_a_move_to_another_provider_leaves_the_reasoning_behind() -> Result[Void]
+  replies = ["write_file.sse", "text.sse", "text.sse"]
+  setup = H.Setup(api: "openai_responses", replies: replies, providers: ["other:openai_responses"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    change = Protocol.encode_update_session(Protocol.UpdateSession(provider: some("other"), model: some("m1")))
+    try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), change, H.auth(h))).status, 200)
+    H.restarted(h, setup, "") do |r|
+      _ = try H.send(r, id, "Thanks.")
+      _ = try H.idle(r, id)
+      _ = try H.next_request(r)
+      _ = try H.next_request(r)
+      third = try H.next_request(r)
+      try Test.eq(third.path, "/other/responses")
+      Test.eq(
+        types(try JSON.parse(third.body), "input").uniq.sort,
+        ["function_call", "function_call_output", "message"],
+      )
+    end
+  end
+end
+
 private
 
 def string(json: JSON.Value, key: String) -> String

@@ -13,6 +13,7 @@ HELP = [
   "/fork [N|N+]               a new session from before message N (or after its answer)",
   "/clone                     a new session with this one's history",
   "/model [PROVIDER/]NAME     change the model (and provider) from the next turn on; alone: pick or show it",
+  "                           a model the session's provider lists stays on it: openrouter/anthropic/x forces one",
   "/thinking [low|medium|high|default]  the thinking level, or change it",
   "/compact                   fold the history into a summary now",
   "/stop                      stop the running turn",
@@ -61,9 +62,13 @@ def model_warning(model: String) -> String
   "the call failed after /model #{model}: check the name (/model NAME changes it)"
 end
 
-## The change `/model TEXT` asks for: a provider and its model when a provider of `list` has the name before the first
-## `/`, else the model alone (a model name may hold a `/`).
-def model_change(list: Protocol.ProviderList, text: String) -> Protocol.UpdateSession
+## The change `/model TEXT` asks for: the model alone when `current`, the session's provider, lists `TEXT` or no provider
+## of `list` has the name before the first `/` (a model name may hold a `/`); else that provider and the rest as its
+## model.
+def model_change(list: Protocol.ProviderList, current: String, text: String) -> Protocol.UpdateSession
+  own = list.providers.select { |p| p.name == current }
+  return Protocol.UpdateSession(model: some(text)) if (own.any? { |p| p.models.include?(text) })
+
   case text.index_of("/")
     some(at) ->
       provider = text.slice(0, at)

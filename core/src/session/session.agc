@@ -156,6 +156,12 @@ struct Entry
   listed: Optional[Cached] = none
 end
 
+# A session's provider and model API by name.
+struct Chosen
+  provider: String
+  api: String
+end
+
 # The context of a session and its approval extension.
 struct Opened
   context: Tools.Context
@@ -342,7 +348,7 @@ def summary_now(found: Cached) -> Protocol.SessionSummary
   cut = title.slice(0, [title.length, TITLE_CHARS].min.unwrap!)
   found.summary.with(
     model: found.listing.model.unwrap_or(found.summary.model),
-    provider: found.listing.provider.unwrap_or(found.summary.provider),
+    provider: found.listing.provider.map { |p| some(p) }.unwrap_or(found.summary.provider),
     api: found.listing.api.unwrap_or(found.summary.api),
     updated_s: found.modified_s,
     title: cut.split("").map { |c| printable(c) }.join(""),
@@ -494,17 +500,15 @@ def entry(
   file: String,
   saved: Optional[Store.Saved],
 ) -> Result[Entry]
-  api = header.api.unwrap_or(options.providers[options.provider].api)
-  for chosen in option_list(saved)
-    api = chosen.api.unwrap_or(api)
+  chosen = chosen_of(options, header)
+  api = chosen.api
+  provider = chosen.provider
+  for settings in option_list(saved)
+    api = settings.api.unwrap_or(api)
+    provider = settings.provider.unwrap_or(provider)
   end
 
-  provider = header.provider.unwrap_or(provider_of_api(options, some(api)))
-  for chosen in option_list(saved)
-    provider = chosen.provider.unwrap_or(provider)
-  end
-
-  endpoint = try endpoint_of(options, provider, api)
+  endpoint = try loaded_endpoint(options, provider, api)
   context = opened.context
   found = skills_of(options, context.root)
   for warning in found.warnings
@@ -532,7 +536,7 @@ def entry(
     endpoint: some(->(name: String, now: String) { switched_endpoint(options, name, now) }),
   )
 
-  setup = SessionActor.switched(base, endpoint).with(model: header.model)
+  setup = SessionActor.switched(base, endpoint).with(model: header.model, refused: refusal(options, provider))
 
   ok(
     Entry(
@@ -557,6 +561,33 @@ def default_model(options: Config.Options, provider: String, api: String) -> Str
   options.model
 end
 
+# The provider and API of a session's header. A file made before providers names none: its API's built-in provider
+# (`local`, or `anthropic`), never the server's default, which may be a remote one; one made before the API choice
+# names neither and takes the API of the server's built-in provider.
+def chosen_of(options: Config.Options, header: Store.Header) -> Chosen
+  for provider in option_list(header.provider)
+    own = options.providers.get(provider).map { |p| p.api }.unwrap_or("")
+    return Chosen(provider: provider, api: header.api.unwrap_or(own))
+  end
+
+  for api in option_list(header.api)
+    return Chosen(provider: builtin_of(api), api: api)
+  end
+
+  builtin = Providers.LOCAL
+  if options.provider == Providers.ANTHROPIC
+    builtin = Providers.ANTHROPIC
+  end
+
+  Chosen(provider: builtin, api: options.providers[builtin].api)
+end
+
+def builtin_of(api: String) -> String
+  return Providers.ANTHROPIC if api == "anthropic"
+
+  Providers.LOCAL
+end
+
 # The provider of a session that names none: the server's, unless it does not speak `api`; then the first built-in that
 # does (`--api anthropic` on a server of a local model).
 def provider_of_api(options: Config.Options, api: Optional[String]) -> String
@@ -572,6 +603,8 @@ def provider_of_api(options: Config.Options, api: Optional[String]) -> String
   options.provider
 end
 
+# The models of a provider: those of the config file, the server's on its own, and those of its catalog entry that call
+# tools. A local server serves what it loaded, so `local` lists the catalog only for `FINN_MODELS_PROVIDER`.
 def provider_info(options: Config.Options, name: String) -> Protocol.ProviderInfo
   found = options.providers[name]
   models = found.models
@@ -579,8 +612,15 @@ def provider_info(options: Config.Options, name: String) -> Protocol.ProviderInf
     models = models.push(options.model)
   end
 
+  listed = catalog_of(options, found)
+  if name == Providers.LOCAL
+    listed = options.models_provider
+  end
+
   for catalog in option_list(options.catalog)
-    models = models + Catalog.models(catalog, catalog_of(options, found))
+    if not listed.empty?
+      models = models + Catalog.models(catalog, listed)
+    end
   end
 
   Protocol.ProviderInfo(name: name, api: found.api, models: models.uniq)
@@ -591,6 +631,24 @@ def catalog_of(options: Config.Options, found: Config.Provider) -> String
   return found.catalog if not found.catalog.empty?
 
   catalog_provider(options.models_provider, found.apis[found.api].provider)
+end
+
+# A session on a provider the server no longer offers (its key is unset) loads with it, on the server's endpoint, and
+# refuses a turn until a `PATCH` picks another provider.
+def loaded_endpoint(options: Config.Options, provider: String, api: String) -> Result[SessionActor.Endpoint]
+  return endpoint_of(options, provider, api) if options.providers.has_key?(provider)
+
+  fallback = try endpoint_of(options, options.provider, options.providers[options.provider].api)
+  ok(fallback.with(name: provider, api: api))
+end
+
+def refusal(options: Config.Options, provider: String) -> String
+  return "" if options.providers.has_key?(provider)
+
+  key = options.key_envs.get(provider).unwrap_or("")
+  return "provider #{provider} is not offered" if key.empty?
+
+  "provider #{provider} is not offered (is #{key} set?)"
 end
 
 # What a session on `provider` and `api` takes from them; an unknown one is an API error.
@@ -645,9 +703,14 @@ def if_local(api: Config.ModelApi, url: String) -> String
 end
 
 def summary_of(options: Config.Options, header: Store.Header) -> Protocol.SessionSummary
-  api = header.api.unwrap_or(options.providers[options.provider].api)
-  provider = header.provider.unwrap_or(provider_of_api(options, some(api)))
-  Protocol.SessionSummary(id: header.id, cwd: header.cwd, model: header.model, api: api, provider: provider)
+  chosen = chosen_of(options, header)
+  Protocol.SessionSummary(
+    id: header.id,
+    cwd: header.cwd,
+    model: header.model,
+    api: chosen.api,
+    provider: some(chosen.provider),
+  )
 end
 
 # In the order they were made, not loaded yet. A file whose first line is not a session is left out, with a warning.

@@ -446,7 +446,8 @@ def model_command(chat: Chat, model: Optional[String]) -> Result[Step]
 end
 
 def model_changed(chat: Chat, text: String) -> Result[Chat]
-  change = Client.model_change(try Client.list_providers(chat.server), text)
+  current = (try Client.session(chat.server, chat.id)).provider
+  change = Client.model_change(try Client.list_providers(chat.server), current, text)
   changed(chat, change, "[model #{text} from the next turn]")
 end
 

@@ -81,6 +81,31 @@ def offered(customs: List[Custom], read: Fn[String, Result[String]], options: LL
   out
 end
 
+## The key variable of each provider that has one, offered or not.
+def key_envs(customs: List[Custom]) -> Map[String, String]
+  out: Map[String, String] = {}
+  for custom in (customs.select { |c| not c.key_env.empty? })
+    out = out.put(custom.name, custom.key_env)
+  end
+
+  out
+end
+
+## A warning for each provider whose key variable is the key of another one: that key would go to its URL too.
+def shared_keys(customs: List[Custom]) -> List[String]
+  owners = key_envs(customs)
+  names = owners.keys.sort
+  warnings: List[String] = []
+  for at in 0...names.size
+    name = names[at]
+    for other in (names.take(at).select { |n| owners[n] == owners[name] })
+      warnings = warnings.push("providers #{other} and #{name} both take #{owners[name]}")
+    end
+  end
+
+  warnings
+end
+
 ## The fields of every Responses request: the API keeps nothing, and the reasoning comes back encrypted.
 def stateless() -> Map[String, JSON.Value]
   {"store": JSON.from(false), "include": JSON.from(["reasoning.encrypted_content"])}
@@ -116,7 +141,8 @@ end
 
 def checked(path: String, customs: List[Custom]) -> Result[List[Custom]]
   for custom in customs
-    return error("#{path}: a provider has no name") if custom.name.empty? or custom.name.include?("/")
+    return error("#{path}: a provider has no name") if custom.name.empty?
+    return error("#{path}: provider #{custom.name.inspect}: a name cannot have a /") if custom.name.include?("/")
     if not ["openai", "openai_responses"].include?(custom.api)
       return error(
         "#{path}: provider #{custom.name}: api must be openai or openai_responses, not #{custom.api.inspect}",

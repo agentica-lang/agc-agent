@@ -30,7 +30,7 @@ def test_a_message_reads_back_with_every_kind_of_block() -> Result[Void]
     LLM.Message(
       role: LLM.Role.Assistant,
       content: [
-        LLM.Block.Thinking(LLM.ThinkingPart(text: "plan", replay: some(replay))),
+        LLM.Block.Thinking(LLM.ThinkingPart(text: "plan", replay: some(replay), source: "local/openai")),
         LLM.Block.Text(LLM.TextPart(text: "ok", replay: some(replay))),
         LLM.Block.ToolUse(good),
         LLM.Block.ToolUse(bad),
@@ -186,7 +186,7 @@ end
 def block_kind(block: LLM.Block) -> String
   case block
     LLM.Block.Text(part) -> "text #{part.text} #{part.replay.some?}"
-    LLM.Block.Thinking(part) -> "thinking #{part.text} #{part.replay.some?}"
+    LLM.Block.Thinking(part) -> "thinking #{part.text} #{part.replay.some?} #{part.source}"
     LLM.Block.ToolUse(call) ->
       "tool_use #{call.id} #{call.name} #{call.input_error.some?} #{call.kind == LLM.ToolKind.Custom}"
     LLM.Block.ToolResult(output) -> "tool_result #{output.tool_use_id} #{output.content} #{output.is_error}"

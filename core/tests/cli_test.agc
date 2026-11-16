@@ -112,8 +112,10 @@ def test_providers_come_from_presets_with_a_key_and_the_config_file() -> Result[
   try Dir.mkdir_private(dir)
   custom = "{\"name\": \"box\", \"base_url\": \"http://box/v1\", \"models\": [\"q\"]}"
   keyed = "{\"name\": \"paid\", \"base_url\": \"http://paid/v1\", \"key_env\": \"PAID_KEY\"}"
-  try File.write_text("#{dir}/config.json", "{\"providers\": [#{custom}, #{keyed}]}")
+  shared = "{\"name\": \"proxy\", \"base_url\": \"http://proxy/v1\", \"key_env\": \"FIREWORKS_API_KEY\"}"
+  try File.write_text("#{dir}/config.json", "{\"providers\": [#{custom}, #{keyed}, #{shared}]}")
   try File.write_text("#{dir}/bad.json", "{\"providers\": [{\"name\": \"x\", \"base_url\": \"\"}]}")
+  try File.write_text("#{dir}/slash.json", "{\"providers\": [{\"name\": \"a/b\", \"base_url\": \"http://a/v1\"}]}")
   bare = try Config.from_env(->(n) { located({}, n) })
   keys = {
     "FIREWORKS_API_KEY": "fw",
@@ -125,12 +127,15 @@ def test_providers_come_from_presets_with_a_key_and_the_config_file() -> Result[
   given = try Config.from_env(->(n) { located(keys, n) })
   missing = Config.from_env(->(n) { located({"FINN_PROVIDER": "fireworks"}, n) })
   broken = Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/bad.json"}, n) })
+  slash = Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/slash.json"}, n) })
   _ = Path.remove(dir)
   try Test.eq(bare.providers.keys.sort, ["anthropic", "local"])
-  try Test.eq(given.providers.keys.sort, ["anthropic", "box", "fireworks", "local"])
+  try Test.eq(given.providers.keys.sort, ["anthropic", "box", "fireworks", "local", "proxy"])
+  try Test.eq([given.key_envs["paid"], given.key_envs["groq"]], ["PAID_KEY", "GROQ_API_KEY"])
+  try Test.eq(given.warnings, ["providers fireworks and proxy both take FIREWORKS_API_KEY"])
   try Test.eq([given.provider, given.model, given.providers["fireworks"].catalog], ["fireworks", "k", "fireworks-ai"])
   try Test.eq(given.providers["box"].models, ["q"])
-  Test.eq([missing.ok?, broken.ok?], [false, false])
+  Test.eq([missing.ok?, broken.ok?, slash.ok?], [false, false, false])
 end
 
 # No trusted folder when `FINN_TRUSTED_DIRS` is unset or empty; empty parts are skipped.

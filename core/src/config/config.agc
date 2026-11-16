@@ -46,6 +46,10 @@ struct Options
   providers: Map[String, Providers.Provider]
   provider: String
   model: String
+  ## The key variable of each provider that has one, offered or not, for the hint of a session on one not offered.
+  key_envs: Map[String, String] = {}
+  ## What the server warns about when it starts.
+  warnings: List[String] = []
   env: Fn[String, Result[String]]
   ## The rules of the approval extension; none turns it off, and every tool call runs without asking.
   approvals: Optional[Approval.Rules] = none
@@ -136,6 +140,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       data_dir: try data_dir(read),
       providers: providers,
       provider: provider,
+      key_envs: Providers.key_envs(customs),
+      warnings: Providers.shared_keys(customs),
       model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,
       approvals: some(try Permissions.user_rules(read)),

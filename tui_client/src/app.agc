@@ -695,7 +695,8 @@ def model_picking(app: Model) -> Result[Model]
 end
 
 def model_changed(app: Model, text: String) -> Result[Model]
-  change = Client.model_change(try Client.list_providers(app.server), text)
+  current = app.serving.split("/")[0]
+  change = Client.model_change(try Client.list_providers(app.server), current, text)
   done = try changed(app, change, "model #{text} from the next turn")
   ok(done.with(serving: serving_of(try Client.session(app.server, app.id))))
 end

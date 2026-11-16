@@ -536,7 +536,7 @@ def test_a_session_keeps_its_provider_and_model() -> Result[Void]
     try Test.eq((try H.post(h, Protocol.SESSIONS_PATH, Protocol.encode_new_session(unknown))).status, 400)
     H.restarted(h, setup, "") do |r|
       listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
-      try Test.eq(listed.sessions.map { |s| [s.provider, s.model] }, [["local", "m2"]])
+      try Test.eq(listed.sessions.map { |s| [s.provider.unwrap_or(""), s.model] }, [["local", "m2"]])
       _ = try H.send(r, id, "Again.")
       _ = try H.idle(r, id)
       seen = try H.next_request(r)
@@ -545,6 +545,70 @@ def test_a_session_keeps_its_provider_and_model() -> Result[Void]
       again = try H.session(r, id)
       Test.eq([again.provider, again.api, again.model], ["local", "openai", "m2"])
     end
+  end
+end
+
+# A file made before providers runs on the built-in provider of its API, never on the server's (`other` here). A
+# session whose provider is not offered now (its key is unset) loads, refuses a turn with the key to set, and moves
+# to another provider by a PATCH.
+def test_old_and_orphan_sessions_load() -> Result[Void]
+  setup = H.Setup(
+    replies: ["text.sse", "text.sse"],
+    providers: ["other"],
+    provider: "other",
+    key_envs: {"gone": "GONE_KEY"},
+  )
+
+  H.using(setup) do |h|
+    try File.write_text(H.session_file(h, "old"), header(h.work, "old", ",\"api\":\"openai\""))
+    try File.write_text(
+      H.session_file(h, "orphan"),
+      header(h.work, "orphan", ",\"api\":\"openai\",\"provider\":\"gone\""),
+    )
+
+    H.restarted(h, setup, "") do |r|
+      listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
+      providers = listed.sessions.map { |s| "#{s.id} #{s.provider.unwrap_or("")}" }.sort
+      try Test.eq(providers, ["old local", "orphan gone"])
+      try Test.eq((try H.session(r, "orphan")).provider, "gone")
+      refused = try H.send(r, "orphan", "Hi.")
+      failure = try Protocol.decode_failure(refused.text)
+      try Test.eq([refused.status.to_s, failure.kind], ["503", Protocol.KIND_SESSION_UNAVAILABLE])
+      try Test.assert(failure.message.include?("GONE_KEY"), "the key is not named: #{failure.message}")
+      change = Protocol.encode_update_session(Protocol.UpdateSession(provider: some("local")))
+      try Test.eq((try H.call(r, "PATCH", Protocol.session_path("orphan"), change, H.auth(r))).status, 200)
+      for id in ["old", "orphan"]
+        _ = try H.send(r, id, "Hi.")
+        _ = try H.idle(r, id)
+      end
+
+      Test.eq(
+        [(try H.next_request(r)).path, (try H.next_request(r)).path],
+        ["/v1/chat/completions", "/v1/chat/completions"],
+      )
+    end
+  end
+end
+
+# A PATCH while a turn runs applies from the next turn: the rest of the running one stays on its provider and model.
+def test_a_change_during_a_turn_applies_from_the_next_turn() -> Result[Void]
+  setup = H.Setup(replies: ["write_file.sse", "text.sse", "text.sse"], providers: ["other"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    change = Protocol.encode_update_session(Protocol.UpdateSession(provider: some("other"), model: some("m1")))
+    try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), change, H.auth(h))).status, 200)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Deny)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    _ = try H.send(h, id, "Again.")
+    _ = try H.idle(h, id)
+    seen = [try H.next_request(h), try H.next_request(h), try H.next_request(h)]
+    try Test.eq(seen.map { |s| s.path }, ["/v1/chat/completions", "/v1/chat/completions", "/other/chat/completions"])
+    try Test.eq(JSON.get(try JSON.parse(seen[1].body), "model"), ok(JSON.from(setup.model)))
+    Test.eq(JSON.get(try JSON.parse(seen[2].body), "model"), ok(JSON.from("m1")))
   end
 end
 

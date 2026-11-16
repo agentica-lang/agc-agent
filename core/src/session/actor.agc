@@ -82,6 +82,8 @@ struct Setup
   provider_name: String = ""
   api: String = ""
   endpoint: Optional[Fn[String, String, Result[Endpoint]]] = none
+  ## Why a turn cannot start (the provider is not offered now); empty when it can.
+  refused: String = ""
   ## The approval extension, with what the session's answers and mode allowed so far; none runs every call.
   approvals: Optional[Extension.Approvals] = none
 end
@@ -243,6 +245,7 @@ end
 def switched(setup: Setup, endpoint: Endpoint) -> Setup
   setup.with(
     provider_name: endpoint.name,
+    refused: "",
     api: endpoint.api,
     model: endpoint.model,
     provider: endpoint.provider,
@@ -598,6 +601,11 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     return state
   end
 
+  if not state.setup.refused.empty?
+    Actor.reply(reply, error(state.setup.refused, kind: Protocol.KIND_SESSION_UNAVAILABLE))
+    return state
+  end
+
   for running in option_list(state.turn)
     if state.queued.size >= MAX_QUEUED or (state.queued + [typed]).join("\n\n").bytesize > MAX_QUEUED_BYTES
       message = "a turn is running and its queue is full (#{MAX_QUEUED} messages, #{MAX_QUEUED_BYTES} bytes)"
@@ -653,6 +661,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     cache: setup.cache,
     refresh: setup.refresh,
     stripped: state.stripped,
+    source: "#{setup.provider_name}/#{setup.api}",
     compaction: Compaction.Settings(
       window: state.window,
       model: compact_model(setup),
