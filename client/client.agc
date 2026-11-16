@@ -40,6 +40,8 @@ export Discovery.connect
 export Discovery.Found
 export Discovery.find
 export Discovery.log_file
+export Discovery.server_pid
+export Discovery.exited?
 export Discovery.recheck
 
 export Control.stop_and_wait

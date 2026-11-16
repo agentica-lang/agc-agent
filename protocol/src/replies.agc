@@ -18,13 +18,14 @@ struct Health
 end
 
 ## `GET /v1/server`: `started_s` is when the process started (Unix seconds); `running_turns` counts the sessions that
-## have a turn now.
+## have a turn or a shell command running now; `stopping` says a stop waits for them.
 struct ServerStatus
   pid: Int
   version: String
   started_s: Int
   sessions: Int
   running_turns: Int
+  stopping: Bool
 end
 
 ## The answer of `POST /v1/sessions`.

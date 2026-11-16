@@ -17,10 +17,27 @@ def serve() -> Void
     ok(server) ->
       puts("Finn Agent core listening on 127.0.0.1:#{server.port}")
       IO.flush()
+      stop_on_signals(server)
       Server.shutdown(server, Server.stop_requested(server))
       puts("Finn Agent core stopped")
       IO.flush()
     error(e) -> fail(e.message, "")
+  end
+end
+
+# A signal that ends a container (SIGTERM, or Ctrl-C) stops the server as `finn server stop --now` does.
+def stop_on_signals(server: Server.Server) -> Void
+  case System.subscribe([System.Signal.Term, System.Signal.Int])
+    ok(signals) ->
+      _ = Task.spawn(
+        -> {
+          case signals.recv(86_400_000 * 365)
+            ok(_) -> Server.request_stop(server, true)
+            error(_) -> nil
+          end
+        },
+      )
+    error(e) -> IO.warn("no signal handling: #{e.message}")
   end
 end
 

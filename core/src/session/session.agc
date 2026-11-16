@@ -32,10 +32,12 @@ struct Sessions
   dir: String
 end
 
-## How many sessions the server has and how many of them run a turn now (only a loaded session can).
+## How many sessions the server has, how many of them work now (a turn or a shell command; only a loaded session can),
+## and how many of those wait for something else than the answer to an approval.
 struct Activity
   sessions: Int
-  running_turns: Int
+  running: Int
+  busy: Int
 end
 
 ## The folder of the session files.
@@ -78,16 +80,23 @@ end
 def activity(sessions: Sessions) -> Result[Activity]
   all = try entries(sessions)
   running = 0
+  busy = 0
   for session in loaded(all)
-    if running_turn?(session)
-      running = running + 1
+    case SessionActor.load(session)
+      ok(load) if load.running ->
+        running = running + 1
+        if not load.asking
+          busy = busy + 1
+        end
+
+      _ -> nil
     end
   end
 
-  ok(Activity(sessions: all.size, running_turns: running))
+  ok(Activity(sessions: all.size, running: running, busy: busy))
 end
 
-## Stops the running turn of every session: how many ran.
+## Stops the running turn or shell command of every session: how many ran.
 def cancel_turns(sessions: Sessions) -> Result[Int]
   stopped = 0
   for session in loaded(try entries(sessions))
@@ -667,13 +676,6 @@ end
 # The addresses of the sessions that are loaded.
 def loaded(all: List[Entry]) -> List[Address[SessionActor.Msg]]
   all.flat_map { |entry| option_list(entry.session).map { |session| session.address } }
-end
-
-def running_turn?(session: Address[SessionActor.Msg]) -> Bool
-  case SessionActor.snapshot(session)
-    ok(snapshot) -> snapshot.turn_id.some?
-    error(_) -> false
-  end
 end
 
 def find(sessions: Sessions, id: String) -> Result[Address[SessionActor.Msg]]

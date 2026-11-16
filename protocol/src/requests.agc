@@ -62,9 +62,10 @@ struct Fork
   entry: Optional[Int] = none
 end
 
-## `POST /v1/server/stop`: the server stops taking connections and goes once its turns end; `now` cancels them first.
+## `POST /v1/server/stop`: the server stops starting work and goes once its turns end; `now` cancels them first (none
+## is false). A second request with `now` while it waits makes it cancel.
 struct StopServer
-  now: Bool = false
+  now: Optional[Bool] = none
 end
 
 ## `POST /v1/sessions/ID/shell`: runs `command` in the session folder as the `bash` tool would, while no turn runs.

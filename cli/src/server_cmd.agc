@@ -6,6 +6,8 @@ import Args from "args"
 
 LOG_LINES = 100
 FOLLOW_MS = 200
+CHECK_EVERY = 10
+READ_BYTES = 65_536
 ## Exit code of `status` when no server runs.
 NOT_RUNNING = 1
 
@@ -32,8 +34,15 @@ def render(status: Protocol.ServerStatus, url: String, dir: String, now_s: Int) 
     "  uptime #{uptime(now_s - status.started_s)}",
     "  sessions #{status.sessions}",
     "  running turns #{status.running_turns}",
+    "  stopping #{stopping_word(status.stopping)}",
     "  state folder #{dir}",
   ]
+end
+
+def stopping_word(stopping: Bool) -> String
+  return "yes (waiting for the running turns)" if stopping
+
+  "no"
 end
 
 def uptime(seconds: Int) -> String
@@ -45,6 +54,12 @@ def uptime(seconds: Int) -> String
 end
 
 private
+
+## The last lines of a file, and the start of the line the file ends in.
+struct Tail
+  lines: List[String]
+  rest: String
+end
 
 def status(dir: String) -> Result[Int]
   case try Client.find(dir)
@@ -91,37 +106,89 @@ def restarted(launch: Client.Launch, dir: String, now: Bool) -> Result[Int]
   ok(0)
 end
 
-# The end of the server log; with `follow`, what is added to it, until the command is stopped.
+# The end of the server log, read once from its start in pieces (the file may be big); with `follow`, what is added to
+# it, until the server is gone or the command is stopped.
 def logs(dir: String, follow: Bool) -> Result[Int]
   path = Client.log_file(dir)
-  text = case File.read_text(path)
-    ok(read) -> read
-    error(_) -> ""
+  if not File.stat(path).ok?
+    return error("no server log: #{path} does not exist (no server was started in this folder)")
   end
 
-  lines = text.split("\n")
-  tail = lines.drop([lines.size - LOG_LINES, 0].max.unwrap!)
-  puts(tail.join("\n").strip)
-  return ok(0) if not follow
+  File.open(path) do |file|
+    seen = try read_tail(file)
+    puts(seen.lines.join("\n"))
+    IO.flush()
+    if follow
+      try follow_log(file, dir, seen.rest)
+    end
 
-  IO.flush()
-  follow_log(path, text.length)
+    ok(0)
+  end
 end
 
-def follow_log(path: String, shown: Int) -> Result[Int]
+# Reads to the end of the file: the last `LOG_LINES` whole lines, and the part after the last line end.
+def read_tail(file: File.Handle) -> Result[Tail]
+  lines: List[String] = []
+  rest = ""
+  pending = "".bytes
   while true
-    Task.sleep(FOLLOW_MS)
-    text = File.read_text(path).unwrap_or("")
-    if text.length < shown
-      shown = 0
-    end
+    piece = try File.read_bytes(file, READ_BYTES)
+    break if piece.size == 0
 
-    if text.length > shown
-      puts(text.slice(shown, text.length - shown).strip)
-      IO.flush()
-      shown = text.length
+    pending = Bytes.concat([pending, piece])
+    # A piece may end inside a character: it waits for the next one.
+    case String.from_bytes(pending)
+      ok(text) ->
+        pending = "".bytes
+        parts = (rest + text).split("\n")
+        rest = parts[parts.size - 1]
+        lines = lines + parts.take(parts.size - 1)
+        lines = lines.drop([lines.size - LOG_LINES, 0].max.unwrap!)
+      error(_) -> nil
     end
   end
 
-  ok(0)
+  ok(Tail(lines: lines, rest: rest))
+end
+
+# Prints what the file gets, by the position of the handle; every `CHECK_EVERY` idle polls it asks whether the
+# server runs.
+def follow_log(file: File.Handle, dir: String, start: String) -> Result[Void]
+  rest = start
+  pending = "".bytes
+  idle = 0
+  while true
+    piece = try File.read_bytes(file, READ_BYTES)
+    if piece.size == 0
+      idle = idle + 1
+      return ok() if idle % CHECK_EVERY == 0 and not running?(dir)
+
+      Task.sleep(FOLLOW_MS)
+    else
+      idle = 0
+      pending = Bytes.concat([pending, piece])
+      case String.from_bytes(pending)
+        ok(text) ->
+          pending = "".bytes
+          parts = (rest + text).split("\n")
+          rest = parts[parts.size - 1]
+          for line in parts.take(parts.size - 1)
+            puts(line)
+          end
+
+          IO.flush()
+        error(_) -> nil
+      end
+    end
+  end
+
+  ok()
+end
+
+def running?(dir: String) -> Bool
+  case Client.find(dir)
+    ok(Client.Found.Absent(_)) -> false
+    ok(_) -> true
+    error(_) -> false
+  end
 end

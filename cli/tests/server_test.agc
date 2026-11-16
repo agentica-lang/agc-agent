@@ -1,15 +1,30 @@
 # `finn server` against the real core: start, status, logs, restart and stop of the server of a state folder.
 
+import HTTP from "std/http"
+import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import Args from "../src/args"
 import Driver from "support/driver"
+
+# A model that never answers: a turn that runs until the server cancels it. `entered` has a message when the model
+# got the request.
+struct Model
+  server: HTTP.Server
+  entered: Channel[Bool]
+  gate: Channel[Bool]
+end
 
 def test_the_server_is_started_asked_restarted_and_stopped() -> Result[Void] = Driver.within_dir(&lifecycle)
 
 def lifecycle(dir: String) -> Result[Void]
   command = try Driver.core_command()
   result = steps(dir, command)
-  # A server that is left after a failed step goes with the test.
+  stop_leftover(dir)
+  result
+end
+
+# A server that is left after a failed step goes with the test.
+def stop_leftover(dir: String) -> Void
   case File.read_text("#{dir}/server.json")
     ok(text) ->
       case Protocol.decode_server_info(text)
@@ -19,8 +34,6 @@ def lifecycle(dir: String) -> Result[Void]
 
     error(_) -> nil
   end
-
-  result
 end
 
 def steps(dir: String, command: List[String]) -> Result[Void]
@@ -55,9 +68,194 @@ def steps(dir: String, command: List[String]) -> Result[Void]
   Test.eq(gone.code, 1)
 end
 
+# A signal that ends a container stops the server cleanly: its file goes and its log says it stopped.
+def test_a_term_signal_stops_the_server_cleanly() -> Result[Void] = Driver.within_dir(&signalled)
+
+def signalled(dir: String) -> Result[Void]
+  command = try Driver.core_command()
+  started = try run(dir, ["start"], command)
+  try Test.assert(started.code == 0, "start: #{started.errors}")
+  pid = try Client.server_pid(dir)
+  try System.signal(pid, System.Signal.Term, "agentica")
+  waited = 0
+  while waited < 10_000 and not Client.exited?(dir, pid)
+    Task.sleep(100)
+    waited = waited + 100
+  end
+
+  try Test.assert(Client.exited?(dir, pid), "the server did not stop")
+  try Test.assert(not File.stat("#{dir}/server.json").ok?, "server.json is removed")
+  Test.assert((try File.read_text("#{dir}/server.log")).include?("Finn Agent core stopped"), "the log says it stopped")
+end
+
+def model_that_waits() -> Result[Model]
+  entered: Channel[Bool] = Channel.new(8)
+  gate: Channel[Bool] = Channel.new(1)
+  handler = ->(request: HTTP.Request, _body: HTTP.RequestBody) {
+    if request.path.end_with?("/chat/completions")
+      _ = entered.send(true, 0)
+      _ = gate.recv(60_000)
+    end
+
+    ok(HTTP.Answer.Whole(HTTP.Response(status: 404, headers: [], body: "{}".bytes)))
+  }
+
+  server = try HTTP.serve("127.0.0.1", 0, handler)
+  ok(Model(server: server, entered: entered, gate: gate))
+end
+
+def free(model: Model) -> Void
+  model.gate.close
+  HTTP.close_server(model.server)
+  _ = HTTP.wait(model.server)
+end
+
+def model_env(model: Model, drain_ms: String) -> Map[String, String]
+  {
+    "FINN_BASE_URL": "http://127.0.0.1:#{HTTP.local_port(model.server)}/v1",
+    "FINN_API": "openai",
+    "FINN_MODEL": "m",
+    "FINN_DRAIN_MS": drain_ms,
+  }
+end
+
+# A restart during a turn waits for the old server (its turn is cancelled when the wait ends), and the new one starts.
+def test_a_restart_during_a_turn_waits_for_the_old_server() -> Result[Void] = Driver.within_dir(&restarted_in_a_turn)
+
+def restarted_in_a_turn(dir: String) -> Result[Void]
+  model = try model_that_waits()
+  result = restart_steps(dir, model)
+  free(model)
+  stop_leftover(dir)
+  result
+end
+
+def restart_steps(dir: String, model: Model) -> Result[Void]
+  command = try Driver.core_command()
+  env = model_env(model, "1500")
+  started = try Driver.finish(try Driver.start_server(dir, ["start"], command, env))
+  try Test.assert(started.code == 0, "start: #{started.errors}")
+  first = try Client.server_pid(dir)
+  turn = try Driver.start(dir, ["-p", "go"])
+  try model.entered.recv(15_000)
+  restarted = try Driver.finish(try Driver.start_server(dir, ["restart"], command, env))
+  try Test.assert(restarted.code == 0, "restart: #{restarted.errors}")
+  try Test.assert(try Client.server_pid(dir) != first, "another server runs")
+  try Test.assert(Client.exited?(dir, first), "the old server is gone")
+  _ = try Driver.finish(turn)
+  ok()
+end
+
+# A stop waits for the turn while the server answers its status; a second stop with `--now` cancels the turn.
+def test_a_stop_waits_for_a_turn_and_is_escalated_by_now() -> Result[Void] = Driver.within_dir(&escalated)
+
+def escalated(dir: String) -> Result[Void]
+  model = try model_that_waits()
+  result = escalation_steps(dir, model)
+  free(model)
+  stop_leftover(dir)
+  result
+end
+
+def escalation_steps(dir: String, model: Model) -> Result[Void]
+  command = try Driver.core_command()
+  env = model_env(model, "60000")
+  started = try Driver.finish(try Driver.start_server(dir, ["start"], command, env))
+  try Test.assert(started.code == 0, "start: #{started.errors}")
+  pid = try Client.server_pid(dir)
+  turn = try Driver.start(dir, ["-p", "go"])
+  try model.entered.recv(15_000)
+  waiting = try Driver.start_server(dir, ["stop"])
+  try stopping_shown(dir)
+  try Test.assert(not Client.exited?(dir, pid), "the server waits for its turn")
+  now = try run(dir, ["stop", "--now"])
+  try Test.assert(now.code == 0, "stop --now: #{now.errors}")
+  first = try Driver.finish(waiting)
+  try Test.eq(first.lines, ["server stopped"])
+  try Test.assert(Client.exited?(dir, pid), "the server is gone")
+  cancelled = try Driver.finish(turn)
+  Test.eq(cancelled.code, 130)
+end
+
+# `status` shows the stop that waits: its line says so once the stop request arrived.
+def stopping_shown(dir: String) -> Result[Void]
+  waited = 0
+  while waited < 10_000
+    status = try run(dir, ["status"])
+    shown = status.lines.any? { |line| line.strip.start_with?("stopping yes") }
+    return ok() if shown
+
+    waited = waited + 300
+  end
+
+  error("status never showed the stop")
+end
+
+# The tail of a log over 1 MiB, a log that is gone, and a log that is rotated when a server starts.
+def test_the_logs_of_a_big_file_show_its_tail_and_a_start_rotates_a_log_over_10_mib() -> Result[Void]
+  Driver.within_dir(&big_log)
+end
+
+# A log of `head`, `count` lines of 100 bytes, and `tail`, which is over 1 MiB (the limit of `File.read_text`).
+def write_log(path: String, head: String, count: Int, tail: String) -> Result[Void]
+  _ = Path.remove(path)
+  File.open(path, "create_private") do |file|
+    try File.write(file, head)
+    line = "x" * 99 + "\n"
+    block = line * 1000
+    for _ in 0..(count / 1000)
+      try File.write(file, block)
+    end
+
+    File.write(file, tail)
+  end
+end
+
+def big_log(dir: String) -> Result[Void]
+  missing = try run(dir, ["logs"])
+  try Test.eq(missing.code, 1)
+  try Test.assert(missing.errors.include?("no server log"), "the message: #{missing.errors}")
+  path = "#{dir}/server.log"
+  try write_log(path, "first\n", 120_000, "last-but-one\nlast\n")
+  tail = try run(dir, ["logs"])
+  try Test.eq(tail.lines.size, 100)
+  try Test.eq(tail.lines[99], "last")
+  command = try Driver.core_command()
+  try write_log(path, "old\n", 110_000, "end\n")
+  started = try run(dir, ["start"], command)
+  try Test.assert(started.code == 0, "start: #{started.errors}")
+  try Test.assert(File.stat("#{path}.1").ok?, "the big log became server.log.1")
+  try Test.assert((try File.stat(path)).size_bytes < 1_000_000, "a new log started")
+  try Test.eq((try File.stat(path)).mode % 512, 384)
+  stopped = try run(dir, ["stop"])
+  Test.eq(stopped.code, 0)
+end
+
+# `logs -f` ends by itself when the server goes away.
+def test_following_the_logs_ends_when_the_server_stops() -> Result[Void] = Driver.within_dir(&followed)
+
+def followed(dir: String) -> Result[Void]
+  command = try Driver.core_command()
+  started = try run(dir, ["start"], command)
+  try Test.assert(started.code == 0, "start: #{started.errors}")
+  following = try Driver.start_server(dir, ["logs", "-f"])
+  Task.sleep(500)
+  stopped = try run(dir, ["stop"])
+  try Test.eq(stopped.code, 0)
+  ended = try Driver.finish(following)
+  try Test.eq(ended.code, 0)
+  Test.assert(ended.lines.any? { |line| line.include?("listening") }, "the log was shown: #{ended.lines}")
+end
+
 def test_the_server_action_and_its_options_are_parsed() -> Result[Void]
   for bad in [["server"], ["server", "nope"], ["server", "stop", "restart"]]
     try Test.eq(Args.parse(bad).ok?, false)
+  end
+
+  leading = try Args.parse(["--state-dir", "/s", "server", "stop"])
+  case leading
+    Args.Command.Server(options) -> try Test.eq(options.state_dir, some("/s"))
+    _ -> return error("not a server command")
   end
 
   case try Args.parse(["server", "stop", "--now", "--state-dir", "/s", "--", "agentica", "core.agc"])

@@ -22,6 +22,7 @@ START_WAIT_MS = 10_000
 POLL_MS = 100
 NOT_FOUND = 127
 GROUP_AND_OTHERS = 63
+LOG_KEEP_BYTES = 10_485_760
 
 ## How a client finds or starts its server. `none` takes the default: the state folder of the environment, and the
 ## server command of `FINN_SERVER_COMMAND`, else `core/main.agc serve` of the repository the client runs from, which
@@ -79,6 +80,22 @@ def find(dir: String) -> Result[Found]
     Probe.Other(pid) -> ok(Found.Other(pid))
     Probe.Absent(reason) -> ok(Found.Absent(reason))
     Probe.Unusable(reason) -> refused(dir, reason)
+  end
+end
+
+## The pid in the `server.json` of the folder.
+def server_pid(dir: String) -> Result[Int]
+  info = try read_info(file_in(dir, SERVER_FILE))
+  ok(info.pid)
+end
+
+## True once the server that had `pid` is gone: its `server.json` is removed (or names another server), or, where there
+## is a /proc, the process has exited. A server that stops refuses connections before it is gone, so the answer of its
+## health check says nothing about this.
+def exited?(dir: String, pid: Int) -> Bool
+  case server_pid(dir)
+    ok(now) if now == pid -> pid_gone?(pid)
+    _ -> true
   end
 end
 
@@ -188,6 +205,8 @@ def reach(info: Protocol.ServerInfo) -> Probe
   end
 end
 
+def pid_gone?(pid: Int) -> Bool = File.stat("/proc/self").ok? and not File.stat("/proc/#{pid}").ok?
+
 # Where there is a /proc, a pid that is not there or belongs to someone else is not our server.
 def foreign_pid?(pid: Int) -> Bool
   return false if not File.stat("/proc/self").ok?
@@ -265,8 +284,24 @@ def start(options: Launch, dir: String, why_not: String) -> Result[Client.Server
 end
 
 def started(options: Launch, dir: String) -> Result[Client.Server]
+  try rotate_log(dir)
   try spawn_server(options, dir)
   wait_alive(dir)
+end
+
+# A log over `LOG_KEEP_BYTES` becomes `server.log.1` (the one before it goes), and a new one starts private.
+def rotate_log(dir: String) -> Result[Void]
+  path = file_in(dir, LOG_FILE)
+  big = case File.stat(path)
+    ok(info) -> info.size_bytes > LOG_KEEP_BYTES
+    error(_) -> false
+  end
+
+  return ok() if not big
+
+  _ = Path.remove("#{path}.1")
+  try Path.rename(path, "#{path}.1")
+  private_file(path)
 end
 
 def explained[T](result: Result[T], why_not: String) -> Result[T]

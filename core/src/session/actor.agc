@@ -93,6 +93,13 @@ enum Msg
   Copy(Optional[Int], Copying, Channel[Result[Copied]])
   Shell(Protocol.RunShell, Channel[Result[Protocol.ShellAccepted]])
   ShellDone(String, Tools.Output, Int)
+  Load(Channel[Load])
+end
+
+## Whether the session works now (a turn or a shell command), and whether all it waits for is an answer to an approval.
+struct Load
+  running: Bool
+  asking: Bool
 end
 
 ## Where `copy` writes the new session: its header, in the folder `dir`.
@@ -204,6 +211,8 @@ end
 def snapshot(address: Address[Msg]) -> Result[Protocol.Session]
   Actor.call(address, CALL_MS) do |reply| Msg.Snapshot(reply) end
 end
+
+def load(address: Address[Msg]) -> Result[Load] = Actor.call(address, CALL_MS) do |reply| Msg.Load(reply) end
 
 ## The event stream from after `last_event_id` (from now when none), as SSE bytes.
 def subscribe(address: Address[Msg], last_event_id: Optional[Int]) -> Result[Channel[Bytes]]
@@ -327,6 +336,10 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
   case msg
     Msg.Snapshot(reply) ->
       Actor.reply(reply, session(state))
+      Actor.continue(state)
+    Msg.Load(reply) ->
+      running = state.turn.some? or state.shell.some?
+      Actor.reply(reply, Load(running: running, asking: running and not state.pending.empty?))
       Actor.continue(state)
     Msg.Subscribe(last, reply) -> Actor.continue(attach(state, last, reply))
     Msg.Send(text, reply) -> Actor.continue(start_turn(state, text, reply))

@@ -35,7 +35,13 @@ end
 
 ## Asks the server to stop: it answers at once and goes once its turns end (`now` cancels them).
 def stop_server(server: Server, now: Bool) -> Result[Void]
-  _ = try call(server, "POST", Protocol.SERVER_STOP_PATH, Protocol.encode_stop_server(Protocol.StopServer(now: now)))
+  _ = try call(
+    server,
+    "POST",
+    Protocol.SERVER_STOP_PATH,
+    Protocol.encode_stop_server(Protocol.StopServer(now: some(now))),
+  )
+
   ok()
 end
 

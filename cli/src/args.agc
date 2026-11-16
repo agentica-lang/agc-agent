@@ -3,6 +3,10 @@ import Client from "pkg/client/client"
 import {Kind, Opt, Parsed} from "std/option_parser"
 
 VERSION = "0.0.1"
+# The options of a client that take the next word.
+VALUE_OPTIONS = [
+  "--state-dir", "--server-command", "--session", "--cwd", "--model", "--api", "--prompt", "-p", "--delete",
+]
 
 ## The options of a run. `none` takes the default: the state folder from the environment, a new session in the current
 ## folder, the server command of `FINN_SERVER_COMMAND`. The server command is the words after `--`, or the
@@ -51,7 +55,8 @@ enum Command
 end
 
 def parse(args: List[String]) -> Result[Command]
-  return parse_server(args.drop(1)) if not args.empty? and args[0] == "server"
+  at = server_word(args)
+  return parse_server(args.take(at) + args.drop(at + 1)) if at >= 0
 
   parser = OP.new(
     "finn",
@@ -125,6 +130,26 @@ def launch(options: Options) -> Client.Launch
 end
 
 private
+
+# Where the word `server` is, the first that is not an option or the value of one (so `finn --state-dir X server stop`
+# works); -1 when there is none.
+def server_word(args: List[String]) -> Int
+  at = 0
+  while at < args.size
+    word = args[at]
+    return -1 if word == "--"
+    return at if word == "server"
+    return -1 if not word.start_with?("-")
+
+    takes_value = VALUE_OPTIONS.include?(word)
+    at = at + 1
+    if takes_value
+      at = at + 1
+    end
+  end
+
+  -1
+end
 
 def command(parsed: Parsed) -> Result[Command]
   return ok(Command.Version) if OP.flag(parsed, "version")

@@ -48,7 +48,8 @@ bin/finn serve --api anthropic         # Anthropic: ANTHROPIC_API_KEY, ANTHROPIC
 bin/finn --version
 ```
 
-`finn server status`, `stop` (`--now` cancels the running turns), `restart`, `start` and `logs [-f]` manage the server a
+`finn server status`, `stop` (waits for the running turns and ends when the server has gone; `--now` cancels them),
+`restart`, `start` and `logs [-f]` manage the server a
 client started in the background.
 
 The flags of `finn serve` (`--api`, `--model`, `--base-url`) override their environment variables (`FINN_API`,
