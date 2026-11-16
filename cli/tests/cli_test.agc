@@ -209,9 +209,10 @@ end
 
 # A line typed while a turn runs is sent, and shown as queued.
 def test_a_line_sent_during_a_turn_is_queued() -> Result[Void]
-  replies = ["working.sse", "queued.sse"].map { |name|
-    Fake.Reply(status: 202, body: "{\"turn_id\": \"t1\"}", push: [name])
-  }
+  replies = [
+    Fake.Reply(status: 202, body: "{\"turn_id\": \"t1\"}", push: ["working.sse"]),
+    Fake.Reply(status: 202, body: "{\"turn_id\": \"t1\", \"message_id\": \"t1.1\"}", push: ["queued.sse"]),
+  ]
 
   sending = Fake.Route(method: "POST", path: Protocol.messages_path("s1"), replies: replies)
   Driver.within([Routes.created(), Routes.held_events(), sending], &queued)
@@ -413,7 +414,7 @@ def test_one_shot_denies_approvals_and_yolo_allows_them() -> Result[Void]
       answer = try Fake.request(rig.fake, "POST", Protocol.approval_path("s1", "a1"))
       try Test.eq(Protocol.decode_approve(answer.body), ok(Protocol.Approve(decision: decision)))
       try Test.assert(not done.errors.include?(PROMPT), "nothing is asked: #{done.errors}")
-      try Test.eq(done.errors.include?("--yolo: every tool call is approved"), yolo)
+      try Test.eq(done.errors.include?("--yolo: the tool calls of the turns this client starts are approved"), yolo)
       Test.eq(done.code, 0)
     end
   end
@@ -472,8 +473,25 @@ def test_one_shot_reads_the_task_from_stdin_with_a_dash() -> Result[Void]
   end
 end
 
-# `--yolo` allows the approvals of this run only: one that was pending before the client attached is asked.
-def test_yolo_asks_an_approval_pending_before_it_attached() -> Result[Void]
+# `--yolo` asks the rest of an own turn once another client queued a message into it; one-shot denies it.
+def test_yolo_denies_a_turn_another_client_steers() -> Result[Void]
+  routes = [
+    Routes.created(),
+    Routes.held_events(),
+    Routes.accepting(["steered_approval.sse"]),
+    Routes.answering("a1", Fake.Reply(push: ["denied_end.sse"])),
+  ]
+
+  Driver.within(routes) do |rig|
+    done = try Driver.exited(try Driver.start(rig.dir, PLAIN + ["-p", "clean up", "--yolo"]))
+    answer = try Fake.request(rig.fake, "POST", Protocol.approval_path("s1", "a1"))
+    try Test.eq(Protocol.decode_approve(answer.body), ok(Protocol.Approve(decision: Protocol.Decision.Deny)))
+    Test.eq(done.code, 0)
+  end
+end
+
+# `--yolo` allows the approvals of its own turns only: one of a turn that ran before the client attached is asked.
+def test_yolo_asks_an_approval_of_a_turn_it_did_not_start() -> Result[Void]
   routes = [
     Routes.session([Fake.Reply(session: "session_running_approval.json")]),
     Routes.events([Fake.Reply(fixture: "replay_pending.sse", hold: true)]),

@@ -114,10 +114,12 @@ struct Usage
   session_cost: Optional[Float] = none
 end
 
-## A message sent while the turn `turn_id` runs: the turn reads it before its next model call.
+## A message sent while the turn `turn_id` runs: the turn reads it before its next model call. `message_id` is the one
+## the `202` of its sender has.
 struct MessageQueued
   turn_id: String
   text: String
+  message_id: String
 end
 
 struct TurnFinished
@@ -308,6 +310,7 @@ def shape() -> List[String]
     Wire.record("ApprovalRequested", ApprovalRequested.members),
     Wire.record("ApprovalResolved", ApprovalResolved.members),
     Wire.record("Usage", Usage.members),
+    Wire.record("UsageWire", UsageWire.members),
     Wire.record("MessageQueued", MessageQueued.members),
     Wire.record("TurnFinished", TurnFinished.members),
     Wire.record("ResolvedWire", ResolvedWire.members),

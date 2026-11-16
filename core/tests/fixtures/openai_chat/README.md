@@ -17,7 +17,9 @@ The fake LLM of the server tests streams these, in the order a test gives.
   `write_file` call.
 - `bash_echo_small.sse` is `bash_echo.sse` with 50 prompt tokens.
 - `text_cached.sse` is `text.sse` with other usage: 150 prompt tokens, 120 of
-  them cached, and 7 completion tokens.
+  them cached, and 7 completion tokens. `text_length.sse` and
+  `text_refused.sse` are `text.sse` that ends with `finish_reason: "length"`
+  and `"content_filter"`.
 - `summary.sse` is the summary a compaction asks for, and `models_small.json` a
   llama-server `GET /models` answer whose only model (`qwen`, not the model the
   tests name) has a window of 120 tokens.

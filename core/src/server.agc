@@ -769,8 +769,8 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
     "GET 1" -> response(200, Protocol.encode_session(try Session.snapshot(try find(registry, parts[0]))))
     "POST 2" if parts[1] == "messages" ->
       message = try Protocol.decode_send_message(text)
-      turn_id = try Session.send(try find(registry, parts[0]), message.text)
-      response(202, Protocol.encode_message_accepted(Protocol.MessageAccepted(turn_id: turn_id)))
+      accepted = try Session.send(try find(registry, parts[0]), message.text)
+      response(202, Protocol.encode_message_accepted(accepted))
     "PATCH 1" ->
       change = try Protocol.decode_update_session(text)
       try Session.update(try find(registry, parts[0]), change)

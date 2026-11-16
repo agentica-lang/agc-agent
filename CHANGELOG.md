@@ -4,6 +4,7 @@
 
 - `finn tui --yolo` allows the tool calls of the turns it starts; the status line shows YOLO all the time, and a turn another client started is still asked.
 - `finn tui` takes pasted text whole (bracketed paste) into the prompt or the `/resume` filter.
+- **Breaking:** `finn --yolo` allows only the tool calls of the turns it starts, as `finn tui --yolo` does; both ask the rest of a turn another client queued a message into (`message_id` in the `202` and in `message_queued`), or whose events a resync did not replay.
 - `finn chat` and `finn tui` refuse a running server of another version (its wire records differ) and say how to stop it, instead of failing on its replies.
 - Turn ids have a random part, so a server that lost the last records of a session never gives a new turn an old id.
 - `finn chat` and `finn tui` check the server's version again before they read its event stream again; the version also covers the error kinds and the paths.

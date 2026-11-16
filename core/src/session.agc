@@ -67,7 +67,7 @@ end
 enum Msg
   Snapshot(Channel[Protocol.Session])
   Subscribe(Optional[Int], Channel[Channel[Bytes]])
-  Send(String, Channel[Result[String]])
+  Send(String, Channel[Result[Protocol.MessageAccepted]])
   Answer(String, Protocol.Decision, Channel[Result[Void]])
   Stop(Channel[Bool])
   Close(Channel[Result[Void]])
@@ -108,6 +108,8 @@ struct Running
   from_event_id: Int
   ## The text of the turn's answers so far, kept as it is committed, so a compaction of the history leaves it whole.
   texts: List[String] = []
+  ## The messages queued into the turn so far, which number their ids.
+  queued: Int = 0
 end
 
 struct State
@@ -137,7 +139,8 @@ struct State
   ## What the calls cost in USD, from the catalog's prices: the session's and the running turn's.
   cost: Optional[Float] = none
   turn_cost: Float = 0.0
-  ## Messages sent while the turn runs, which it has not read yet.
+  ## Messages sent while the turn runs, which it has not read yet. They live only here: a crash of the server loses
+  ## them with no `queue_dropped`.
   queued: List[String] = []
   ## The names the extensions noted: the skills the session loaded.
   marks: List[String] = []
@@ -176,9 +179,9 @@ def subscribe(address: Address[Msg], last_event_id: Optional[Int]) -> Result[Cha
   Actor.call(address, CALL_MS) do |reply| Msg.Subscribe(last_event_id, reply) end
 end
 
-## Starts a turn; its id, or `session.busy` while one runs.
-def send(address: Address[Msg], text: String) -> Result[String]
-  sent: Result[Result[String]] = Actor.call(address, CALL_MS) do |reply| Msg.Send(text, reply) end
+## Starts a turn or queues the message into the running one; `session.busy` when it cannot.
+def send(address: Address[Msg], text: String) -> Result[Protocol.MessageAccepted]
+  sent: Result[Result[Protocol.MessageAccepted]] = Actor.call(address, CALL_MS) do |reply| Msg.Send(text, reply) end
   ok(try try sent)
 end
 
@@ -504,7 +507,7 @@ end
 
 # A message sent while a turn runs waits in the queue, which the turn reads before its next model call. The user's
 # `/name` of a skill puts its content before the message, unless the session has it already.
-def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> State
+def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.MessageAccepted]]) -> State
   if state.compacting
     Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
     return state
@@ -517,9 +520,11 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
       return state
     end
 
-    Actor.reply(reply, ok(running.id))
-    queued = state.with(queued: state.queued.push(typed))
-    return emit(queued, Protocol.Event.MessageQueued(Protocol.MessageQueued(turn_id: running.id, text: typed)))
+    message_id = "#{running.id}.#{running.queued + 1}"
+    Actor.reply(reply, ok(Protocol.MessageAccepted(turn_id: running.id, message_id: some(message_id))))
+    queued = state.with(turn: some(running.with(queued: running.queued + 1)), queued: state.queued.push(typed))
+    event = Protocol.MessageQueued(turn_id: running.id, text: typed, message_id: message_id)
+    return emit(queued, Protocol.Event.MessageQueued(event))
   end
 
   expanded = Skills.on_message(typed, state.setup.skills, state.marks)
@@ -591,7 +596,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
     broken: none,
   )
 
-  Actor.reply(reply, ok(turn_id))
+  Actor.reply(reply, ok(Protocol.MessageAccepted(turn_id: turn_id)))
   emit(
     started,
     Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id, history_size: some(started.display.size))),
@@ -766,7 +771,7 @@ def next_turn(state: State) -> State
   return state if state.queued.empty?
   return unsent(state) if state.broken.some?
 
-  ignored: Channel[Result[String]] = Channel.new(1)
+  ignored: Channel[Result[Protocol.MessageAccepted]] = Channel.new(1)
   started = start_turn(state.with(queued: []), state.queued.join("\n\n"), ignored)
   return unsent(started.with(queued: state.queued)) if started.turn.none?
 
@@ -902,7 +907,8 @@ def stripped(state: State) -> State
 end
 
 # The history of a turn only grows, so only its new messages go to the file.
-# The messages the turn read from the queue leave it here, shown after the answer of the turn so far.
+# The messages the turn read from the queue leave it here, shown after the answer of the turn so far. A crash between
+# their `queued` records and the messages record leaves a shown message that the history lacks.
 def commit(state: State, history: List[LLM.Message], marks: List[String], read: List[Agent.Queued]) -> State
   added = history.drop(state.history.size)
   return state if added.empty?
