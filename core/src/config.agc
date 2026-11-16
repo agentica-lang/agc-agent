@@ -1,25 +1,28 @@
-## The options of `serve`, from the environment: `AGC_AGENT_STATE_DIR` (else `$XDG_STATE_HOME/agc-agent`, else
-## `~/.local/state/agc-agent`), `AGC_AGENT_DATA_DIR` for the sessions (else `$XDG_DATA_HOME/agc-agent`, else
-## `~/.local/share/agc-agent`), and the model API: `AGC_AGENT_API` (`openai`, chat completions, by default, or
-## `openai_responses`), `AGC_AGENT_BASE_URL` (a local llama-server by default), `AGC_AGENT_API_KEY` and
-## `AGC_AGENT_MODEL`; `AGC_AGENT_CONTEXT_WINDOW` and `AGC_AGENT_COMPACT_MODEL` for compaction.
+## The options of `serve`, from the environment: `FINN_STATE_DIR` (else `$XDG_STATE_HOME/finn`, else
+## `~/.local/state/finn`), `FINN_DATA_DIR` for the sessions (else `$XDG_DATA_HOME/finn`, else
+## `~/.local/share/finn`), and the model API: `FINN_API` (`openai`, chat completions, by default, or
+## `openai_responses`), `FINN_BASE_URL` (a local llama-server by default), `FINN_API_KEY` and
+## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction. The names of before Finn still work:
+## `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder is there.
 
 import LLM from "pkg/llm/llm"
 import Server from "server"
 import Tools from "tools"
 
-STATE_DIR_ENV = "AGC_AGENT_STATE_DIR"
-DATA_DIR_ENV = "AGC_AGENT_DATA_DIR"
+STATE_DIR_ENV = "FINN_STATE_DIR"
+DATA_DIR_ENV = "FINN_DATA_DIR"
+PREFIX = "FINN_"
+OLD_PREFIX = "AGC_AGENT_"
 DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
 DEFAULT_MODEL = "default"
-## The names `AGC_AGENT_API` takes: OpenAI chat completions, and the OpenAI Responses format.
+## The names `FINN_API` takes: OpenAI chat completions, and the OpenAI Responses format.
 APIS = ["openai", "openai_responses"]
 
 def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
-  base_url = set(read, "AGC_AGENT_BASE_URL").unwrap_or(DEFAULT_BASE_URL)
-  api_key = set(read, "AGC_AGENT_API_KEY").unwrap_or("")
-  api = set(read, "AGC_AGENT_API").unwrap_or(APIS[0])
-  return error("AGC_AGENT_API must be one of #{APIS.join(", ")}, not #{api.inspect}") if not APIS.include?(api)
+  base_url = set(read, "FINN_BASE_URL").unwrap_or(DEFAULT_BASE_URL)
+  api_key = set(read, "FINN_API_KEY").unwrap_or("")
+  api = set(read, "FINN_API").unwrap_or(APIS[0])
+  return error("FINN_API must be one of #{APIS.join(", ")}, not #{api.inspect}") if not APIS.include?(api)
 
   ok(
     Server.Options(
@@ -27,18 +30,18 @@ def from_env(read: Fn[String, Result[String]]) -> Result[Server.Options]
       data_dir: try data_dir(read),
       apis: apis(base_url, api_key),
       api: api,
-      model: set(read, "AGC_AGENT_MODEL").unwrap_or(DEFAULT_MODEL),
+      model: set(read, "FINN_MODEL").unwrap_or(DEFAULT_MODEL),
       env: read,
       rules: Tools.Rules(allow: [], deny: []),
       context_window: try context_window(read),
-      compact_model: set(read, "AGC_AGENT_COMPACT_MODEL").unwrap_or(""),
+      compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(base_url),
       api_key: api_key,
     ),
   )
 end
 
-## Every model API at `base_url`, by its `AGC_AGENT_API` name. On the Responses format the API keeps nothing
+## Every model API at `base_url`, by its `FINN_API` name. On the Responses format the API keeps nothing
 ## (`store: false`): the session file has the history, and the reasoning comes back in its encrypted content.
 def apis(base_url: String, api_key: String, options: LLM.Options = LLM.Options()) -> Map[String, Server.ModelApi]
   stateless = {"store": JSON.from(false), "include": JSON.from(["reasoning.encrypted_content"])}
@@ -62,24 +65,39 @@ def folder(read: Fn[String, Result[String]], own: String, xdg: String, under_loc
   end
 
   for base in option_list(set(read, xdg))
-    return Path.join([base, "agc-agent"])
+    return named_folder(base)
   end
 
-  Path.join([try read.call("HOME"), ".local", under_local, "agc-agent"])
+  named_folder(try Path.join([try read.call("HOME"), ".local", under_local]))
+end
+
+def named_folder(base: String) -> Result[String]
+  dir = try Path.join([base, "finn"])
+  old = try Path.join([base, "agc-agent"])
+  return ok(old) if not File.stat(dir).ok? and File.stat(old).ok?
+
+  ok(dir)
 end
 
 def set(read: Fn[String, Result[String]], name: String) -> Optional[String]
-  case read.call(name)
-    ok(value) if value != "" -> some(value)
-    _ -> none
+  names = [name]
+  if name.start_with?(PREFIX)
+    names = [name, "#{OLD_PREFIX}#{name.slice(PREFIX.length, name.length - PREFIX.length)}"]
   end
+
+  for each in names
+    value = read.call(each).unwrap_or("")
+    return some(value) if value != ""
+  end
+
+  none
 end
 
 def context_window(read: Fn[String, Result[String]]) -> Result[Optional[Int]]
-  for text in option_list(set(read, "AGC_AGENT_CONTEXT_WINDOW"))
+  for text in option_list(set(read, "FINN_CONTEXT_WINDOW"))
     case text.to_i
       ok(tokens) if tokens > 0 -> return ok(some(tokens))
-      _ -> return error("AGC_AGENT_CONTEXT_WINDOW must be a number of tokens over 0, not #{text.inspect}")
+      _ -> return error("FINN_CONTEXT_WINDOW must be a number of tokens over 0, not #{text.inspect}")
     end
   end
 

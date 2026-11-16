@@ -13,7 +13,7 @@ def fake_env(name: String) -> Result[String]
     "PATH" -> System.env("PATH")
     "HOME" -> ok("/home/tester")
     "OPENAI_API_KEY" -> ok("sk-secret-key")
-    "AGC_AGENT_SERVER_JSON" -> ok("/state/server.json")
+    "FINN_SERVER_JSON" -> ok("/state/server.json")
     _ -> error("not set")
   end
 end

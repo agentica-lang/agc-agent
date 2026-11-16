@@ -10,8 +10,8 @@ import Protocol from "pkg/protocol/protocol"
 import Args from "args"
 import Client from "client"
 
-STATE_DIR_ENV = "AGC_AGENT_STATE_DIR"
-SERVER_COMMAND_ENV = "AGC_AGENT_SERVER_COMMAND"
+STATE_DIR_ENV = "FINN_STATE_DIR"
+SERVER_COMMAND_ENV = "FINN_SERVER_COMMAND"
 SERVER_FILE = "server.json"
 LOCK_FILE = "server.lock"
 LOG_FILE = "server.log"
@@ -23,7 +23,7 @@ POLL_MS = 100
 NOT_FOUND = 127
 GROUP_AND_OTHERS = 63
 
-## The folder of `server.json`: `--state-dir`, else `AGC_AGENT_STATE_DIR`, else the user's state folder, with its
+## The folder of `server.json`: `--state-dir`, else `FINN_STATE_DIR`, else the user's state folder, with its
 ## symlinks resolved. A symlink that is not yours is refused.
 def state_dir(options: Args.Options) -> Result[String]
   dir = case options.state_dir
@@ -62,17 +62,32 @@ enum Probe
 end
 
 def environment_dir() -> Result[String]
-  case System.env(STATE_DIR_ENV)
-    ok(dir) if dir != "" -> ok(dir)
-    _ -> user_state_dir()
-  end
+  dir = setting(STATE_DIR_ENV)
+  return ok(dir) if dir != ""
+
+  user_state_dir()
 end
 
+## The value of a `FINN_` variable, else of its name before Finn (`AGC_AGENT_`); empty when neither is set.
+def setting(name: String) -> String
+  value = System.env(name).unwrap_or("")
+  return value if value != ""
+
+  System.env("AGC_AGENT_#{name.slice(5, name.length - 5)}").unwrap_or("")
+end
+
+## `finn` of the user's state folder, else `agc-agent` while only that one is there.
 def user_state_dir() -> Result[String]
-  case System.env("XDG_STATE_HOME")
-    ok(base) if base != "" -> Path.join([base, "agc-agent"])
-    _ -> Path.join([try System.env("HOME"), ".local", "state", "agc-agent"])
+  base = case System.env("XDG_STATE_HOME")
+    ok(xdg) if xdg != "" -> xdg
+    _ -> try Path.join([try System.env("HOME"), ".local", "state"])
   end
+
+  dir = try Path.join([base, "finn"])
+  old = try Path.join([base, "agc-agent"])
+  return ok(old) if not File.stat(dir).ok? and File.stat(old).ok?
+
+  ok(dir)
 end
 
 def file_in(dir: String, name: String) -> String = "#{dir}/#{name}"
@@ -238,11 +253,11 @@ def take_lock(lock: File.Handle) -> Result[Void]
   error("another client is starting the server and did not finish in #{LOCK_WAIT_MS / 1000} s", kind: "cli.lock")
 end
 
-# The server command: the one given, else AGC_AGENT_SERVER_COMMAND, else the core's entry point next to this client.
+# The server command: the one given, else FINN_SERVER_COMMAND, else the core's entry point next to this client.
 def command_words(options: Args.Options) -> Result[List[String]]
   return ok(options.server_command.unwrap!) if options.server_command.some?
 
-  words = System.env(SERVER_COMMAND_ENV).unwrap_or("").split(" ").select { |word| word != "" }
+  words = setting(SERVER_COMMAND_ENV).split(" ").select { |word| word != "" }
   return ok(words) if not words.empty?
 
   default_command()

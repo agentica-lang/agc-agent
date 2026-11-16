@@ -14,7 +14,7 @@ private
 
 def dispatch(command: Args.Command) -> Void
   case command
-    Args.Command.Version -> puts("agc-agent cli #{Args.VERSION}")
+    Args.Command.Version -> puts("Finn Agent cli #{Args.VERSION}")
     Args.Command.Help(text) -> puts(text)
     Args.Command.Run(options) -> finish(App.run(options))
     Args.Command.Delete(options, id) -> finish(App.delete(options, id))
@@ -27,7 +27,7 @@ def finish(result: Result[Int]) -> Void
       IO.flush()
       System.exit(code)
     error(e) ->
-      IO.warn("agc: #{e.message}")
+      IO.warn("finn: #{e.message}")
       System.exit(1)
   end
 end

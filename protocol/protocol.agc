@@ -1,4 +1,4 @@
-## The messages between the agc-agent server and its clients: the bodies of the HTTP commands, their answers and the
+## The messages between the Finn Agent server and its clients: the bodies of the HTTP commands, their answers and the
 ## events of the SSE stream, with their JSON codecs, and the paths and error kinds both sides share. Pure: no I/O, and
 ## it depends on no other package.
 ##

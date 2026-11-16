@@ -120,7 +120,7 @@ def known_window(turn: Turn) -> Int
     ok(tokens) ->
       turn.link.window.call(tokens)
       if tokens < 0
-        message = "the API does not give the model's window: no compaction (set AGC_AGENT_CONTEXT_WINDOW)"
+        message = "the API does not give the model's window: no compaction (set FINN_CONTEXT_WINDOW)"
         turn.link.emit.call(Protocol.Event.Error(Protocol.Failure(kind: Compaction.KIND_NO_WINDOW, message: message)))
       end
 

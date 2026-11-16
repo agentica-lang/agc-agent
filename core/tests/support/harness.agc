@@ -53,7 +53,7 @@ struct Setup
   ## The server asks the fake's `/props` for the window first.
   props: Bool = false
   before_load: Optional[Fn[String, Void]] = none
-  ## The model API of the server, as `AGC_AGENT_API` names it; the fixtures come from the folder of its format.
+  ## The model API of the server, as `FINN_API` names it; the fixtures come from the folder of its format.
   api: String = "openai"
 end
 

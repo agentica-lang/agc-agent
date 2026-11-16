@@ -20,7 +20,7 @@ struct Header
   created_ms: Int
   ## The system prompt of every call of the session, so a cache of its prefix stays valid after a restart.
   system: Optional[String] = none
-  ## The model API of the session, by its `AGC_AGENT_API` name; none in a file made before the choice.
+  ## The model API of the session, by its `FINN_API` name; none in a file made before the choice.
   api: Optional[String] = none
 end
 
