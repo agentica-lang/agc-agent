@@ -20,9 +20,10 @@ tui_client/          the TUI client on agentica-tui (pinned commit): client, pro
                      entry point; tests/test_pty.py runs it under a pty against core and a fake model
 <pkg>/tests/         *_test.agc tests of that package; fixtures/ the recorded data they read
 llm/smoke/           tests against a real llama-server (make smoke-llama)
-llm/live/            tests against a paid API (make live-fireworks): never in CI
+llm/live/            tests against a paid API (live-fireworks, smoke-anthropic): never in CI
 scripts/             fetch the pinned llama.cpp release and model into .tools/ (sha256)
-Makefile             check, fmt-check, unit, smoke, test over every package; smoke-llama, live-fireworks
+Makefile             check, fmt-check, unit, smoke, test over every package; smoke-llama, live-fireworks,
+                     smoke-anthropic
 .github/workflows/   ci.yml: the pinned Agentica release, then fmt-check and test; the llama job
 ```
 
@@ -56,6 +57,10 @@ A package is added by the phase that needs it, never as an empty folder.
 - `make live-fireworks`: one real call to Fireworks (`FIREWORKS_API_KEY`,
   `FIREWORKS_MODEL`); it skips without the key. It costs money: only with the
   owner's yes, never in CI.
+- `make smoke-anthropic`: four calls to `claude-haiku-5-5` (text, a tool
+  round, a cache read) with `ANTHROPIC_API_KEY`, else `ANTHROPIC_AUTH_TOKEN`,
+  else the token of `ant auth login`; it skips without any. It costs money:
+  only with the owner's yes, never in CI. The token is never printed.
 - After a change of a package's dependencies: `agentica update` in that
   package's folder, and commit its `agentica.lock`.
 
