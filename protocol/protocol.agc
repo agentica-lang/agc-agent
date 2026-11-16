@@ -31,6 +31,7 @@ export Kinds.KIND_SESSION_STORAGE
 export Kinds.KIND_SESSION_UNAVAILABLE
 export Kinds.KIND_APPROVAL_NOT_FOUND
 export Kinds.KIND_APPROVAL_RESOLVED
+export Kinds.KIND_SHELL_DENIED
 
 export Routes.HEALTH_PATH
 export Routes.SESSIONS_PATH
@@ -44,6 +45,7 @@ export Routes.compact_path
 export Routes.tree_path
 export Routes.branch_path
 export Routes.fork_path
+export Routes.shell_path
 
 export Requests.Decision
 export Requests.NewSession
@@ -53,6 +55,7 @@ export Requests.UpdateSession
 export Requests.Compacted
 export Requests.Branch
 export Requests.Fork
+export Requests.RunShell
 export Requests.EFFORTS
 export Requests.EFFORT_DEFAULT
 export Requests.decisions
@@ -72,6 +75,8 @@ export Requests.encode_branch
 export Requests.decode_branch
 export Requests.encode_fork
 export Requests.decode_fork
+export Requests.encode_run_shell
+export Requests.decode_run_shell
 
 export Replies.Role
 export Replies.Health
@@ -85,6 +90,7 @@ export Replies.Session
 export Replies.TreeNode
 export Replies.SessionTree
 export Replies.Branched
+export Replies.ShellAccepted
 export Replies.roles
 export Replies.role_name
 export Replies.parse_role
@@ -104,6 +110,8 @@ export Replies.encode_session_tree
 export Replies.decode_session_tree
 export Replies.encode_branched
 export Replies.decode_branched
+export Replies.encode_shell_accepted
+export Replies.decode_shell_accepted
 
 export Errors.Failure
 export Errors.encode_failure
@@ -123,6 +131,8 @@ export Events.ApprovalResolved
 export Events.Usage
 export Events.TurnFinished
 export Events.MessageQueued
+export Events.ShellStarted
+export Events.ShellFinished
 export Events.event_kinds
 export Events.event_kind
 export Events.kind_name

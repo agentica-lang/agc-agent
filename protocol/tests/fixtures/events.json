@@ -15,6 +15,8 @@
   {"name": "approval_resolved", "data": {"approval_id": "a5", "decision": "allow_prefix", "source": "client"}},
   {"name": "approval_resolved", "data": {"approval_id": "a6", "decision": "allow_tool", "source": "client"}},
   {"name": "message_queued", "data": {"turn_id": "t1", "text": "also update the README", "message_id": "t1.1"}},
+  {"name": "shell_started", "data": {"shell_id": "sh1", "command": "git status", "context": true}},
+  {"name": "shell_finished", "data": {"shell_id": "sh1", "command": "git status", "context": true, "ok": false, "output": "exit code 128\nnot a git repository", "duration_ms": 12}},
   {"name": "usage", "data": {"input": 1200, "output": 85, "cache_read": 1000, "cache_write": 0, "context": 1285}},
   {"name": "usage", "data": {"input": 10, "output": 5, "cache_read": 0, "cache_write": 0, "context": 10, "cost": 0.25, "turn_cost": 0.5, "session_cost": 1.5}},
   {"name": "turn_finished", "data": {"turn_id": "t1", "stop_reason": "end_turn", "history_size": 4}},
