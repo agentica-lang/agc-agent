@@ -64,6 +64,12 @@ struct Setup
   monty: String = ""
   ## Deny rules of the config, as `bash(rm *)`.
   deny: List[String] = []
+  ## The token that Anthropic fetches again after a 401; none when empty.
+  fresh_token: String = ""
+  ## Skills: the home folder is `home` under the test's folder, and the folders of `trust` (under the test's folder;
+  ## the test's folder itself when none) are trusted.
+  skills: Bool = false
+  trust: Optional[List[String]] = none
 end
 
 def fake_env(name: String) -> Result[String]
@@ -84,9 +90,12 @@ def using(setup: Setup, body: Fn[Harness, Result[Void]]) -> Result[Void]
   result
 end
 
+# A fixture's `@BASE@` is the test's folder.
 def with_fake(setup: Setup, base: String, body: Fn[Harness, Result[Void]]) -> Result[Void]
-  fake = try Fake.start(try fixtures(setup.replies, fixture_dir(setup.api)))
-  started = start(setup, try Path.real(base), fake)
+  real = try Path.real(base)
+  replies = (try fixtures(setup.replies, fixture_dir(setup.api))).map { |reply| placed(reply, real) }
+  fake = try Fake.start(replies)
+  started = start(setup, real, fake)
   result = case started
     ok(h) -> body.call(h)
     error(e) -> error(e)
@@ -101,13 +110,32 @@ def with_fake(setup: Setup, base: String, body: Fn[Harness, Result[Void]]) -> Re
   result
 end
 
+# With `fresh_token`, Anthropic gets that token after a 401.
+def apis(setup: Setup, fake: Fake.Fake) -> Map[String, Server.ModelApi]
+  options = LLM.Options(timeout_ms: 5000, retry_base_ms: 1)
+  all = Config.apis(fake.url, "test-key", options)
+  return all if setup.fresh_token.empty?
+
+  token = setup.fresh_token
+  url = fake.url
+  refresh = -> { ok(LLM.anthropic(url, "", options, token)) }
+  all.put("anthropic", all["anthropic"].with(refresh: some(refresh)))
+end
+
+def placed(reply: Fake.Reply, base: String) -> Fake.Reply
+  case String.from_bytes(reply.body)
+    ok(text) if text.include?("@BASE@") -> reply.with(body: text.replace("@BASE@", base).bytes)
+    _ -> reply
+  end
+end
+
 def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   work = "#{base}/work"
   try Dir.mkdir(work)
   options = Server.Options(
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
-    apis: Config.apis(fake.url, "test-key", LLM.Options(timeout_ms: 5000, retry_base_ms: 1)),
+    apis: apis(setup, fake),
     api: setup.api,
     model: "qwen2.5-0.5b-instruct",
     env: &fake_env,
@@ -120,6 +148,8 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     before_load: setup.before_load,
     tools: setup.tools,
     code_mode: code_mode(setup.monty),
+    home: skills_home(setup, base),
+    trusted: skills_trusted(setup, base),
   )
 
   server = try Server.start(options)
@@ -181,6 +211,18 @@ def code_mode(fixture: String) -> Optional[CodeMode.Settings]
   some(CodeMode.Settings(worker: -> { ok(words) }, limits: Monty.Limits()))
 end
 
+def skills_home(setup: Setup, base: String) -> String
+  return "" if not setup.skills
+
+  "#{base}/home"
+end
+
+def skills_trusted(setup: Setup, base: String) -> List[String]
+  return [] if not setup.skills
+
+  setup.trust.unwrap_or(["."]).map { |dir| "#{base}/#{dir}" }
+end
+
 def window(tokens: Int) -> Optional[Int]
   return none if tokens == 0
 
@@ -189,9 +231,17 @@ end
 
 def no_rules() -> Tools.Rules = Tools.Rules(allow: [], deny: [])
 
+## A name is a fixture under `dir`, `STATUS:name.json`, or a path; `name@MS` answers after MS milliseconds.
 def fixtures(names: List[String], dir: String = "openai_chat") -> Result[List[Fake.Reply]]
   replies: List[Fake.Reply] = []
-  for name in names
+  for timed in names
+    name = timed.split("@")[0]
+    if timed.include?("@")
+      later = try fixtures([name], dir)
+      replies = replies.push(later[0].with(delay_ms: try timed.split("@")[1].to_i))
+      next
+    end
+
     parts = name.split(":")
     if name.include?("/")
       replies = replies.push(try Fake.sse(name))

@@ -292,6 +292,18 @@ class Terminal:
                 raise AssertionError(f"no {text!r} on the screen:\n{shown}")
             self._read(0.05)
 
+    def wait_until(self, check, what: str) -> list[str]:
+        """Reads until `check` holds for the screen rows; gives the screen."""
+        deadline = time.monotonic() + TIMEOUT
+        while True:
+            rows = self.screen()
+            if check(rows):
+                return rows
+            if time.monotonic() > deadline:
+                shown = "\n".join(rows)
+                raise AssertionError(f"no {what} on the screen:\n{shown}")
+            self._read(0.05)
+
     def settle(self, seconds: float = 0.5) -> list[str]:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
@@ -300,6 +312,15 @@ class Terminal:
 
     def type(self, text: str) -> None:
         os.write(self.master, text.encode())
+
+    def click(self, row: int, col: int) -> None:
+        """A left click at a cell (from 0), as an SGR mouse report: press, then release."""
+        self.type(f"\x1b[<0;{col + 1};{row + 1}M\x1b[<0;{col + 1};{row + 1}m")
+
+    def find(self, text: str) -> tuple[int, int]:
+        rows = self.wait_for(text)
+        row = next(i for i, line in enumerate(rows) if text in line)
+        return row, rows[row].index(text)
 
     def finish(self) -> int:
         code = self.process.wait(TIMEOUT)
@@ -474,11 +495,115 @@ class PtyTest(unittest.TestCase):
         self.assertNotIn("**", text_of(rows))
         self.assertNotIn("```", text_of(rows))
 
+    def test_session_commands(self) -> None:
+        term = self.start([Reply("text.sse"), Reply("text.sse"), Reply("summary.sse")])
+        first = re.search(r"· session (\S+)", text_of(term.screen())).group(1)
+        term.type("hi\r")
+        term.wait_for(ANSWER)
+        term.wait_for("ready")
+        term.type("/model other-model\r")
+        term.wait_for("· model other-model from the next turn")
+        term.type("/thinking high\r")
+        term.wait_for("· thinking high from the next turn")
+        term.type("/thinking\r")
+        term.wait_for("· thinking high")
+        term.type("/thinking max\r")
+        rows = term.wait_for("· the thinking level is one of low, medium, high, default")
+        self.assertEqual(rows[-1], "> /thinking max")
+        term.type("\x7f" * len("/thinking max"))
+        term.type("again\r")
+        # The turn has finished once its answer is drawn twice and the status is back to ready, not before.
+        term.wait_until(lambda rows: text_of(rows).count(ANSWER) == 2 and "ready" in rows[-2], "the second answer")
+        self.fake.requests.get(timeout=1)
+        self.assertEqual(self.fake.requests.get(timeout=5)["model"], "other-model")
+        term.type("/compact\r")
+        term.wait_for("· compacted")
+        self.fake.requests.get(timeout=1)
+        term.type("/new\r")
+        rows = term.wait_for("ready")
+        deadline = time.monotonic() + TIMEOUT
+        while ANSWER in text_of(rows):
+            self.assertLess(time.monotonic(), deadline, "the old session stayed on the screen")
+            rows = term.settle(0.2)
+        self.assertNotIn(first, text_of(rows))
+        term.type("/resume\r")
+        term.wait_for("resume a session (2 of 2)")
+        term.type("\x1b")
+        rows = term.settle()
+        self.assertNotIn("resume a session", text_of(rows))
+        term.type("/resume\r")
+        term.wait_for("resume a session (2 of 2)")
+        term.type(first[:8])
+        rows = term.wait_for("resume a session (1 of 2)")
+        row = next(row for row in rows if first in row)
+        self.assertTrue(row.startswith("› "), row)
+        self.assertIn("other-model", row)
+        self.assertIn("  hi", row)
+        term.type("\r")
+        rows = term.wait_for("> again")
+        self.assertIn(f"· session {first}", text_of(rows))
+        self.assertNotIn("resume a session", text_of(rows))
+        term.type("/help\r")
+        term.wait_for("leave")
+        term.type("/quit\r")
+        self.assertEqual(term.finish(), 0)
+
+    def test_a_slash_line_that_is_no_command_goes_to_the_agent(self) -> None:
+        term = self.start([Reply("text.sse"), Reply("text.sse")])
+        for text in ["/etc/hosts has a bad entry", "/"]:
+            term.type(f"{text}\r")
+            term.wait_for(ANSWER)
+            term.wait_for("ready")
+            self.assertEqual(self.fake.requests.get(timeout=5)["messages"][-1]["content"], text)
+
+    def test_clicks_answer_toggle_and_move_the_cursor(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("thinking.sse")])
+        term.type("write it\r")
+        term.find("^Y allow")
+        term.settle(0.4)
+        term.click(*term.find("^Y allow"))
+        term.wait_for(": allow (client)")
+        term.wait_for("ready")
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
+        self.assertNotIn("⚙ write_file", text_of(term.screen()))
+        term.click(*term.find("✓ "))
+        term.wait_for("⚙ write_file")
+        term.type("helo")
+        row, col = term.find("> helo")
+        term.click(row, col + 5)
+        # A key sent right after the mouse report was dropped here; a person never types that fast.
+        term.settle(0.3)
+        term.type("l")
+        term.wait_for("> hello")
+        term.type("\r")
+        term.click(*term.find("▸ thinking"))
+        term.wait_for("The user greets me. I greet back.")
+        term.click(*term.find("The user greets me."))
+        rows = term.wait_for("▸ thinking")
+        self.assertNotIn("greets", text_of(rows))
+
+    def test_clicks_on_content_or_twice_on_tab_answer_nothing(self) -> None:
+        term = self.start([Reply("write_keys.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        term.find("^Y allow")
+        term.settle(0.4)
+        for text in ["  a = 1", "  ^Y please"]:
+            term.click(*term.find(text))
+        row, col = term.find("Tab to answer")
+        term.type(f"\x1b[<0;{col + 3};{row + 1}M\x1b[<0;{col + 3};{row + 1}m" * 2)
+        term.settle(0.5)
+        term.click(row, col + 2)
+        rows = term.settle(0.5)
+        self.assertNotIn("allow_session", text_of(rows))
+        self.assertNotIn("· approval a1:", text_of(rows))
+        self.assertIn("Tab to answer", text_of(rows))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+
     def test_a_tool_is_approved_and_its_notices_shown(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")
-        rows = term.wait_for("Tab to answer (a: allow write_file on this exact target for the session)")
-        self.assertIn("^Y allow · ^N deny", " ".join(rows))
+        rows = term.wait_for("^Y allow · ^N deny")
+        self.assertIn("Tab to answer (a: allow write_file on this exact target for the session)", rows)
         self.assertIn("approval waiting", text_of(rows))
         self.assertIn("· write_file:", text_of(rows))
         self.assertIn("  hi", rows)

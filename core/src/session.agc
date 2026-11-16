@@ -19,6 +19,7 @@ import SSE from "pkg/sse/sse"
 import Agent from "agent"
 import CodeMode from "code_mode"
 import Compaction from "compaction"
+import Skills from "skills"
 import Store from "store"
 import Tools from "tools"
 
@@ -46,6 +47,13 @@ struct Setup
   api_key: String = ""
   extra: Map[String, JSON.Value] = {}
   code_mode: Optional[CodeMode.Settings] = none
+  ## Ask the provider for its prompt cache.
+  cache: Bool = false
+  ## A provider with a fresh token, after a 401.
+  refresh: Optional[Fn[Result[LLM.Provider]]] = none
+  skills: List[Skills.Skill] = []
+  ## The thinking level of the calls; none leaves it to the model.
+  effort: Optional[String] = none
 end
 
 enum Msg
@@ -58,11 +66,25 @@ enum Msg
   Emit(String, Protocol.Event)
   Ask(String, Agent.Ask, Channel[Protocol.Decision])
   Expire(String)
-  Commit(String, List[LLM.Message])
+  Commit(String, List[LLM.Message], List[String])
   Compacted(String, Compaction.Compaction)
   Window(Int)
   Finished(String, Protocol.StopReason)
   Take(String, Channel[List[String]])
+  Update(Protocol.UpdateSession, Channel[Result[Void]])
+  Fold(Channel[Result[Fold]])
+  Folded(Optional[Compaction.Compaction], Channel[Result[Void]])
+  Stripped(String)
+  Renewed(LLM.Provider)
+end
+
+## What a compaction that a client asked for needs, taken from the session while no turn runs.
+struct Fold
+  provider: LLM.Provider
+  refresh: Optional[Fn[Result[LLM.Provider]]] = none
+  settings: Compaction.Settings
+  history: List[LLM.Message]
+  span: Optional[Compaction.Compaction]
 end
 
 struct Waiting
@@ -106,6 +128,8 @@ struct State
   context: Int = 0
   ## Messages sent while the turn runs, which it has not read yet.
   queued: List[String] = []
+  ## The names the extensions noted: the skills the session loaded.
+  marks: List[String] = []
   ## The model's window: 0 until it is known, -1 when the provider does not say.
   window: Int = 0
   ## The ids up to this one are saved or reserved in the file.
@@ -114,6 +138,10 @@ struct State
   lost_below: Int = 0
   ## The turn that a failed write stopped, for a client that attaches from inside it.
   lost: Optional[Lost] = none
+  ## A compaction that a client asked for runs: no turn starts meanwhile.
+  compacting: Bool = false
+  ## Anthropic requests go without thinking blocks until the next fold: a turn passed the limit inside a tool round.
+  stripped: Bool = false
 end
 
 ## Starts a session; from what its file saved when there is one.
@@ -154,6 +182,45 @@ def end_session(address: Address[Msg]) -> Result[Void]
   closed: Result[Result[Void]] = Actor.call(address, CALL_MS) do |reply| Msg.Close(reply) end
   try try closed
   ok()
+end
+
+## Changes the model or the thinking level from the next turn on, and keeps them in the session's file.
+def update(address: Address[Msg], change: Protocol.UpdateSession) -> Result[Void]
+  updated: Result[Result[Void]] = Actor.call(address, CALL_MS) do |reply| Msg.Update(change, reply) end
+  try try updated
+  ok()
+end
+
+## Folds the history into a summary now, as a turn past the limit would; false when there is nothing to fold.
+## `session.busy` while a turn or another compaction runs. The summary is asked outside the session, which only
+## refuses new turns meanwhile.
+def compact_now(address: Address[Msg]) -> Result[Bool]
+  taken: Result[Result[Fold]] = Actor.call(address, CALL_MS) do |reply| Msg.Fold(reply) end
+  fold = try try taken
+  summary: Result[Optional[Compaction.Compaction]] = ok(none)
+  for span in option_list(fold.span)
+    renewal = Agent.with_token(
+      fold.provider,
+      fold.refresh,
+      ->(p: LLM.Provider) { Compaction.summarize(p, fold.settings, fold.history, span) },
+    )
+
+    for provider in option_list(renewal.fresh)
+      _ = Actor.cast(address, Msg.Renewed(provider), CALL_MS)
+    end
+
+    summary = case renewal.result
+      ok(compaction) -> ok(some(compaction))
+      error(e) -> error("the history was not compacted: #{e.message}", kind: Compaction.KIND_FAILED, cause: e)
+    end
+  end
+
+  nothing: Optional[Compaction.Compaction] = none
+  found = summary.unwrap_or(nothing)
+  done: Result[Result[Void]] = Actor.call(address, CALL_MS) do |reply| Msg.Folded(found, reply) end
+  _ = try summary
+  try try done
+  ok(found.some?)
 end
 
 ## Stops the running turn; whether one ran.
@@ -202,10 +269,16 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Ask(turn_id, call, reply) -> Actor.continue(if_current(state, turn_id, ->(s) { ask(s, call, reply) }))
     Msg.Expire(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { expire(s) }))
     Msg.Take(turn_id, reply) -> Actor.continue(take(state, turn_id, reply))
-    Msg.Commit(turn_id, history) -> Actor.continue(if_current(state, turn_id, ->(s) { commit(s, history) }))
+    Msg.Commit(turn_id, history, marks) ->
+      Actor.continue(if_current(state, turn_id, ->(s) { commit(s, history, marks) }))
     Msg.Compacted(turn_id, compaction) -> Actor.continue(if_current(state, turn_id, ->(s) { compact(s, compaction) }))
     Msg.Window(window) -> Actor.continue(state.with(window: window))
+    Msg.Stripped(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { stripped(s) }))
+    Msg.Renewed(provider) -> Actor.continue(state.with(setup: state.setup.with(provider: provider)))
     Msg.Finished(turn_id, reason) -> Actor.continue(if_current(state, turn_id, ->(s) { finish(s, reason) }))
+    Msg.Update(change, reply) -> Actor.continue(update_setup(state, change, reply))
+    Msg.Fold(reply) -> Actor.continue(start_fold(state, reply))
+    Msg.Folded(found, reply) -> Actor.continue(end_fold(state, found, reply))
   end
 end
 
@@ -244,6 +317,7 @@ def session(state: State) -> Protocol.Session
     turn_from_event_id: state.turn.map { |t| t.from_event_id },
     pending_approvals: state.pending.map { |w| w.request },
     history: state.display,
+    effort: state.setup.effort,
   )
 end
 
@@ -401,8 +475,14 @@ def trim(log: List[Store.Logged], state: State) -> List[Store.Logged]
   log.drop(drop)
 end
 
-# A message sent while a turn runs waits in the queue, which the turn reads before its next model call.
-def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> State
+# A message sent while a turn runs waits in the queue, which the turn reads before its next model call. The user's
+# `/name` of a skill puts its content before the message, unless the session has it already.
+def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> State
+  if state.compacting
+    Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
+    return state
+  end
+
   for running in option_list(state.turn)
     if state.queued.size >= MAX_QUEUED
       Actor.reply(reply, error("a turn is running and #{MAX_QUEUED} messages wait", kind: Protocol.KIND_SESSION_BUSY))
@@ -410,12 +490,14 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     end
 
     Actor.reply(reply, ok(running.id))
-    queued = state.with(queued: state.queued.push(text))
-    return emit(queued, Protocol.Event.MessageQueued(Protocol.MessageQueued(turn_id: running.id, text: text)))
+    queued = state.with(queued: state.queued.push(typed))
+    return emit(queued, Protocol.Event.MessageQueued(Protocol.MessageQueued(turn_id: running.id, text: typed)))
   end
 
-  case save(state, -> { Store.append_user(state.setup.file, text) })
-    ok(_) -> nil
+  expanded = Skills.on_message(typed, state.setup.skills, state.marks)
+  text = expanded.text
+  case save(state, -> { Store.append_user(state.setup.file, text, typed, expanded.names) })
+    ok(_) -> state = state.with(marks: state.marks + expanded.names)
     error(e) ->
       Actor.reply(
         reply,
@@ -432,10 +514,12 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
   link = Agent.Link(
     emit: ->(event) { tell(address, Msg.Emit(turn_id, event)) },
     approve: ->(call) { wait_approval(address, turn_id, call, setup.approval_timeout_ms) },
-    commit: ->(history) { tell(address, Msg.Commit(turn_id, history)) },
+    commit: ->(history, marks) { tell(address, Msg.Commit(turn_id, history, marks)) },
     take: -> { taken(address, turn_id) },
     compacted: ->(compaction) { tell(address, Msg.Compacted(turn_id, compaction)) },
     window: ->(window) { tell(address, Msg.Window(window)) },
+    stripped: -> { tell(address, Msg.Stripped(turn_id)) },
+    renewed: ->(provider) { tell(address, Msg.Renewed(provider)) },
   )
 
   turn = Agent.Turn(
@@ -448,6 +532,9 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     ctx: setup.ctx,
     link: link,
     extra: setup.extra,
+    cache: setup.cache,
+    refresh: setup.refresh,
+    stripped: state.stripped,
     compaction: Compaction.Settings(
       window: state.window,
       model: compact_model(setup),
@@ -457,6 +544,10 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     ),
     last_context: state.context,
     code_mode: setup.code_mode,
+    turn_tools: Skills.tools(setup.skills),
+    marks: state.marks,
+    on_fold: some(Skills.on_fold(setup.skills)),
+    effort: setup.effort,
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
@@ -465,7 +556,7 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     turn: some(running),
     turns: state.turns + 1,
     history: state.history.push(LLM.Message(role: LLM.Role.User, content: [Agent.text_block(text)])),
-    display: state.display.push(Protocol.Message(role: Protocol.Role.User, text: text)),
+    display: state.display.push(Protocol.Message(role: Protocol.Role.User, text: typed)),
     broken: none,
   )
 
@@ -691,6 +782,79 @@ def ended(state: State, turn_id: String, texts: List[String], reason: Protocol.S
   emit(shown, Protocol.Event.TurnFinished(finished))
 end
 
+def busy_reason(state: State) -> String
+  return "a turn is running" if state.turn.some?
+
+  "the history is being compacted"
+end
+
+def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Result[Void]]) -> State
+  setup = state.setup.with(model: change.model.unwrap_or(state.setup.model))
+  case change.effort
+    some(level) if level == Protocol.EFFORT_DEFAULT -> setup = setup.with(effort: none)
+    some(level) -> setup = setup.with(effort: some(level))
+    none -> nil
+  end
+
+  case save(state, -> { Store.append_settings(state.setup.file, setup.model, setup.effort) })
+    ok(_) ->
+      Actor.reply(reply, ok())
+      state.with(setup: setup, broken: none)
+    error(e) ->
+      Actor.reply(
+        reply,
+        error("the session file cannot be written: #{e.message}", kind: Protocol.KIND_SESSION_STORAGE),
+      )
+
+      state.with(broken: some(e.message))
+  end
+end
+
+def start_fold(state: State, reply: Channel[Result[Fold]]) -> State
+  if state.turn.some? or state.compacting
+    Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
+    return state
+  end
+
+  setup = state.setup
+  settings = Compaction.Settings(
+    window: state.window,
+    model: compact_model(setup),
+    props_url: setup.props_url,
+    api_key: setup.api_key,
+    extra: setup.extra,
+  )
+
+  fold = Fold(
+    provider: setup.provider,
+    refresh: setup.refresh,
+    settings: settings,
+    history: state.history,
+    span: Compaction.span(state.history),
+  )
+
+  Actor.reply(reply, ok(fold))
+  state.with(compacting: true)
+end
+
+def end_fold(state: State, found: Optional[Compaction.Compaction], reply: Channel[Result[Void]]) -> State
+  done = state.with(compacting: false)
+  for summary in option_list(found)
+    extra = Skills.on_fold(done.setup.skills).call(done.marks, Compaction.staying(done.history, summary))
+    folded = compact(done, summary.with(summary: "#{summary.summary}#{extra}"))
+    if folded.broken.some?
+      Actor.reply(reply, error("the session file cannot be written", kind: Protocol.KIND_SESSION_STORAGE))
+      return folded
+    end
+
+    Actor.reply(reply, ok())
+    return folded
+  end
+
+  Actor.reply(reply, ok())
+  done
+end
+
 def compact_model(setup: Setup) -> String
   return setup.model if setup.compact_model.empty?
 
@@ -700,20 +864,27 @@ end
 def compact(state: State, compaction: Compaction.Compaction) -> State
   answer = state.turn.map { |t| t.texts }.unwrap_or([])
   case save(state, -> { Store.append_compaction(state.setup.file, compaction, answer) })
-    ok(_) -> state.with(history: Compaction.apply(state.history, compaction), broken: none)
+    ok(_) -> state.with(history: Compaction.apply(state.history, compaction), broken: none, stripped: false)
+    error(e) -> broke(state, e)
+  end
+end
+
+def stripped(state: State) -> State
+  case save(state, -> { Store.append_stripped(state.setup.file) })
+    ok(_) -> state.with(stripped: true, broken: none)
     error(e) -> broke(state, e)
   end
 end
 
 # The history of a turn only grows, so only its new messages go to the file.
-def commit(state: State, history: List[LLM.Message]) -> State
+def commit(state: State, history: List[LLM.Message], marks: List[String]) -> State
   added = history.drop(state.history.size)
   return state if added.empty?
 
-  case save(state, -> { Store.append_messages(state.setup.file, added) })
+  case save(state, -> { Store.append_messages(state.setup.file, added, marks) })
     ok(_) ->
       turn = state.turn.map { |t| t.with(texts: t.texts + answer_texts(added)) }
-      state.with(history: history, turn: turn, broken: none)
+      state.with(history: history, turn: turn, broken: none, marks: state.marks + marks)
     error(e) -> broke(state, e)
   end
 end
@@ -721,13 +892,20 @@ end
 def restore(setup: Setup, saved: Store.Saved) -> State
   events = saved.events
   last_saved = events.map { |logged| logged.id }.max.unwrap_or(0)
+  changed = setup.with(model: saved.model.unwrap_or(setup.model))
+  if saved.model.some?
+    changed = changed.with(effort: saved.effort)
+  end
+
   state = State(
-    setup: setup,
+    setup: changed,
     counter: [last_saved, saved.reserved].max.unwrap!,
     reserved: [last_saved, saved.reserved].max.unwrap!,
     lost_below: lost_below(events),
     log: events.drop([events.size - setup.keep_events, 0].max.unwrap!),
     history: saved.history,
+    marks: saved.marks,
+    stripped: saved.stripped,
     display: saved.shown,
     turns: [saved.users, count(events, Protocol.EventKind.TurnStarted)].max.unwrap!,
     approvals: count(events, Protocol.EventKind.ApprovalRequested),

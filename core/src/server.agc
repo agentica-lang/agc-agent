@@ -16,9 +16,12 @@ import Protocol from "pkg/protocol/protocol"
 import CodeMode from "code_mode"
 import Sandbox from "sandbox"
 import Session from "session"
+import Skills from "skills"
 import Store from "store"
 import Tools from "tools"
 
+## The model of a session on an OpenAI API of a server whose own API has its own model (Anthropic).
+DEFAULT_MODEL = "default"
 VERSION = "0.0.1"
 SERVER_JSON = "server.json"
 SESSIONS_DIR = "sessions"
@@ -47,6 +50,15 @@ SSE_HEADERS = [
 struct ModelApi
   provider: LLM.Provider
   extra: Map[String, JSON.Value] = {}
+  ## The model of a session that picks this API without a model, when it is not the server's API; empty for the
+  ## server's model.
+  model: String = ""
+  ## Ask for the prompt cache (Anthropic).
+  cache: Bool = false
+  ## A local server whose `/props` may give the window (llama-server), and which may get `FINN_API_KEY` there.
+  local: Bool = true
+  ## A provider with a fresh token, after a 401 (the token of `ant`).
+  refresh: Optional[Fn[Result[LLM.Provider]]] = none
 end
 
 struct Options
@@ -75,6 +87,10 @@ struct Options
   before_load: Optional[Fn[String, Void]] = none
   ## Code mode: the model may also call the tools from a Python script (`run_script`).
   code_mode: Optional[CodeMode.Settings] = none
+  ## The home folder, whose skills every session has; empty for none.
+  home: String = ""
+  ## The folders whose sessions load the skills of their own folder: a project's skills are its instructions.
+  trusted: List[String] = []
 end
 
 struct Server
@@ -124,6 +140,8 @@ end
 
 private
 
+TITLE_CHARS = 200
+
 struct Entry
   summary: Protocol.SessionSummary
   header: Store.Header
@@ -132,6 +150,7 @@ struct Entry
   session: Optional[Actor.Ref[Session.State, Session.Msg]]
   ## The requests that wait while the session loads; a load runs while it is not empty.
   waiting: List[Channel[Result[Address[Session.Msg]]]] = []
+  listed: Optional[Cached] = none
 end
 
 ## What the task that loads a session read from its file.
@@ -168,8 +187,19 @@ enum Msg
   Create(Protocol.NewSession, Channel[Result[String]])
   Find(String, Channel[Result[Found]])
   Delete(String, Channel[Result[Void]])
-  List(Channel[Protocol.SessionList])
+  List(Channel[List[Entry]])
   Load(String, Result[Loaded])
+  ## What a list read of session files, kept for the next list.
+  Listed(List[Cached])
+end
+
+## What a list read of one session file, valid while its size and time of change stay.
+struct Cached
+  id: String
+  summary: Protocol.SessionSummary
+  size: Int
+  modified_s: Int
+  listing: Store.Listing
 end
 
 def serve(options: Options, registry: Actor.Ref[Registry, Msg], lock: File.Handle) -> Result[Server]
@@ -291,6 +321,10 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
       case ended(found[0])
         ok(entry) ->
           removed = remove_file(entry.file)
+          if removed.ok?
+            _ = Path.remove(Store.settings_file(entry.file))
+          end
+
           Actor.reply(reply, removed)
           sessions = registry.sessions.map { |e| replaced(e, entry) }
           if removed.ok?
@@ -308,10 +342,60 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
           Actor.continue(registry)
       end
 
+    Msg.Listed(read) ->
+      sessions = registry.sessions.map { |entry| with_listed(entry, read) }
+
+      Actor.continue(registry.with(sessions: sessions))
     Msg.List(reply) ->
-      Actor.reply(reply, Protocol.SessionList(sessions: registry.sessions.map { |entry| entry.summary }))
+      Actor.reply(reply, registry.sessions)
       Actor.continue(registry)
   end
+end
+
+def with_listed(entry: Entry, read: List[Cached]) -> Entry
+  fresh = read.select { |c| c.id == entry.summary.id }
+  return entry if fresh.empty?
+
+  entry.with(listed: some(fresh[0]))
+end
+
+# The listing of a session file, read again only when its size or time of change moved. A file that cannot be read
+# keeps what its header said.
+def cached(entry: Entry) -> Cached
+  size = 0
+  modified = 0
+  case File.stat(entry.file)
+    ok(info) ->
+      size = info.size_bytes
+      modified = info.modified_seconds
+    error(_) -> nil
+  end
+
+  for old in option_list(entry.listed)
+    return old.with(summary: entry.summary) if old.size == size and old.modified_s == modified
+  end
+
+  listing = Store.listing(entry.file).unwrap_or(Store.Listing())
+  Cached(id: entry.summary.id, summary: entry.summary, size: size, modified_s: modified, listing: listing)
+end
+
+# A session with its model now (a `PATCH` changes it after the header), when it last changed and its first message
+# without control characters.
+def summary_now(found: Cached) -> Protocol.SessionSummary
+  title = found.listing.title
+  cut = title.slice(0, [title.length, TITLE_CHARS].min.unwrap!)
+  found.summary.with(
+    model: found.listing.model.unwrap_or(found.summary.model),
+    updated_s: found.modified_s,
+    title: cut.split("").map { |c| printable(c) }.join(""),
+  )
+end
+
+def printable(c: String) -> String
+  code = c.code
+  return " " if code < 0x20 or (code >= 0x7f and code < 0xa0)
+
+  c
 end
 
 def sessions_dir(options: Options) -> String = "#{options.data_dir}/#{SESSIONS_DIR}"
@@ -332,9 +416,9 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   header = Store.Header(
     id: "s#{registry.sessions.size + 1}-#{OpenSSL.Random.hex(4)}",
     cwd: context.root,
-    model: request.model.unwrap_or(options.model),
+    model: request.model.unwrap_or(default_model(options, api)),
     created_ms: Time.now_ms,
-    system: some(system_prompt(context.root)),
+    system: some(with_catalog(system_prompt(context.root), skills_of(options, context.root).skills)),
     api: some(api),
   )
 
@@ -442,22 +526,31 @@ def entry(
   return error("unknown API #{name}", kind: KIND_UNKNOWN_API) if not options.apis.has_key?(name)
 
   api = options.apis[name]
+  found = skills_of(options, context.root)
+  for warning in found.warnings
+    IO.warn("skills: #{warning}")
+  end
 
+  system = header.system.unwrap_or(system_prompt(context.root))
+  skills = Skills.restrict(found.skills, system)
   setup = Session.Setup(
     id: header.id,
     cwd: context.root,
     model: header.model,
     provider: api.provider,
-    system: header.system.unwrap_or(system_prompt(context.root)),
-    ctx: context,
+    system: system,
+    ctx: context.with(read_roots: skills.map { |skill| skill.dir }),
+    skills: skills,
     keep_events: options.keep_events,
     approval_timeout_ms: options.approval_timeout_ms,
     file: file,
     window: options.context_window.unwrap_or(0),
-    compact_model: options.compact_model,
-    props_url: options.props_url,
-    api_key: options.api_key,
+    compact_model: own(options, name, options.compact_model),
+    props_url: if_local(api, options.props_url),
+    api_key: if_local(api, options.api_key),
     extra: api.extra,
+    cache: api.cache,
+    refresh: api.refresh,
     code_mode: options.code_mode,
   )
 
@@ -469,6 +562,29 @@ def entry(
       session: some(Session.start(setup, saved)),
     ),
   )
+end
+
+# A session on another API than the server's takes that API's model, when it names one; on an OpenAI API of a server
+# whose API has its own model, `default`.
+def default_model(options: Options, api: String) -> String
+  return options.model if api == options.api
+  return options.apis[api].model if options.apis[api].model != ""
+  return DEFAULT_MODEL if options.apis[options.api].model != ""
+
+  options.model
+end
+
+# `FINN_COMPACT_MODEL` is a model of the server's API.
+def own(options: Options, api: String, value: String) -> String
+  return "" if api != options.api
+
+  value
+end
+
+def if_local(api: ModelApi, url: String) -> String
+  return "" if not api.local
+
+  url
 end
 
 def summary_of(options: Options, header: Store.Header) -> Protocol.SessionSummary
@@ -507,6 +623,18 @@ def listed_session(file: String) -> Result[Store.Header]
 end
 
 # `AGENTS.md` goes to the model only when it is a regular file inside the folder: a link out of it could be any file.
+def skills_of(options: Options, root: String) -> Skills.Found
+  trusted = options.trusted.any? { |dir| Sandbox.inside?(Path.real(dir).unwrap_or(dir), root) }
+  Skills.discover(root, options.home, trusted)
+end
+
+def with_catalog(system: String, skills: List[Skills.Skill]) -> String
+  catalog = Skills.catalog(skills)
+  return system if catalog == ""
+
+  "#{system}\n#{catalog}"
+end
+
 def system_prompt(root: String) -> String
   case project_instructions(root)
     ok(text) -> "#{SYSTEM_PROMPT}\n# AGENTS.md of the session folder\n\n#{text}"
@@ -602,8 +730,15 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
       id = try try created
       response(201, Protocol.encode_session_created(Protocol.SessionCreated(id: id)))
     "GET 0" ->
-      list: Result[Protocol.SessionList] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
-      response(200, Protocol.encode_session_list(try list))
+      entries: Result[List[Entry]] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
+      read = (try entries).map { |entry| cached(entry) }
+      _ = Actor.cast(registry, Msg.Listed(read), CALL_MS)
+      sessions = read.map { |found| summary_now(found) }
+
+      response(
+        200,
+        Protocol.encode_session_list(Protocol.SessionList(sessions: sessions.sort_by { |s| -s.updated_s })),
+      )
     "DELETE 1" ->
       deleted: Result[Result[Void]] = Actor.call(registry, CALL_MS) do |reply| Msg.Delete(parts[0], reply) end
       try try deleted
@@ -613,6 +748,13 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
       message = try Protocol.decode_send_message(text)
       turn_id = try Session.send(try find(registry, parts[0]), message.text)
       response(202, Protocol.encode_message_accepted(Protocol.MessageAccepted(turn_id: turn_id)))
+    "PATCH 1" ->
+      change = try Protocol.decode_update_session(text)
+      try Session.update(try find(registry, parts[0]), change)
+      response(200, "{}")
+    "POST 2" if parts[1] == "compact" ->
+      compacted = try Session.compact_now(try find(registry, parts[0]))
+      response(200, Protocol.encode_compacted(Protocol.Compacted(compacted: compacted)))
     "POST 2" if parts[1] == "stop" ->
       _ = try Session.stop(try find(registry, parts[0]))
       response(200, "{}")
