@@ -136,14 +136,6 @@ class FakeModel:
                 except OSError:
                     pass
 
-            def fail(self) -> None:
-                data = json.dumps({"kind": "proxy.failed", "message": "the proxy failed it"}).encode()
-                self.send_response(500)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(data)))
-                self.end_headers()
-                self.wfile.write(data)
-
             def chunk(self, data: bytes) -> None:
                 self.wfile.write(b"%x\r\n%s\r\n" % (len(data), data))
                 self.wfile.flush()
@@ -678,7 +670,10 @@ class PtyTest(unittest.TestCase):
         term = self.start([held, Reply("write_file.sse"), Reply("text.sse")], extra=["--yolo"])
         session_id = re.search(r"· session (\S+)", text_of(term.screen())).group(1)
         term.type("say hi\r")
-        term.settle(0.4)
+        deadline = time.monotonic() + TIMEOUT
+        while self.fake.requests.empty():
+            self.assertLess(time.monotonic(), deadline, "the turn called no model")
+            term.settle(0.05)
         info = json.loads((term.base / "state" / "server.json").read_text())
         server = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=TIMEOUT)
         headers = {"Authorization": f"Bearer {info['token']}", "Content-Type": "application/json"}
