@@ -5,6 +5,7 @@ import Commands from "src/commands"
 import Discovery from "src/discovery"
 import Events from "src/feed"
 import Http from "src/http"
+import Tree from "src/tree"
 
 VERSION = "0.0.1"
 
@@ -21,6 +22,9 @@ export Http.stop
 export Http.list_sessions
 export Http.update_session
 export Http.compact
+export Http.tree
+export Http.branch
+export Http.fork
 export Http.open_events
 
 export Discovery.Launch
@@ -43,3 +47,8 @@ export Commands.printable
 export Commands.listing
 export Commands.pick
 export Commands.model_warning
+
+export Tree.TreeRow
+export Tree.tree_rows
+export Tree.tree_listing
+export Tree.tree_entry

@@ -14,7 +14,7 @@ def test_keys_move_filter_and_pick() -> Result[Void]
   try Test.eq(wheel.selected, 1)
   filtered = stay(Picker.key(stay(Picker.key(down, char("D"))), char("o")))
   try Test.eq([filtered.filter, filtered.selected.to_s], ["Do", "0"])
-  try Test.eq(Picker.shown(filtered).map { |s| s.id }, ["s2"])
+  try Test.eq(Picker.shown(filtered).map { |c| c.key }, ["s2"])
   try Test.eq(Picker.key(filtered, key(TUI.Key.Enter)), Picker.Step.Pick("s2"))
   back = stay(Picker.key(filtered, key(TUI.Key.Backspace)))
   try Test.eq(back.filter, "D")
