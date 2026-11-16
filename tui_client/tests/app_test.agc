@@ -3,6 +3,7 @@ import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import App from "../src/app"
 import Args from "../src/args"
+import Picker from "../src/picker"
 
 def test_keys_edit_the_prompt_and_the_view_draws_it() -> Result[Void]
   model = model_of(30, 6)
@@ -11,7 +12,7 @@ def test_keys_edit_the_prompt_and_the_view_draws_it() -> Result[Void]
   end
 
   try Test.eq(model.prompt, "hi")
-  try Test.eq(rows(model).last, "> hi")
+  try Test.eq(rows(model).drop(2).take(3), ["─" * 30, "hi", "─" * 30])
   resized = App.update(model, App.Msg.Key(TUI.Event.Resize(20, 4))).model
   try Test.eq([resized.width, resized.height], [20, 4])
   Test.eq(rows(resized).size, 4)
@@ -73,6 +74,45 @@ def test_messages_go_in_order_and_an_early_stop_waits_for_the_turn() -> Result[V
   Test.eq(sent.size, 1)
 end
 
+# Shift+Tab sets the next thinking level, one change on its way at a time: the reply sends the latest level wanted,
+# one note says where it settled, and a failure with nothing newer goes back to the server's level.
+def test_shift_tab_sends_one_level_at_a_time() -> Result[Void]
+  model = model_of(30, 6)
+  steps: List[Int] = []
+  for _ in 0...3
+    step = App.update(model, back_tab())
+    model = step.model
+    steps = steps.push(step.cmds.size)
+  end
+
+  try Test.eq(steps, [1, 0, 0])
+  try Test.eq([model.effort, model.level_sending], [some("high"), some("low")])
+
+  first = App.update(model, App.Msg.Leveled(ok()))
+  try Test.eq(
+    [first.model.confirmed, first.model.level_sending, some("#{first.cmds.size}")],
+    [some("low"), some("high"), some("1")],
+  )
+
+  settled = App.update(first.model, App.Msg.Leveled(ok()))
+  try Test.eq([settled.model.confirmed, settled.model.level_sending], [some("high"), none])
+  try Test.eq(settled.model.entries.map { |entry| entry.text }, ["thinking high from the next turn"])
+  failed = App.update(
+    App.update(settled.model, back_tab()).model,
+    App.Msg.Leveled(error("down", kind: "client.unreachable")),
+  )
+
+  Test.eq([failed.model.effort, failed.model.level_sending], [some("high"), none])
+end
+
+# A running turn spins in the top rule.
+def test_a_turn_spins_in_the_rule() -> Result[Void]
+  turn = model_of(30, 6).with(turn: true)
+  try Test.eq(App.subscriptions(turn).size, 2)
+  spun = App.update(turn, App.Msg.Spin).model
+  Test.eq(rows(spun)[2].slice(0, 12), "── ⠙ Working")
+end
+
 def test_ctrl_c_and_a_signal_quit_with_their_codes() -> Result[Void]
   model = model_of(30, 6)
   quit = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Ctrl("c"), TUI.Mods())))
@@ -87,7 +127,24 @@ def test_an_update_keeps_the_wrapped_rows_of_the_entries() -> Result[Void]
   model = model_of(30, 6).with(entries: [])
   step = App.update(model, App.Msg.Note("one two three"))
   try Test.assert(step.model.entries.all? { |entry| entry.wrapped.some? }, "every entry is wrapped")
-  Test.assert(rows(step.model).include?("· one two three"), "the note is drawn")
+  Test.assert(rows(step.model).include?("one two three"), "the note is drawn")
+end
+
+# The status line shows the session's provider and model; the `/model` picker draws its pairs, and Esc closes it.
+def test_the_status_shows_the_model_and_the_model_picker_closes() -> Result[Void]
+  list = Protocol.ProviderList(
+    provider: "local",
+    providers: [Protocol.ProviderInfo(name: "fireworks", api: "openai", models: ["k2"])],
+  )
+
+  model = model_of(100, 12).with(serving: "local/qwen")
+  try Test.assert(rows(model).any? { |row| row.include?("(local) qwen") }, "the status shows the model")
+  picking = model.with(picker: some(Picker.models(list, "local/qwen")))
+  shown = rows(picking)
+  try Test.assert(shown.any? { |row| row.include?("pick a model (1 of 1)") }, "the picker is drawn")
+  try Test.assert(shown.any? { |row| row.include?("fireworks/k2") }, "the pair is drawn")
+  closed = App.update(picking, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model
+  Test.eq(closed.picker.none?, true)
 end
 
 def model_of(width: Int, height: Int) -> App.Model
@@ -108,6 +165,8 @@ def rows(model: App.Model) -> List[String]
   cells = TUI.layout(App.view(model), model.width, model.height)
   (0...model.height).to_a.map do |y| cells.select { |cell| cell.y == y }.map { |cell| cell.char }.join("").strip end
 end
+
+def back_tab() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.BackTab, TUI.Mods()))
 
 def enter() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
 
