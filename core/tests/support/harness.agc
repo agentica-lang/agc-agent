@@ -56,6 +56,7 @@ struct Setup
   ## The server asks the fake's `/props` for the window first.
   props: Bool = false
   before_load: Optional[Fn[String, Void]] = none
+  after_load: Optional[Fn[String, Void]] = none
   ## The model API of the server, as `FINN_API` names it; the fixtures come from the folder of its format.
   api: String = "openai"
   ## The tools of MCP servers.
@@ -146,6 +147,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     compact_model: setup.compact_model,
     props_url: props_url(setup, fake),
     before_load: setup.before_load,
+    after_load: setup.after_load,
     tools: setup.tools,
     code_mode: code_mode(setup.monty),
     home: skills_home(setup, base),

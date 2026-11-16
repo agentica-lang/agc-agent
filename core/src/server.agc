@@ -85,6 +85,8 @@ struct Options
   api_key: String = ""
   ## Runs in the task that loads a session, with its id, before the file is read: a seam for the tests.
   before_load: Optional[Fn[String, Void]] = none
+  ## Runs in that task once what it read is on its way to the registry: a seam for the tests.
+  after_load: Optional[Fn[String, Void]] = none
   ## Code mode: the model may also call the tools from a Python script (`run_script`).
   code_mode: Optional[CodeMode.Settings] = none
   ## The home folder, whose skills every session has; empty for none.
@@ -458,6 +460,10 @@ def load(job: Load) -> Void
       error(e) if e.kind == "channel.timeout" -> next
       _ -> break
     end
+  end
+
+  for hook in option_list(job.options.after_load)
+    hook.call(job.entry.summary.id)
   end
 end
 
