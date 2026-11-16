@@ -26,8 +26,8 @@ YOLO_WARNING = "--yolo: the tool calls of turns sent from here run without askin
 HINTS = "Enter send · ^J newline · ^T thinking · Esc stop · PgUp/PgDn · ^C quit"
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
-def run(screen: TUI.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
-  try TUI.set_input_mode(screen, TUI.InputMode.Esc, true)
+def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
+  try TUI.Raw.set_input_mode(screen, TUI.InputMode.Esc, true)
   inbox: Channel[Inbox.Input] = Channel.new(INBOX_CAPACITY)
   signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
   _ = Task.spawn(-> { watch_signals(signals, inbox) })
@@ -54,7 +54,7 @@ end
 private
 
 struct App
-  screen: TUI.Screen
+  screen: TUI.Raw.Screen
   server: Client.Server
   id: String
   inbox: Channel[Inbox.Input]
@@ -127,9 +127,9 @@ def watch_signals(signals: Channel[System.Signal], inbox: Channel[Inbox.Input]) 
   end
 end
 
-def read_keys(screen: TUI.Screen, inbox: Channel[Inbox.Input]) -> Void
+def read_keys(screen: TUI.Raw.Screen, inbox: Channel[Inbox.Input]) -> Void
   while true
-    case TUI.poll_event(screen)
+    case TUI.Raw.poll_event(screen)
       ok(event) -> break if not inbox.send(Inbox.Input.Terminal(event), SEND_MS).ok?
       error(e) ->
         _ = inbox.send(Inbox.Input.Closed(e.message), SEND_MS)
@@ -309,7 +309,7 @@ def clicked_on(app: App, hits: Hits, x: Int, y: Int) -> App
 
   return app if y < hits.prompt_top
 
-  at = Prompt.index_at(app.prompt, cursor(app), hits.width, TUI.height(app.screen), x, y - hits.prompt_top)
+  at = Prompt.index_at(app.prompt, cursor(app), hits.width, TUI.Raw.height(app.screen), x, y - hits.prompt_top)
   app.with(cursor: at)
 end
 
@@ -335,7 +335,7 @@ def option_list[T](value: Optional[T]) -> List[T]
   end
 end
 
-def page(app: App) -> Int = [TUI.height(app.screen) / 2, 1].max.unwrap!
+def page(app: App) -> Int = [TUI.Raw.height(app.screen) / 2, 1].max.unwrap!
 
 def scrolled(app: App, rows: Int) -> App = app.with(scroll: [app.scroll + rows, 0].max.unwrap!)
 
@@ -607,8 +607,8 @@ def drawn(app: App) -> App
 end
 
 def framed(app: App) -> Frame
-  width = TUI.width(app.screen)
-  height = TUI.height(app.screen)
+  width = TUI.Raw.width(app.screen)
+  height = TUI.Raw.height(app.screen)
   prompt = Prompt.view(app.prompt, cursor(app), width, height)
   room = height - prompt.rows.size - 2
   asked = panel_rows(app, width, room)
@@ -622,8 +622,8 @@ end
 # The rows of the panel over the prompt now: the session picker, else the approval asked.
 # The rows of the panel over the prompt, without the transcript: a key needs only these.
 def panel(app: App) -> List[Layout.Row]
-  width = TUI.width(app.screen)
-  height = TUI.height(app.screen)
+  width = TUI.Raw.width(app.screen)
+  height = TUI.Raw.height(app.screen)
   room = height - Prompt.view(app.prompt, cursor(app), width, height).rows.size - 2
   panel_rows(app, width, room)
 end
@@ -639,7 +639,7 @@ end
 def draw(app: App) -> Result[Hits]
   screen = app.screen
   frame = framed(app)
-  try TUI.clear(screen)
+  try TUI.Raw.clear(screen)
   y = 0
   for line in frame.lines.drop(frame.top).take(frame.area)
     x = 0
@@ -658,7 +658,7 @@ def draw(app: App) -> Result[Hits]
     y = y + 1
   end
 
-  _ = try put(screen, 0, y, status(app, frame.width), TUI.Style(attrs: [TUI.Attr.Reverse]))
+  _ = try put(screen, 0, y, status(app, frame.width), TUI.Style(reverse: true))
   y = y + 1
   prompt_top = y
   cursor_y = y + frame.prompt.cursor_y
@@ -668,17 +668,17 @@ def draw(app: App) -> Result[Hits]
   end
 
   if cursor_y < frame.height and frame.width > 0
-    try TUI.set_cursor(screen, [frame.prompt.cursor_x, frame.width - 1].min.unwrap!, cursor_y)
+    try TUI.Raw.set_cursor(screen, [frame.prompt.cursor_x, frame.width - 1].min.unwrap!, cursor_y)
   end
 
-  try TUI.present(screen)
+  try TUI.Raw.present(screen)
   ok(Hits(entries: shown, panel: frame.panel, panel_top: frame.area, prompt_top: prompt_top, width: frame.width))
 end
 
-def put(screen: TUI.Screen, x: Int, y: Int, text: String, style: TUI.Style) -> Result[Int]
-  return ok(0) if y < 0 or y >= TUI.height(screen) or x >= TUI.width(screen)
+def put(screen: TUI.Raw.Screen, x: Int, y: Int, text: String, style: TUI.Style) -> Result[Int]
+  return ok(0) if y < 0 or y >= TUI.Raw.height(screen) or x >= TUI.Raw.width(screen)
 
-  TUI.write(screen, x, y, text, style)
+  TUI.Raw.write(screen, x, y, text, style)
 end
 
 def status(app: App, width: Int) -> String
@@ -703,16 +703,16 @@ end
 
 def style(kind: Transcript.Kind, look: Markdown.Look) -> TUI.Style
   case kind
-    Transcript.Kind.User -> TUI.Style(fg: TUI.Color.Cyan, attrs: [TUI.Attr.Bold])
+    Transcript.Kind.User -> TUI.Style(fg: TUI.Color.Cyan, bold: true)
     Transcript.Kind.Notice -> TUI.Style(fg: TUI.Color.Yellow)
     Transcript.Kind.Tool -> TUI.Style(fg: TUI.Color.Blue)
     Transcript.Kind.ToolFailed -> TUI.Style(fg: TUI.Color.Red)
-    Transcript.Kind.Thinking -> TUI.Style(attrs: [TUI.Attr.Dim])
+    Transcript.Kind.Thinking -> TUI.Style(dim: true)
     Transcript.Kind.Assistant ->
       case look
         Markdown.Look.Plain -> TUI.Style()
-        Markdown.Look.Bold -> TUI.Style(attrs: [TUI.Attr.Bold])
-        Markdown.Look.Heading -> TUI.Style(fg: TUI.Color.Magenta, attrs: [TUI.Attr.Bold, TUI.Attr.Underline])
+        Markdown.Look.Bold -> TUI.Style(bold: true)
+        Markdown.Look.Heading -> TUI.Style(fg: TUI.Color.Magenta, bold: true, underline: true)
         Markdown.Look.Code -> TUI.Style(fg: TUI.Color.Green)
       end
   end

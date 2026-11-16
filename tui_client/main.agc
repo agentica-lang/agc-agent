@@ -27,7 +27,7 @@ end
 def run(options: Args.Options) -> Result[Int]
   launch = Args.launch(options)
   server = try Client.connect(launch, try Client.state_dir(launch))
-  TUI.open(->(screen) { App.run(screen, server, options) })
+  TUI.Raw.open(->(screen) { App.run(screen, server, options) })
 end
 
 def finish(result: Result[Int]) -> Void
