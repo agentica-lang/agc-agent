@@ -6,7 +6,6 @@
 - `finn tui`: Alt+Enter keeps a message for the end of the turn (listed above the prompt; Esc puts it back), Up on an empty prompt recalls earlier prompts, `@` lists the files of the session's folder (Tab completes one), and a large paste stays one `[paste #1 +31 lines]` token.
 - `finn tui` says a send that timed out "may not have been sent", stops another client's turn when Esc came before the reply, and keeps the thinking level it is setting across a new read of the session.
 - `message_queued` events without `message_id` load again.
-
 - `finn tui` reads Alt+Enter as one key (it was Escape, which stopped the turn, then Enter).
 - Providers by name: `local` (FINN_BASE_URL) and `anthropic`, the presets openai, fireworks, openrouter, groq and deepseek once their key variable is set, and custom ones under `providers` in the config file; `FINN_PROVIDER` or `finn serve --provider` picks the default, `finn --provider` and `finn tui --provider` a new session's, and a session keeps its provider (`GET /v1/providers`, `provider` in `POST` and `PATCH /v1/sessions`); one whose provider is no longer offered still opens and names the key to set.
 - `/model provider/model` moves the session to another provider; in `finn tui`, `/model` alone opens a picker of every provider's models, and the status line shows `(provider) model`.
