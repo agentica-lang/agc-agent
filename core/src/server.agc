@@ -6,7 +6,8 @@
 ## a server, so the server takes another file.
 ##
 ## The sessions live in `sessions/` of the data folder (0700), one file each (`Store`). At start the server reads only
-## the first line of each file, for the list; a session is loaded from its file on its first request.
+## the first line of each file, for the list; a session is loaded from its file on its first request, in a task of its
+## own, so a big file never holds up the requests of other sessions.
 
 import Actor from "std/actor"
 import HTTP from "std/http"
@@ -25,6 +26,10 @@ MAX_BODY_BYTES = 1_048_576
 MAX_INSTRUCTIONS_BYTES = 65_536
 MAX_READ_BYTES = 1_048_576
 CALL_MS = 5000
+## A request for a session that is not loaded yet waits for its load.
+LOAD_MS = 60_000
+## The requests that may wait for one load; past them a request answers 503.
+MAX_WAITING = 64
 SYSTEM_PROMPT = <<~TEXT
   You are a coding agent. You work in the session folder with the tools you have: read before you change a file, keep
   changes small, and say briefly what you did.
@@ -76,7 +81,11 @@ def start(options: Options) -> Result[Server]
     return error("a server already runs for #{options.state_dir}")
   end
 
-  init = -> { Registry(options: options, sessions: load_sessions(options)) }
+  init = -> {
+    inbox: Channel[Msg] = Actor.inbox()
+    Registry(options: options, sessions: load_sessions(options), address: inbox.address)
+  }
+
   behaviour = Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate))
   registry = Actor.start(behaviour)
   started = serve(options, registry, lock)
@@ -104,6 +113,14 @@ struct Entry
   file: String
   ## None until the session is first used.
   session: Optional[Actor.Ref[Session.State, Session.Msg]]
+  ## The requests that wait while the session loads; a load runs while it is not empty.
+  waiting: List[Channel[Result[Address[Session.Msg]]]] = []
+end
+
+## What the task that loads a session read from its file.
+struct Loaded
+  saved: Store.Saved
+  context: Tools.Context
 end
 
 struct Listed
@@ -114,13 +131,28 @@ end
 struct Registry
   options: Options
   sessions: List[Entry] = []
+  address: Address[Msg]
+end
+
+## A load to run in its own task; it tells `registry` what it read.
+struct Load
+  options: Options
+  entry: Entry
+  registry: Address[Msg]
+end
+
+## What `Find` gives: the session, or the channel that gets it once it loads.
+enum Found
+  Ready(Address[Session.Msg])
+  Loading(Channel[Result[Address[Session.Msg]]])
 end
 
 enum Msg
   Create(Protocol.NewSession, Channel[Result[String]])
-  Find(String, Channel[Result[Address[Session.Msg]]])
+  Find(String, Channel[Result[Found]])
   Delete(String, Channel[Result[Void]])
   List(Channel[Protocol.SessionList])
+  Load(String, Result[Loaded])
 end
 
 def serve(options: Options, registry: Actor.Ref[Registry, Msg], lock: File.Handle) -> Result[Server]
@@ -209,16 +241,28 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
         return Actor.continue(registry)
       end
 
-      case started(registry.options, found[0])
-        ok(entry) ->
-          Actor.reply(reply, entry.session.map { |session| session.address }.to_result("not started"))
-          Actor.continue(registry.with(sessions: registry.sessions.map { |e| replaced(e, entry) }))
-        error(e) ->
-          message = "session #{id} cannot be loaded now: #{e.message}"
-          IO.warn(message)
-          Actor.reply(reply, error(message, kind: Protocol.KIND_SESSION_UNAVAILABLE))
-          Actor.continue(registry)
+      listed = found[0]
+      for session in option_list(listed.session)
+        Actor.reply(reply, ok(Found.Ready(session.address)))
+        return Actor.continue(registry)
       end
+
+      if listed.waiting.size >= MAX_WAITING
+        message = "session #{id} is loading for too many requests"
+        Actor.reply(reply, error(message, kind: Protocol.KIND_SESSION_UNAVAILABLE))
+        return Actor.continue(registry)
+      end
+
+      if listed.waiting.empty?
+        _ = Task.spawn(&load, Load(options: registry.options, entry: listed, registry: registry.address))
+      end
+
+      loaded: Channel[Result[Address[Session.Msg]]] = Channel.new(1)
+      Actor.reply(reply, ok(Found.Loading(loaded)))
+      waiting = listed.with(waiting: listed.waiting.push(loaded))
+      Actor.continue(registry.with(sessions: registry.sessions.map { |e| replaced(e, waiting) }))
+
+    Msg.Load(id, read) -> Actor.continue(registered(registry, id, read))
 
     Msg.Delete(id, reply) ->
       found = registry.sessions.select { |entry| entry.summary.id == id }
@@ -233,6 +277,11 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
           Actor.reply(reply, removed)
           sessions = registry.sessions.map { |e| replaced(e, entry) }
           if removed.ok?
+            # What a load still running reads finds no entry, and is dropped.
+            for waiting in entry.waiting
+              Actor.reply(waiting, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
+            end
+
             sessions = sessions.select { |e| e.summary.id != id }
           end
 
@@ -293,10 +342,19 @@ def replaced(entry: Entry, by: Entry) -> Entry
   entry
 end
 
-# The entry with its session running: loaded from its file when it is not yet.
-def started(options: Options, listed: Entry) -> Result[Entry]
-  return ok(listed) if listed.session.some?
+# The load always reports, even when it crashes, so the requests that wait for it get an answer.
+def load(job: Load) -> Void
+  reading = Task.spawn do read(job.options, job.entry) end
+  loaded = Msg.Load(job.entry.summary.id, Task.await(reading))
+  while true
+    case Actor.cast(job.registry, loaded, CALL_MS)
+      error(e) if e.message.include?("timeout") -> next
+      _ -> break
+    end
+  end
+end
 
+def read(options: Options, listed: Entry) -> Result[Loaded]
   info = try File.lstat(listed.file)
   return error("not a regular file") if info.kind != "file"
 
@@ -305,12 +363,41 @@ def started(options: Options, listed: Entry) -> Result[Entry]
     IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
   end
 
-  context = try Tools.context(saved.header.cwd, options.env, options.rules)
-  if saved.open_end
+  ok(Loaded(saved: saved, context: try Tools.context(saved.header.cwd, options.env, options.rules)))
+end
+
+# Starts the session that a load read, and answers the requests that waited for it. A load of a session deleted since
+# it began is dropped.
+def registered(registry: Registry, id: String, read: Result[Loaded]) -> Registry
+  found = registry.sessions.select { |entry| entry.summary.id == id and not entry.waiting.empty? }
+  return registry if found.empty?
+
+  listed = found[0]
+  case started(registry.options, listed, read)
+    ok(entry) ->
+      for waiting in listed.waiting
+        Actor.reply(waiting, entry.session.map { |session| session.address }.to_result("not started"))
+      end
+
+      registry.with(sessions: registry.sessions.map { |e| replaced(e, entry) })
+    error(e) ->
+      message = "session #{id} cannot be loaded now: #{e.message}"
+      IO.warn(message)
+      for waiting in listed.waiting
+        Actor.reply(waiting, error(message, kind: Protocol.KIND_SESSION_UNAVAILABLE))
+      end
+
+      registry.with(sessions: registry.sessions.map { |other| replaced(other, listed.with(waiting: [])) })
+  end
+end
+
+def started(options: Options, listed: Entry, read: Result[Loaded]) -> Result[Entry]
+  loaded = try read
+  if loaded.saved.open_end
     try Store.reopen(listed.file)
   end
 
-  ok(entry(options, saved.header, context, listed.file, some(saved)))
+  ok(entry(options, loaded.saved.header, loaded.context, listed.file, some(loaded.saved)))
 end
 
 def entry(
@@ -510,8 +597,15 @@ def subscribe(registry: Address[Msg], id: String, last: Optional[Int]) -> Result
 end
 
 def find(registry: Address[Msg], id: String) -> Result[Address[Session.Msg]]
-  found: Result[Result[Address[Session.Msg]]] = Actor.call(registry, CALL_MS) do |reply| Msg.Find(id, reply) end
-  ok(try try found)
+  found: Result[Result[Found]] = Actor.call(registry, CALL_MS) do |reply| Msg.Find(id, reply) end
+  case try try found
+    Found.Ready(address) -> ok(address)
+    Found.Loading(loaded) ->
+      case loaded.recv(LOAD_MS)
+        ok(address) -> address
+        error(_) -> error("session #{id} is still loading", kind: Protocol.KIND_SESSION_UNAVAILABLE)
+      end
+  end
 end
 
 def no_route(method: String, path: String) -> HTTP.Response
