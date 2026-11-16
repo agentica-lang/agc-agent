@@ -15,8 +15,11 @@ KIND_FORBIDDEN = "auth.forbidden"
 
 KIND_SESSION_NOT_FOUND = "session.not_found"
 
-## A message sent while a turn runs (`409`).
+## A message sent while a turn runs and its queue is full (`409`).
 KIND_SESSION_BUSY = "session.busy"
+
+## The `error` event of a turn that ended before it read the messages queued for it: they were not sent to the model.
+KIND_QUEUE_DROPPED = "session.queue_dropped"
 
 ## The server cannot write the session's file (`500`): the turn stops, and no turn starts until a write works.
 KIND_SESSION_STORAGE = "session.storage"

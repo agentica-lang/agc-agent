@@ -89,6 +89,8 @@ struct Options
   after_load: Optional[Fn[String, Void]] = none
   ## Code mode: the model may also call the tools from a Python script (`run_script`).
   code_mode: Optional[CodeMode.Settings] = none
+  ## How long a turn waits for the messages queued for it (tests shorten it).
+  take_ms: Int = 5000
   ## The home folder, whose skills every session has; empty for none.
   home: String = ""
   ## The folders whose sessions load the skills of their own folder: a project's skills are its instructions.
@@ -558,6 +560,7 @@ def entry(
     cache: api.cache,
     refresh: api.refresh,
     code_mode: options.code_mode,
+    take_ms: options.take_ms,
   )
 
   ok(

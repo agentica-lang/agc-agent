@@ -641,6 +641,24 @@ class PtyTest(unittest.TestCase):
         self.assertNotIn("--yolo allows", text_of(term.settle(0.6)))
         self.assertFalse((term.base / "work" / "hello.txt").exists())
 
+    def test_yolo_asks_the_calls_another_client_steers_into_its_turn(self) -> None:
+        held = Reply("text.sse", hold=2)
+        term = self.start([held, Reply("write_file.sse"), Reply("text.sse")], extra=["--yolo"])
+        session_id = re.search(r"· session (\S+)", text_of(term.screen())).group(1)
+        term.type("say hi\r")
+        term.settle(0.4)
+        info = json.loads((term.base / "state" / "server.json").read_text())
+        server = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=TIMEOUT)
+        headers = {"Authorization": f"Bearer {info['token']}", "Content-Type": "application/json"}
+        server.request("POST", f"/v1/sessions/{session_id}/messages", json.dumps({"text": "write it"}), headers)
+        self.assertEqual(server.getresponse().status, 202)
+        server.close()
+        term.wait_for("queued: write it")
+        held.release.set()
+        term.wait_for("Tab to answer")
+        self.assertNotIn("--yolo allows", text_of(term.settle(0.6)))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+
     def test_a_tool_is_approved_and_its_notices_shown(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")

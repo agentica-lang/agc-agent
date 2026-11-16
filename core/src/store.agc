@@ -110,6 +110,12 @@ def append_user(path: String, text: String, typed: String = "", marks: List[Stri
   append(path, with_marks(fields, marks))
 end
 
+## A message sent during a turn, once the turn read it: shown as a user message that starts no turn. The history has it
+## in the `messages` record that follows.
+def append_queued(path: String, text: String) -> Result[Void]
+  append(path, {"type": JSON.from("queued"), "text": JSON.from(text)})
+end
+
 ## The messages a round added to the history, in one record so that a call never goes without its result, with the
 ## names extensions noted in the round.
 def append_messages(path: String, messages: List[LLM.Message], marks: List[String] = []) -> Result[Void]
@@ -380,6 +386,9 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
           marks: saved.marks + marks_of(json),
         ),
       )
+    "queued" ->
+      shown = Protocol.Message(role: Protocol.Role.User, text: try field(json, "text"))
+      ok(saved.with(shown: saved.shown.push(shown)))
     "messages" ->
       messages: List[LLM.Message] = []
       for item in try JSON.list(try JSON.get(json, "messages"))

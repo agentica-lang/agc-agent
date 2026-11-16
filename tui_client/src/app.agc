@@ -349,14 +349,13 @@ def send(app: App) -> App
     _ -> nil
   end
 
-  return noted(app, "a turn is running: Esc stops it") if app.turn
-
+  # A message sent while a turn runs is queued; its `message_queued` event shows it.
   case Client.send_message(app.server, app.id, text)
+    ok(accepted) if app.turn -> app.with(prompt: "", scroll: 0, yolo: Yolo.queued(app.yolo, accepted.turn_id, text))
     ok(accepted) ->
       entries = Transcript.add(app.entries, Transcript.Kind.User, text)
       yolo = Yolo.started(app.yolo, accepted.turn_id)
       app.with(entries: entries, prompt: "", turn: true, stopping: false, scroll: 0, yolo: yolo)
-    error(e) if e.kind == Protocol.KIND_SESSION_BUSY -> noted(app.with(turn: true), "a turn is already running")
     error(e) -> noted(app, "error: #{e.message}")
   end
 end
@@ -561,6 +560,9 @@ def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
         none -> failed
       end
 
+    Protocol.Event.MessageQueued(queued) ->
+      steered = shown.with(yolo: Yolo.steered(shown.yolo, queued))
+      noted(steered, "queued: #{Client.printable(queued.text)}")
     _ -> shown
   end
 end

@@ -37,6 +37,7 @@ export Commands.Command
 export Commands.HELP
 export Commands.KIND_COMMAND
 export Commands.parse_command
+export Commands.printable
 export Commands.listing
 export Commands.pick
 export Commands.model_warning

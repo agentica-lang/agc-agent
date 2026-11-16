@@ -18,3 +18,18 @@ def test_an_allow_not_sent_is_asked_unless_it_was_resolved_first() -> Result[Voi
   try Test.eq(Yolo.unsent(sending, "a1", error("done", kind: Protocol.KIND_APPROVAL_RESOLVED)), none)
   Test.eq(Yolo.unsent(Yolo.resolved(sending, "a1"), "a1", lost), none)
 end
+
+# A message another client queued into an own turn ends `--yolo` for the rest of it; one this client queued does not.
+def test_a_turn_another_client_steers_is_asked() -> Result[Void]
+  mine = Yolo.running(Yolo.started(Yolo.Yolo(on: true), "turn-2"), some("turn-2"))
+  own = Yolo.steered(
+    Yolo.queued(mine, "turn-2", "and docs"),
+    Protocol.MessageQueued(turn_id: "turn-2", text: "and docs"),
+  )
+
+  try Test.eq([Yolo.allows?(own), own.sent.empty?], [true, true])
+  foreign = Yolo.steered(mine, Protocol.MessageQueued(turn_id: "turn-2", text: "rm it"))
+  try Test.eq(Yolo.allows?(foreign), false)
+  other = Yolo.steered(mine, Protocol.MessageQueued(turn_id: "turn-9", text: "x"))
+  Test.eq(Yolo.allows?(other), true)
+end
