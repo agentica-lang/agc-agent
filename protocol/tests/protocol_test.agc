@@ -255,5 +255,22 @@ end
 def test_routes() -> Result[Void]
   try Test.eq(Protocol.approval_path("s1", "a1"), "/v1/sessions/s1/approvals/a1")
   try Test.eq(Protocol.events_path("s1"), "/v1/sessions/s1/events")
+  try Test.eq(Protocol.compact_path("s1"), "/v1/sessions/s1/compact")
   Test.eq(Protocol.stop_path("s1"), "/v1/sessions/s1/stop")
+end
+
+def test_session_settings_round_trip_and_refuse_unknown_levels() -> Result[Void]
+  both = Protocol.UpdateSession(model: some("qwen3"), effort: some("high"))
+  try Test.eq(Protocol.decode_update_session(Protocol.encode_update_session(both)), ok(both))
+  try Test.eq(Protocol.decode_update_session("{\"effort\": \"low\"}"), ok(Protocol.UpdateSession(effort: some("low"))))
+  try Test.eq(Protocol.decode_update_session("{}"), ok(Protocol.UpdateSession()))
+  try Test.eq(error_kind(Protocol.decode_update_session("{\"effort\": \"max\"}")), "protocol.unknown")
+  try Test.eq(error_kind(Protocol.decode_update_session("{\"model\": \"\"}")), "protocol.invalid")
+  try Test.eq(error_kind(Protocol.decode_update_session("{\"modle\": \"m\"}")), "protocol.invalid")
+  compacted = Protocol.Compacted(compacted: true)
+  try Test.eq(Protocol.decode_compacted(Protocol.encode_compacted(compacted)), ok(compacted))
+  idle = try decode_fixture("session", &Protocol.decode_session, &Protocol.encode_session)
+  try Test.eq(idle.effort, none)
+  thinking = idle.with(effort: some("medium"))
+  Test.eq(Protocol.decode_session(Protocol.encode_session(thinking)), ok(thinking))
 end

@@ -53,6 +53,8 @@ struct Turn
   max_rounds: Int = MAX_ROUNDS
   ## Adds `run_script`, which calls the tools from a Python script.
   code_mode: Optional[CodeMode.Settings] = none
+  ## The thinking level of the calls; none leaves it to the model.
+  effort: Optional[String] = none
 end
 
 struct Outcome
@@ -185,6 +187,7 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
     tools: tools,
     extra: turn.extra,
     cache: turn.cache,
+    effort: turn.effort,
   )
 
   stream = try LLM.stream(turn.provider, request)

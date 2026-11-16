@@ -1,6 +1,7 @@
 ## What every client of the server needs: finding or starting the server of the state folder, the HTTP calls of the
-## protocol, and the task that reads the event stream of a session.
+## protocol, the task that reads the event stream of a session, and the commands a user types.
 
+import Commands from "src/commands"
 import Discovery from "src/discovery"
 import Events from "src/feed"
 import Http from "src/http"
@@ -17,6 +18,9 @@ export Http.send_message
 export Http.approve
 export Http.delete_session
 export Http.stop
+export Http.list_sessions
+export Http.update_session
+export Http.compact
 export Http.open_events
 
 export Discovery.Launch
@@ -28,3 +32,11 @@ export Discovery.connect
 export Events.Feed
 export Events.Item
 export Events.start
+
+export Commands.Command
+export Commands.HELP
+export Commands.KIND_COMMAND
+export Commands.parse_command
+export Commands.listing
+export Commands.pick
+export Commands.model_warning

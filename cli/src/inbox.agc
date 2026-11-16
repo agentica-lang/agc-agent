@@ -8,6 +8,8 @@ enum Input
   Eof
   Interrupt
   Terminate
+  ## A line to print from a task of the loop (a compaction's end).
+  Note(String)
   ## The first value is the generation of the stream that sent it, so the main loop drops what an old stream sent.
   Stream(Int, Client.Item)
 end

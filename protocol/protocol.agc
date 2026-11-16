@@ -39,11 +39,16 @@ export Routes.events_path
 export Routes.messages_path
 export Routes.approval_path
 export Routes.stop_path
+export Routes.compact_path
 
 export Requests.Decision
 export Requests.NewSession
 export Requests.SendMessage
 export Requests.Approve
+export Requests.UpdateSession
+export Requests.Compacted
+export Requests.EFFORTS
+export Requests.EFFORT_DEFAULT
 export Requests.decisions
 export Requests.decision_name
 export Requests.parse_decision
@@ -53,6 +58,10 @@ export Requests.encode_send_message
 export Requests.decode_send_message
 export Requests.encode_approve
 export Requests.decode_approve
+export Requests.encode_update_session
+export Requests.decode_update_session
+export Requests.encode_compacted
+export Requests.decode_compacted
 
 export Replies.Role
 export Replies.Health
