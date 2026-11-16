@@ -45,10 +45,16 @@ fmt-check:
 unit:
 	for pkg in $(PACKAGES); do $(call tests,$$pkg,tests); done
 
-# The entry points run, with their packages read from the workspace.
+# The entry points run, with their packages read from the workspace; bin/agc also from another folder, through a
+# symlink (in .tools/, gitignored).
 smoke:
 	out=$$($(AGENTICA) core/main.agc --version) && echo "$$out" | grep -qx 'agc-agent core [0-9.]* (llm [0-9.]*)'
 	out=$$($(AGENTICA) cli/main.agc --version) && echo "$$out" | grep -qx 'agc-agent cli [0-9.]*'
+	mkdir -p .tools/smoke && ln -sf '$(CURDIR)/bin/agc' .tools/smoke/agc
+	cd / && agc='$(CURDIR)/.tools/smoke/agc' && out=$$("$$agc" --version) && \
+	  echo "$$out" | grep -qx 'agc-agent core [0-9.]* (llm [0-9.]*)' && echo "$$out" | grep -qx 'agc-agent cli [0-9.]*' && \
+	  "$$agc" --help | grep -q '^usage: agc' && "$$agc" serve --help | grep -q '^usage: agc serve' && \
+	  "$$agc" chat --help | grep -q '^Usage: agc' && ! "$$agc" serve --bogus 2>/dev/null
 
 test: check unit smoke
 

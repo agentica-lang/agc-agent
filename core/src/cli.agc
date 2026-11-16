@@ -3,7 +3,7 @@ import LLM from "pkg/llm/llm"
 VERSION = "0.0.1"
 
 USAGE = <<~TEXT
-  usage: agentica core/main.agc [serve | --version | --help]
+  usage: agc serve [--api NAME] [--model NAME] [--base-url URL]
 
   The agc-agent core. `serve` runs the server on 127.0.0.1 and writes server.json in the state folder:
   AGC_AGENT_STATE_DIR, else $XDG_STATE_HOME/agc-agent, else ~/.local/state/agc-agent. The sessions are kept in
