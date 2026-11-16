@@ -4,8 +4,9 @@
 ## A tool is `mcp__SERVER__TOOL` and asks before each call, unless a rule allows it (`mcp__fs__read(*)`); its target is
 ## the JSON input. A server starts with the short environment of the bash tool plus its `env`, which is passed on as it
 ## is (a key it needs goes there), and writes its stderr to `STATE_DIR/mcp/NAME.log`. A server whose tools cannot be
-## listed at the start is left out, and a tool whose name another one already has, with a warning.
+## listed is left out, and a tool whose name another one already has, with a warning.
 
+import Actor from "std/actor"
 import Regex from "std/regex"
 import Mcp from "pkg/mcp/mcp"
 import Sandbox from "sandbox"
@@ -21,6 +22,13 @@ struct Started
   clients: List[Mcp.Client]
   tools: List[Spec.Tool]
   warnings: List[String]
+end
+
+## Servers that list their tools in the background: `tools` gives those listed so far, so a slow server (`npx` on its
+## first run) does not hold up the start.
+struct Board
+  actor: Actor.Ref[Listed, Msg]
+  tasks: List[Task[Void]]
 end
 
 ## The servers of the config file that `read` names; none without it.
@@ -53,16 +61,32 @@ def servers(read: Fn[String, Result[String]], state_dir: String) -> Result[List[
   ok(out)
 end
 
-## Starts each server and lists the tools of all of them at once.
-def start(servers: List[Mcp.Server], options: Mcp.Options = Mcp.Options()) -> Started
-  clients = servers.map { |server| Mcp.start(server, options) }
-  listings = clients.map { |client| Task.spawn { Mcp.tools(client) } }
-  started = Started(clients: [], tools: [], warnings: [])
-  for i in 0...servers.size
-    started = added(started, servers[i], clients[i], Task.await(listings[i]))
+## Starts each server and lists its tools in a task of its own; `warn` gets each warning as it comes.
+def background(servers: List[Mcp.Server], warn: Fn[String, Void], options: Mcp.Options = Mcp.Options()) -> Board
+  init = -> { Listed(started: Started(clients: [], tools: [], warnings: []), warn: warn) }
+  actor = Actor.start(Actor.Behaviour(init: init, handle: &handle))
+  address = actor.address
+  tasks = servers.map { |server| Task.spawn { list(address, server, options) } }
+  Board(actor: actor, tasks: tasks)
+end
+
+## The tools listed so far.
+def tools(board: Board) -> List[Spec.Tool] = state(board).tools
+
+## Waits until every server listed its tools or was left out, and ends the board; the clients keep running.
+def wait(board: Board) -> Started
+  for task in board.tasks
+    Task.await(task)
   end
 
+  started = state(board)
+  _ = Actor.stop(board.actor, 5000)
   started
+end
+
+## Starts each server and lists the tools of all of them at once.
+def start(servers: List[Mcp.Server], options: Mcp.Options = Mcp.Options()) -> Started
+  wait(background(servers, &ignore, options))
 end
 
 def stop(started: Started) -> Void
@@ -72,6 +96,52 @@ def stop(started: Started) -> Void
 end
 
 private
+
+struct Listed
+  started: Started
+  warn: Fn[String, Void]
+end
+
+struct Listing
+  server: Mcp.Server
+  client: Mcp.Client
+  listed: Result[List[Mcp.Tool]]
+end
+
+enum Msg
+  Add(Listing)
+  Get(Channel[Started])
+end
+
+def handle(state: Listed, msg: Msg) -> Actor.Step[Listed]
+  case msg
+    Msg.Add(listing) ->
+      started = added(state.started, listing.server, listing.client, listing.listed)
+      for warning in started.warnings.drop(state.started.warnings.size)
+        state.warn.call(warning)
+      end
+
+      Actor.continue(state.with(started: started))
+    Msg.Get(reply) ->
+      _ = Actor.reply(reply, state.started)
+      Actor.continue(state)
+  end
+end
+
+def list(address: Address[Msg], server: Mcp.Server, options: Mcp.Options) -> Void
+  client = Mcp.start(server, options)
+  listing = Listing(server: server, client: client, listed: Mcp.tools(client))
+  _ = Actor.cast(address, Msg.Add(listing))
+end
+
+def state(board: Board) -> Started
+  answer: Result[Started] = Actor.call(board.actor.address, 5000) do |reply| Msg.Get(reply) end
+  answer.unwrap_or(Started(clients: [], tools: [], warnings: []))
+end
+
+def ignore(_text: String) -> Void
+  return
+end
 
 # The logs can hold what the tools read: the folder is only the user's, as the state folder is.
 def private_dir(path: String) -> Result[Void]

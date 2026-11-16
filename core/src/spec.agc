@@ -8,8 +8,9 @@ struct Context
   root: String
   env: Fn[String, Result[String]]
   rules: Approval.Rules
-  ## The tools after the base ones (MCP).
+  ## The tools after the base ones (MCP), and those that come later (MCP servers still listing at the start).
   tools: List[Tool] = []
+  late: Optional[Fn[List[Tool]]] = none
 end
 
 struct Output
@@ -47,6 +48,13 @@ def output(result: Result[String]) -> Output
   case result
     ok(text) -> Output(text: cap(text), is_error: false)
     error(e) -> Output(text: cap(e.message), is_error: true)
+  end
+end
+
+def more_tools(ctx: Context) -> List[Tool]
+  case ctx.late
+    some(late) -> ctx.tools + late.call()
+    none -> ctx.tools
   end
 end
 

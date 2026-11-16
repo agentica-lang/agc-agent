@@ -59,8 +59,9 @@ struct Options
   model: String
   env: Fn[String, Result[String]]
   rules: Tools.Rules
-  ## The tools of the MCP servers.
+  ## The tools of the MCP servers, and those of the servers that list them after the start.
   tools: List[Tools.Tool] = []
+  late_tools: Optional[Fn[List[Tools.Tool]]] = none
   port: Int = 0
   keep_events: Int = 1000
   approval_timeout_ms: Int = 90000
@@ -324,7 +325,7 @@ def sessions_dir(options: Options) -> String = "#{options.data_dir}/#{SESSIONS_D
 
 def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]
   options = registry.options
-  ctx = case Tools.context(request.cwd, options.env, options.rules, options.tools)
+  ctx = case Tools.context(request.cwd, options.env, options.rules, options.tools, options.late_tools)
     ok(ctx) -> ok(ctx)
     error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
   end
@@ -396,7 +397,12 @@ def read(options: Options, listed: Entry) -> Result[Loaded]
     IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
   end
 
-  ok(Loaded(saved: saved, context: try Tools.context(saved.header.cwd, options.env, options.rules, options.tools)))
+  ok(
+    Loaded(
+      saved: saved,
+      context: try Tools.context(saved.header.cwd, options.env, options.rules, options.tools, options.late_tools),
+    ),
+  )
 end
 
 # Starts the session that a load read, and answers the requests that waited for it. A load of a session deleted since

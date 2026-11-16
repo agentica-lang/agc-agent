@@ -33,13 +33,14 @@ def context(
   env: Fn[String, Result[String]],
   rules: Approval.Rules,
   more: List[Spec.Tool] = [],
+  late: Optional[Fn[List[Spec.Tool]]] = none,
 ) -> Result[Spec.Context]
   root = try Sandbox.open(cwd)
-  ok(Spec.Context(root: root, env: env, rules: rules, tools: more))
+  ok(Spec.Context(root: root, env: env, rules: rules, tools: more, late: late))
 end
 
 ## The tools a session offers the model: the base ones, then those of its context.
-def offered(ctx: Spec.Context) -> List[Spec.Tool] = all() + ctx.tools
+def offered(ctx: Spec.Context) -> List[Spec.Tool] = all() + Spec.more_tools(ctx)
 
 def all() -> List[Spec.Tool]
   [
@@ -155,7 +156,7 @@ private
 DETAIL_CHARS = 4000
 
 def offered_tool(ctx: Spec.Context, name: String) -> Result[Spec.Tool]
-  case (ctx.tools.find { |tool| tool.name == name })
+  case (Spec.more_tools(ctx).find { |tool| tool.name == name })
     ok(tool) -> ok(tool)
     error(_) -> find(name)
   end

@@ -60,7 +60,9 @@ def test_the_config_refuses_odd_names() -> Result[Void]
 
     env = JSON.object({"A=B": JSON.from("x")})
     try write_config(dir, {"ok": JSON.object({"command": JSON.from("true"), "env": env})})
-    Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok? == false, "A=B taken")
+    try Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok? == false, "A=B taken")
+    try write_config(dir, {"ok": JSON.object({"command": JSON.from("X=1")})})
+    Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok? == false, "a command with = taken")
   end
 end
 
@@ -86,6 +88,23 @@ def test_a_server_gets_a_short_environment_and_unique_tools() -> Result[Void]
     try Test.eq(started.warnings.size, 2)
     try Test.eq([key, greeting], ["", "hi"])
     Test.assert(not path.empty?, "no PATH")
+  end
+end
+
+# Slow servers list their tools at the same time and after the start: their tools come as they are listed.
+def test_slow_servers_list_their_tools_in_the_background() -> Result[Void]
+  within_dir do |dir|
+    slow = JSON.object({"FAKE_MCP_SLOW_MS": JSON.from("3000")})
+    try write_config(dir, {"one": try fake_server(slow), "two": try fake_server(slow)})
+    began = Time.monotonic_ms()
+    board = McpTools.background(try McpTools.servers(->(n) { config_env(dir, n) }, dir), ->(_w: String) { nil })
+    at_start = McpTools.tools(board)
+    started = McpTools.wait(board)
+    took = Time.monotonic_ms() - began
+    McpTools.stop(started)
+    try Test.eq(at_start.size, 0)
+    try Test.eq(started.tools.size, 18)
+    Test.assert(took < 5000, "the listings took #{took} ms: one after the other")
   end
 end
 
