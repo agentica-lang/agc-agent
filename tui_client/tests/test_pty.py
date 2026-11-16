@@ -616,6 +616,19 @@ class PtyTest(unittest.TestCase):
         term.type("/quit\r")
         self.assertEqual(term.finish(), 0)
 
+    def test_a_command_prefix_closed_with_escape_goes_as_text_and_a_whole_name_runs(self) -> None:
+        term = self.start([Reply("text.sse")])
+        term.type("/re")
+        term.wait_for(" /resume [N|ID]")
+        term.type("\x1b")
+        term.wait_until(lambda rows: "/resume [N|ID]" not in text_of(rows), "the list closed")
+        term.type("\r")
+        term.wait_for(ANSWER)
+        self.assertEqual(self.fake.requests.get(timeout=5)["messages"][-1]["content"], "/re")
+        term.wait_for("ready")
+        term.type("/resume\r")
+        term.wait_for("resume a session (1 of 1)")
+
     def test_a_bracketed_paste_goes_to_the_prompt_and_answers_nothing(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")

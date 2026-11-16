@@ -79,6 +79,11 @@ struct RunShell
   context: Bool
 end
 
+## `POST /v1/auth/PROVIDER`: the key of a login. The server checks it at the provider before it stores it.
+struct Login
+  key: String
+end
+
 ## Every decision, in a fixed order.
 def decisions() -> List[Decision] = Wire.chain(Decision.Allow, &following)
 
@@ -166,6 +171,14 @@ def decode_run_shell(text: String) -> Result[RunShell]
   ok(body)
 end
 
+def encode_login(body: Login) -> String = JSON.encode(body)
+
+def decode_login(text: String) -> Result[Login]
+  body = try Wire.decode_strict(text, Login.codec)
+  try Wire.non_empty("key", body.key)
+  ok(body)
+end
+
 ## The fields of the requests and the names of their values on the wire, for `Protocol.WIRE`.
 def shape() -> List[String]
   records = [
@@ -178,6 +191,7 @@ def shape() -> List[String]
     Wire.record("Fork", Fork.members),
     Wire.record("StopServer", StopServer.members),
     Wire.record("RunShell", RunShell.members),
+    Wire.record("Login", Login.members),
     Wire.record("ApproveWire", ApproveWire.members),
   ]
 

@@ -25,6 +25,10 @@ export Http.stop
 export Http.list_sessions
 export Http.list_providers
 export Http.update_session
+export Http.list_logins
+export Http.login
+export Http.logout
+export Http.skip_login
 export Http.compact
 export Http.tree
 export Http.branch
@@ -53,7 +57,10 @@ export Events.Item
 export Events.start
 
 export Commands.Command
-export Commands.HELP
+export Commands.help
+export Commands.listed
+export Commands.Usage
+export Commands.COMMANDS
 export Commands.KIND_COMMAND
 export Commands.parse_command
 export Commands.parse_shell

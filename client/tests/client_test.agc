@@ -46,11 +46,14 @@ def test_commands_parse_with_their_arguments() -> Result[Void]
   try Test.eq(Client.parse_command("/tree 2+"), some(ok(Client.Command.Tree(some("2+")))))
   try Test.eq(Client.parse_command("/fork"), some(ok(Client.Command.Fork(none))))
   try Test.eq(Client.parse_command("/clone"), some(ok(Client.Command.Clone)))
+  try Test.eq(Client.parse_command("/login"), some(ok(Client.Command.Login(none))))
+  try Test.eq(Client.parse_command("/login groq"), some(ok(Client.Command.Login(some("groq")))))
+  try Test.eq(Client.parse_command("/logout"), some(ok(Client.Command.Logout(none))))
   for text in ["/review-pr 12", "/etc/hosts has a bad entry", "/"]
     try Test.eq(Client.parse_command(text), none)
   end
 
-  for bad in ["/thinking max", "/new now", "/model qwen3 8b", "/clone 2"]
+  for bad in ["/thinking max", "/new now", "/model qwen3 8b", "/clone 2", "/login groq sk-1"]
     parsed = Client.parse_command(bad)
     case parsed
       some(error(e)) -> try Test.eq(e.kind, Client.KIND_COMMAND)
@@ -58,7 +61,14 @@ def test_commands_parse_with_their_arguments() -> Result[Void]
     end
   end
 
-  ok()
+  # Every command of the table parses, and the help lists those the suggestions list.
+  for usage in Client.COMMANDS
+    try Test.assert(Client.parse_command(usage.name).some?, usage.name)
+  end
+
+  help = Client.help()
+  try Test.eq(help[0], "/new                       a new session in this folder")
+  Test.assert(Client.listed().all? { |usage| help.any? { |line| line.start_with?("#{usage.name} ") } }, "#{help}")
 end
 
 def test_a_bang_line_is_a_shell_command() -> Result[Void]

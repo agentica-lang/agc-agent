@@ -3,26 +3,45 @@
 import Protocol from "pkg/protocol/protocol"
 
 KIND_COMMAND = "client.command"
-NAMES = [
-  "/new", "/resume", "/tree", "/fork", "/clone", "/model", "/thinking", "/compact", "/stop", "/cost", "/help", "/quit",
+## The commands of both clients, in the order `/help` lists them: the one table that the parser, the help and the
+## suggestions of `finn tui` read.
+COMMANDS = [
+  Usage(name: "/new", about: "a new session in this folder"),
+  Usage(name: "/resume", args: "[N|ID]", about: "list the sessions; /resume N or /resume ID switches to one"),
+  Usage(
+    name: "/tree",
+    args: "[N|N+]",
+    about: "the session's messages; N goes back before message N, N+ on after its answer",
+  ),
+  Usage(name: "/fork", args: "[N|N+]", about: "a new session from before message N (or after its answer)"),
+  Usage(name: "/clone", about: "a new session with this one's history"),
+  Usage(
+    name: "/model",
+    args: "[PROVIDER/]NAME",
+    about: "change the model (and provider) from the next turn on; alone: pick or show it",
+    more: "a model the session's provider lists stays on it: openrouter/anthropic/x forces one",
+  ),
+  Usage(name: "/thinking", args: "[low|medium|high|default]", about: "the thinking level, or change it"),
+  Usage(name: "/compact", about: "fold the history into a summary now"),
+  Usage(name: "/login", args: "[PROVIDER]", about: "set up a provider with its key (finn tui); alone: pick one"),
+  Usage(name: "/logout", args: "[PROVIDER]", about: "remove a stored key; alone: every one"),
+  Usage(name: "/stop", about: "stop the running turn"),
+  Usage(name: "/cost", about: "what the session cost", listed: false),
+  Usage(name: "/help", about: "this list"),
+  Usage(name: "/quit", about: "leave"),
 ]
-HELP = [
-  "/new                       a new session in this folder",
-  "/resume                    list the sessions; /resume N or /resume ID switches to one",
-  "/tree [N|N+]               the session's messages; N goes back before message N, N+ on after its answer",
-  "/fork [N|N+]               a new session from before message N (or after its answer)",
-  "/clone                     a new session with this one's history",
-  "/model [PROVIDER/]NAME     change the model (and provider) from the next turn on; alone: pick or show it",
-  "                           a model the session's provider lists stays on it: openrouter/anthropic/x forces one",
-  "/thinking [low|medium|high|default]  the thinking level, or change it",
-  "/compact                   fold the history into a summary now",
-  "/stop                      stop the running turn",
-  "/help                      this list",
-  "/quit                      leave",
-  "!CMD                       run CMD in the session folder; the model gets its output with the next message",
-  "!!CMD                      run CMD without giving its output to the model",
-  "any other /name goes to the agent as a message",
-]
+## The column where the help puts what a command does.
+ABOUT_COLUMN = 27
+
+## A command: its name, the arguments the help shows, what it does (and a second line); `listed` false keeps it out
+## of the help and the suggestions.
+struct Usage
+  name: String
+  args: String = ""
+  about: String
+  more: String = ""
+  listed: Bool = true
+end
 
 enum Command
   New
@@ -41,6 +60,10 @@ enum Command
   Stop
   ## The cost of the session, once the model catalog gives prices (#88).
   Cost
+  ## Picks a provider without an argument; then asks for its key.
+  Login(Optional[String])
+  ## Every stored key without an argument.
+  Logout(Optional[String])
   Help
   Quit
 end
@@ -53,7 +76,7 @@ def parse_command(line: String) -> Optional[Result[Command]]
 
   words = text.split(" ").select { |word| word != "" }
   name = words[0]
-  return none if not NAMES.include?(name)
+  return none if (not COMMANDS.any? { |usage| usage.name == name })
 
   argument = words.drop(1).join(" ")
   some(command(name, argument))
@@ -75,6 +98,27 @@ def parse_shell(line: String) -> Optional[Protocol.RunShell]
 
   some(Protocol.RunShell(command: rest.strip, context: context))
 end
+
+## The lines of `/help`.
+def help() -> List[String]
+  rows = listed().flat_map do |usage|
+    head = "#{usage.name} #{usage.args}".strip
+    line = "#{head}#{" " * [ABOUT_COLUMN - head.length, 2].max.unwrap!}#{usage.about}"
+    [line] + [usage.more].select { |m| m != "" }.map { |m| "#{" " * ABOUT_COLUMN}#{m}" }
+  end
+
+  (
+    rows +
+    [
+      "!CMD                       run CMD in the session folder; the model gets its output with the next message",
+      "!!CMD                      run CMD without giving its output to the model",
+      "any other /name goes to the agent as a message",
+    ]
+  )
+end
+
+## The commands the help and the suggestions show.
+def listed() -> List[Usage] = COMMANDS.select { |usage| usage.listed }
 
 ## What a client says when the first turn after `/model NAME` fails: the server takes any name.
 def model_warning(model: String) -> String
@@ -146,8 +190,10 @@ def command(name: String, argument: String) -> Result[Command]
     "/compact" -> bare(Command.Compact, name, argument)
     "/stop" -> bare(Command.Stop, name, argument)
     "/cost" -> bare(Command.Cost, name, argument)
+    "/login" -> ok(Command.Login(try provider(argument)))
+    "/logout" -> ok(Command.Logout(try provider(argument)))
     "/help" -> bare(Command.Help, name, argument)
-    # Only `/quit` is left of NAMES.
+    # Only `/quit` is left of COMMANDS.
     _ -> bare(Command.Quit, name, argument)
   end
 end
@@ -162,6 +208,13 @@ def given(argument: String) -> Optional[String]
   return none if argument == ""
 
   some(argument)
+end
+
+# One word: a key typed after the name would be shown and kept as the line.
+def provider(argument: String) -> Result[Optional[String]]
+  return error("give the provider alone: the key is asked for next", kind: KIND_COMMAND) if argument.include?(" ")
+
+  ok(given(argument))
 end
 
 def model(argument: String) -> Result[Command]

@@ -5,6 +5,7 @@ SESSIONS_PATH = "/v1/sessions"
 SERVER_PATH = "/v1/server"
 SERVER_STOP_PATH = "/v1/server/stop"
 PROVIDERS_PATH = "/v1/providers"
+AUTH_PATH = "/v1/auth"
 
 ## The header a client sends to resume an event stream.
 LAST_EVENT_ID_HEADER = "Last-Event-ID"
@@ -31,6 +32,10 @@ def fork_path(session_id: String) -> String = "#{session_path(session_id)}/fork"
 
 def shell_path(session_id: String) -> String = "#{session_path(session_id)}/shell"
 
+## A login to a provider (`POST`), or its logout (`DELETE`). `AUTH_PATH` lists the logins (`GET`), removes every
+## stored key (`DELETE`), or makes an empty key file when there is none (`PUT`: a first-start login skipped).
+def auth_path(provider: String) -> String = "#{AUTH_PATH}/#{provider}"
+
 ## The paths and the header, for `Protocol.wire_shape`.
 def shape() -> List[String]
   [
@@ -39,6 +44,7 @@ def shape() -> List[String]
     SERVER_PATH,
     SERVER_STOP_PATH,
     PROVIDERS_PATH,
+    AUTH_PATH,
     LAST_EVENT_ID_HEADER,
     session_path("ID"),
     events_path("ID"),
@@ -50,5 +56,6 @@ def shape() -> List[String]
     branch_path("ID"),
     fork_path("ID"),
     shell_path("ID"),
+    auth_path("P"),
   ]
 end

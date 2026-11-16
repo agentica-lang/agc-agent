@@ -279,7 +279,7 @@ def test_the_tree_picker_moves_the_session_and_fills_the_prompt() -> Result[Void
   held = App.update(picked.model.with(prompt: "hi"), enter())
   try Test.eq([held.cmds.size.to_s, held.model.prompt, held.model.outbox.size.to_s], ["0", "hi", "0"])
   helped = App.update(picked.model.with(prompt: "/help"), enter()).model
-  try Test.eq([helped.prompt, helped.entries.last.text], ["", Client.HELP.last])
+  try Test.eq([helped.prompt, helped.entries.last.text], ["", Client.help().last])
   renewed = App.update(picked.model.with(prompt: "/new"), enter()).model
   try Test.eq([renewed.prompt, renewed.entries.last.text], ["/new", "the session is moving: wait for it"])
   typed = App.update(model.with(picker: none, prompt: "/tree 3"), enter())
@@ -448,6 +448,79 @@ def test_at_lists_the_files_and_tab_completes_one() -> Result[Void]
   Test.assert(not rows(closed).include?("thinking.sse"), "Esc closes the list")
 end
 
+# `/` lists the commands of the client's table under the editor, narrowed as the name grows; Tab completes the
+# selected one, Enter completes a part of a name and runs a whole one, Esc closes the list, and a name no command
+# starts with shows none and goes as text.
+def test_slash_lists_the_commands_and_tab_completes_one() -> Result[Void]
+  model = App.update(model_of(80, 20).with(id: "s1"), key_char("/")).model
+  try Test.assert(
+    rows(model).any? { |row| row.start_with?("/new") and row.include?("a new session") },
+    "#{rows(model)}",
+  )
+
+  try Test.assert(not rows(model).any? { |row| row.start_with?("/cost") }, "an unlisted command is left out")
+  for c in ["m", "o"]
+    model = App.update(model, key_char(c)).model
+  end
+
+  try Test.assert(
+    rows(model).any? { |row| row.start_with?("/model [PROVIDER/]NAME  change the model") },
+    "#{rows(model)}",
+  )
+
+  try Test.assert(not rows(model).any? { |row| row.start_with?("/new") }, "the list narrows")
+  done = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))).model
+  try Test.eq([done.prompt, done.cursor.to_s], ["/model ", "7"])
+  try Test.assert(not rows(done).any? { |row| row.start_with?("/model [") }, "a space closes the list")
+  closed = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model
+  try Test.assert(not rows(closed).any? { |row| row.start_with?("/model [") }, "Esc closes the list")
+  try Test.eq(closed.stopping, false)
+  # Enter on part of a name completes it and runs nothing; on a whole name it runs the command.
+  partial = App.update(model_of(80, 20).with(id: "s1", prompt: "/c", cursor: 2), enter())
+  try Test.eq([partial.model.prompt, partial.model.outbox.size.to_s, partial.cmds.size.to_s], ["/clone", "0", "0"])
+  helped = App.update(model_of(80, 20).with(id: "s1", prompt: "/help", cursor: 5), enter()).model
+  try Test.eq(helped.prompt, "")
+  try Test.assert(
+    helped.entries.any? { |entry| entry.text == "/quit                      leave" },
+    "the help is drawn",
+  )
+
+  # Esc, then Enter, sends a prefix as text.
+  escaped = App.update(model_of(80, 20).with(id: "s1", prompt: "/c", cursor: 2), escape()).model
+  try Test.eq(App.update(escaped, enter()).model.outbox, ["/c"])
+  # The cursor inside the word, or a word after which more is typed, shows no list; at the end of the word the whole
+  # word is replaced.
+  inside = App.update(model_of(80, 20).with(id: "s1", prompt: "/resume", cursor: 3), enter()).model
+  try Test.eq([inside.prompt, inside.entries.last.text.start_with?("error:").to_s], ["", "true"])
+  middle = App.update(model_of(80, 20).with(id: "s1", prompt: "/mo foo", cursor: 3), tab()).model
+  try Test.eq(middle.prompt, "/model foo")
+  inside_rows = rows(model_of(80, 20).with(prompt: "/resume", cursor: 3))
+  try Test.assert(not inside_rows.any? { |row| row.start_with?("/resume [") }, "no list inside the word")
+  # Backspace from `/` closes the list; a prompt Up recalled shows none.
+  back = App.update(App.update(model_of(80, 20).with(id: "s1"), key_char("/")).model, backspace()).model
+  try Test.assert(not rows(back).any? { |row| row.start_with?("/new") }, "no list")
+  recalled = App.update(model_of(80, 20).with(id: "s1", history: ["/he"]), up()).model
+  try Test.eq(recalled.prompt, "/he")
+  try Test.assert(not rows(recalled).any? { |row| row.start_with?("/help") }, "a recalled prompt shows no list")
+  try Test.eq(App.update(model_of(80, 20).with(id: "s1", prompt: "/", cursor: 1), enter()).model.outbox, ["/"])
+  unknown = model_of(80, 20).with(id: "s1", prompt: "/zz", cursor: 3)
+  try Test.assert(not rows(unknown).any? { |row| row.include?("no file matches") }, "no list")
+  Test.eq(App.update(unknown, enter()).model.outbox, ["/zz"])
+end
+
+# On a small screen the list shows the rows it has room for and keeps the selected one among them.
+def test_the_command_list_follows_the_selection_on_a_small_screen() -> Result[Void]
+  model = App.update(model_of(80, 7).with(id: "s1"), key_char("/")).model
+  for _ in 0...20
+    model = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))).model
+  end
+
+  try Test.assert(rows(model).any? { |row| row.start_with?("/quit") }, "the selected row shows: #{rows(model)}")
+  tiny = App.update(model_of(80, 4).with(id: "s1"), key_char("/")).model
+  try Test.eq(App.update(tiny, App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))).model.mention_selected, 0)
+  Test.eq(App.update(tiny, enter()).model.outbox, ["/"])
+end
+
 def model_of(width: Int, height: Int) -> App.Model
   options = Args.Options(
     state_dir: none,
@@ -462,12 +535,47 @@ def model_of(width: Int, height: Int) -> App.Model
   App.seed(Client.Server(url: "http://127.0.0.1:1", token: ""), options, Channel.new(1), width, height)
 end
 
+# A coming login cannot be given a key; Esc in the key prompt drops what was typed; under `finn login` the answer to
+# the login ends the app.
+def test_a_login_drops_a_coming_pick_and_a_cancelled_key() -> Result[Void]
+  claude = Protocol.LoginStatus(name: "claude", label: "Claude Pro/Max", key_env: "", from: "", coming: true)
+  groq = Protocol.LoginStatus(name: "groq", label: "", key_env: "GROQ_API_KEY", from: "", coming: false)
+  list = Protocol.LoginList(providers: [groq, claude], first: false)
+  picking = model_of(60, 12).with(picker: some(Picker.logins(list)))
+  down = App.update(picking, App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))).model
+  coming = App.update(down, enter()).model
+  try Test.eq([coming.picker.none?, coming.key_for.none?], [true, true])
+  try Test.assert(coming.entries.any? { |e| e.text.include?("Claude Pro/Max: coming") }, "the coming login is said")
+  asked = App.update(picking, enter()).model
+  try Test.eq(asked.key_for, some("groq"))
+  typed = App.update(asked, App.Msg.Key(TUI.Event.Paste("sk-1\n"))).model
+  try Test.eq([typed.secret, typed.prompt], ["sk-1", ""])
+  cancelled = App.update(typed, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model
+  try Test.eq([cancelled.secret, "#{cancelled.key_for}"], ["", "none"])
+  only = typed.with(login_only: true)
+  sent = App.update(only, enter())
+  try Test.eq([sent.model.secret, "#{sent.cmds.size}"], ["", "1"])
+  done = App.update(sent.model, App.Msg.LoggedIn("groq", ok(groq.with(from: "stored"))))
+  try Test.eq(done.model.exit, some(0))
+  Test.eq(rows(done.model).any? { |row| row.include?("sk-1") }, false)
+end
+
 def rows(model: App.Model) -> List[String]
   cells = TUI.layout(App.view(model), model.width, model.height)
   (0...model.height).to_a.map do |y| cells.select { |cell| cell.y == y }.map { |cell| cell.char }.join("").strip end
 end
 
 def back_tab() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.BackTab, TUI.Mods()))
+
+def tab() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))
+
+def escape() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
+
+def backspace() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Backspace, TUI.Mods()))
+
+def up() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Up, TUI.Mods()))
+
+def key_char(c: String) -> App.Msg = App.Msg.Key(TUI.Event.Char(c, TUI.Mods()))
 
 def enter() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
 

@@ -19,6 +19,14 @@ def delete(options: Args.Options, id: String) -> Result[Int]
   ok(0)
 end
 
+def logout(options: Args.Options, name: Optional[String]) -> Result[Int]
+  launch = Args.launch(options)
+  server = try Client.connect(launch, try Client.state_dir(launch))
+  try Client.logout(server, name)
+  puts("[#{Chat.logged_out(name)}]")
+  ok(0)
+end
+
 private
 
 def no_color?() -> Bool

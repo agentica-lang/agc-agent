@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 - `!` commands: a command whose task ends without its output ends as failed instead of running forever, and `finn tui` shows no duration for one a restart cut.
+- `finn tui` lists the commands while `/` and part of a name are typed, each with what it does: Tab or Enter completes the selected one, Enter on a whole name runs it, Up/Down select, and Esc closes the list so that Enter sends the text as typed. `/help` reads the same table and shows `/resume [N|ID]`.
+- `finn login` and `/login` in `finn tui` check a provider key and store it in `~/.config/finn/auth.json` (0600); `finn logout` and `/logout` remove it.
 - `!` commands: `finn tui` marks an output the model does not get, the session snapshot names a running command (`shell_id`), and a command that a server restart cut ends as failed, so the clients stop waiting for it.
 - `finn chat` and `finn tui` run `!CMD` in the session folder and give its output to the model with the next message, and `!!CMD` without giving it: `POST /v1/sessions/ID/shell` runs the command as the `bash` tool does, for up to 10 minutes (a deny rule refuses it, `shell.denied`), not while a turn runs, and sends `shell_started` and `shell_finished`; up to 20 outputs (1 MiB) wait for the next message.
 - `finn tui` shows a tool call as a shell line (`$ ls`, `read x`, `edit x`) tinted by how it went, with its output, a numbered diff of an edit and "Took 1.2s"; Ctrl+O shows or folds every tool output and Ctrl+T every thinking block, with a note. `tool_finished` has `output` and `diff`.
