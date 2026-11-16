@@ -292,6 +292,18 @@ class Terminal:
                 raise AssertionError(f"no {text!r} on the screen:\n{shown}")
             self._read(0.05)
 
+    def wait_until(self, check, what: str) -> list[str]:
+        """Reads until `check` holds for the screen rows; gives the screen."""
+        deadline = time.monotonic() + TIMEOUT
+        while True:
+            rows = self.screen()
+            if check(rows):
+                return rows
+            if time.monotonic() > deadline:
+                shown = "\n".join(rows)
+                raise AssertionError(f"no {what} on the screen:\n{shown}")
+            self._read(0.05)
+
     def settle(self, seconds: float = 0.5) -> list[str]:
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
@@ -500,8 +512,8 @@ class PtyTest(unittest.TestCase):
         self.assertEqual(rows[-1], "> /thinking max")
         term.type("\x7f" * len("/thinking max"))
         term.type("again\r")
-        term.wait_for("> again")
-        term.wait_for("ready")
+        # The turn has finished once its answer is drawn twice and the status is back to ready, not before.
+        term.wait_until(lambda rows: text_of(rows).count(ANSWER) == 2 and "ready" in rows[-2], "the second answer")
         self.fake.requests.get(timeout=1)
         self.assertEqual(self.fake.requests.get(timeout=5)["model"], "other-model")
         term.type("/compact\r")
