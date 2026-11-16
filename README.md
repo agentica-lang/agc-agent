@@ -37,7 +37,7 @@ folder (link it into your PATH if you like):
 ```sh
 bin/finn --help
 bin/finn                               # chat in this folder; starts the server when none runs
-bin/finn tui                           # the same on the full screen: Enter sends, Alt+Enter after the turn, Ctrl+J newline, Ctrl+T thinking, Ctrl+O tools, Shift+Tab level, @ files, / commands, Up history, Esc stops
+bin/finn tui                           # the same on the full screen: Enter sends, Alt+Enter after the turn, Ctrl+J newline, Ctrl+T thinking, Ctrl+O tools, Shift+Tab level, @ files, / commands (Esc then Enter sends the text as typed), Up history, Esc stops
 # (the mouse answers panel keys, opens tool calls and thinking, and moves the prompt cursor; --yolo allows its own turns)
 # in both: /new, /resume, /tree, /fork, /clone, /model, /thinking, /compact, /stop, /help, /quit
 # in both: !CMD runs CMD in the folder and the model gets its output with the next message; !!CMD does not give it

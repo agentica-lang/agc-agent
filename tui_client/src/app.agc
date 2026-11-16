@@ -42,7 +42,7 @@ HINTS = [
   "^T show thinking",
   "^O show tool output",
   "@ files",
-  "/ commands",
+  "/ commands (Esc Enter: as typed)",
   "↑ history",
   "PgUp/PgDn",
 ]
@@ -95,10 +95,12 @@ struct Model
   recall: Optional[Int] = none
   ## The large pastes behind the tokens of the prompt, until it is sent.
   pastes: List[String] = []
-  ## The files of the session's folder once read, the selected one of the `@` list, and the `@` that Esc closed.
+  ## The files of the session's folder once read, the selected one of the `@` or `/` list, the first one it shows, and
+  ## the word that Esc closed.
   files: Optional[List[String]] = none
   reading_files: Bool = false
   mention_selected: Int = 0
+  mention_top: Int = 0
   mention_closed: Optional[Int] = none
   ## Esc came before the turn of a message sent started: the turn stops once the reply says it did.
   stop_wanted: Bool = false
@@ -593,7 +595,7 @@ def typed(app: Model, piece: String) -> Model
   edited = app.with(prompt: Prompt.insert(app.prompt, at, piece), cursor: at + piece.length, recall: none)
   # A list Esc closed opens again for a new prompt.
   if app.prompt == ""
-    edited = edited.with(mention_closed: none, mention_selected: 0)
+    edited = edited.with(mention_closed: none, mention_selected: 0, mention_top: 0)
   end
 
   return edited if piece != "@" or edited.files.some? or edited.reading_files
@@ -767,15 +769,20 @@ def on_mention_key(app: Model, found: Input.Mention, event: TUI.Event) -> Model
   choices = mention_choices(app, found)
   selected = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
   case event
-    TUI.Event.Key(TUI.Key.Up, _) -> app.with(mention_selected: [selected - 1, 0].max.unwrap!)
-    TUI.Event.Key(TUI.Key.Down, _) -> app.with(mention_selected: [selected + 1, choices.size - 1].min.unwrap!)
+    TUI.Event.Key(TUI.Key.Up, _) -> selected_choice(app, [selected - 1, 0].max.unwrap!, choices.size)
+    TUI.Event.Key(TUI.Key.Down, _) -> selected_choice(app, [selected + 1, choices.size - 1].min.unwrap!, choices.size)
     TUI.Event.Key(TUI.Key.Escape, _) -> app.with(mention_closed: some(found.start))
     _ if choices.empty? -> app
     _ ->
       at = cursor(app)
       text = Input.completed(app.prompt, at, found, choices[selected].value)
-      app.with(prompt: text, cursor: at + text.length - app.prompt.length, mention_selected: 0)
+      app.with(prompt: text, cursor: at + text.length - app.prompt.length, mention_selected: 0, mention_top: 0)
   end
+end
+
+def selected_choice(app: Model, selected: Int, size: Int) -> Model
+  top = Input.window(app.mention_top, selected, list_room(app), size)
+  app.with(mention_selected: selected, mention_top: top)
 end
 
 # A click on the transcript opens or closes a thinking block or a tool call; on a key of the approval panel it is
@@ -1434,7 +1441,7 @@ def approval_rows(app: Model, room: Int) -> List[Layout.Row]
     some(found) ->
       choices = mention_choices(app, found)
       selected = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
-      Input.rows(choices, selected, app.width, room)
+      Input.rows(choices, selected, Input.window(app.mention_top, selected, room, choices.size), app.width, room)
     none -> []
   end
 end
