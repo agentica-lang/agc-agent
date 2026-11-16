@@ -19,6 +19,8 @@ MAX_RECONNECTS = 3
 MAX_RESYNCS = 2
 SCROLL_STEP = 3
 HINTS = "Enter send · ^J newline · ^T thinking · Esc stop · PgUp/PgDn · ^C quit"
+ANSWERS = "y allow · n deny · a allow for the session"
+MAX_DETAIL_ROWS = 10
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
 def run(screen: TUI.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
@@ -54,7 +56,14 @@ struct App
   resyncs: Int = 0
   ## The thinking of the model is drawn.
   thinking: Bool = false
+  ## The approvals that wait, the first one asked.
+  pending: List[Protocol.ApprovalRequested] = []
   exit: Optional[Int] = none
+end
+
+struct Row
+  text: String
+  style: TUI.Style
 end
 
 def watch_signals(signals: Channel[System.Signal], inbox: Channel[Inbox.Input]) -> Void
@@ -104,6 +113,7 @@ def attach(app: App, session: Protocol.Session, skip_replay: Bool) -> App
     turn: session.turn_id.some?,
     stopping: false,
     shown_id: from,
+    pending: session.pending_approvals,
   )
 
   subscribe(fresh, from)
@@ -171,6 +181,7 @@ def on_key(app: App, event: TUI.Event) -> App
     TUI.Event.Key(TUI.Key.PageDown, _) -> scrolled(app, -page(app))
     TUI.Event.Mouse(TUI.Mouse.WheelUp, _, _, _) -> scrolled(app, SCROLL_STEP)
     TUI.Event.Mouse(TUI.Mouse.WheelDown, _, _, _) -> scrolled(app, -SCROLL_STEP)
+    TUI.Event.Char(char, _) if not app.pending.empty? and decision(char).some? -> answer(app, decision(char).unwrap!)
     TUI.Event.Char(char, _) -> app.with(prompt: Prompt.insert(app.prompt, char))
     _ -> app
   end
@@ -203,6 +214,37 @@ def stop(app: App) -> App
   end
 end
 
+def decision(char: String) -> Optional[Protocol.Decision]
+  case char.downcase
+    "y" -> some(Protocol.Decision.Allow)
+    "n" -> some(Protocol.Decision.Deny)
+    "a" -> some(Protocol.Decision.AllowSession)
+    _ -> none
+  end
+end
+
+# Answers the first pending approval. Another client may have answered first: that is not a failure. An answer that
+# was not sent leaves the approval pending.
+def answer(app: App, decision: Protocol.Decision) -> App
+  request = app.pending[0]
+  case Client.approve(app.server, app.id, request.approval_id, decision)
+    ok(_) -> resolved(app, request.approval_id)
+    error(e) if e.kind == Protocol.KIND_APPROVAL_RESOLVED or e.kind == Protocol.KIND_APPROVAL_NOT_FOUND ->
+      noted(resolved(app, request.approval_id), "approval #{request.approval_id} was already answered")
+    error(e) -> noted(app, "error: the answer was not sent: #{e.message}")
+  end
+end
+
+def resolved(app: App, approval_id: String) -> App
+  app.with(pending: app.pending.select { |p| p.approval_id != approval_id })
+end
+
+def requested(app: App, request: Protocol.ApprovalRequested) -> App
+  return app if (app.pending.any? { |p| p.approval_id == request.approval_id })
+
+  app.with(pending: app.pending.push(request))
+end
+
 def noted(app: App, text: String) -> App = app.with(entries: Transcript.note(app.entries, text))
 
 def on_stream(app: App, item: Client.Item) -> Result[App]
@@ -227,11 +269,24 @@ def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
       shown.with(entries: Transcript.add(shown.entries, Transcript.Kind.Thinking, delta.text))
     Protocol.Event.TurnStarted(_) -> shown.with(turn: true)
     Protocol.Event.TurnFinished(done) -> finished(shown.with(turn: false, stopping: false), done.stop_reason)
-    Protocol.Event.ApprovalRequested(request) ->
-      noted(shown, "approval #{request.approval_id} waiting (#{request.tool}): answer it with finn")
+    Protocol.Event.ApprovalRequested(request) -> requested(shown, request)
+    Protocol.Event.ApprovalResolved(done) ->
+      decided = "approval #{done.approval_id}: #{Protocol.decision_name(done.decision)}"
+      noted(resolved(shown, done.approval_id), "#{decided} (#{Protocol.source_name(done.source)})")
+    Protocol.Event.ToolStarted(tool) ->
+      text = "⚙ #{tool.name} #{tool.summary}"
+      shown.with(entries: Transcript.tool(shown.entries, tool.call_id, Transcript.Kind.Tool, text))
+    Protocol.Event.ToolFinished(tool) -> shown.with(entries: tool_finished(shown.entries, tool))
     Protocol.Event.Error(failure) -> noted(shown, "error: #{failure.kind}: #{failure.message}")
     _ -> shown
   end
+end
+
+def tool_finished(entries: List[Transcript.Entry], tool: Protocol.ToolFinished) -> List[Transcript.Entry]
+  timing = "#{tool.summary} (#{tool.duration_ms} ms)"
+  return Transcript.tool(entries, tool.call_id, Transcript.Kind.Tool, "✓ #{timing}") if tool.ok
+
+  Transcript.tool(entries, tool.call_id, Transcript.Kind.ToolFailed, "✗ #{timing}")
 end
 
 def finished(app: App, reason: Protocol.StopReason) -> App
@@ -263,7 +318,8 @@ def draw(app: App) -> Result[Void]
   height = TUI.height(screen)
   try TUI.clear(screen)
   prompt = Prompt.rows(app.prompt, width)
-  area = [height - prompt.size - 1, 0].max.unwrap!
+  asked = panel(app.pending, width)
+  area = [height - prompt.size - asked.size - 1, 0].max.unwrap!
   lines = Transcript.lines(app.entries, width, app.thinking)
   top = [lines.size - area - [app.scroll, [lines.size - area, 0].max.unwrap!].min.unwrap!, 0].max.unwrap!
   y = 0
@@ -277,16 +333,56 @@ def draw(app: App) -> Result[Void]
     y = y + 1
   end
 
-  _ = try TUI.write(screen, 0, area, status(app, width), TUI.Style(attrs: [TUI.Attr.Reverse]))
-  y = area + 1
+  y = area
+  for row in asked
+    _ = try TUI.write(screen, 0, y, row.text, row.style)
+    y = y + 1
+  end
+
+  _ = try TUI.write(screen, 0, y, status(app, width), TUI.Style(attrs: [TUI.Attr.Reverse]))
+  y = y + 1
   for row in prompt
     _ = try TUI.write(screen, 0, y, row)
     y = y + 1
   end
 
   last = prompt[prompt.size - 1]
-  try TUI.set_cursor(screen, [Width.text(last), width - 1].min.unwrap!, area + prompt.size)
+  try TUI.set_cursor(screen, [Width.text(last), width - 1].min.unwrap!, y - 1)
   TUI.present(screen)
+end
+
+# The first pending approval: what the call is, what it would write, and the keys that answer it.
+def panel(pending: List[Protocol.ApprovalRequested], width: Int) -> List[Row]
+  return [] if pending.empty?
+
+  request = pending[0]
+  head = TUI.Style(fg: TUI.Color.Yellow, attrs: [TUI.Attr.Bold])
+  rows = Transcript.wrap("approval #{request.approval_id} · #{request.tool}: #{request.preview}", width).map do |text|
+    Row(text: text, style: head)
+  end
+
+  detail = request.detail.split("\n").select { |line| line != "" }
+  for line in detail.take(MAX_DETAIL_ROWS)
+    rows = rows.push(Row(text: Width.cut("  #{line}", width)[0], style: detail_style(line)))
+  end
+
+  if detail.size > MAX_DETAIL_ROWS
+    rows = rows.push(Row(text: "  … #{detail.size - MAX_DETAIL_ROWS} more lines", style: TUI.Style()))
+  end
+
+  more = ""
+  if pending.size > 1
+    more = " · #{pending.size - 1} more waiting"
+  end
+
+  rows.push(Row(text: ANSWERS + more, style: head))
+end
+
+def detail_style(line: String) -> TUI.Style
+  return TUI.Style(fg: TUI.Color.Red) if line.start_with?("-")
+  return TUI.Style(fg: TUI.Color.Green) if line.start_with?("+")
+
+  TUI.Style()
 end
 
 def status(app: App, width: Int) -> String
@@ -305,6 +401,8 @@ def style(kind: Transcript.Kind, look: Markdown.Look) -> TUI.Style
   case kind
     Transcript.Kind.User -> TUI.Style(fg: TUI.Color.Cyan, attrs: [TUI.Attr.Bold])
     Transcript.Kind.Notice -> TUI.Style(fg: TUI.Color.Yellow)
+    Transcript.Kind.Tool -> TUI.Style(fg: TUI.Color.Blue)
+    Transcript.Kind.ToolFailed -> TUI.Style(fg: TUI.Color.Red)
     Transcript.Kind.Thinking -> TUI.Style(attrs: [TUI.Attr.Dim])
     Transcript.Kind.Assistant ->
       case look

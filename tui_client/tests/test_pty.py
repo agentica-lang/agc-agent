@@ -458,10 +458,30 @@ class PtyTest(unittest.TestCase):
         self.assertNotIn("**", text_of(rows))
         self.assertNotIn("```", text_of(rows))
 
-    def test_an_approval_request_is_noted(self) -> None:
-        term = self.start([Reply("write_file.sse")])
+    def test_a_tool_is_approved_and_its_notices_shown(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")
-        term.wait_for("waiting (write_file): answer it with finn")
+        rows = term.wait_for("y allow · n deny · a allow for the session")
+        self.assertIn("· write_file:", text_of(rows))
+        self.assertIn("  hi", rows)
+        term.type("y")
+        term.wait_for(ANSWER)
+        rows = term.wait_for("ready")
+        shown = text_of(rows)
+        self.assertIn(": allow (client)", shown)
+        self.assertIn("✓ ", shown)
+        self.assertNotIn("⚙ ", shown)
+        self.assertNotIn("y allow", shown)
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
+
+    def test_a_denied_tool_writes_nothing(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        term.wait_for("y allow")
+        term.type("n")
+        rows = term.wait_for("ready")
+        self.assertIn(": deny (client)", text_of(rows))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
 
     def test_term_and_hup_restore_the_terminal(self) -> None:
         for sig, code in [(signal.SIGTERM, 143), (signal.SIGHUP, 129)]:

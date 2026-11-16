@@ -61,7 +61,7 @@ smoke: install
 	  "$$finn" --help | grep -q '^usage: finn' && "$$finn" serve --help | grep -q '^usage: finn serve' && \
 	  "$$finn" chat --help | grep -q '^Usage: finn' && ! "$$finn" serve --bogus 2>/dev/null && \
 	  '$(CURDIR)/.tools/smoke/finn' --version | grep -qx 'Finn Agent cli [0-9.]*'
-	out=$$($(AGENTICA) tui_client/main.agc --version) && echo "$$out" | grep -qx 'Finn Agent tui [0-9.]*'
+	out=$$('$(CURDIR)/bin/finn' tui --version) && echo "$$out" | grep -qx 'Finn Agent tui [0-9.]*'
 
 # The TUI client under a pseudo-terminal, against the server against a fake model (Python, standard library only).
 pty: install

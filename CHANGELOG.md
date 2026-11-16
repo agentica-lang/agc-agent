@@ -37,6 +37,7 @@
 - The `tui_client` package: a full-screen client on agentica-tui with a scrolling transcript of the streamed answer, a multiline prompt (Enter sends, Ctrl+J adds a line) and Esc to stop the turn.
 - The `client` package: what the cli and the TUI share (finding or starting the server, the HTTP calls, the event reader).
 - `tui_client`: the answer is drawn as markdown (headings, lists, code blocks, bold), and Ctrl+T (or `--thinking` at the start) shows or hides the model's thinking.
+- `finn tui` starts the TUI. It shows each tool call as it runs and ends, and asks each approval in a panel with the call's detail: y allows, n denies, a allows for the session.
 - Code mode (`FINN_CODE_MODE=1`): `run_script` runs a Python script in pydantic's Monty sandbox that calls the tools as functions, each call approved as a direct one; the pinned worker is fetched on first use with its sha256 checked (`FINN_MONTY` names another). The `monty` package drives it.
 - The `anthropic` provider (the Anthropic Messages API: adaptive thinking sent back with its signature, cache breakpoints on the system prompt or tools and the conversation, the models list), with an API key or an OAuth token; the llama smoke tests run it too, and `make smoke-anthropic` makes a few real calls.
 - `finn -p TASK` runs one task (`-p -` reads it from stdin): the answer on stdout, the rest on stderr; it exits 0 when the turn ends normally, 130 when cancelled, 1 otherwise, and denies approvals; `--yolo` allows the tool calls of the run, in one-shot and in chat.
