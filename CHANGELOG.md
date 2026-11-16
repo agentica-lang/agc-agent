@@ -21,3 +21,4 @@
 - `core serve` lists the sessions from the first line of their files at start and loads a session on its first request; one that cannot be loaded now answers 503 `session.unavailable`.
 - `DELETE /v1/sessions/ID` deletes a session and its file (`session.busy` while a turn runs); `agc --delete ID` does it from the cli.
 - Compaction: past 80 % of the model's window (`AGC_AGENT_CONTEXT_WINDOW`, else llama-server's `/props`, else `GET /models`), the history between the first task and the running turn becomes a summary by `AGC_AGENT_COMPACT_MODEL` (else the session's model), saved in the session file; the system prompt and tools stay the same. The running turn is never compacted, the summary's tokens are not in `usage`, and a failed summary or an unknown window is an `error` event.
+- `cli`: after a resync, the client prints the part of the history it missed (the end of a turn a restart cut, a later turn), and says when the turn ended while the stream was away.

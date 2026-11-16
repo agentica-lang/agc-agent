@@ -6,5 +6,30 @@
   "turn_id": null,
   "turn_from_event_id": null,
   "pending_approvals": [],
-  "history": []
+  "history": [
+    {
+      "role": "user",
+      "text": "hello"
+    },
+    {
+      "role": "assistant",
+      "text": "hi"
+    },
+    {
+      "role": "user",
+      "text": "go on"
+    },
+    {
+      "role": "assistant",
+      "text": "on it"
+    },
+    {
+      "role": "user",
+      "text": "and then"
+    },
+    {
+      "role": "assistant",
+      "text": "done"
+    }
+  ]
 }

@@ -1,0 +1,15 @@
+id: 8
+event: turn_started
+data: {"turn_id":"t2"}
+
+id: 9
+event: text_delta
+data: {"text":"on it\n"}
+
+id: 10
+event: turn_finished
+data: {"turn_id":"t2","stop_reason":"end_turn"}
+
+event: resync
+data: {}
+
