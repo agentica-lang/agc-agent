@@ -23,14 +23,19 @@ POLL_MS = 100
 NOT_FOUND = 127
 GROUP_AND_OTHERS = 63
 
-## The folder of `server.json`: `--state-dir`, else `AGC_AGENT_STATE_DIR`, else the user's state folder.
+## The folder of `server.json`: `--state-dir`, else `AGC_AGENT_STATE_DIR`, else the user's state folder, with its
+## symlinks resolved. A symlink that is not yours is refused.
 def state_dir(options: Args.Options) -> Result[String]
   dir = case options.state_dir
     some(text) -> text
     none -> try environment_dir()
   end
 
-  Path.resolve(dir)
+  path = try Path.resolve(dir)
+  return ok(path) if not File.lstat(path).ok?
+
+  try check_link(path)
+  Path.real(path)
 end
 
 ## The running server of the folder, started first when none runs.
@@ -141,6 +146,7 @@ def check_owned(path: String, mode: String) -> Result[Void]
   me = owner_id()
   return ok() if me.none?
 
+  try check_link(path)
   info = try File.stat(path)
   if info.user_id != me.unwrap!
     return error("#{path} is not owned by you: do not use this state folder", kind: KIND_STATE)
@@ -148,6 +154,18 @@ def check_owned(path: String, mode: String) -> Result[Void]
 
   if info.mode.bit_and(GROUP_AND_OTHERS) != 0
     return error("#{path} is open to other users: run `chmod #{mode} #{path}`", kind: KIND_STATE)
+  end
+
+  ok()
+end
+
+def check_link(path: String) -> Result[Void]
+  me = owner_id()
+  return ok() if me.none?
+
+  info = try File.lstat(path)
+  if info.kind == "link" and info.user_id != me.unwrap!
+    return error("#{path} is a symlink you do not own: do not use this state folder", kind: KIND_STATE)
   end
 
   ok()

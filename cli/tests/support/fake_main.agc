@@ -26,6 +26,7 @@ def serve(dir: String) -> Result[Void]
 
   file = try Path.join([dir, "server.json"])
   try File.append_text(try Path.join([dir, "starts.log"]), "started\n")
+  _ = Path.remove(file)
   try Fake.write_private(file, Fake.server_file(fake, Fake.TOKEN))
   waited = 0
   while waited < DEADLINE_MS and File.stat(file).ok?
