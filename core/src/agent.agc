@@ -256,6 +256,10 @@ def checked_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
     return Tools.Output(text: problem, is_error: true)
   end
 
+  if call.name == Tools.PATCH and (turn.provider.name != RESPONSES or call.kind != LLM.ToolKind.Custom)
+    return Tools.Output(text: "unknown tool: #{call.name}", is_error: true)
+  end
+
   if call.name == CodeMode.NAME
     for settings in option_list(turn.code_mode)
       names = Tools.all().map { |tool| tool.name }

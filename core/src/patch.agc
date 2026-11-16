@@ -14,6 +14,10 @@ DELETE = "*** Delete File: "
 UPDATE = "*** Update File: "
 MOVE = "*** Move to: "
 END_OF_FILE = "*** End of File"
+MAX_PATCH_CHARS = 1_048_576
+MAX_CHUNK_LINES = 1000
+## The most line comparisons one chunk's search may take, so a patch cannot hold the session for long.
+MAX_SEEK = 20_000_000
 
 DESCRIPTION = <<~TEXT
   Add, delete, update or move files with a patch:
@@ -109,11 +113,13 @@ def target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   ok((try paths(ctx, try parse(try args(input)))).join(", "))
 end
 
-## Each path decides as an `edit_file` (or an `apply_patch`) call on it: a deny of either denies the patch, a path that
-## neither allows asks, and the patch runs without asking only when every path is allowed.
+## Each path decides as the call that does the same would: an updated file as `edit_file`, an added file or the
+## target of a move as `write_file`, each also as `apply_patch`. A deny rule of `edit_file`, `write_file` or
+## `apply_patch` on a path (or of `read_file`, as for `edit_file`) denies the patch. A deleted file, or the old path of
+## a move, asks unless an `apply_patch` rule allows it. The patch runs without asking only when every path is allowed.
 def verdict(ctx: Spec.Context, input: JSON.Value) -> Approval.Verdict
   case touched(ctx, input)
-    ok(found) -> combined(found.map { |path| path_verdict(ctx.rules, path) })
+    ok(found) -> combined(found.map { |t| path_verdict(ctx.rules, t) })
     error(_) -> Approval.Verdict.Deny
   end
 end
@@ -125,6 +131,8 @@ def combined(verdicts: List[Approval.Verdict]) -> Approval.Verdict
   Approval.Verdict.Allow
 end
 
+## Applies the patch whole: every hunk is checked first, and when a write fails the files written before it get their
+## old content back.
 def apply(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   hunks = try parse(try args(input))
   _ = try paths(ctx, hunks)
@@ -133,8 +141,22 @@ def apply(ctx: Spec.Context, input: JSON.Value) -> Result[String]
     changes = changes.push(try planned(ctx, hunk))
   end
 
+  before: List[Saved] = []
   for change in changes
-    try done(change)
+    for path in option_list(change.write) + option_list(change.remove)
+      before = before.push(Saved(path: path, content: present(path)))
+    end
+  end
+
+  for change in changes
+    case done(change)
+      ok(_) -> nil
+      error(e) ->
+        restored = restore(before)
+        return error("#{e.message}; no file was changed") if restored.ok?
+
+        return error("#{e.message}; restoring the files failed too: #{restored.message}")
+    end
   end
 
   ok("Done. The files changed:\n#{changes.map { |change| change.summary }.join("\n")}")
@@ -142,6 +164,8 @@ end
 
 ## The hunks of a patch, or an error that says which line is wrong.
 def parse(text: String) -> Result[List[Hunk]]
+  return error("the patch is longer than #{MAX_PATCH_CHARS} characters") if text.length > MAX_PATCH_CHARS
+
   lines = text.strip.split("\n").map { |line| trim_cr(line) }
   return error("the patch must start with #{BEGIN}") if lines.empty? or lines.first.strip != BEGIN
   return error("the patch must end with #{END}") if lines.size < 2 or lines.last.strip != END
@@ -158,6 +182,8 @@ def parse(text: String) -> Result[List[Hunk]]
         body = body.push(lines[i].slice(1, lines[i].length - 1))
         i = i + 1
       end
+
+      return error("line #{i} of the patch adds a file with no + line") if body.empty?
 
       hunks = hunks.push(Hunk(kind: Kind.Add, path: after(line, ADD), lines: body))
     elsif line.start_with?(DELETE)
@@ -191,13 +217,24 @@ def updated(lines: List[String], chunks: List[Chunk], path: String) -> Result[Li
       at = found.unwrap! + 1
     end
 
+    return error("#{path}: a change has more than #{MAX_CHUNK_LINES} old lines") if chunk.old.size > MAX_CHUNK_LINES
+
     if chunk.old.empty?
-      edits = edits.push(Edit(start: lines.size, size: 0, new: chunk.new))
+      start = lines.size
+      if chunk.context.some?
+        start = at
+      end
+
+      edits = edits.push(Edit(start: start, size: 0, new: chunk.new))
       next
     end
 
     old = chunk.old
     new = chunk.new
+    if lines.size * old.size > MAX_SEEK
+      return error("#{path}: the file is too long to place a change of #{old.size} lines")
+    end
+
     found = seek(lines, old, at, chunk.at_end)
     if found.none? and old.last == ""
       old = old.take(old.size - 1)
@@ -214,8 +251,10 @@ def updated(lines: List[String], chunks: List[Chunk], path: String) -> Result[Li
     at = found.unwrap! + old.size
   end
 
+  # The edits by place, in order for the same place, applied from the end so each start still holds.
+  ordered = (0...edits.size).to_a.sort_by { |i| edits[i].start * (edits.size + 1) + i }.map { |i| edits[i] }
   out = lines
-  for edit in edits.reverse
+  for edit in ordered.reverse
     out = out.take(edit.start) + edit.new + out.drop(edit.start + edit.size)
   end
 
@@ -233,6 +272,23 @@ struct Edit
   start: Int
   size: Int
   new: List[String]
+end
+
+struct Saved
+  path: String
+  ## None when the file was not there.
+  content: Optional[String]
+end
+
+enum Touch
+  Write
+  Edit
+  Remove
+end
+
+struct Touched
+  path: String
+  touch: Touch
 end
 
 struct Change
@@ -303,26 +359,53 @@ def after(line: String, prefix: String) -> String = line.slice(prefix.length, li
 
 # The paths the hunks touch, each once, relative to the session folder; an error for a path out of it.
 def paths(ctx: Spec.Context, hunks: List[Hunk]) -> Result[List[String]]
-  out: List[String] = []
-  for hunk in hunks
-    named = [hunk.path] + option_list(hunk.move_to)
-    for path in named
-      relative = Sandbox.relative(ctx.root, try Sandbox.resolve(ctx.root, path))
-      return error("the patch touches #{relative} twice") if out.include?(relative)
+  ok((try touches(ctx, hunks)).map { |t| t.path })
+end
 
-      out = out.push(relative)
+def touches(ctx: Spec.Context, hunks: List[Hunk]) -> Result[List[Touched]]
+  out: List[Touched] = []
+  for hunk in hunks
+    for t in touches_of(hunk)
+      relative = Sandbox.relative(ctx.root, try Sandbox.resolve(ctx.root, t.path))
+      return error("the patch touches #{relative} twice") if (out.any? { |o| o.path == relative })
+
+      out = out.push(t.with(path: relative))
     end
   end
 
   ok(out)
 end
 
-def touched(ctx: Spec.Context, input: JSON.Value) -> Result[List[String]] = paths(ctx, try parse(try args(input)))
+def touches_of(hunk: Hunk) -> List[Touched]
+  case hunk.kind
+    Kind.Add -> [Touched(path: hunk.path, touch: Touch.Write)]
+    Kind.Delete -> [Touched(path: hunk.path, touch: Touch.Remove)]
+    Kind.Update -> moved(hunk)
+  end
+end
 
-def path_verdict(rules: Approval.Rules, path: String) -> Approval.Verdict
-  verdicts = [Approval.decide(rules, "edit_file", path, true), Approval.decide(rules, NAME, path, true)]
-  return Approval.Verdict.Deny if verdicts.include?(Approval.Verdict.Deny)
-  return Approval.Verdict.Allow if verdicts.include?(Approval.Verdict.Allow)
+def moved(hunk: Hunk) -> List[Touched]
+  for to in option_list(hunk.move_to)
+    return [Touched(path: hunk.path, touch: Touch.Remove), Touched(path: to, touch: Touch.Write)]
+  end
+
+  [Touched(path: hunk.path, touch: Touch.Edit)]
+end
+
+def touched(ctx: Spec.Context, input: JSON.Value) -> Result[List[Touched]] = touches(ctx, try parse(try args(input)))
+
+def path_verdict(rules: Approval.Rules, t: Touched) -> Approval.Verdict
+  decide = ->(tool: String) { Approval.decide(rules, tool, t.path, true) }
+  denied = ["edit_file", "write_file", NAME].any? { |tool| decide.call(tool) == Approval.Verdict.Deny }
+  return Approval.Verdict.Deny if denied
+
+  allowing = case t.touch
+    Touch.Edit -> ["edit_file", NAME]
+    Touch.Write -> ["write_file", NAME]
+    Touch.Remove -> [NAME]
+  end
+
+  return Approval.Verdict.Allow if (allowing.any? { |tool| decide.call(tool) == Approval.Verdict.Allow })
 
   Approval.Verdict.Ask
 end
@@ -335,7 +418,7 @@ def planned(ctx: Spec.Context, hunk: Hunk) -> Result[Change]
     Kind.Add ->
       return error("#{relative} exists: update it instead") if File.lstat(path).ok?
 
-      ok(Change(write: some(path), content: text_of(hunk.lines), remove: none, summary: "A #{relative}"))
+      ok(Change(write: some(path), content: text_of(hunk.lines, "\n"), remove: none, summary: "A #{relative}"))
     Kind.Delete ->
       _ = try read(path, relative)
       ok(Change(write: none, content: "", remove: some(path), summary: "D #{relative}"))
@@ -346,7 +429,7 @@ def planned(ctx: Spec.Context, hunk: Hunk) -> Result[Change]
         lines = lines.take(lines.size - 1)
       end
 
-      content = text_of(try updated(lines, hunk.chunks, relative))
+      content = text_of(try updated(lines, hunk.chunks, relative), line_end(text))
       case hunk.move_to
         some(to) ->
           moved = try Sandbox.resolve(ctx.root, to)
@@ -379,10 +462,39 @@ def read(path: String, relative: String) -> Result[String]
   File.read_text(path)
 end
 
-def text_of(lines: List[String]) -> String
+def text_of(lines: List[String], ending: String) -> String
   return "" if lines.empty?
 
-  "#{lines.join("\n")}\n"
+  "#{lines.join(ending)}#{ending}"
+end
+
+# A file whose first line ends with CRLF keeps CRLF.
+def line_end(text: String) -> String
+  first = text.index_of("\n")
+  return "\r\n" if first.some? and first.unwrap! > 0 and text.slice(first.unwrap! - 1, 1) == "\r"
+
+  "\n"
+end
+
+def present(path: String) -> Optional[String]
+  case File.read_text(path)
+    ok(text) -> some(text)
+    error(_) -> none
+  end
+end
+
+def restore(saved: List[Saved]) -> Result[Void]
+  for each in saved.reverse
+    case each.content
+      some(text) -> try File.write_text(each.path, text)
+      none ->
+        if File.lstat(each.path).ok?
+          try Path.remove(each.path)
+        end
+    end
+  end
+
+  ok()
 end
 
 # Where `wanted` starts in `lines` from `from`: an exact match first, then one that ignores the spaces at the end of

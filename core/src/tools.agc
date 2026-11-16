@@ -27,6 +27,8 @@ export Spec.Tool
 export Approval.Verdict
 export Approval.Rules
 
+PATCH = Patch.NAME
+
 ## The context of a session in `cwd`: the real path of the folder, where bash reads its few environment variables, and
 ## the approval rules. Change the rules with `ctx.with(rules: ...)`.
 def context(cwd: String, env: Fn[String, Result[String]], rules: Approval.Rules) -> Result[Spec.Context]
