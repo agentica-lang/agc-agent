@@ -123,14 +123,6 @@ end
 
 def summary_text(summary: String) -> String = "Summary of the session so far:\n\n#{summary}"
 
-## Where the running turn begins after `apply`: its user message moves with the messages after the span, or it is the
-## user message that `apply` put after the summary.
-def turn_start(first_message: Int, compaction: Compaction) -> Int
-  return compaction.from + 1 if compaction.to > first_message
-
-  first_message - (compaction.to - compaction.from - 1)
-end
-
 ## The messages as a JSON list of their blocks, long texts cut.
 def transcript(messages: List[LLM.Message]) -> String
   items: List[JSON.Value] = []

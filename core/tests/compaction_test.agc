@@ -133,8 +133,10 @@ def test_the_older_rounds_of_the_running_turn_are_compacted() -> Result[Void]
     try Test.assert(JSON.get(messages(after)[4], "tool_calls").ok?, "the last tool call is not kept")
     shown = (try H.session(h, id)).history
     try Test.eq(shown.map { |m| Protocol.role_name(m.role) }, ["user", "assistant"])
-    try Test.assert(shown[1].text.start_with?("Hello!"), "the answer of the turn is not shown")
+    # The text of the folded round stays in the answer, as without a compaction.
+    try Test.assert(shown[1].text.start_with?("I will write it.\n\nHello!"), "the answer is cut: #{shown[1].text}")
     H.restarted(h, setup, "") do |r|
+      try Test.eq((try H.session(r, id)).history, shown)
       _ = try H.send(r, id, "Again.")
       _ = try H.idle(r, id)
       again = try body(r)
@@ -155,7 +157,6 @@ def test_a_span_into_a_later_turn_keeps_its_task_after_the_summary() -> Result[V
     [history[0], said(Compaction.summary_text("S")), history[2], history[5], history[6]].map { |m| m.content },
   )
 
-  try Test.eq(Compaction.turn_start(2, span), 2)
   try Test.eq(Compaction.span(history.take(5)).map { |c| c.to }, some(2))
   Test.eq(Compaction.span([user("only"), said("call"), result("1")]), none)
 end

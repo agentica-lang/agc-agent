@@ -71,7 +71,8 @@ struct Running
   id: String
   task: Task[Void]
   from_event_id: Int
-  first_message: Int
+  ## The text of the turn's answers so far, kept as it is committed, so a compaction of the history leaves it whole.
+  texts: List[String] = []
 end
 
 struct State
@@ -440,7 +441,7 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
-  running = Running(id: turn_id, task: task, from_event_id: state.counter, first_message: state.history.size)
+  running = Running(id: turn_id, task: task, from_event_id: state.counter)
   started = state.with(
     turn: some(running),
     turns: state.turns + 1,
@@ -579,15 +580,14 @@ end
 
 def finish(state: State, reason: Protocol.StopReason) -> State
   case state.turn
-    some(turn) -> ended(state, turn.id, turn.first_message, reason).with(turn: none)
+    some(turn) -> ended(state, turn.id, turn.texts, reason).with(turn: none)
     none -> state
   end
 end
 
-# Shows the answer of the turn whose user message is at `first_message` of the history, then ends the turn.
-def ended(state: State, turn_id: String, first_message: Int, reason: Protocol.StopReason) -> State
-  texts = state.history.drop(first_message + 1).select { |m| m.role == LLM.Role.Assistant }
-  text = texts.map { |m| Agent.assistant_text(m) }.select { |t| not t.empty? }.join("\n\n")
+# Shows the answer of the turn, its `texts` together, then ends the turn.
+def ended(state: State, turn_id: String, texts: List[String], reason: Protocol.StopReason) -> State
+  text = texts.join("\n\n")
   shown = state
   if not text.empty?
     case save(state, -> { Store.append_answer(state.setup.file, text) })
@@ -610,9 +610,7 @@ end
 
 def compact(state: State, compaction: Compaction.Compaction) -> State
   case save(state, -> { Store.append_compaction(state.setup.file, compaction) })
-    ok(_) ->
-      turn = state.turn.map { |t| t.with(first_message: Compaction.turn_start(t.first_message, compaction)) }
-      state.with(history: Compaction.apply(state.history, compaction), turn: turn, broken: none)
+    ok(_) -> state.with(history: Compaction.apply(state.history, compaction), broken: none)
     error(e) -> broke(state, e)
   end
 end
@@ -623,7 +621,9 @@ def commit(state: State, history: List[LLM.Message]) -> State
   return state if added.empty?
 
   case save(state, -> { Store.append_messages(state.setup.file, added) })
-    ok(_) -> state.with(history: history, broken: none)
+    ok(_) ->
+      turn = state.turn.map { |t| t.with(texts: t.texts + answer_texts(added)) }
+      state.with(history: history, turn: turn, broken: none)
     error(e) -> broke(state, e)
   end
 end
@@ -746,7 +746,13 @@ def end_cut_turn(state: State, cut: Cut, messages: Int) -> State
     out = emit(out.with(resolved: out.resolved.push(approval_id)), Protocol.Event.ApprovalResolved(resolved))
   end
 
-  ended(out, cut.turn_id, turn_message(out.history.take(messages)), Protocol.StopReason.Cancelled)
+  history = out.history.take(messages)
+  ended(out, cut.turn_id, answer_texts(history.drop(turn_message(history) + 1)), Protocol.StopReason.Cancelled)
+end
+
+def answer_texts(messages: List[LLM.Message]) -> List[String]
+  said = messages.select { |m| m.role == LLM.Role.Assistant }.map { |m| Agent.assistant_text(m) }
+  said.select { |t| not t.empty? }
 end
 
 # Where the last turn began: its user message is the last one with text (tool results have none).
