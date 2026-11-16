@@ -1,37 +1,40 @@
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Approvals from "../src/approvals"
+import Layout from "../src/panel"
 
 AFTER = 1000 + Approvals.GUARD_MS
 
 def test_only_ctrl_keys_or_a_focused_panel_answer() -> Result[Void]
   panel = asked(["a1"])
   for typed in "pay".split("")
-    try Test.eq(Approvals.decision(panel, char(typed), AFTER), none)
+    try Test.eq(Approvals.decision(panel, char(typed), AFTER, true), none)
     try Test.eq(Approvals.captures?(panel, char(typed)), false)
   end
 
-  try Test.eq(Approvals.decision(panel, ctrl("a"), AFTER), some(Protocol.Decision.AllowSession))
-  try Test.eq(Approvals.decision(panel, ctrl("y"), AFTER), some(Protocol.Decision.Allow))
-  try Test.eq(Approvals.decision(panel, ctrl("n"), AFTER), some(Protocol.Decision.Deny))
+  try Test.eq(Approvals.decision(panel, ctrl("a"), AFTER, true), none)
+  try Test.eq(Approvals.captures?(panel, ctrl("a")), false)
+  try Test.eq(Approvals.decision(panel, ctrl("y"), AFTER, false), none)
+  try Test.eq(Approvals.decision(panel, ctrl("y"), AFTER, true), some(Protocol.Decision.Allow))
+  try Test.eq(Approvals.decision(panel, ctrl("n"), AFTER, true), some(Protocol.Decision.Deny))
   focused = Approvals.toggled(panel)
-  try Test.eq(Approvals.decision(focused, char("Y"), AFTER), some(Protocol.Decision.Allow))
-  try Test.eq(Approvals.decision(focused, char("N"), AFTER), some(Protocol.Decision.Deny))
-  try Test.eq(Approvals.decision(focused, char("a"), AFTER), some(Protocol.Decision.AllowSession))
-  try Test.eq(Approvals.decision(focused, char("A"), AFTER), some(Protocol.Decision.AllowSession))
-  try Test.eq(Approvals.decision(focused, char("p"), AFTER), none)
+  try Test.eq(Approvals.decision(focused, char("Y"), AFTER, true), some(Protocol.Decision.Allow))
+  try Test.eq(Approvals.decision(focused, char("N"), AFTER, true), some(Protocol.Decision.Deny))
+  try Test.eq(Approvals.decision(focused, char("a"), AFTER, true), some(Protocol.Decision.AllowSession))
+  try Test.eq(Approvals.decision(focused, char("A"), AFTER, true), some(Protocol.Decision.AllowSession))
+  try Test.eq(Approvals.decision(focused, char("p"), AFTER, true), none)
   try Test.eq(Approvals.captures?(focused, char("p")), true)
-  Test.eq(Approvals.decision(Approvals.sending(focused), char("y"), AFTER), none)
+  Test.eq(Approvals.decision(Approvals.sending(focused), char("y"), AFTER, true), none)
 end
 
 # A key typed just as the asked approval changes does not answer the new one, and the focus does not carry over.
 def test_no_answer_right_after_the_panel_changes() -> Result[Void]
   focused = Approvals.toggled(asked(["a1", "a2"]))
-  try Test.eq(Approvals.decision(focused, ctrl("y"), 1000 + Approvals.GUARD_MS - 1), none)
+  try Test.eq(Approvals.decision(focused, ctrl("y"), 1000 + Approvals.GUARD_MS - 1, true), none)
   next_one = Approvals.resolved(focused, "a1", 5000)
   try Test.eq([next_one.pending.size.to_s, next_one.focused.to_s], ["1", "false"])
-  try Test.eq(Approvals.decision(next_one, ctrl("y"), 5000 + Approvals.GUARD_MS - 1), none)
-  Test.eq(Approvals.decision(next_one, ctrl("y"), 5000 + Approvals.GUARD_MS), some(Protocol.Decision.Allow))
+  try Test.eq(Approvals.decision(next_one, ctrl("y"), 5000 + Approvals.GUARD_MS - 1, true), none)
+  Test.eq(Approvals.decision(next_one, ctrl("y"), 5000 + Approvals.GUARD_MS, true), some(Protocol.Decision.Allow))
 end
 
 def test_a_request_seen_twice_is_asked_once_and_a_resync_rebuilds_the_list() -> Result[Void]
@@ -68,7 +71,7 @@ def test_the_panel_caps_its_detail_and_fits_the_room() -> Result[Void]
   try Test.eq(rows[Approvals.MAX_DETAIL_ROWS], "  … 16 more lines")
   try Test.assert(rows[rows.size - 1].end_with?(" · 2 more waiting"), rows[rows.size - 1])
   try Test.assert(
-    rows[rows.size - 1].include?("^A allow write_file on this exact target for the session"),
+    rows[rows.size - 1].include?("a: allow write_file on this exact target for the session"),
     rows[rows.size - 1],
   )
 
@@ -107,4 +110,4 @@ def char(c: String) -> TUI.Event = TUI.Event.Char(c, TUI.Mods())
 
 def ctrl(c: String) -> TUI.Event = TUI.Event.Key(TUI.Key.Ctrl(c), TUI.Mods(ctrl: true))
 
-def texts(rows: List[Approvals.Row]) -> List[String] = rows.map { |row| row.text }
+def texts(rows: List[Layout.Row]) -> List[String] = rows.map { |row| row.text }

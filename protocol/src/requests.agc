@@ -6,6 +6,8 @@ import Wire from "wire"
 
 ## The thinking levels a session takes (`effort`), lowest first.
 EFFORTS = ["low", "medium", "high"]
+## The effort of `UpdateSession` that goes back to the model's own default.
+EFFORT_DEFAULT = "default"
 
 ## How a client answers an approval request.
 enum Decision
@@ -86,7 +88,8 @@ def decode_update_session(text: String) -> Result[UpdateSession]
   body = try Wire.decode_strict(text, UpdateSession.codec)
   try Wire.non_empty_if_present("model", body.model)
   for effort in Wire.option_list(body.effort)
-    return error("unknown effort: #{effort}", kind: Kinds.KIND_UNKNOWN) if not EFFORTS.include?(effort)
+    known = EFFORTS.include?(effort) or effort == EFFORT_DEFAULT
+    return error("unknown effort: #{effort}", kind: Kinds.KIND_UNKNOWN) if not known
   end
 
   ok(body)

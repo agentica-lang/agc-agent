@@ -8,7 +8,7 @@ HELP = [
   "/new                       a new session in this folder",
   "/resume                    list the sessions; /resume N or /resume ID switches to one",
   "/model [NAME]              the session's model, or change it from the next turn on",
-  "/thinking [low|medium|high]  the thinking level, or change it",
+  "/thinking [low|medium|high|default]  the thinking level, or change it",
   "/compact                   fold the history into a summary now",
   "/stop                      stop the running turn",
   "/help                      this list",
@@ -44,6 +44,11 @@ def parse_command(line: String) -> Optional[Result[Command]]
 
   argument = words.drop(1).join(" ")
   some(command(name, argument))
+end
+
+## What a client says when the first turn after `/model NAME` fails: the server takes any name.
+def model_warning(model: String) -> String
+  "the call failed after /model #{model}: check the name (/model NAME changes it)"
 end
 
 ## The sessions of the server, one numbered line each, for `/resume N`.
@@ -97,8 +102,9 @@ end
 
 def thinking(argument: String) -> Result[Command]
   return ok(Command.Thinking(none)) if argument == ""
-  if not Protocol.EFFORTS.include?(argument)
-    return error("the thinking level is one of #{Protocol.EFFORTS.join(", ")}", kind: KIND_COMMAND)
+  levels = Protocol.EFFORTS + [Protocol.EFFORT_DEFAULT]
+  if not levels.include?(argument)
+    return error("the thinking level is one of #{levels.join(", ")}", kind: KIND_COMMAND)
   end
 
   ok(Command.Thinking(some(argument)))

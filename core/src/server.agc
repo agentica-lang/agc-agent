@@ -122,6 +122,8 @@ end
 
 private
 
+TITLE_CHARS = 200
+
 struct Entry
   summary: Protocol.SessionSummary
   header: Store.Header
@@ -166,7 +168,7 @@ enum Msg
   Create(Protocol.NewSession, Channel[Result[String]])
   Find(String, Channel[Result[Found]])
   Delete(String, Channel[Result[Void]])
-  List(Channel[Protocol.SessionList])
+  List(Channel[List[Entry]])
   Load(String, Result[Loaded])
 end
 
@@ -307,9 +309,31 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
       end
 
     Msg.List(reply) ->
-      Actor.reply(reply, Protocol.SessionList(sessions: registry.sessions.map { |entry| entry.summary }))
+      Actor.reply(reply, registry.sessions)
       Actor.continue(registry)
   end
+end
+
+# Newest first, each with its model now (a `PATCH` changes it after the header), when it last changed and its first
+# message. A file that cannot be read keeps what its header said.
+def listed(entries: List[Entry]) -> Protocol.SessionList
+  sessions = entries.map do |entry|
+    summary = entry.summary
+    file = entry.file
+    found = Store.listing(file).unwrap_or(Store.Listing())
+    updated = case File.stat(file)
+      ok(info) -> info.modified_seconds
+      error(_) -> 0
+    end
+
+    summary.with(
+      model: found.model.unwrap_or(summary.model),
+      updated_s: updated,
+      title: found.title.slice(0, [found.title.length, TITLE_CHARS].min.unwrap!),
+    )
+  end
+
+  Protocol.SessionList(sessions: sessions.sort_by { |s| -s.updated_s })
 end
 
 def sessions_dir(options: Options) -> String = "#{options.data_dir}/#{SESSIONS_DIR}"
@@ -600,8 +624,8 @@ def answer(registry: Address[Msg], method: String, parts: List[String], bytes: B
       id = try try created
       response(201, Protocol.encode_session_created(Protocol.SessionCreated(id: id)))
     "GET 0" ->
-      list: Result[Protocol.SessionList] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
-      response(200, Protocol.encode_session_list(try list))
+      entries: Result[List[Entry]] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
+      response(200, Protocol.encode_session_list(listed(try entries)))
     "DELETE 1" ->
       deleted: Result[Result[Void]] = Actor.call(registry, CALL_MS) do |reply| Msg.Delete(parts[0], reply) end
       try try deleted

@@ -27,11 +27,15 @@ struct MessageAccepted
 end
 
 ## `api` is the model API of the session, by the name the server gives it.
+## `model` is the one the session uses now, `updated_s` when its file last changed (Unix seconds), and `title` its first
+## user message ("" before one).
 struct SessionSummary
   id: String
   cwd: String
   model: String
   api: String
+  updated_s: Int = 0
+  title: String = ""
 end
 
 ## The answer of `GET /v1/sessions`.

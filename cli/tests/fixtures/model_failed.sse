@@ -1,0 +1,8 @@
+id: 3
+event: error
+data: {"kind":"llm.api","message":"model not found"}
+
+id: 4
+event: turn_finished
+data: {"turn_id":"t1","stop_reason":"error"}
+
