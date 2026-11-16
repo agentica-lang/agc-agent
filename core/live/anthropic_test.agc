@@ -35,7 +35,7 @@ def session(base: String, access: Config.AnthropicAccess) -> Result[Void]
   apis = Config.apis("", "", LLM.Options(), access)
   small = {"max_tokens": JSON.from(256), "output_config": JSON.object({"effort": JSON.from("low")})}
   claude = apis["anthropic"].with(extra: small)
-  options = Server.Options(
+  options = Config.Options(
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
     apis: {"anthropic": claude},

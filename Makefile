@@ -54,6 +54,8 @@ coupling:
 	@$(call none,core/src/ext imports a core folder but tools,$(call core_imports,ext,tools))
 	@$(call none,core/src/agent imports a core folder but tools and approval,$(call core_imports,agent,tools|approval))
 	@$(call none,core/src/session imports http,$(call core_imports,session,agent|tools|ext|approval|config))
+	@$(call none,core/src/config imports a core folder but tools approval and agent,$(call core_imports,config,tools|approval|agent))
+	@$(call none,core/src/http imports a core folder but session and config,$(call core_imports,http,session|config))
 
 fmt-check:
 	for pkg in $(PACKAGES); do (cd $$pkg && $(AGENTICA) fmt --check .) || exit 1; done

@@ -25,7 +25,7 @@ struct Harness
   data_dir: String
   url: String
   token: String
-  apis: Map[String, Server.ModelApi]
+  apis: Map[String, Config.ModelApi]
 end
 
 struct Answer
@@ -118,7 +118,7 @@ def with_fake(setup: Setup, base: String, body: Fn[Harness, Result[Void]]) -> Re
 end
 
 # With `fresh_token`, Anthropic gets that token after a 401.
-def apis(setup: Setup, fake: Fake.Fake) -> Map[String, Server.ModelApi]
+def apis(setup: Setup, fake: Fake.Fake) -> Map[String, Config.ModelApi]
   options = LLM.Options(timeout_ms: 5000, retry_base_ms: 1)
   all = Config.apis(fake.url, "test-key", options)
   return all if setup.fresh_token.empty?
@@ -139,7 +139,7 @@ end
 def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   work = "#{base}/work"
   try Dir.mkdir(work)
-  options = Server.Options(
+  options = Config.Options(
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
     apis: apis(setup, fake),
