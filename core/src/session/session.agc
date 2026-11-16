@@ -29,6 +29,7 @@ MAX_WAITING = 64
 ## The registry, which owns the sessions.
 struct Sessions
   registry: Actor.Ref[Registry, Msg]
+  dir: String
 end
 
 ## The folder of the session files.
@@ -41,7 +42,8 @@ def start(options: Config.Options) -> Sessions
     Registry(options: options, sessions: load_sessions(options), address: inbox.address)
   }
 
-  Sessions(registry: Actor.start(Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate))))
+  registry = Actor.start(Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate)))
+  Sessions(registry: registry, dir: folder(options))
 end
 
 ## Stops the registry and the sessions it runs.
@@ -99,6 +101,32 @@ def stop_turn(sessions: Sessions, id: String) -> Result[Bool] = SessionActor.sto
 
 def answer(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
   SessionActor.answer(try find(sessions, id), approval_id, decision)
+end
+
+def tree(sessions: Sessions, id: String) -> Result[Protocol.SessionTree] = SessionActor.tree(try find(sessions, id))
+
+def branch(sessions: Sessions, id: String, entry: Int) -> Result[Protocol.Branched]
+  SessionActor.branch(try find(sessions, id), entry)
+end
+
+## A new session with the history of session `id` up to `entry` of its tree, all of it when none. It keeps the
+## session's folder, system prompt, model API, model and thinking level.
+def fork(sessions: Sessions, id: String, entry: Optional[Int]) -> Result[Protocol.Branched]
+  address = try find(sessions, id)
+  registry = sessions.registry.address
+  entries: Result[List[Entry]] = Actor.call(registry, CALL_MS) do |reply| Msg.List(reply) end
+  listed = try entries
+  source = try listed.find { |e| e.summary.id == id }
+  header = source.header.with(id: new_id(listed.size), created_ms: Time.now_ms)
+  copied = try SessionActor.copy(address, entry, SessionActor.Copying(header: header, dir: sessions.dir))
+  adopted: Result[Bool] = Actor.call(registry, CALL_MS) do |reply| Msg.Adopt(header, copied.file, reply) end
+  if not adopted.ok?
+    _ = Path.remove(copied.file)
+    _ = Path.remove(Store.settings_file(copied.file))
+  end
+
+  _ = try adopted
+  ok(Protocol.Branched(id: header.id, text: copied.text))
 end
 
 private
@@ -160,6 +188,8 @@ enum Msg
   Load(String, Result[Loaded])
   ## What a list read of session files, kept for the next list.
   Listed(List[Cached])
+  ## A session file written outside the registry (a fork), to list.
+  Adopt(Store.Header, String, Channel[Bool])
 end
 
 ## What a list read of one session file, valid while its size and time of change stay.
@@ -259,6 +289,10 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
     Msg.List(reply) ->
       Actor.reply(reply, registry.sessions)
       Actor.continue(registry)
+    Msg.Adopt(header, file, reply) ->
+      Actor.reply(reply, true)
+      adopted = Entry(summary: summary_of(registry.options, header), header: header, file: file, session: none)
+      Actor.continue(registry.with(sessions: registry.sessions.push(adopted)))
   end
 end
 
@@ -323,7 +357,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   end
 
   header = Store.Header(
-    id: "s#{registry.sessions.size + 1}-#{OpenSSL.Random.hex(4)}",
+    id: new_id(registry.sessions.size),
     cwd: context.root,
     model: request.model.unwrap_or(default_model(options, api)),
     created_ms: Time.now_ms,
@@ -334,6 +368,8 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   file = try Store.create(folder(options), header)
   entry(options, header, opened(context, approvals), file, none)
 end
+
+def new_id(count: Int) -> String = "s#{count + 1}-#{OpenSSL.Random.hex(4)}"
 
 # The entry with its session ended, refused while a turn runs; it loads again on its next use.
 def ended(listed: Entry) -> Result[Entry]
