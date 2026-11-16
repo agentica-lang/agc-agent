@@ -187,7 +187,7 @@ def marked(mark: String, text: String) -> String = text.split("\n").map { |line|
 
 def verdict_of(ctx: Spec.Context, tool: Spec.Tool, input: JSON.Value) -> Approval.Verdict
   case tool.target(ctx, input)
-    ok(target) -> Approval.decide(ctx.rules, tool.name, target, tool.asks)
+    ok(target) -> Approval.decide(ctx.rules, tool.name, target, tool.asks, some(ctx.root))
     error(_) -> Approval.Verdict.Deny
   end
 end

@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+- `finn tui --yolo` allows the tool calls of the turns it starts; the status line shows YOLO all the time, and a turn another client started is still asked.
+- `finn tui` takes pasted text whole (bracketed paste) into the prompt or the `/resume` filter.
+
 - The repo skeleton: a workspace with the `llm` and `core` packages, and CI.
 - The `sse` package: a Server-Sent Events parser and writer.
 - The `protocol` package: the records of the commands and events between the server and its clients, with JSON codecs.
@@ -42,6 +45,7 @@
 - The `anthropic` provider (the Anthropic Messages API: adaptive thinking sent back with its signature, cache breakpoints on the system prompt or tools and the conversation, the models list), with an API key or an OAuth token; the llama smoke tests run it too, and `make smoke-anthropic` makes a few real calls.
 - MCP servers on stdio (`FINN_MCP_CONFIG`, the `mcp` package): their tools are `mcp__SERVER__TOOL`, ask like the other tools, and a server that crashed or hung gives an error result and starts again on the next call. A server gets a short environment plus the `env` of its config, and a stop ends what it started.
 - `finn -p TASK` runs one task (`-p -` reads it from stdin): the answer on stdout, the rest on stderr; it exits 0 when the turn ends normally, 130 when cancelled, 1 otherwise, and denies approvals; `--yolo` allows the tool calls of the run, in one-shot and in chat.
+- A `bash` command that only reads inside the session folder (`ls`, `cat`, `grep`, `rg`, `sed -n`, `find`, ... with the options of an allow-list, in pipelines and lists, its paths resolved, no unquoted glob; checked by the new `shell` package) runs without asking and with PATH `/usr/bin:/bin`, unless a deny rule of `read_file` or `bash` exists.
 - Core on Anthropic (`FINN_API=anthropic` or a session's `--api anthropic`): `ANTHROPIC_API_KEY`, else `ANTHROPIC_AUTH_TOKEN`, else the token of `ant auth login` (fetched again after a 401); the prompt cache is asked for, thinking blocks go back with their signatures, the history folds only between turns and drops the thinking of the kept messages; `make live-anthropic-core`.
 - Agent Skills: `SKILL.md` folders under `.finn/skills`, `.agents/skills` and `.claude/skills` of the home folder, and of the session folder when it is under `FINN_TRUSTED_DIRS`; a catalog in the system prompt, the `activate_skill` tool, `/name` in a message, and compaction keeps loaded skills.
 - Session commands in `finn chat` and `finn tui`: `/new`, `/resume` (lists the sessions; `/resume N` or an id switches), `/model`, `/thinking low|medium|high`, `/compact`, `/stop`, `/help`, `/quit`.

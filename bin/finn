@@ -19,7 +19,7 @@ usage() {
   cat <<'TEXT'
 usage: finn [chat] [options]      talk to the agent in this folder (starts the server when none runs)
        finn -p TASK [--yolo]      one task (- reads it from stdin): the answer on stdout, the rest on stderr
-       finn tui [options]         the same on the full screen (finn tui --help lists the options)
+       finn tui [options]         the same on the full screen, --yolo too (finn tui --help lists the options)
        finn serve [options]       run the server in the foreground
        finn --version | --help
 

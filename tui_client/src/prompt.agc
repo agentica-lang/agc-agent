@@ -32,24 +32,28 @@ def backspace(text: String, at: Int) -> String
   text.slice(0, cut - 1) + text.slice(cut, text.length - cut)
 end
 
+## Pasted text without its control characters, but for line ends and tabs.
+def pasted(text: String) -> String = text.split("").select { |c| kept?(c) }.join("")
+
 def clamp(text: String, at: Int) -> Int = [[at, 0].max.unwrap!, text.length].min.unwrap!
 
-def rows(text: String, width: Int) -> List[String] = view(text, text.length, width).rows
+def rows(text: String, width: Int) -> List[String] = view(text, text.length, width, MAX_ROWS + 1).rows
 
-def view(text: String, cursor: Int, width: Int) -> View
+## `height` is the rows of the screen: the prompt leaves one to the status line.
+def view(text: String, cursor: Int, width: Int, height: Int) -> View
   all = pieces(text, width)
   at = clamp(text, cursor)
   row = row_of(all, at)
-  first = first_row(all, row)
-  led = all.drop(first).take(MAX_ROWS).map { |piece| lead(piece) + piece.text }
+  first = first_row(all, row, height)
+  led = all.drop(first).take(most(height)).map { |piece| lead(piece) + piece.text }
   x = LEAD.length + Width.text(text.slice(all[row].start, at - all[row].start))
   View(rows: led, cursor_x: x, cursor_y: row - first)
 end
 
 ## The index of the text at column `x` of row `y` of the view.
-def index_at(text: String, cursor: Int, width: Int, x: Int, y: Int) -> Int
+def index_at(text: String, cursor: Int, width: Int, height: Int, x: Int, y: Int) -> Int
   all = pieces(text, width)
-  first = first_row(all, row_of(all, clamp(text, cursor)))
+  first = first_row(all, row_of(all, clamp(text, cursor)), height)
   piece = all[[[first + y, 0].max.unwrap!, all.size - 1].min.unwrap!]
   piece.start + Width.cut(piece.text, [x - LEAD.length, 0].max.unwrap!)[0].length
 end
@@ -100,8 +104,17 @@ def row_of(all: List[Piece], cursor: Int) -> Int
   found
 end
 
-# The last MAX_ROWS rows, or from the cursor's row when it is above them.
-def first_row(all: List[Piece], row: Int) -> Int = [[all.size - MAX_ROWS, 0].max.unwrap!, row].min.unwrap!
+def kept?(c: String) -> Bool
+  code = c.code
+  c == "\n" or c == "\t" or not (code < 0x20 or (code >= 0x7f and code < 0xa0))
+end
+
+def most(height: Int) -> Int = [[height - 1, 1].max.unwrap!, MAX_ROWS].min.unwrap!
+
+# The last rows that fit, or from the cursor's row when it is above them.
+def first_row(all: List[Piece], row: Int, height: Int) -> Int
+  [[all.size - most(height), 0].max.unwrap!, row].min.unwrap!
+end
 
 def lead(piece: Piece) -> String
   return LEAD if piece.start == 0

@@ -375,12 +375,12 @@ class PtyTest(unittest.TestCase):
         self.fake = model
         return model
 
-    def start(self, replies: list[Reply], rows: int = ROWS, cols: int = COLS) -> Terminal:
+    def start(self, replies: list[Reply], rows: int = ROWS, cols: int = COLS, extra: list[str] = []) -> Terminal:
         """The client, which starts its own server."""
         base = self.folder()
         model = self.model(replies)
         self.addCleanup(stop_server, base / "state")
-        args = ["--state-dir", str(base / "state"), "--", AGENTICA, str(CORE), "serve"]
+        args = [*extra, "--state-dir", str(base / "state"), "--", AGENTICA, str(CORE), "serve"]
         terminal = Terminal(base, model, args, rows, cols)
         self.addCleanup(terminal.close)
         terminal.wait_for("ready")
@@ -571,8 +571,6 @@ class PtyTest(unittest.TestCase):
         term.type("helo")
         row, col = term.find("> helo")
         term.click(row, col + 5)
-        # A key sent right after the mouse report was dropped here; a person never types that fast.
-        term.settle(0.3)
         term.type("l")
         term.wait_for("> hello")
         term.type("\r")
@@ -590,13 +588,75 @@ class PtyTest(unittest.TestCase):
         for text in ["  a = 1", "  ^Y please"]:
             term.click(*term.find(text))
         row, col = term.find("Tab to answer")
+        # A double click in one write: two Tabs, so the panel is back where it was, and nothing answered.
         term.type(f"\x1b[<0;{col + 3};{row + 1}M\x1b[<0;{col + 3};{row + 1}m" * 2)
-        term.settle(0.5)
+        rows = term.settle(0.5)
+        self.assertIn("Tab to answer", text_of(rows))
         term.click(row, col + 2)
+        rows = term.wait_for("Tab back to the prompt")
         rows = term.settle(0.5)
         self.assertNotIn("allow_session", text_of(rows))
         self.assertNotIn("· approval a1:", text_of(rows))
-        self.assertIn("Tab to answer", text_of(rows))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+
+    def test_yolo_allows_the_calls_of_its_run_but_asks_the_inherited_ones(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse"), Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        term.wait_for("Tab to answer")
+        term.type("\x03")
+        self.assertEqual(term.finish(), 0)
+        info = json.loads((term.base / "state" / "server.json").read_text())
+        server = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=TIMEOUT)
+        server.request("GET", "/v1/sessions", headers={"Authorization": f"Bearer {info['token']}"})
+        session_id = json.loads(server.getresponse().read())["sessions"][0]["id"]
+        server.close()
+        args = ["--yolo", "--state-dir", str(term.base / "state"), "--session", session_id]
+        again = Terminal(term.base, self.fake, args)
+        self.addCleanup(again.close)
+        rows = again.wait_for("Tab to answer")
+        self.assertIn("YOLO · ", rows[-2])
+        self.assertIn("· --yolo: the tool calls of turns sent from here run without asking", text_of(rows))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+        again.settle(0.4)
+        again.type("\x0e")
+        again.wait_for(": deny (client)")
+        again.wait_until(lambda rows: "ready" in rows[-2], "the end of the turn")
+        (term.base / "work" / "hello.txt").unlink(missing_ok=True)
+        again.type("write it again\r")
+        rows = again.wait_for("· --yolo allows write_file:")
+        again.wait_until(lambda rows: text_of(rows).count(ANSWER) == 2 and "ready" in rows[-2], "the answer")
+        self.assertNotIn("Tab to answer", text_of(again.screen()))
+        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
+
+    def test_yolo_asks_the_calls_of_a_turn_another_client_started(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")], extra=["--yolo"])
+        session_id = re.search(r"· session (\S+)", text_of(term.screen())).group(1)
+        info = json.loads((term.base / "state" / "server.json").read_text())
+        server = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=TIMEOUT)
+        headers = {"Authorization": f"Bearer {info['token']}", "Content-Type": "application/json"}
+        server.request("POST", f"/v1/sessions/{session_id}/messages", json.dumps({"text": "write it"}), headers)
+        self.assertEqual(server.getresponse().status, 202)
+        server.close()
+        term.wait_for("Tab to answer")
+        self.assertNotIn("--yolo allows", text_of(term.settle(0.6)))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+
+    def test_yolo_asks_the_calls_another_client_steers_into_its_turn(self) -> None:
+        held = Reply("text.sse", hold=2)
+        term = self.start([held, Reply("write_file.sse"), Reply("text.sse")], extra=["--yolo"])
+        session_id = re.search(r"· session (\S+)", text_of(term.screen())).group(1)
+        term.type("say hi\r")
+        term.settle(0.4)
+        info = json.loads((term.base / "state" / "server.json").read_text())
+        server = http.client.HTTPConnection("127.0.0.1", info["port"], timeout=TIMEOUT)
+        headers = {"Authorization": f"Bearer {info['token']}", "Content-Type": "application/json"}
+        server.request("POST", f"/v1/sessions/{session_id}/messages", json.dumps({"text": "write it"}), headers)
+        self.assertEqual(server.getresponse().status, 202)
+        server.close()
+        term.wait_for("queued: write it")
+        held.release.set()
+        term.wait_for("Tab to answer")
+        self.assertNotIn("--yolo allows", text_of(term.settle(0.6)))
         self.assertFalse((term.base / "work" / "hello.txt").exists())
 
     def test_a_tool_is_approved_and_its_notices_shown(self) -> None:
@@ -656,6 +716,19 @@ class PtyTest(unittest.TestCase):
         rows = term.wait_for("> xa")
         self.assertIn("Tab to answer", text_of(term.settle()))
         self.assertNotIn("allow_session", text_of(rows))
+        self.assertFalse((term.base / "work" / "hello.txt").exists())
+
+    def test_a_bracketed_paste_goes_to_the_prompt_and_answers_nothing(self) -> None:
+        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
+        term.type("write it\r")
+        term.wait_for("Tab to answer")
+        term.type("\t")
+        term.wait_for("y allow · n deny")
+        term.settle(0.4)
+        term.type("\x1b[200~y\x01a\x19n\r\nnext\x1b[201~")
+        rows = term.wait_for("  next")
+        self.assertIn("> yan", rows)
+        self.assertIn("y allow · n deny", text_of(term.settle()))
         self.assertFalse((term.base / "work" / "hello.txt").exists())
 
     def test_a_client_that_attaches_asks_the_pending_approval(self) -> None:
