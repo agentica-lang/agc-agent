@@ -49,7 +49,7 @@ A package is added by the phase that needs it, never as an empty folder.
   that passes no test fails), `smoke` (runs `core/main.agc`), `pty`
   (`tui_client/tests/test_pty.py`) and `peer` (`shell/tests/test_bash_peer.py`),
   both Python standard library only. `install`
-  fetches agentica-tui into `tui_client/deps/` (gitignored); `check`,
+  fetches bond into `core/deps/` and agentica-tui into `tui_client/deps/` (gitignored); `check`,
   `smoke` and `pty` run it first.
 - `cli` tests run the client as a child process on pipes (the Makefile
   exports `AGENTICA` for it) against a fake protocol server in

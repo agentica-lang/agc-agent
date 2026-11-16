@@ -6,6 +6,7 @@
 ## a server, so the server takes another file.
 
 import HTTP from "std/http"
+import Bond from "pkg/bond/bond"
 import Protocol from "pkg/protocol/protocol"
 import Config from "../config/config"
 import Sessions from "../session/session"
@@ -14,10 +15,6 @@ VERSION = "0.0.1"
 SERVER_JSON = "server.json"
 LOCK_FILE = "core.lock"
 MAX_BODY_BYTES = 1_048_576
-SSE_HEADERS = [
-  HTTP.Header(name: "Content-Type", value: "text/event-stream"),
-  HTTP.Header(name: "Cache-Control", value: "no-cache"),
-]
 
 struct Server
   http: HTTP.Server
@@ -51,30 +48,53 @@ def start(options: Config.Options) -> Result[Server]
 end
 
 def stop(server: Server) -> Void
-  HTTP.close_server(server.http)
-  _ = HTTP.wait(server.http)
+  Bond.stop(server.http)
+  _ = Bond.wait(server.http)
   Sessions.stop(server.sessions)
   _ = Path.remove("#{server.state_dir}/#{SERVER_JSON}")
   _ = File.close(server.lock)
+end
+
+## The routes of the protocol behind the checks, over the sessions: what `start` serves.
+def app(token: String, sessions: Sessions.Sessions) -> Bond.App
+  all = Protocol.SESSIONS_PATH
+  one = "#{all}/:id"
+  (
+    Bond.app()
+    |> Bond.before(->(conn) { ok(guard(token, conn)) })
+    |> Bond.get(Protocol.HEALTH_PATH, &health)
+    |> Bond.post(all, ->(conn) { reply(conn, 201, create(sessions, conn)) })
+    |> Bond.get(all, ->(conn) { reply(conn, 200, list(sessions)) })
+    |> Bond.get(one, ->(conn) { reply(conn, 200, snapshot(sessions, conn)) })
+    |> Bond.patch(one, ->(conn) { reply(conn, 200, update(sessions, conn)) })
+    |> Bond.delete(one, ->(conn) { reply(conn, 200, delete(sessions, conn)) })
+    |> Bond.post("#{one}/messages", ->(conn) { reply(conn, 202, send(sessions, conn)) })
+    |> Bond.post("#{one}/compact", ->(conn) { reply(conn, 200, compact(sessions, conn)) })
+    |> Bond.post("#{one}/stop", ->(conn) { reply(conn, 200, stop_turn(sessions, conn)) })
+    |> Bond.post("#{one}/approvals/:approval", ->(conn) { reply(conn, 200, approve(sessions, conn)) })
+    |> Bond.get("#{one}/events", ->(conn) { events(sessions, conn) })
+    |> Bond.not_found(->(conn) { ok(no_route(conn)) })
+    |> Bond.after(&answer_405_as_404)
+  )
 end
 
 private
 
 def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handle) -> Result[Server]
   token = OpenSSL.Random.hex(32)
-  http = try HTTP.serve(
+  http = try Bond.start_with(
+    app(token, sessions),
     "127.0.0.1",
     options.port,
-    ->(request, body) { route(token, sessions, request, body) },
     HTTP.ServerOptions(max_body_bytes: MAX_BODY_BYTES),
   )
 
-  port = HTTP.local_port(http)
+  port = Bond.local_port(http)
   case write_server_json(options.state_dir, Protocol.ServerInfo(port: port, token: token, pid: System.pid))
     ok(_) ->
       ok(Server(http: http, port: port, token: token, sessions: sessions, lock: lock, state_dir: options.state_dir))
     error(e) ->
-      HTTP.close_server(http)
+      Bond.stop(http)
       error(e)
   end
 end
@@ -125,63 +145,93 @@ def write_server_json(dir: String, info: Protocol.ServerInfo) -> Result[Void]
   written
 end
 
-def route(
-  token: String,
-  sessions: Sessions.Sessions,
-  request: HTTP.Request,
-  body: HTTP.RequestBody,
-) -> Result[HTTP.Answer]
-  for refusal in option_list(refused(token, request))
-    return ok(HTTP.Answer.Whole(refusal))
-  end
-
-  if request.method == "GET" and request.path == Protocol.HEALTH_PATH
-    return whole(200, Protocol.encode_health(Protocol.Health(version: VERSION, wire: some(Protocol.wire_digest()))))
-  end
-
-  prefix = Protocol.SESSIONS_PATH
-  if request.path != prefix and not request.path.start_with?("#{prefix}/")
-    return ok(HTTP.Answer.Whole(no_route(request.method, request.path)))
-  end
-
-  # The parts after /v1/sessions: an id, then a sub-resource.
-  parts = request.path.slice(prefix.length, request.path.length - prefix.length).split("/").drop(1)
-  return events(sessions, request, parts[0]) if request.method == "GET" and parts.size == 2 and parts[1] == "events"
-
-  case HTTP.read_all(body, MAX_BODY_BYTES)
-    ok(bytes) -> ok(HTTP.Answer.Whole(answered(sessions, request.method, parts, bytes)))
-    error(e) -> ok(HTTP.body_refusal(e.message))
-  end
+def health(conn: Bond.Conn) -> Result[Bond.Conn]
+  reply(conn, 200, ok(Protocol.encode_health(Protocol.Health(version: VERSION, wire: some(Protocol.wire_digest())))))
 end
 
-def answered(sessions: Sessions.Sessions, method: String, parts: List[String], bytes: Bytes) -> HTTP.Response
-  case answer(sessions, method, parts, bytes)
-    ok(response) -> response
-    error(e) -> failure(e)
+def create(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  request = try Protocol.decode_new_session(try String.from_bytes(conn.body))
+  id = try Sessions.create(sessions, request)
+  ok(Protocol.encode_session_created(Protocol.SessionCreated(id: id)))
+end
+
+def list(sessions: Sessions.Sessions) -> Result[String]
+  ok(Protocol.encode_session_list(Protocol.SessionList(sessions: try Sessions.list(sessions))))
+end
+
+def snapshot(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  ok(Protocol.encode_session(try Sessions.snapshot(sessions, try Bond.param(conn, "id"))))
+end
+
+def update(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  change = try Protocol.decode_update_session(try String.from_bytes(conn.body))
+  try Sessions.update(sessions, try Bond.param(conn, "id"), change)
+  ok("{}")
+end
+
+def delete(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  try Sessions.delete(sessions, try Bond.param(conn, "id"))
+  ok("{}")
+end
+
+def send(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  message = try Protocol.decode_send_message(try String.from_bytes(conn.body))
+  accepted = try Sessions.send(sessions, try Bond.param(conn, "id"), message.text)
+  ok(Protocol.encode_message_accepted(accepted))
+end
+
+def compact(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  compacted = try Sessions.compact(sessions, try Bond.param(conn, "id"))
+  ok(Protocol.encode_compacted(Protocol.Compacted(compacted: compacted)))
+end
+
+def stop_turn(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  _ = try Sessions.stop_turn(sessions, try Bond.param(conn, "id"))
+  ok("{}")
+end
+
+def approve(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  approve = try Protocol.decode_approve(try String.from_bytes(conn.body))
+  try Sessions.answer(sessions, try Bond.param(conn, "id"), try Bond.param(conn, "approval"), approve.decision)
+  ok("{}")
+end
+
+def events(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[Bond.Conn]
+  last: Optional[Int] = none
+  for text in HTTP.header_values(conn.headers, Protocol.LAST_EVENT_ID_HEADER.downcase)
+    case Protocol.parse_event_id(text)
+      ok(value) -> last = some(value)
+      error(e) -> return reply(conn, status_of(e.kind), error(e))
+    end
+  end
+
+  case Sessions.subscribe(sessions, try Bond.param(conn, "id"), last)
+    ok(out) -> ok(Bond.header(Bond.sse(conn, out), "content-type", "text/event-stream"))
+    error(e) -> reply(conn, status_of(e.kind), error(e))
   end
 end
 
 # `Host` must name this machine, so a web page of another name that resolves here (DNS rebinding) is refused. A
 # browser sends `Origin`: only a page of this server may call it.
-def refused(token: String, request: HTTP.Request) -> Optional[HTTP.Response]
-  host = header(request, "host")
-  return some(failure_response(403, Protocol.KIND_FORBIDDEN, "host not allowed")) if not local_host?(host)
+def guard(token: String, conn: Bond.Conn) -> Bond.Conn
+  host = header(conn, "host")
+  return refuse(conn, 403, Protocol.KIND_FORBIDDEN, "host not allowed") if not local_host?(host)
 
-  for origin in HTTP.header_values(request.headers, "origin")
-    return some(failure_response(403, Protocol.KIND_FORBIDDEN, "origin not allowed")) if origin != "http://#{host}"
+  for origin in HTTP.header_values(conn.headers, "origin")
+    return refuse(conn, 403, Protocol.KIND_FORBIDDEN, "origin not allowed") if origin != "http://#{host}"
   end
 
-  given = header(request, "authorization")
+  given = header(conn, "authorization")
   if not OpenSSL.HMAC.secure_compare(given.bytes, "Bearer #{token}".bytes)
-    return some(failure_response(401, Protocol.KIND_UNAUTHORIZED, "missing or wrong token"))
+    return refuse(conn, 401, Protocol.KIND_UNAUTHORIZED, "missing or wrong token")
   end
 
-  none
+  conn
 end
 
 # A repeated header is refused as a wrong one.
-def header(request: HTTP.Request, name: String) -> String
-  values = HTTP.header_values(request.headers, name)
+def header(conn: Bond.Conn, name: String) -> String
+  values = HTTP.header_values(conn.headers, name)
   return "" if values.size != 1
 
   values[0]
@@ -192,64 +242,29 @@ def local_host?(host: String) -> Bool
   ["127.0.0.1", "localhost"].include?(name) and host.split(":").size <= 2
 end
 
-def answer(sessions: Sessions.Sessions, method: String, parts: List[String], bytes: Bytes) -> Result[HTTP.Response]
-  text = try String.from_bytes(bytes)
-  case "#{method} #{parts.size}"
-    "POST 0" ->
-      request = try Protocol.decode_new_session(text)
-      id = try Sessions.create(sessions, request)
-      response(201, Protocol.encode_session_created(Protocol.SessionCreated(id: id)))
-    "GET 0" -> response(200, Protocol.encode_session_list(Protocol.SessionList(sessions: try Sessions.list(sessions))))
-    "DELETE 1" ->
-      try Sessions.delete(sessions, parts[0])
-      response(200, "{}")
-    "GET 1" -> response(200, Protocol.encode_session(try Sessions.snapshot(sessions, parts[0])))
-    "POST 2" if parts[1] == "messages" ->
-      message = try Protocol.decode_send_message(text)
-      accepted = try Sessions.send(sessions, parts[0], message.text)
-      response(202, Protocol.encode_message_accepted(accepted))
-    "PATCH 1" ->
-      change = try Protocol.decode_update_session(text)
-      try Sessions.update(sessions, parts[0], change)
-      response(200, "{}")
-    "POST 2" if parts[1] == "compact" ->
-      compacted = try Sessions.compact(sessions, parts[0])
-      response(200, Protocol.encode_compacted(Protocol.Compacted(compacted: compacted)))
-    "POST 2" if parts[1] == "stop" ->
-      _ = try Sessions.stop_turn(sessions, parts[0])
-      response(200, "{}")
-    "POST 3" if parts[1] == "approvals" ->
-      approve = try Protocol.decode_approve(text)
-      try Sessions.answer(sessions, parts[0], parts[2], approve.decision)
-      response(200, "{}")
-    _ -> ok(no_route(method, "#{Protocol.SESSIONS_PATH}/#{parts.join("/")}"))
+# A path with a route for other methods is a 404 of the protocol, not a 405.
+def answer_405_as_404(conn: Bond.Conn) -> Result[Bond.Conn]
+  return ok(no_route(conn)) if conn.status == 405
+
+  ok(conn)
+end
+
+def no_route(conn: Bond.Conn) -> Bond.Conn
+  json(conn, 404, failure_text("not_found", "no route for #{conn.method} #{conn.path}"))
+end
+
+def reply(conn: Bond.Conn, status: Int, body: Result[String]) -> Result[Bond.Conn]
+  case body
+    ok(text) -> ok(json(conn, status, text))
+    error(e) -> ok(failure(conn, e))
   end
 end
 
-def events(sessions: Sessions.Sessions, request: HTTP.Request, id: String) -> Result[HTTP.Answer]
-  last: Optional[Int] = none
-  for text in HTTP.header_values(request.headers, Protocol.LAST_EVENT_ID_HEADER.downcase)
-    case Protocol.parse_event_id(text)
-      ok(value) -> last = some(value)
-      error(e) -> return ok(HTTP.Answer.Whole(failure(e)))
-    end
-  end
-
-  case Sessions.subscribe(sessions, id, last)
-    ok(out) -> ok(HTTP.Answer.Stream(HTTP.StreamResponse(status: 200, headers: SSE_HEADERS, body: out)))
-    error(e) -> ok(HTTP.Answer.Whole(failure(e)))
-  end
-end
-
-def no_route(method: String, path: String) -> HTTP.Response
-  failure_response(404, "not_found", "no route for #{method} #{path}")
-end
-
-def failure(e: Error) -> HTTP.Response
+def failure(conn: Bond.Conn, e: Error) -> Bond.Conn
   # A request that reached a session as it was deleted.
-  return failure_response(404, Protocol.KIND_SESSION_NOT_FOUND, "session deleted") if e.kind == "channel.gone"
+  return refuse(conn, 404, Protocol.KIND_SESSION_NOT_FOUND, "session deleted") if e.kind == "channel.gone"
 
-  failure_response(status_of(e.kind), e.kind, e.message)
+  json(conn, status_of(e.kind), failure_text(e.kind, e.message))
 end
 
 def status_of(kind: String) -> Int
@@ -261,20 +276,16 @@ def status_of(kind: String) -> Int
   500
 end
 
-def failure_response(status: Int, kind: String, message: String) -> HTTP.Response
-  json_response(status, Protocol.encode_failure(Protocol.Failure(kind: kind, message: message)))
+def refuse(conn: Bond.Conn, status: Int, kind: String, message: String) -> Bond.Conn
+  json(conn, status, failure_text(kind, message)).with(halted: true)
 end
 
-def response(status: Int, text: String) -> Result[HTTP.Response] = ok(json_response(status, text))
+def failure_text(kind: String, message: String) -> String
+  Protocol.encode_failure(Protocol.Failure(kind: kind, message: message))
+end
 
-def whole(status: Int, text: String) -> Result[HTTP.Answer] = ok(HTTP.Answer.Whole(json_response(status, text)))
-
-def json_response(status: Int, text: String) -> HTTP.Response
-  HTTP.Response(
-    status: status,
-    headers: [HTTP.Header(name: "Content-Type", value: "application/json")],
-    body: text.bytes,
-  )
+def json(conn: Bond.Conn, status: Int, text: String) -> Bond.Conn
+  Bond.header(Bond.text(conn, status, text), "content-type", "application/json")
 end
 
 def option_list[T](value: Optional[T]) -> List[T]

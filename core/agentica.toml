@@ -6,6 +6,7 @@ agentica = "0.32.0"
 blank_line_after_end = true
 
 [dependencies]
+bond = { git = "https://github.com/agentica-lang/bond", tag = "0.13.1" }
 llm = { git = "https://github.com/agentica-lang/agc-agent", subdir = "llm", tag = "llm-0.0.1" }
 mcp = { git = "https://github.com/agentica-lang/agc-agent", subdir = "mcp", tag = "mcp-0.0.1" }
 monty = { git = "https://github.com/agentica-lang/agc-agent", subdir = "monty", tag = "monty-0.0.1" }
