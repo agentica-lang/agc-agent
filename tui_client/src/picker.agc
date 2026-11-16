@@ -96,13 +96,13 @@ end
 
 def row(session: Protocol.SessionSummary, selected: Bool, width: Int, now_s: Int) -> Layout.Row
   mark = "  "
-  style = TUI.Style()
+  look = Layout.Look.Plain
   if selected
     mark = "› "
-    style = TUI.Style(reverse: true)
+    look = Layout.Look.Selected
   end
 
   title = session.title.split("\n")[0]
   text = "#{mark}#{session.id}  #{session.cwd}  #{session.model}  #{ago(now_s, session.updated_s)}  #{title}"
-  Layout.Row(text: Width.cut(text, width)[0], style: style)
+  Layout.Row(text: Width.cut(text, width)[0], look: look)
 end

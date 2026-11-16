@@ -21,9 +21,19 @@ struct Button
   event: TUI.Event
 end
 
+## How a row looks; the theme gives each its style.
+enum Look
+  ## The head and the key rows.
+  Head
+  Plain
+  Selected
+  Removed
+  Added
+end
+
 struct Row
   text: String
-  style: TUI.Style
+  look: Look = Look.Plain
   buttons: List[Button] = []
 end
 
@@ -34,7 +44,7 @@ def fit(head: String, keys: List[Key], body: Fn[Int, List[Row]], width: Int, roo
   packed = key_rows(keys, width)
   packed = packed.drop([packed.size - room, 0].max.unwrap!)
   left = room - packed.size
-  head_rows = Transcript.wrap(head, width).take(left).map { |line| Row(text: line, style: strong()) }
+  head_rows = Transcript.wrap(head, width).take(left).map { |line| Row(text: line, look: Look.Head) }
   body_rows = body.call(left - head_rows.size)
   head_rows + body_rows + packed
 end
@@ -49,13 +59,11 @@ end
 
 private
 
-def strong() -> TUI.Style = TUI.Style(fg: TUI.Color.Yellow, bold: true)
-
 # The labels in rows of `width`, separated by SEPARATOR; a label wider than a row is cut.
 def key_rows(keys: List[Key], width: Int) -> List[Row]
   columns = [width, 1].max.unwrap!
   rows: List[Row] = []
-  row = Row(text: "", style: strong())
+  row = Row(text: "", look: Look.Head)
   used = 0
   for key in keys
     label = Width.cut(key.label, columns)[0]
@@ -67,7 +75,7 @@ def key_rows(keys: List[Key], width: Int) -> List[Row]
 
     if row.text != "" and used + gap + size > columns
       rows = rows.push(row)
-      row = Row(text: "", style: strong())
+      row = Row(text: "", look: Look.Head)
       used = 0
       gap = 0
     end

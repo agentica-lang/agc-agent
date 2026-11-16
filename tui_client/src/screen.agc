@@ -7,11 +7,9 @@ import TUI from "pkg/tui/tui"
 import Layout from "panel"
 import Markdown from "markdown"
 import Prompt from "prompt"
+import Theme from "theme"
 import Transcript from "transcript"
 import Width from "width"
-
-STATUS = TUI.Style(reverse: true)
-CURSOR = TUI.Style(reverse: true)
 
 ## Where each region is: `area` transcript rows (the `transcript` lines shown, from the top), the `panel` rows after
 ## them, the status line, then the prompt rows.
@@ -65,12 +63,12 @@ def frame(
   )
 end
 
-def view(frame: Frame) -> TUI.Node
-  rows = frame.transcript.map { |line| transcript_row(line) }
+def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
+  rows = frame.transcript.map { |line| transcript_row(line, theme.transcript) }
   blank = (rows.size...frame.area).to_a.map { |_| TUI.line([]) }
-  panel = frame.panel.map { |row| TUI.line([TUI.span(row.text, row.style)]) }
-  footer = [TUI.line([TUI.span(frame.status, STATUS)])]
-  editor = (0...frame.prompt.rows.size).to_a.map { |y| prompt_row(frame.prompt, y, frame.width) }
+  panel = frame.panel.map { |row| TUI.line([TUI.span(row.text, panel_style(row.look, theme.panel))]) }
+  footer = [TUI.line([TUI.span(frame.status, theme.footer.status)])]
+  editor = (0...frame.prompt.rows.size).to_a.map { |y| prompt_row(frame.prompt, y, frame.width, theme.editor) }
   TUI.col(rows + blank + panel + footer + editor)
 end
 
@@ -91,39 +89,49 @@ def hit(frame: Frame, x: Int, y: Int) -> Hit
   Hit.Prompt(x, y - prompt_top)
 end
 
-def style(kind: Transcript.Kind, look: Markdown.Look) -> TUI.Style
+def style(kind: Transcript.Kind, look: Markdown.Look, colors: Theme.TranscriptColors) -> TUI.Style
   case kind
-    Transcript.Kind.User -> TUI.Style(fg: TUI.Color.Cyan, bold: true)
-    Transcript.Kind.Notice -> TUI.Style(fg: TUI.Color.Yellow)
-    Transcript.Kind.Tool -> TUI.Style(fg: TUI.Color.Blue)
-    Transcript.Kind.ToolFailed -> TUI.Style(fg: TUI.Color.Red)
-    Transcript.Kind.Thinking -> TUI.Style(dim: true)
+    Transcript.Kind.User -> colors.user
+    Transcript.Kind.Notice -> colors.notice
+    Transcript.Kind.Tool -> colors.tool
+    Transcript.Kind.ToolFailed -> colors.tool_failed
+    Transcript.Kind.Thinking -> colors.thinking
     Transcript.Kind.Assistant ->
       case look
-        Markdown.Look.Plain -> TUI.Style()
-        Markdown.Look.Bold -> TUI.Style(bold: true)
-        Markdown.Look.Heading -> TUI.Style(fg: TUI.Color.Magenta, bold: true, underline: true)
-        Markdown.Look.Code -> TUI.Style(fg: TUI.Color.Green)
+        Markdown.Look.Plain -> colors.assistant
+        Markdown.Look.Bold -> colors.bold
+        Markdown.Look.Heading -> colors.heading
+        Markdown.Look.Code -> colors.code
       end
   end
 end
 
 private
 
-def transcript_row(line: Transcript.Line) -> TUI.Node
-  TUI.line(line.spans.map { |span| TUI.span(span.text, style(line.kind, span.look)) })
+def transcript_row(line: Transcript.Line, colors: Theme.TranscriptColors) -> TUI.Node
+  TUI.line(line.spans.map { |span| TUI.span(span.text, style(line.kind, span.look, colors)) })
+end
+
+def panel_style(look: Layout.Look, colors: Theme.PanelColors) -> TUI.Style
+  case look
+    Layout.Look.Head -> colors.head
+    Layout.Look.Plain -> colors.text
+    Layout.Look.Selected -> colors.selected
+    Layout.Look.Removed -> colors.removed
+    Layout.Look.Added -> colors.added
+  end
 end
 
 # The row of the cursor shows the character under it reversed (a space past the end of the text), in the last column
 # at most.
-def prompt_row(prompt: Prompt.View, y: Int, width: Int) -> TUI.Node
+def prompt_row(prompt: Prompt.View, y: Int, width: Int, colors: Theme.EditorColors) -> TUI.Node
   text = prompt.rows[y]
-  return TUI.line([TUI.span(text)]) if y != prompt.cursor_y
+  return TUI.line([TUI.span(text, colors.text)]) if y != prompt.cursor_y
 
   parts = Width.cut(text, [prompt.cursor_x, width - 1].min.unwrap!)
-  return TUI.line([TUI.span(parts[0]), TUI.span(" ", CURSOR)]) if parts[1] == ""
+  return TUI.line([TUI.span(parts[0], colors.text), TUI.span(" ", colors.cursor)]) if parts[1] == ""
 
   under = parts[1].slice(0, 1)
   rest = parts[1].slice(1, parts[1].length - 1)
-  TUI.line([TUI.span(parts[0]), TUI.span(under, CURSOR), TUI.span(rest)])
+  TUI.line([TUI.span(parts[0], colors.text), TUI.span(under, colors.cursor), TUI.span(rest, colors.text)])
 end

@@ -170,15 +170,15 @@ def detail(text: String, width: Int, room: Int) -> List[Layout.Row]
     shown = lines.take(room - 1)
   end
 
-  rows = shown.map { |line| Layout.Row(text: Width.cut("  #{line}", width)[0], style: detail_style(line)) }
+  rows = shown.map { |line| Layout.Row(text: Width.cut("  #{line}", width)[0], look: detail_look(line)) }
   return rows if shown.size == lines.size
 
-  rows.push(Layout.Row(text: Width.cut("  … #{lines.size - shown.size} more lines", width)[0], style: TUI.Style()))
+  rows.push(Layout.Row(text: Width.cut("  … #{lines.size - shown.size} more lines", width)[0]))
 end
 
-def detail_style(line: String) -> TUI.Style
-  return TUI.Style(fg: TUI.Color.Red) if line.start_with?("-")
-  return TUI.Style(fg: TUI.Color.Green) if line.start_with?("+")
+def detail_look(line: String) -> Layout.Look
+  return Layout.Look.Removed if line.start_with?("-")
+  return Layout.Look.Added if line.start_with?("+")
 
-  TUI.Style()
+  Layout.Look.Plain
 end
