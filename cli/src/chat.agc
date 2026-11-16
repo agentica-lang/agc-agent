@@ -16,14 +16,39 @@ MAX_RECONNECTS = 3
 MAX_RESYNCS = 2
 EXIT_INTERRUPTED = 130
 EXIT_TERMINATED = 143
+EXIT_FAILED = 1
 
-## Runs the session until the user leaves: the exit code, or an error when the session cannot go on.
+## Runs the session until the user leaves: the exit code, or an error when the session cannot go on. With a prompt it
+## sends that one task, reads no line, prints only the answer on stdout (the rest on stderr) and gives the status of
+## the turn.
 def run(server: Client.Server, options: Args.Options, style: Render.Style) -> Result[Int]
+  if options.yolo
+    IO.warn("--yolo: every tool call is approved")
+  end
+
   inbox: Channel[Inbox.Input] = Channel.new(INBOX_CAPACITY)
+  chat = Chat(server: server, id: "", style: style, inbox: inbox, yolo: options.yolo)
+  for prompt in option_list(options.prompt)
+    task = prompt
+    if prompt == "-"
+      task = stdin_text()
+    end
+
+    if task.strip == ""
+      IO.warn("finn: the task is empty")
+      return ok(EXIT_FAILED)
+    end
+
+    _ = Task.spawn(&watch_signals, inbox)
+    sent = try send(try open(chat.with(eof: true, once: true), options), task)
+    return ok(sent.exit.unwrap!) if sent.exit.some?
+
+    return loop(sent.chat)
+  end
+
   _ = Task.spawn(&read_lines, inbox)
   _ = Task.spawn(&watch_signals, inbox)
-  chat = try open(Chat(server: server, id: "", style: style, inbox: inbox), options)
-  loop(chat)
+  loop(try open(chat, options))
 end
 
 private
@@ -52,6 +77,13 @@ struct Chat
   reconnects: Int = 0
   ## `resync` events in a row, with no other event between.
   resyncs: Int = 0
+  ## Every approval of this run is allowed without asking.
+  yolo: Bool = false
+  ## The approvals that were pending when the client attached: `--yolo` leaves them to be asked.
+  inherited: List[String] = []
+  ## One task from the command line: the exit code is the status of its turn.
+  once: Bool = false
+  status: Int = 0
 end
 
 struct Step
@@ -99,14 +131,12 @@ def create(chat: Chat, options: Args.Options) -> Result[Chat]
   end
 
   id = try Client.create_session(chat.server, Protocol.NewSession(cwd: cwd, model: options.model, api: options.api))
-  print_line("[session #{id}]")
-  ok(subscribe(chat.with(id: id), 0))
+  ok(subscribe(note(chat, "[session #{id}]").with(id: id), 0))
 end
 
 def resume(chat: Chat, id: String) -> Result[Chat]
   session = try Client.session(chat.server, id)
-  print_line("[session #{id}]")
-  ok(attach(chat, session, false))
+  ok(attach(note(chat, "[session #{id}]"), session, false))
 end
 
 # Prints the history the client has not shown yet, then subscribes to what the snapshot of the session says. While a
@@ -114,12 +144,12 @@ end
 # a server that no longer has that start.
 def attach(chat: Chat, session: Protocol.Session, skip_replay: Bool) -> Chat
   missed = session.history.drop(chat.known)
+  shown = chat
   if not missed.empty?
-    print_line(Render.history(missed))
+    shown = note(chat, Render.history(missed))
   end
 
   running = session.turn_id.some?
-  shown = chat
   if chat.turn and not running
     shown = note(chat, "[the turn ended while the stream was away]")
   end
@@ -134,6 +164,7 @@ def attach(chat: Chat, session: Protocol.Session, skip_replay: Bool) -> Chat
     turn: running,
     stopping: false,
     pending: session.pending_approvals,
+    inherited: shown.inherited + session.pending_approvals.map { |p| p.approval_id },
     asked: false,
     replay_until: session.last_event_id,
   )
@@ -208,7 +239,12 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
     Protocol.Event.TurnStarted(started) ->
       shown.with(turn: true, stopping: false, known: started.history_size.unwrap_or(shown.known))
     Protocol.Event.TurnFinished(finished) ->
-      shown.with(turn: false, stopping: false, known: finished.history_size.unwrap_or(shown.known))
+      shown.with(
+        turn: false,
+        stopping: false,
+        known: finished.history_size.unwrap_or(shown.known),
+        status: exit_status(finished.stop_reason),
+      )
     Protocol.Event.ApprovalRequested(request) -> shown.with(pending: added(shown.pending, request))
     Protocol.Event.ApprovalResolved(resolved) -> forgotten(shown, resolved.approval_id)
     _ -> shown
@@ -231,11 +267,15 @@ def on_line(chat: Chat, raw: String) -> Result[Step]
   send(chat, text)
 end
 
+# A one-shot run that cannot send its task fails, also on a session where another turn runs.
 def send(chat: Chat, text: String) -> Result[Step]
   case Client.send_message(chat.server, chat.id, text)
     ok(_) -> ok(Step(chat: chat.with(turn: true)))
+    error(e) if e.kind == Protocol.KIND_SESSION_BUSY and chat.once ->
+      ok(Step(chat: note(chat, "[error] a turn is already running in this session"), exit: some(EXIT_FAILED)))
     error(e) if e.kind == Protocol.KIND_SESSION_BUSY ->
       ok(Step(chat: note(chat, "[a turn is already running]").with(turn: true)))
+    error(e) if chat.once -> ok(Step(chat: note(chat, "[error] #{e.message}"), exit: some(EXIT_FAILED)))
     error(e) -> ok(Step(chat: note(chat, "[error] #{e.message}")))
   end
 end
@@ -272,11 +312,37 @@ def on_interrupt(chat: Chat) -> Result[Step]
   ok(Step(chat: note(chat, "[interrupted]"), exit: some(EXIT_INTERRUPTED)))
 end
 
-# The end of the input leaves once no turn runs.
+# The end of the input leaves once no turn runs; a one-shot run with the status of its turn.
 def settled(chat: Chat) -> Result[Step]
+  return ok(Step(chat: chat, exit: some(chat.status))) if chat.eof and not chat.turn and chat.once
   return ok(Step(chat: chat, exit: some(0))) if chat.eof and not chat.turn
 
   ok(Step(chat: chat))
+end
+
+def exit_status(reason: Protocol.StopReason) -> Int
+  case reason
+    Protocol.StopReason.EndTurn -> 0
+    Protocol.StopReason.Cancelled -> EXIT_INTERRUPTED
+    _ -> EXIT_FAILED
+  end
+end
+
+def stdin_text() -> String
+  lines: List[String] = []
+  while true
+    case IO.gets
+      ok(line) -> lines = lines.push(line)
+      error(_) -> break
+    end
+  end
+
+  text = lines.join("\n")
+  while text.end_with?("\n")
+    text = text.slice(0, text.length - 1)
+  end
+
+  text
 end
 
 def resync(chat: Chat) -> Result[Step]
@@ -315,24 +381,33 @@ def forgotten(chat: Chat, approval_id: String) -> Chat
   chat.with(pending: rest)
 end
 
-# Asks the first pending approval once the replay is over. With the input at its end nobody can answer: every
-# pending approval is denied, however many come.
+# Asks the first pending approval once the replay is over. With `--yolo` the approvals of this run are allowed; the
+# ones pending before it are asked. With the input at its end nobody can answer: every pending approval left is
+# denied, however many come.
 def prompted(chat: Chat) -> Chat
-  return chat if chat.pending.empty? or chat.last_event_id < chat.replay_until
-  return denied(chat) if chat.eof
-  return chat if chat.asked
+  state = chat
+  while not state.pending.empty? and state.last_event_id >= state.replay_until
+    head = state.pending[0]
+    if state.yolo and not state.inherited.include?(head.approval_id)
+      state = decided(state, Protocol.Decision.Allow)
+    elsif state.eof
+      state = decided(state, Protocol.Decision.Deny)
+    else
+      return state if state.asked
 
-  show(chat, some(Render.prompt(chat.pending[0]))).with(asked: true)
+      return show(state, some(Render.prompt(head))).with(asked: true)
+    end
+  end
+
+  state
 end
 
-def denied(chat: Chat) -> Chat
-  state = chat
-  while not state.pending.empty?
-    head = state.pending[0]
-    state = answer_head(state, Protocol.Decision.Deny)
-    if not state.pending.empty? and state.pending[0].approval_id == head.approval_id
-      state = forgotten(state, head.approval_id)
-    end
+# Answers the first pending approval; one whose answer failed is dropped, so nothing waits for it.
+def decided(chat: Chat, decision: Protocol.Decision) -> Chat
+  head = chat.pending[0]
+  state = answer_head(chat, decision)
+  if not state.pending.empty? and state.pending[0].approval_id == head.approval_id
+    return forgotten(state, head.approval_id)
   end
 
   state
@@ -340,18 +415,41 @@ end
 
 def note(chat: Chat, text: String) -> Chat = show(chat, some(Render.line(text)))
 
+# A one-shot run prints only the answer on stdout; its other lines go to stderr, and so does its thinking.
 def show(chat: Chat, out: Optional[Render.Out]) -> Chat
   case out
     none -> chat
     some(piece) ->
       written = Render.put(chat.flow, piece)
-      print(written.text)
+      if not chat.once or piece.flow == Render.Flow.Text
+        print(written.text)
+      else
+        aside(written.text)
+      end
+
       IO.flush()
       chat.with(flow: written.flow)
   end
 end
 
-def print_line(text: String) -> Void
-  puts(text)
-  IO.flush()
+# The newline that closes the answer's open line stays on stdout; the line itself goes to stderr.
+def aside(text: String) -> Void
+  rest = text
+  if rest.start_with?("\n")
+    print("\n")
+    rest = rest.slice(1, rest.length - 1)
+  end
+
+  if rest.end_with?("\n")
+    rest = rest.slice(0, rest.length - 1)
+  end
+
+  IO.warn(rest)
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
 end
