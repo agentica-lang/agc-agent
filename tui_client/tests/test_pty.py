@@ -462,6 +462,17 @@ class PtyTest(unittest.TestCase):
         term.type("\x03")
         self.assertEqual(term.finish(), 0)
 
+    def test_messages_typed_at_once_reach_the_server_in_order(self) -> None:
+        reply = Reply("text.sse", hold=4)
+        term = self.start([reply, Reply("text.sse")])
+        term.type("one\r")
+        term.wait_for("Hello!")
+        term.type("two\rthree\r")
+        rows = term.wait_for("queued: three")
+        self.assertLess(rows.index("· queued: two"), rows.index("· queued: three"), text_of(rows))
+        reply.release.set()
+        term.wait_for("ready")
+
     def test_ctrl_j_adds_a_line_to_the_prompt(self) -> None:
         term = self.start([Reply("text.sse")])
         term.type("one\ntwo")

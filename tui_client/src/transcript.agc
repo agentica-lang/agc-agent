@@ -96,17 +96,19 @@ end
 ## The thinking blocks follow the default again (after ^T).
 def unfold_thinking(entries: List[Entry]) -> List[Entry] = entries.map { |entry| unfolded(entry) }
 
-## The entries as rows of at most `width` columns, an empty row between two entries; the answers as markdown, and the
-## thinking only when `thinking`.
+## The entries as rows of at most `width` columns, an empty row between two entries that have rows; the answers as
+## markdown, and the thinking only when `thinking`.
 def lines(entries: List[Entry], width: Int, thinking: Bool) -> List[Line]
   rows: List[Line] = []
   for index in 0...entries.size
-    entry = entries[index]
+    drawn = entry_rows(entries[index], index, width, thinking)
+    next if drawn.empty?
+
     if not rows.empty?
-      rows = rows.push(Line(kind: entry.kind, spans: []))
+      rows = rows.push(Line(kind: entries[index].kind, spans: []))
     end
 
-    rows = rows + entry_rows(entry, index, width, thinking)
+    rows = rows + drawn
   end
 
   rows
@@ -116,16 +118,25 @@ end
 def tail(entries: List[Entry], width: Int, thinking: Bool, count: Int) -> List[Line]
   parts: List[List[Line]] = []
   size = 0
+  # The kind of the entry after, which the empty row between takes.
+  after: Optional[Kind] = none
   index = entries.size - 1
   while index >= 0 and size < count
-    rows = entry_rows(entries[index], index, width, thinking)
-    if index > 0
-      rows = [Line(kind: entries[index].kind, spans: [])] + rows
+    drawn = entry_rows(entries[index], index, width, thinking)
+    if not drawn.empty?
+      case after
+        some(kind) ->
+          parts = parts.push([Line(kind: kind, spans: [])])
+          size = size + 1
+        none -> nil
+      end
+
+      drawn = drawn.drop([drawn.size - (count - size), 0].max.unwrap!)
+      parts = parts.push(drawn)
+      size = size + drawn.size
+      after = some(entries[index].kind)
     end
 
-    rows = rows.drop([rows.size - (count - size), 0].max.unwrap!)
-    parts = parts.push(rows)
-    size = size + rows.size
     index = index - 1
   end
 
@@ -190,6 +201,9 @@ def entry_lines(entry: Entry, width: Int, thinking: Bool) -> List[Line]
   end
 
   if entry.kind == Kind.Assistant
+    # An answer that only called tools has no text and no row.
+    return [] if entry.text.strip == ""
+
     return Markdown.rows(entry.text, width).map { |spans| Line(kind: entry.kind, spans: spans) }
   end
 

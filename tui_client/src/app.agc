@@ -56,6 +56,14 @@ struct Model
   reconnects: Int = 0
   ## `resync` events in a row, with no other event between.
   resyncs: Int = 0
+  ## The messages to send, in order, one at a time: the first is on its way. The stream waits in `held` until every
+  ## reply came, so its events meet the state the replies give (the turn this client started, the message it queued).
+  outbox: List[String] = []
+  held: List[Client.Item] = []
+  ## Esc came before the turn of a message sent started: the turn stops once the reply says it did.
+  stop_wanted: Bool = false
+  ## How many times a session was opened, so the reply to a send made before is dropped.
+  opened: Int = 0
   ## The session picker of `/resume`, open over the prompt.
   picker: Optional[Picker.Picker] = none
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
@@ -88,6 +96,10 @@ enum Msg
   Note(String)
   ## The server was checked again before the stream of a generation is read again.
   Rechecked(Int, Result[Void])
+  ## The reply to a message sent: the `opened` count when it was sent, and the text.
+  Sent(Int, String, Result[Protocol.MessageAccepted])
+  ## The reply to a stop.
+  Stopped(Result[Void])
 end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
@@ -180,8 +192,14 @@ def handled(app: Model, msg: Msg) -> Model
         none -> answered
       end
 
+    Msg.Stream(generation, items) if generation == app.generation and not app.outbox.empty? ->
+      app.with(held: app.held + items)
     Msg.Stream(generation, items) if generation == app.generation -> streamed(app, items)
     Msg.Stream(_, _) -> app
+    Msg.Sent(opened, text, result) if opened == app.opened and not app.outbox.empty? ->
+      released(next_send(sent_reply(app.with(outbox: app.outbox.drop(1)), text, result)))
+    Msg.Sent(_, _, _) -> app
+    Msg.Stopped(result) -> stop_reply(app, result)
     Msg.Rechecked(generation, result) if generation == app.generation -> rechecked(app, result)
     Msg.Rechecked(_, _) -> app
   end
@@ -277,7 +295,7 @@ def create(app: Model) -> Result[Model]
 
   request = Protocol.NewSession(cwd: cwd, model: options.model, api: options.api)
   id = try Client.create_session(app.server, request)
-  ok(subscribe(noted(app.with(id: id), "session #{id}"), 0))
+  ok(subscribe(noted(app.with(id: id, opened: app.opened + 1), "session #{id}"), 0))
 end
 
 def resume(app: Model, id: String) -> Result[Model]
@@ -293,6 +311,7 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
   end
 
   fresh = app.with(
+    opened: app.opened + 1,
     entries: Transcript.from_history(session.history),
     turn: session.turn_id.some?,
     stopping: false,
@@ -323,7 +342,14 @@ def subscribe(app: Model, from: Int) -> Model
     tell: ->(item) { feed.send(item, SEND_MS) },
   )
 
-  started = app.with(stream: some(Client.start(reader)), feed: some(feed), generation: generation, last_event_id: from)
+  started = app.with(
+    stream: some(Client.start(reader)),
+    feed: some(feed),
+    generation: generation,
+    last_event_id: from,
+    held: [],
+  )
+
   effect(started, read_feed(generation, feed))
 end
 
@@ -425,16 +451,57 @@ def send(app: Model) -> Model
     _ -> nil
   end
 
-  # A message sent while a turn runs is queued; its `message_queued` event shows it.
-  case Client.send_message(app.server, app.id, text)
-    ok(accepted) if accepted.message_id.some? ->
-      app.with(prompt: "", scroll: 0, yolo: Yolo.accepted(app.yolo, accepted))
+  queued = app.with(prompt: "", scroll: 0, outbox: app.outbox.push(text))
+  return queued if not app.outbox.empty?
+
+  sending(queued, text)
+end
+
+def sending(app: Model, text: String) -> Model
+  server = app.server
+  id = app.id
+  opened = app.opened
+  effect(app, TUI.Cmd.Run(-> { Msg.Sent(opened, text, Client.send_message(server, id, text)) }))
+end
+
+# The next message of the outbox goes once the reply to the one before came, so the server gets them in order.
+def next_send(app: Model) -> Model
+  return app.with(stop_wanted: false) if app.outbox.empty?
+
+  sending(app, app.outbox[0])
+end
+
+# A message sent while a turn runs is queued; its `message_queued` event shows it. A message that was not sent goes
+# back to an empty prompt.
+def sent_reply(app: Model, text: String, result: Result[Protocol.MessageAccepted]) -> Model
+  case result
+    ok(accepted) if accepted.message_id.some? -> app.with(yolo: Yolo.accepted(app.yolo, accepted))
     ok(accepted) ->
       entries = Transcript.add(app.entries, Transcript.Kind.User, text)
-      yolo = Yolo.accepted(app.yolo, accepted)
-      app.with(entries: entries, prompt: "", turn: true, stopping: false, scroll: 0, yolo: yolo)
-    error(e) -> noted(app, "error: #{e.message}")
+      started = app.with(entries: entries, turn: true, stopping: false, yolo: Yolo.accepted(app.yolo, accepted))
+      return started if not app.stop_wanted
+
+      stop(started.with(stop_wanted: false))
+    error(e) ->
+      failed = noted(app, "error: the message was not sent: #{e.message}: #{Client.printable(text)}")
+      return failed if app.prompt != ""
+
+      failed.with(prompt: text, cursor: text.length)
   end
+end
+
+def stop_reply(app: Model, result: Result[Void]) -> Model
+  case result
+    ok(_) -> app
+    error(e) -> noted(app.with(stopping: false), "error: the stop was not sent: #{e.message}")
+  end
+end
+
+# The stream held while messages were sent goes on once every reply came.
+def released(app: Model) -> Model
+  return app if not app.outbox.empty? or app.held.empty?
+
+  streamed(app.with(held: []), app.held)
 end
 
 def on_command(app: Model, command: Client.Command) -> Model
@@ -478,12 +545,14 @@ def fresh(app: Model) -> Model
     now: app.now,
     clock_s: app.clock_s,
     effects: app.effects,
+    opened: app.opened,
   )
 end
 
 # A new session (no choice), or the session `/resume` chose.
 def switch_command(app: Model, choice: Optional[String]) -> Model
   return noted(app, "a turn is running: Esc stops it first") if app.turn
+  return noted(app, "a message is being sent: wait for its reply first") if not app.outbox.empty?
 
   case choice
     some(picked) -> tried(app, switched(app, picked))
@@ -540,12 +609,15 @@ def compacted(server: Client.Server, id: String) -> String
 end
 
 def stop(app: Model) -> Model
+  return noted(app.with(stop_wanted: true), "the turn stops once it starts") if not app.turn and not app.outbox.empty?
   return app if not app.turn or app.stopping
 
-  case Client.stop(app.server, app.id)
-    ok(_) -> noted(app.with(stopping: true), "stopping the turn")
-    error(e) -> noted(app, "error: the stop was not sent: #{e.message}")
-  end
+  server = app.server
+  id = app.id
+  effect(
+    noted(app.with(stopping: true), "stopping the turn"),
+    TUI.Cmd.Run(-> { Msg.Stopped(Client.stop(server, id)) }),
+  )
 end
 
 # The answer is sent by a command, so the keys go on; its reply comes back as a message.
