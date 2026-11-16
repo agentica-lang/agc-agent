@@ -125,7 +125,7 @@ A package is added by the phase that needs it, never as an empty folder.
   none fails.
 - Fast tests: `make test` stays near a minute and no test file passes 5 s
   (`agentica test --timing`). Order of preference: a unit or functional test
-  with fixtures, an app test with a fake (`tui_client/tests/app_test.agc`),
+  with fixtures, an app test on the fake terminal of `TUI.Testing` (`tui_client/tests/terminal_test.agc`, `app_test.agc`),
   then a child process on pipes (`cli`), and a pty only for what the terminal
   does (raw mode, resize, mouse, paste, drawing, signals). No `Task.sleep` or
   `time.sleep` to wait for something: wait on the event (a channel the test

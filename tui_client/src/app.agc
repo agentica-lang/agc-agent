@@ -130,6 +130,12 @@ def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) ->
     start = start.with(theme: Theme.basic())
   end
 
+  drive(TUI.Raw.backend(screen), start, output)
+end
+
+## Runs the app from the model `start` and its effects on `backend` until it ends: the exit code. The tests give it a
+## fake terminal.
+def drive(backend: TUI.Backend, start: Model, output: TUI.OutputMode = TUI.OutputMode.Colors256) -> Result[Int]
   app = TUI.App(
     model: start.with(effects: []),
     update: &update,
@@ -141,11 +147,16 @@ def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) ->
     output: output,
   )
 
-  last = try TUI.Raw.program(screen, app)
+  last = try TUI.Raw.program(backend, app)
   case last.failure
     some(reason) -> error(reason, kind: "tui.session")
     none -> ok(last.exit.unwrap_or(0))
   end
+end
+
+## The command that reads the next items of the stream `feed` of `generation`.
+def read_feed(generation: Int, feed: Channel[Client.Item]) -> TUI.Cmd[Msg]
+  TUI.Cmd.Run(-> { Msg.Stream(generation, drained(feed)) })
 end
 
 ## The model before the session is opened.
@@ -272,11 +283,6 @@ def listen(signals: Channel[System.Signal]) -> TUI.Cmd[Msg]
       end
     },
   )
-end
-
-# The next items of the stream: the first that comes, and those that wait after it.
-def read_feed(generation: Int, feed: Channel[Client.Item]) -> TUI.Cmd[Msg]
-  TUI.Cmd.Run(-> { Msg.Stream(generation, drained(feed)) })
 end
 
 def drained(feed: Channel[Client.Item]) -> List[Client.Item]

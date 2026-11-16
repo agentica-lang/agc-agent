@@ -491,17 +491,6 @@ class PtyTest(unittest.TestCase):
         term.type("\x03")
         self.assertEqual(term.finish(), 0)
 
-    def test_messages_typed_at_once_reach_the_server_in_order(self) -> None:
-        reply = Reply("text.sse", hold=4)
-        term = self.start([reply, Reply("text.sse")])
-        term.type("one\r")
-        term.wait_for("Hello!")
-        term.type("two\rthree\r")
-        rows = term.wait_for("queued: three")
-        self.assertLess(rows.index(" queued: two"), rows.index(" queued: three"), text_of(rows))
-        reply.release.set()
-        term.wait_for("ready")
-
     def test_ctrl_j_adds_a_line_to_the_prompt(self) -> None:
         term = self.start([Reply("text.sse")])
         term.type("one\ntwo")
@@ -622,25 +611,6 @@ class PtyTest(unittest.TestCase):
         rows = term.wait_for("▸ thinking")
         self.assertNotIn("greets", text_of(rows))
 
-    def test_clicks_on_content_or_twice_on_tab_answer_nothing(self) -> None:
-        term = self.start([Reply("write_keys.sse"), Reply("text.sse")])
-        term.type("write it\r")
-        term.find("^Y allow")
-        term.settle(0.4)
-        for text in ["  a = 1", "  ^Y please"]:
-            term.click(*term.find(text))
-        row, col = term.find("Tab to answer")
-        # A double click in one write: two Tabs, so the panel is back where it was, and nothing answered.
-        term.type(f"\x1b[<0;{col + 3};{row + 1}M\x1b[<0;{col + 3};{row + 1}m" * 2)
-        rows = term.settle(0.5)
-        self.assertIn("Tab to answer", text_of(rows))
-        term.click(row, col + 2)
-        rows = term.wait_for("Tab back to the prompt")
-        rows = term.settle(0.5)
-        self.assertNotIn("allow_session", text_of(rows))
-        self.assertNotIn(" approval a1:", text_of(rows))
-        self.assertFalse((term.base / "work" / "hello.txt").exists())
-
     def test_yolo_allows_the_calls_of_its_run_but_asks_the_inherited_ones(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse"), Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")
@@ -753,47 +723,6 @@ class PtyTest(unittest.TestCase):
         self.assertIn(": deny (client)", text_of(rows))
         self.assertFalse((term.base / "work" / "hello.txt").exists())
 
-    def test_typing_while_an_approval_waits_answers_nothing(self) -> None:
-        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
-        term.type("write it\r")
-        term.wait_for("Tab to answer")
-        term.type("pay")
-        rows = term.wait_for(" pay")
-        self.assertIn("Tab to answer", text_of(term.settle()))
-        self.assertFalse((term.base / "work" / "hello.txt").exists())
-        term.type("\t")
-        term.wait_for("y allow · n deny")
-        term.settle(0.4)
-        term.type("A")
-        rows = term.wait_for(": allow_session (client)")
-        self.assertIn(" pay", rows)
-        term.wait_for("ready")
-        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
-
-    def test_a_pasted_control_byte_answers_nothing(self) -> None:
-        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
-        term.type("write it\r")
-        term.wait_for("Tab to answer")
-        term.settle(0.4)
-        term.type("x\x01a\x01")
-        rows = term.wait_for(" xa")
-        self.assertIn("Tab to answer", text_of(term.settle()))
-        self.assertNotIn("allow_session", text_of(rows))
-        self.assertFalse((term.base / "work" / "hello.txt").exists())
-
-    def test_a_bracketed_paste_goes_to_the_prompt_and_answers_nothing(self) -> None:
-        term = self.start([Reply("write_file.sse"), Reply("text.sse")])
-        term.type("write it\r")
-        term.wait_for("Tab to answer")
-        term.type("\t")
-        term.wait_for("y allow · n deny")
-        term.settle(0.4)
-        term.type("\x1b[200~y\x01a\x19n\r\nnext\x1b[201~")
-        rows = term.wait_for(" next")
-        self.assertIn(" yan", rows)
-        self.assertIn("y allow · n deny", text_of(term.settle()))
-        self.assertFalse((term.base / "work" / "hello.txt").exists())
-
     def test_a_client_that_attaches_asks_the_pending_approval(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")
@@ -838,28 +767,6 @@ class PtyTest(unittest.TestCase):
         rows = term.wait_for(" y")
         self.assertFalse((term.base / "work" / "hello.txt").exists())
 
-    def test_a_tiny_terminal_draws_the_panel_and_a_resize_redraws_it(self) -> None:
-        term = self.start([Reply("write_file.sse"), Reply("text.sse")], rows=6, cols=24)
-        term.type("write it\r")
-        # The panel shows before the resize: the last ^Y comes long after the guard of a new approval.
-        rows = term.wait_for("^Y allow")
-        term.settle()
-        self.assertIsNone(term.process.poll(), text_of(rows))
-        term.resize(3, 10)
-        term.settle()
-        self.assertIsNone(term.process.poll())
-        # No panel row on the screen: no key answers.
-        term.type("\x19")
-        term.settle()
-        term.resize(ROWS, COLS)
-        rows = term.wait_for("Tab to answer")
-        self.assertIn("approval waiting", text_of(rows))
-        self.assertFalse((term.base / "work" / "hello.txt").exists())
-        term.type("\x19")
-        term.wait_for(ANSWER)
-        term.wait_for("ready")
-        self.assertEqual((term.base / "work" / "hello.txt").read_text(), "hi\n")
-
     def test_term_hup_and_int_restore_the_terminal(self) -> None:
         for sig, code in [(signal.SIGTERM, 143), (signal.SIGHUP, 129), (signal.SIGINT, 130)]:
             with self.subTest(signal=sig.name):
@@ -868,15 +775,6 @@ class PtyTest(unittest.TestCase):
                 self.assertEqual(term.finish(), code)
                 self.assertIn(LEAVE_SCREEN, term.output[term.output.rindex(ENTER_SCREEN) :])
                 self.assertEqual(termios.tcgetattr(term.slave), term.modes_before)
-
-    def test_escape_while_idle_sends_no_stop(self) -> None:
-        term = self.start_proxied([], [])
-        term.type("\x1b")
-        term.type("x")
-        rows = term.wait_for(" x")
-        self.assertNotIn("Stopping", text_of(term.settle()))
-        self.assertIn("ready", text_of(rows))
-        self.assertFalse(any(path.endswith("/stop") for path in self.proxy.paths), self.proxy.paths)
 
     def test_a_cut_stream_is_read_again_from_the_last_event(self) -> None:
         term = self.start_proxied([Reply("text.sse", pause=0.1)], [("cut", 3)])
