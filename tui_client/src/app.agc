@@ -26,7 +26,7 @@ MAX_DETAIL_ROWS = 10
 def run(screen: TUI.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
   try TUI.set_input_mode(screen, TUI.InputMode.Esc, true)
   inbox: Channel[Inbox.Input] = Channel.new(INBOX_CAPACITY)
-  signals = try System.subscribe([System.Signal.Term, System.Signal.Hup])
+  signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
   _ = Task.spawn(-> { watch_signals(signals, inbox) })
   _ = Task.spawn(-> { read_keys(screen, inbox) })
   app = try open(App(screen: screen, server: server, id: "", inbox: inbox, thinking: options.thinking), options)

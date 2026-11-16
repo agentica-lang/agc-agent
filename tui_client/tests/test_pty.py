@@ -161,6 +161,9 @@ class Proxy:
         for step in plan:
             self.plan.put(step)
         self.paths: list[str] = []
+        # The Last-Event-ID of each event stream, and the ids each one passed on.
+        self.asked: list[int] = []
+        self.passed: list[list[int]] = []
         proxy = self
 
         class Handler(http.server.BaseHTTPRequestHandler):
@@ -180,6 +183,8 @@ class Proxy:
 
             def forward(self) -> None:
                 proxy.paths.append(f"{self.command} {self.path}")
+                if self.path.endswith("/events"):
+                    proxy.asked.append(int(self.headers.get("Last-Event-ID", "-1")))
                 body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 upstream = http.client.HTTPConnection("127.0.0.1", port, timeout=TIMEOUT)
                 upstream.request(self.command, self.path, body, dict(self.headers.items()))
@@ -206,6 +211,8 @@ class Proxy:
                     self.chunk(b"")
                     return
                 left = step[1] if step else None
+                passed: list[int] = []
+                proxy.passed.append(passed)
                 buffer = b""
                 try:
                     while left != 0:
@@ -217,6 +224,7 @@ class Proxy:
                         while b"\n\n" in buffer and left != 0:
                             event, buffer = buffer.split(b"\n\n", 1)
                             self.chunk(event + b"\n\n")
+                            passed.extend(int(line[3:]) for line in event.split(b"\n") if line.startswith(b"id:"))
                             if left is not None:
                                 left -= 1
                 except (OSError, http.client.HTTPException):
@@ -483,8 +491,8 @@ class PtyTest(unittest.TestCase):
         self.assertIn(": deny (client)", text_of(rows))
         self.assertFalse((term.base / "work" / "hello.txt").exists())
 
-    def test_term_and_hup_restore_the_terminal(self) -> None:
-        for sig, code in [(signal.SIGTERM, 143), (signal.SIGHUP, 129)]:
+    def test_term_hup_and_int_restore_the_terminal(self) -> None:
+        for sig, code in [(signal.SIGTERM, 143), (signal.SIGHUP, 129), (signal.SIGINT, 130)]:
             with self.subTest(signal=sig.name):
                 term = self.start([])
                 term.process.send_signal(sig)
@@ -507,8 +515,8 @@ class PtyTest(unittest.TestCase):
         term.wait_for(ANSWER)
         rows = term.wait_for("ready")
         self.assertEqual(text_of(rows).count("Hello!"), 1, text_of(rows))
-        streams = [path for path in self.proxy.paths if path.endswith("/events")]
-        self.assertEqual(len(streams), 2, self.proxy.paths)
+        self.assertEqual(len(self.proxy.asked), 2, self.proxy.paths)
+        self.assertEqual(self.proxy.asked[1], self.proxy.passed[0][-1])
 
     def test_a_resync_reads_the_session_again(self) -> None:
         term = self.start_proxied([Reply("text.sse", pause=0.1)], [("cut", 3), "resync"])
@@ -521,8 +529,16 @@ class PtyTest(unittest.TestCase):
         self.assertTrue(any("/sessions/" in path for path in reads), self.proxy.paths)
 
     def test_resyncs_in_a_row_end_the_client(self) -> None:
-        term = self.start_proxied([], ["resync", "resync", "resync", "resync"])
+        # While a turn runs: the first resync replays the turn from its start, the second reads only what comes next.
+        reply = Reply("text.sse", hold=4)
+        term = self.start_proxied([reply], [("cut", 3), "resync", "resync", "resync"])
+        term.type("hi\r")
         self.assertEqual(term.finish(), 1)
+        self.assertEqual(len(self.proxy.asked), 4, self.proxy.paths)
+        cut_at = self.proxy.passed[0][-1]
+        self.assertEqual(self.proxy.asked[:2], [0, cut_at])
+        self.assertLess(self.proxy.asked[2], self.proxy.asked[3])
+        self.assertGreaterEqual(self.proxy.asked[3], cut_at)
         after = term.output[term.output.rindex(LEAVE_SCREEN) :]
         self.assertIn(b"keeps asking to read the session again", after)
 
