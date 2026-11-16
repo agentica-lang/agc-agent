@@ -172,8 +172,10 @@ def test_an_update_keeps_the_wrapped_rows_of_the_entries() -> Result[Void]
   Test.assert(rows(step.model).include?("one two three"), "the note is drawn")
 end
 
-# The /tree picker lists the messages and answers of every branch; Enter on one asks for the branch by a command, not
-# while a turn runs. The session the server moved to is opened, with the message it went back before in the prompt.
+# The /tree picker lists the numbered messages and answers of every branch; Enter on one asks for the branch by a
+# command, not while a turn runs, and nothing but a local command (/help) goes until its reply. `/tree N` names a
+# message of the picker shown last. The session the server moved to is opened with the message it went back before
+# selected in the prompt: a typed character replaces it, an arrow keeps it.
 def test_the_tree_picker_moves_the_session_and_fills_the_prompt() -> Result[Void]
   nodes = [
     Protocol.TreeNode(id: 1, text: "One.", answer: "A1", last: 7, active: true),
@@ -181,22 +183,42 @@ def test_the_tree_picker_moves_the_session_and_fills_the_prompt() -> Result[Void
     Protocol.TreeNode(id: 15, parent: some(1), text: "Three.", last: 20, active: true),
   ]
 
-  tree = Client.tree_rows(Protocol.SessionTree(nodes: nodes))
-  model = model_of(50, 12).with(id: "s1", picker: some(Picker.Picker(tree: tree, kind: Picker.Kind.Tree)))
+  tree = Protocol.SessionTree(nodes: nodes)
+  picker = Picker.Picker(tree: Client.tree_rows(tree), kind: Picker.Kind.Tree)
+  model = model_of(50, 12).with(id: "s1", picker: some(picker), listed: some(tree))
   drawn = rows(model)
-  try Test.assert(drawn.include?("› * One."), "the first message is selected: #{drawn}")
+  try Test.assert(drawn.include?("› 1. * One."), "the first message is selected: #{drawn}")
+  try Test.assert(drawn.include?("2. ├   Two."), "a branch has a guide: #{drawn}")
   try Test.assert(drawn.include?("→ A2"), "an answer is a row: #{drawn}")
   down = App.update(model, App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))).model
   busy = App.update(down.with(turn: true), enter())
   try Test.eq([busy.cmds.size.to_s, busy.model.picker.some?.to_s], ["0", "false"])
   picked = App.update(down, enter())
-  try Test.eq([picked.cmds.size.to_s, picked.model.picker.some?.to_s], ["1", "false"])
+  try Test.eq(
+    [picked.cmds.size.to_s, picked.model.picker.some?.to_s, picked.model.moving.to_s],
+    ["1", "false", "true"],
+  )
+
   try Test.assert(picked.cmds.flat_map { |cmd| run(cmd) }.all? { |msg| moved?(msg) }, "the branch is asked")
+  held = App.update(picked.model.with(prompt: "hi"), enter())
+  try Test.eq([held.cmds.size.to_s, held.model.prompt, held.model.outbox.size.to_s], ["0", "hi", "0"])
+  helped = App.update(picked.model.with(prompt: "/help"), enter()).model
+  try Test.eq([helped.prompt, helped.entries.last.text], ["", Client.HELP.last])
+  renewed = App.update(picked.model.with(prompt: "/new"), enter()).model
+  try Test.eq([renewed.prompt, renewed.entries.last.text], ["/new", "the session is moving: wait for it"])
+  typed = App.update(model.with(picker: none, prompt: "/tree 3"), enter())
+  try Test.eq([typed.cmds.size.to_s, typed.model.moving.to_s], ["1", "true"])
+  unlisted = App.update(model.with(picker: none, listed: none, prompt: "/tree 3"), enter())
+  try Test.eq([unlisted.cmds.size.to_s, unlisted.model.entries.last.text], ["0", "open the list first: /tree"])
   branched = Protocol.Branched(id: "s1", text: "Two.")
-  back = App.update(model.with(picker: none), App.Msg.Moved(ok(branched))).model
-  try Test.eq([back.prompt, back.cursor.to_s], ["Two.", "4"])
-  failed = App.update(model.with(picker: none), App.Msg.Moved(error("busy", kind: "session.busy"))).model
-  Test.eq([failed.prompt, failed.entries.last.text], ["", "error: busy"])
+  back = App.update(model.with(picker: none, moving: true), App.Msg.Moved(ok(branched))).model
+  try Test.eq([back.prompt, back.cursor.to_s, back.prefilled.to_s, back.moving.to_s], ["Two.", "4", "true", "false"])
+  replaced = App.update(back, App.Msg.Key(TUI.Event.Char("x", TUI.Mods()))).model
+  try Test.eq([replaced.prompt, replaced.prefilled.to_s], ["x", "false"])
+  kept = App.update(back, App.Msg.Key(TUI.Event.Key(TUI.Key.Left, TUI.Mods()))).model
+  try Test.eq([kept.prompt, kept.prefilled.to_s], ["Two.", "false"])
+  failed = App.update(model.with(picker: none, moving: true), App.Msg.Moved(error("busy", kind: "session.busy"))).model
+  Test.eq([failed.prompt, failed.entries.last.text, failed.moving.to_s], ["", "error: busy", "false"])
 end
 
 # Alt+Enter during a turn keeps the text for after it, listed above the editor; the turn's end sends the follow-ups

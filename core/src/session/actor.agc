@@ -172,6 +172,8 @@ struct State
   compacting: Bool = false
   ## Anthropic requests go without thinking blocks until the next fold: a turn passed the limit inside a tool round.
   stripped: Bool = false
+  ## The tree of the file as far as the session read it.
+  entries: Optional[Store.Entries] = none
 end
 
 ## Starts a session; from what its file saved when there is one.
@@ -334,8 +336,15 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Fold(reply) -> Actor.continue(start_fold(state, reply))
     Msg.Folded(found, reply) -> Actor.continue(end_fold(state, found, reply))
     Msg.Tree(reply) ->
-      Actor.reply(reply, Store.tree(state.setup.file))
-      Actor.continue(state)
+      case indexed(state)
+        ok(known) ->
+          Actor.reply(reply, ok(Store.tree(known.entries.unwrap!)))
+          Actor.continue(known)
+        error(e) ->
+          Actor.reply(reply, error(e))
+          Actor.continue(state)
+      end
+
     Msg.Branch(entry, reply) -> Actor.continue(branch_to(state, entry, reply))
     Msg.Copy(entry, to, reply) ->
       Actor.reply(reply, copied(state, entry, to))
@@ -1033,7 +1042,8 @@ end
 
 def moved(state: State, entry: Int) -> Result[Moved]
   file = state.setup.file
-  point = try Store.point(file, some(entry))
+  known = try indexed(state)
+  point = try Store.point(known.entries.unwrap!, some(entry))
   # Read before the branch is written, so a session whose file follows the branch always has its state.
   saved = try Store.load(file, some(point.leaf))
   until = state.counter + 1
@@ -1042,7 +1052,7 @@ def moved(state: State, entry: Int) -> Result[Moved]
     error(e) -> return error("the session file cannot be written: #{e.message}", kind: Protocol.KIND_SESSION_STORAGE)
   end
 
-  on_branch = state.with(
+  on_branch = known.with(
     history: saved.history,
     display: saved.shown,
     marks: saved.marks,
@@ -1067,10 +1077,15 @@ def resynced(state: State) -> State
   state.with(log: [], lost_below: state.counter, lost: none, subscribers: [])
 end
 
+# The tree of the session's file, read only past what the session read of it before.
+def indexed(state: State) -> Result[State]
+  ok(state.with(entries: some(try Store.entries(state.setup.file, state.entries))))
+end
+
 def copied(state: State, entry: Optional[Int], to: Copying) -> Result[Copied]
   return error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY) if state.turn.some? or state.compacting
 
-  point = try Store.point(state.setup.file, entry)
+  point = try Store.point(try Store.entries(state.setup.file, state.entries), entry)
   file = try Store.copy(state.setup.file, to.dir, to.header, point.leaf)
   settings = Store.append_settings(file, state.setup.model, state.setup.effort)
   if not settings.ok?
