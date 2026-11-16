@@ -60,6 +60,34 @@ def test_a_restarted_server_resumes_a_session_with_its_event_ids() -> Result[Voi
   end
 end
 
+# A diff that crashes is only left out: the call still runs, the turn ends, and the file is written.
+def test_a_crashing_diff_never_stops_the_call() -> Result[Void]
+  setup = H.Setup(replies: ["write_file.sse", "text.sse"], diff: some(&crashed_diff))
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    finished = a.seen.select do |s|
+      case s.event
+        Protocol.Event.ToolFinished(done) -> done.ok and done.diff.none?
+        _ -> false
+      end
+    end
+
+    try Test.eq(finished.size, 1)
+    Test.eq(File.read_text("#{h.work}/hello.txt"), ok("hi\n"))
+  end
+end
+
+def crashed_diff(_name: String, _input: JSON.Value) -> String
+  none_yet: List[String] = []
+  none_yet[0]
+end
+
 # A message sent while a turn runs is queued and read before the next model call, after the answer so far; it stays in
 # the history after a restart. Two queued into one turn get their own ids; queued when the turn is stopped, they are
 # dropped with one error event.

@@ -57,6 +57,8 @@ struct Options
   ## The tools of the MCP servers, and those of the servers that list them after the start.
   tools: List[Tools.Tool] = []
   late_tools: Optional[Fn[List[Tools.Tool]]] = none
+  ## A test seam: makes the diff of each tool call (see `Tools.Context.diff`).
+  diff: Optional[Fn[String, JSON.Value, String]] = none
   port: Int = 0
   keep_events: Int = 1000
   approval_timeout_ms: Int = 90000

@@ -39,9 +39,10 @@ def context(
   env: Fn[String, Result[String]],
   more: List[Spec.Tool] = [],
   late: Optional[Fn[List[Spec.Tool]]] = none,
+  diff: Optional[Fn[String, JSON.Value, String]] = none,
 ) -> Result[Spec.Context]
   root = try Sandbox.open(cwd)
-  ok(Spec.Context(root: root, env: env, tools: more, late: late))
+  ok(Spec.Context(root: root, env: env, tools: more, late: late, diff: diff))
 end
 
 ## The tools a session offers the model: the base ones, then those of its context.
@@ -168,9 +169,11 @@ end
 ## tools, a call it cannot read, or a diff that fails or takes over DIFF_MS: it is only shown, so it never stops the
 ## call.
 def change(ctx: Spec.Context, name: String, input: JSON.Value) -> Optional[String]
-  task = Task.spawn do changed(ctx, name, input) end
+  # A task that gives a Result: a crash then comes back as an error, not in this task.
+  task = Task.spawn do ok(made(ctx, name, input)) end
   case Task.await(task, DIFF_MS)
-    Await.Done(text) -> nonempty(text)
+    Await.Done(ok(text)) -> nonempty(text)
+    Await.Done(_) -> none
     _ ->
       Task.cancel(task)
       none
@@ -201,6 +204,13 @@ def text_of(ctx: Spec.Context, path: String) -> String
   case Sandbox.resolve(ctx.root, path)
     ok(found) -> File.read_text(found).unwrap_or("")
     error(_) -> ""
+  end
+end
+
+def made(ctx: Spec.Context, name: String, input: JSON.Value) -> String
+  case ctx.diff
+    some(diff) -> diff.call(name, input)
+    none -> changed(ctx, name, input)
   end
 end
 

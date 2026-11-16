@@ -66,6 +66,8 @@ struct Setup
   ## The tools of MCP servers, and those that come after the start.
   tools: List[Tools.Tool] = []
   late_tools: Optional[Fn[List[Tools.Tool]]] = none
+  ## Makes the diff of each tool call in place of the real one.
+  diff: Optional[Fn[String, JSON.Value, String]] = none
   ## Code mode on a fake Monty worker that replays this fixture of `tests/fixtures/monty`.
   monty: String = ""
   ## Providers of the config file, each at `/NAME` of the fake with the OpenAI chat API (`NAME:openai_responses` for
@@ -190,6 +192,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     after_load: setup.after_load,
     tools: setup.tools,
     late_tools: setup.late_tools,
+    diff: setup.diff,
     code_mode: code_mode(setup.monty),
     catalog: setup.catalog,
     take_ms: setup.take_ms,

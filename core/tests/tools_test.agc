@@ -552,7 +552,8 @@ def test_an_edit_is_shown_as_numbered_lines() -> Result[Void]
   started = Time.monotonic_ms
   shown = Tools.change(s.ctx, "edit_file", many.unwrap!)
   try Test.assert(Time.monotonic_ms - started < 3000, "the diff took #{Time.monotonic_ms - started} ms")
-  Test.assert(shown.unwrap_or("... and 339999 more").end_with?("... and 339999 more"), "#{shown}")
+  try Test.assert(shown.some?, "the diff came in time")
+  Test.assert(shown.unwrap!.end_with?("... and 339999 more"), "#{shown}")
 end
 
 # Any edit of any small file gives a diff whose `-` rows are lines of the file and `+` rows lines of the result, at
