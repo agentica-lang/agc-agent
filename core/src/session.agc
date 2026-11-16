@@ -659,7 +659,7 @@ def wait_approval(address: Address[Msg], turn_id: String, call: Agent.Ask, timeo
 end
 
 def ask(state: State, call: Agent.Ask, reply: Channel[Protocol.Decision]) -> State
-  if Permissions.allows?(state.allows, call.tool, call.target, state.setup.ctx.root)
+  if Permissions.allows?(state.allows, state.setup.ctx.rules, call.tool, call.target, state.setup.ctx.root)
     _ = reply.send(Protocol.Decision.Allow, 0)
     return state
   end

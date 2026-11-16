@@ -63,8 +63,49 @@ def test_a_project_file_denies_anywhere_and_allows_only_when_trusted() -> Result
     untrusted = try Permissions.with_project(base, h.work, false)
     trusted = try Permissions.with_project(base, h.work, true)
     try Test.eq([untrusted.allow.size, untrusted.deny.size], [0, 1])
-    Test.eq([trusted.allow.size, trusted.deny.size], [1, 1])
+    try Test.eq([trusted.allow.size, trusted.deny.size], [1, 1])
+    try File.write_text("#{h.work}/.finn/config.json", "{\"allow\": [\"npm test\"]}")
+    try Test.eq(Permissions.with_project(base, h.work, false), ok(base))
+    Test.eq(Permissions.with_project(base, h.work, true).ok?, false)
   end
+end
+
+# A session allow never passes a deny rule: each simple command is checked, and one whose words are not plain (quoted,
+# expanded) is not allowed through a prefix or the whole tool while a deny rule of bash exists. With a deny rule of
+# read_file, a command that only reads needs a prefix too.
+def test_session_allows_keep_the_deny_rules_of_each_command() -> Result[Void]
+  rules = try Approval.parse_rules([], ["bash(rm *)", "bash(git push*)", "read_file(.env)"])
+  prefixes = Permissions.Allows(prefixes: [["rm"], ["git", "push"], ["git", "status"], ["echo"]])
+  whole = Permissions.Allows(tools: ["bash"])
+  denied = [
+    "rm -rf 'x'", "git push '--force' origin", "ls; git push --force", "FOO=1 git push", "echo \"$(git push)\"",
+  ]
+
+  for command in denied
+    try Test.eq([command, Permissions.allows?(prefixes, rules, "bash", command, "/tmp").to_s], [command, "false"])
+    try Test.eq([command, Permissions.allows?(whole, rules, "bash", command, "/tmp").to_s], [command, "false"])
+  end
+
+  try Test.eq(Permissions.allows?(prefixes, rules, "bash", "git status; cat .env", "/tmp"), false)
+  try Test.eq(Permissions.allows?(prefixes, rules, "bash", "git status --short && echo done", "/tmp"), true)
+  Test.eq(Permissions.allows?(whole, rules, "bash", "cat .env | wc -l", "/tmp"), true)
+end
+
+# An edit of two files, one under .git/, is protected: neither accept edits nor allow_tool runs it.
+def test_a_patch_that_touches_git_is_never_allowed_by_the_session() -> Result[Void]
+  target = "a.txt, .git/hooks/pre-commit"
+  edits = Permissions.Allows(accept_edits: true, tools: ["apply_patch"])
+  try Test.eq(Approval.protected?("apply_patch", target), true)
+  try Test.eq(Approval.protected?("apply_patch", "a.txt, b/.gitignore"), false)
+  Test.eq(Permissions.allows?(edits, Approval.Rules(allow: [], deny: []), "apply_patch", target, "/tmp"), false)
+end
+
+# The prefix of a program of two words is its first two; with an option second, an answer allows the same call only.
+def test_the_prefix_of_a_command() -> Result[Void]
+  try Test.eq(Permissions.prefix("bash", "git log -n 3"), some(["git", "log"]))
+  try Test.eq(Permissions.prefix("bash", "git -c a=b log"), none)
+  try Test.eq(Permissions.prefix("bash", "ls -la"), some(["ls"]))
+  Test.eq(Permissions.prefix("bash", "ls | wc"), none)
 end
 
 # The user's rules come from FINN_CONFIG, else the default file when it is there; a broken file stops the start.

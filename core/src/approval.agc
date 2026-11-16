@@ -67,8 +67,7 @@ def decide(rules: Rules, tool: String, target: String, asks: Bool, root: Optiona
   matchable = tool != "bash" or plain?(target)
   hidden = tool == "edit_file" and read_denied?(rules, target)
   denied = hidden or (matchable and rules.deny.any? { |rule| matches?(rule, tool, target) })
-  guarded = rules.deny.any? { |rule| rule.tool == "read_file" or rule.tool == "bash" }
-  read_only = tool == "bash" and not guarded and root.map { |folder| read_only?(folder, target) } == some(true)
+  read_only = tool == "bash" and not guarded?(rules) and root.map { |folder| read_only?(folder, target) } == some(true)
   allowed = read_only or (matchable and rules.allow.any? { |rule| matches?(rule, tool, target) })
   if denied
     Verdict.Deny
@@ -83,10 +82,21 @@ def decide(rules: Rules, tool: String, target: String, asks: Bool, root: Optiona
   end
 end
 
-## A change under `.git/`, which always asks unless a deny rule refuses it.
+## A change under `.git/`, which always asks unless a deny rule refuses it. The target of `apply_patch` is its paths
+## joined with ", ": each one is checked.
 def protected?(tool: String, target: String) -> Bool
-  WRITES.include?(tool) and target.split("/").any? { |name| Regex.match?(name.downcase, GIT) }
+  return false if not WRITES.include?(tool)
+
+  target.split(", ").any? { |path| path.split("/").any? { |name| Regex.match?(name.downcase, GIT) } }
 end
+
+## Whether a deny rule of `tool` matches `target`.
+def denied?(rules: Rules, tool: String, target: String) -> Bool
+  rules.deny.any? { |rule| matches?(rule, tool, target) }
+end
+
+## A deny rule of `read_file` or `bash` exists: a command that only reads could read what it hides.
+def guarded?(rules: Rules) -> Bool = rules.deny.any? { |rule| rule.tool == "read_file" or rule.tool == "bash" }
 
 ## Whether `command` only reads inside `root` (`Shell.verdict`, its paths resolved by `Sandbox`).
 def read_only?(root: String, command: String) -> Bool

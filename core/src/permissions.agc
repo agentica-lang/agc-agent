@@ -7,8 +7,12 @@
 ##
 ## A session allows more by its answers: the same call (`allow_session`), the same command prefix for `bash`
 ## (`allow_prefix`: `git log`, `npm test`), or the whole tool (`allow_tool`); and in the accept-edits mode the edits of
-## files run without asking. None of them reaches into `.git/`, and a deny rule is checked before them.
+## files run without asking. None of them reaches into `.git/`, and a deny rule is checked before them: for `bash`, on
+## each simple command, its words joined by spaces; a command whose words cannot be checked that way (a quote, a `$`,
+## a glob) is not allowed through them while a deny rule of `bash` exists. They last as long as the server runs: a
+## restart forgets them.
 
+import Regex from "std/regex"
 import Shell from "pkg/shell/shell"
 import Approval from "approval"
 import Sandbox from "sandbox"
@@ -22,6 +26,7 @@ TWO_WORDS = [
   "git", "npm", "pnpm", "yarn", "bun", "npx", "cargo", "go", "make", "docker", "kubectl", "pip", "poetry", "uv", "mix",
   "gh", "dotnet", "bundle", "rails",
 ]
+ASSIGNMENT = /\A[A-Za-z_][A-Za-z0-9_]*=/
 
 struct Allows
   ## `tool\ntarget` of each call allowed again.
@@ -44,12 +49,21 @@ def user_rules(read: Fn[String, Result[String]]) -> Result[Approval.Rules]
   end
 end
 
-## `rules` with those of the project file of `root`: its deny rules, and its allow rules when `root` is `trusted`.
+## `rules` with those of the project file of `root`: its deny rules, and its allow rules when `root` is `trusted`. A
+## broken file in a folder that is not trusted is ignored with a warning, so a repository cannot stop its sessions.
 def with_project(rules: Approval.Rules, root: String, trusted: Bool) -> Result[Approval.Rules]
   path = "#{root}/#{PROJECT_FILE}"
   return ok(rules) if not File.stat(path).ok?
 
-  project = try rules_of(path)
+  read = rules_of(path)
+  case read
+    error(e) if not trusted ->
+      IO.warn("#{e.message}; its rules are ignored")
+      return ok(rules)
+    _ -> nil
+  end
+
+  project = try read
   allow = rules.allow
   if trusted
     allow = allow + project.allow
@@ -59,7 +73,8 @@ def with_project(rules: Approval.Rules, root: String, trusted: Bool) -> Result[A
 end
 
 ## The words a prefix answer would allow for a `bash` command: its first word, or two for `TWO_WORDS`; none for another
-## tool or a command that is not one simple command.
+## tool, a command that is not one simple command, or one of `TWO_WORDS` whose second word is missing or an option
+## (`git -c a=b log`), which an answer allows only as the same call.
 def prefix(tool: String, target: String) -> Optional[List[String]]
   return none if tool != "bash"
 
@@ -67,19 +82,34 @@ def prefix(tool: String, target: String) -> Optional[List[String]]
   return none if script.pipelines.size != 1 or script.pipelines[0].commands.size != 1
 
   words = Shell.argv(script.pipelines[0].commands[0])
-  return some(words.take(2)) if TWO_WORDS.include?(words[0]) and words.size >= 2 and not words[1].start_with?("-")
+  return none if words.empty?
+  return some(words.take(1)) if not TWO_WORDS.include?(words[0])
+  return none if words.size < 2 or words[1].start_with?("-")
 
-  some(words.take(1))
+  some(words.take(2))
 end
 
-## Whether the session's answers or mode allow the call (in the session folder `root`).
-def allows?(allows: Allows, tool: String, target: String, root: String) -> Bool
+## Whether the session's answers or mode allow the call (in the session folder `root`), under the deny rules of
+## `rules`.
+def allows?(allows: Allows, rules: Approval.Rules, tool: String, target: String, root: String) -> Bool
   return false if Approval.protected?(tool, target)
+  return false if tool == "bash" and bash_denied?(rules, target)
   return true if allows.exact.include?(key(tool, target))
   return true if allows.tools.include?(tool)
   return true if allows.accept_edits and EDITS.include?(tool)
 
-  tool == "bash" and not allows.prefixes.empty? and prefixed?(allows.prefixes, target, root)
+  tool == "bash" and not allows.prefixes.empty? and prefixed?(allows.prefixes, target, root, Approval.guarded?(rules))
+end
+
+## Whether a deny rule of `bash` matches a simple command of `target` (its words joined by spaces, after the variable
+## assignments in front), or cannot be checked: the command does not parse, or a word is not plain.
+def bash_denied?(rules: Approval.Rules, target: String) -> Bool
+  return false if (not rules.deny.any? { |rule| rule.tool == "bash" })
+
+  case Shell.parse(target)
+    ok(script) -> script.pipelines.any? { |p| p.commands.any? { |c| command_denied?(rules, c) } }
+    error(_) -> true
+  end
 end
 
 ## What an answer adds; `allow_prefix` without a prefix allows the same call.
@@ -136,13 +166,13 @@ end
 
 # Every command starts with an allowed prefix or only reads; nothing writes through a redirection or runs in the
 # background.
-def prefixed?(prefixes: List[List[String]], target: String, root: String) -> Bool
+def prefixed?(prefixes: List[List[String]], target: String, root: String, guarded: Bool) -> Bool
   case Shell.parse(target)
     ok(script) ->
       script.pipelines.all? do |pipeline|
         (
           pipeline.join != some(Shell.Join.Background) and
-          pipeline.commands.all? { |c| command_allowed?(prefixes, c, root) }
+          pipeline.commands.all? { |c| command_allowed?(prefixes, c, root, guarded) }
         )
       end
 
@@ -150,9 +180,11 @@ def prefixed?(prefixes: List[List[String]], target: String, root: String) -> Boo
   end
 end
 
-def command_allowed?(prefixes: List[List[String]], command: Shell.Command, root: String) -> Bool
+# Without `guarded`, a command that only reads inside `root` needs no prefix.
+def command_allowed?(prefixes: List[List[String]], command: Shell.Command, root: String, guarded: Bool) -> Bool
   alone = Shell.Script(pipelines: [Shell.Pipeline(commands: [command])])
-  return true if Shell.read_only?(alone, ->(path) { Sandbox.resolve(root, path).ok? }) == Shell.Verdict.Safe
+  inside = ->(path: String) { Sandbox.resolve(root, path).ok? }
+  return true if not guarded and Shell.read_only?(alone, inside) == Shell.Verdict.Safe
 
   writes = command.redirects.any? do |r|
     case r
@@ -163,4 +195,15 @@ def command_allowed?(prefixes: List[List[String]], command: Shell.Command, root:
 
   words = Shell.argv(command)
   not writes and prefixes.any? { |p| words.take(p.size) == p }
+end
+
+def command_denied?(rules: Approval.Rules, command: Shell.Command) -> Bool
+  words = Shell.argv(command)
+  while not words.empty? and Regex.match?(words[0], ASSIGNMENT)
+    words = words.drop(1)
+  end
+
+  return true if (words.any? { |word| word.empty? or word.include?(" ") or not Approval.plain?(word) })
+
+  Approval.denied?(rules, "bash", words.join(" "))
 end
