@@ -8,6 +8,8 @@ import Approvals from "approvals"
 import Args from "args"
 import Inbox from "inbox"
 import Markdown from "markdown"
+import Picker from "picker"
+import Layout from "panel"
 import Prompt from "prompt"
 import Transcript from "transcript"
 import Width from "width"
@@ -67,6 +69,10 @@ struct App
   reconnects: Int = 0
   ## `resync` events in a row, with no other event between.
   resyncs: Int = 0
+  ## The session picker of `/resume`, open over the prompt.
+  picker: Optional[Picker.Picker] = none
+  ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
+  new_model: Optional[String] = none
   ## A draw failed and the transcript says so; later failures are not noted again.
   draw_failed: Bool = false
   ## The thinking of the model is drawn.
@@ -202,6 +208,10 @@ def handle(app: App, input: Inbox.Input) -> Result[App]
 end
 
 def on_key(app: App, event: TUI.Event) -> App
+  for picker in option_list(app.picker)
+    return on_picker_key(app, picker, event) if not ctrl_c?(event)
+  end
+
   case Approvals.decision(app.approvals, event, Time.monotonic_ms, not panel(app).empty?)
     some(decision) -> return answer(app, decision)
     none -> nil
@@ -224,6 +234,28 @@ def on_key(app: App, event: TUI.Event) -> App
     TUI.Event.Mouse(TUI.Mouse.WheelDown, _, _, _) -> scrolled(app, -SCROLL_STEP)
     TUI.Event.Char(char, _) -> app.with(prompt: Prompt.insert(app.prompt, char))
     _ -> app
+  end
+end
+
+def ctrl_c?(event: TUI.Event) -> Bool
+  case event
+    TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> true
+    _ -> false
+  end
+end
+
+def on_picker_key(app: App, picker: Picker.Picker, event: TUI.Event) -> App
+  case Picker.key(picker, event)
+    Picker.Step.Stay(next_picker) -> app.with(picker: some(next_picker))
+    Picker.Step.Close -> app.with(picker: none)
+    Picker.Step.Pick(id) -> switch_command(app.with(picker: none), some(id))
+  end
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
   end
 end
 
@@ -259,7 +291,7 @@ def on_command(app: App, command: Client.Command) -> App
     Client.Command.Help -> app.with(entries: app.entries + Client.HELP.map { |line| note_entry(line) })
     Client.Command.Cost -> noted(app, "/cost comes with the model catalog")
     Client.Command.New -> switch_command(app, none)
-    Client.Command.Resume(none) -> tried(app, listed(app))
+    Client.Command.Resume(none) -> tried(app, picking(app))
     Client.Command.Resume(choice) -> switch_command(app, choice)
     Client.Command.Model(model) -> setting_command(app, "model", model, Protocol.UpdateSession(model: model))
     Client.Command.Thinking(level) -> setting_command(app, "thinking", level, Protocol.UpdateSession(effort: level))
@@ -308,11 +340,11 @@ def switch_command(app: App, choice: Optional[String]) -> App
   end
 end
 
-def listed(app: App) -> Result[App]
-  lines = Client.listing(try Client.list_sessions(app.server))
-  return ok(noted(app, "no sessions")) if lines.empty?
+def picking(app: App) -> Result[App]
+  list = try Client.list_sessions(app.server)
+  return ok(noted(app, "no sessions")) if list.sessions.empty?
 
-  ok(app.with(entries: app.entries + (["sessions (/resume N):"] + lines).map { |line| note_entry(line) }))
+  ok(app.with(picker: some(Picker.Picker(sessions: list.sessions))))
 end
 
 def switched(app: App, choice: String) -> Result[App]
@@ -335,7 +367,10 @@ end
 
 def changed(app: App, change: Protocol.UpdateSession, done: String) -> Result[App]
   try Client.update_session(app.server, app.id, change)
-  ok(noted(app, done))
+  shown = noted(app, done)
+  return ok(shown) if change.model.none?
+
+  ok(shown.with(new_model: change.model))
 end
 
 # The summary takes as long as a turn: a task asks for it and puts the outcome on the inbox.
@@ -407,7 +442,8 @@ def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
     Protocol.Event.ThinkingDelta(delta) ->
       shown.with(entries: Transcript.add(shown.entries, Transcript.Kind.Thinking, delta.text))
     Protocol.Event.TurnStarted(_) -> shown.with(turn: true)
-    Protocol.Event.TurnFinished(done) -> finished(shown.with(turn: false, stopping: false), done.stop_reason)
+    Protocol.Event.TurnFinished(done) ->
+      finished(shown.with(turn: false, stopping: false, new_model: none), done.stop_reason)
     Protocol.Event.ApprovalRequested(request) ->
       shown.with(approvals: Approvals.requested(shown.approvals, request, Time.monotonic_ms))
     Protocol.Event.ApprovalResolved(done) ->
@@ -417,7 +453,13 @@ def on_event(app: App, id: Optional[Int], event: Protocol.Event) -> App
       text = "⚙ #{tool.name} #{tool.summary}"
       shown.with(entries: Transcript.tool(shown.entries, tool.call_id, Transcript.Kind.Tool, text))
     Protocol.Event.ToolFinished(tool) -> shown.with(entries: tool_finished(shown.entries, tool))
-    Protocol.Event.Error(failure) -> noted(shown, "error: #{failure.kind}: #{failure.message}")
+    Protocol.Event.Error(failure) ->
+      failed = noted(shown, "error: #{failure.kind}: #{failure.message}")
+      case shown.new_model
+        some(model) -> noted(failed.with(new_model: none), "warning: #{Client.model_warning(model)}")
+        none -> failed
+      end
+
     _ -> shown
   end
 end
@@ -461,11 +503,14 @@ def drawn(app: App) -> App
   end
 end
 
-# The rows of the approval panel on the screen now.
-def panel(app: App) -> List[Approvals.Row]
+# The rows of the panel over the prompt now: the session picker, else the approval asked.
+def panel(app: App) -> List[Layout.Row]
   width = TUI.width(app.screen)
   room = TUI.height(app.screen) - Prompt.rows(app.prompt, width).size - 2
-  Approvals.rows(app.approvals, width, room)
+  case app.picker
+    some(picker) -> Picker.rows(picker, width, room, Time.now_ms / 1000)
+    none -> Approvals.rows(app.approvals, width, room)
+  end
 end
 
 # Every write is clipped to the screen, which may be smaller than the panel and the prompt.
