@@ -1,0 +1,29 @@
+version = 1
+
+[[package]]
+name = "client"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "client"
+tag = "client-0.0.1"
+workspace = true
+
+[[package]]
+name = "protocol"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "protocol"
+tag = "protocol-0.0.1"
+workspace = true
+
+[[package]]
+name = "sse"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "sse"
+tag = "sse-0.0.1"
+workspace = true
+
+[[package]]
+name = "tui"
+git = "https://github.com/agentica-lang/agentica-tui"
+ref = "1453f1484eb18ff1d46db45841e5aff9adaa29be"
+commit = "1453f1484eb18ff1d46db45841e5aff9adaa29be"
+hash = "sha256:7c5ddf7cde2b356df6ce2bd0b3a17b4a5717af4bc924224d8d5f2492a7b55f26"

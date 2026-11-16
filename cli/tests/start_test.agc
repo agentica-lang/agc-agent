@@ -1,9 +1,8 @@
 # Finding the server of the state folder, starting one, and refusing the ones that are not safe to use.
 
-import Args from "../src/args"
-import Client from "../src/client"
-import Server from "../src/server"
+import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
+import Args from "../src/args"
 import Driver from "support/driver"
 import Fake from "support/fake_server"
 import Routes from "support/routes"
@@ -134,10 +133,10 @@ def open_folder(dir: String) -> Result[Void]
     thinking: false,
   )
 
-  case Server.connect(options, open)
+  case Client.connect(Args.launch(options), open)
     ok(_) -> error("an open folder was accepted")
     error(e) ->
-      try Test.eq(e.kind, Server.KIND_STATE)
+      try Test.eq(e.kind, Client.KIND_STATE)
       Test.assert(e.message.include?("chmod 700 #{open}"), "the fix is named: #{e.message}")
   end
 end
