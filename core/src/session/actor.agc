@@ -85,6 +85,21 @@ enum Msg
   Folded(Optional[Compaction.Compaction], Channel[Result[Void]])
   Stripped(String)
   Renewed(LLM.Provider)
+  Tree(Channel[Result[Protocol.SessionTree]])
+  Branch(Int, Channel[Result[Protocol.Branched]])
+  Copy(Optional[Int], Copying, Channel[Result[Copied]])
+end
+
+## Where `copy` writes the new session: its header, in the folder `dir`.
+struct Copying
+  header: Store.Header
+  dir: String
+end
+
+## A copy of a session: its file, and the user message it went back before ("" when none).
+struct Copied
+  file: String
+  text: String
 end
 
 ## What a compaction that a client asked for needs, taken from the session while no turn runs.
@@ -240,6 +255,25 @@ end
 ## Stops the running turn; whether one ran.
 def stop(address: Address[Msg]) -> Result[Bool] = Actor.call(address, CALL_MS) do |reply| Msg.Stop(reply) end
 
+## The user messages of every branch of the session.
+def tree(address: Address[Msg]) -> Result[Protocol.SessionTree]
+  read: Result[Result[Protocol.SessionTree]] = Actor.call(address, CALL_MS) do |reply| Msg.Tree(reply) end
+  ok(try try read)
+end
+
+## Goes on from `entry` of the tree; `session.busy` while a turn or a compaction runs. The clients get `resync`.
+def branch(address: Address[Msg], entry: Int) -> Result[Protocol.Branched]
+  moved: Result[Result[Protocol.Branched]] = Actor.call(address, CALL_MS) do |reply| Msg.Branch(entry, reply) end
+  ok(try try moved)
+end
+
+## Writes a new session file with the history up to `entry` (as `branch`), all of it when none; `session.busy` while a
+## turn or a compaction runs.
+def copy(address: Address[Msg], entry: Optional[Int], to: Copying) -> Result[Copied]
+  copied: Result[Result[Copied]] = Actor.call(address, CALL_MS) do |reply| Msg.Copy(entry, to, reply) end
+  ok(try try copied)
+end
+
 private
 
 struct Job
@@ -252,6 +286,11 @@ end
 struct Lost
   to: Int
   frames: List[String]
+end
+
+struct Moved
+  state: State
+  text: String
 end
 
 # A turn that a restart cut, with its approvals still waiting.
@@ -293,6 +332,13 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Update(change, reply) -> Actor.continue(update_setup(state, change, reply))
     Msg.Fold(reply) -> Actor.continue(start_fold(state, reply))
     Msg.Folded(found, reply) -> Actor.continue(end_fold(state, found, reply))
+    Msg.Tree(reply) ->
+      Actor.reply(reply, Store.tree(state.setup.file))
+      Actor.continue(state)
+    Msg.Branch(entry, reply) -> Actor.continue(branch_to(state, entry, reply))
+    Msg.Copy(entry, to, reply) ->
+      Actor.reply(reply, copied(state, entry, to))
+      Actor.continue(state)
   end
 end
 
@@ -952,9 +998,73 @@ def answer_so_far(state: State) -> State
   state
 end
 
+# The branch record goes first: when the load after it fails, the session goes on from there once it loads again.
+def branch_to(state: State, entry: Int, reply: Channel[Result[Protocol.Branched]]) -> State
+  if state.turn.some? or state.compacting
+    Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
+    return state
+  end
+
+  case moved(state, entry)
+    ok(pair) ->
+      Actor.reply(reply, ok(Protocol.Branched(id: state.setup.id, text: pair.text)))
+      resynced(pair.state)
+    error(e) ->
+      Actor.reply(reply, error(e))
+      return state.with(broken: some(e.message)) if e.kind == Protocol.KIND_SESSION_STORAGE
+
+      state
+  end
+end
+
+def moved(state: State, entry: Int) -> Result[Moved]
+  file = state.setup.file
+  point = try Store.point(file, some(entry))
+  case save(state, -> { Store.append_branch(file, point.leaf) })
+    ok(_) -> nil
+    error(e) -> return error("the session file cannot be written: #{e.message}", kind: Protocol.KIND_SESSION_STORAGE)
+  end
+
+  saved = try Store.load(file)
+  on_branch = state.with(
+    history: saved.history,
+    display: saved.shown,
+    marks: saved.marks,
+    stripped: saved.stripped,
+    context: last_usage(saved.events).context,
+    broken: none,
+  )
+
+  ok(Moved(state: on_branch, text: point.text))
+end
+
+# The events so far are of another branch: a client that attaches from one of them gets `resync`, and so do the
+# clients attached now, which read the session again.
+def resynced(state: State) -> State
+  for out in state.subscribers
+    _ = out.send(frame("", Protocol.Event.Resync).bytes, 0)
+    out.close
+  end
+
+  state.with(log: [], lost_below: state.counter, lost: none, subscribers: [])
+end
+
+def copied(state: State, entry: Optional[Int], to: Copying) -> Result[Copied]
+  return error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY) if state.turn.some? or state.compacting
+
+  point = try Store.point(state.setup.file, entry)
+  file = try Store.copy(state.setup.file, to.dir, to.header, point.leaf)
+  settings = Store.append_settings(file, state.setup.model, state.setup.effort)
+  if not settings.ok?
+    _ = Path.remove(file)
+  end
+
+  try settings
+  ok(Copied(file: file, text: point.text))
+end
+
 def restore(setup: Setup, saved: Store.Saved) -> State
   events = saved.events
-  last_saved = events.map { |logged| logged.id }.max.unwrap_or(0)
   changed = setup.with(model: saved.model.unwrap_or(setup.model))
   if saved.model.some?
     changed = changed.with(effort: saved.effort)
@@ -963,8 +1073,8 @@ def restore(setup: Setup, saved: Store.Saved) -> State
   state = State(
     setup: changed,
     allows: Permissions.Allows(),
-    counter: [last_saved, saved.reserved].max.unwrap!,
-    reserved: [last_saved, saved.reserved].max.unwrap!,
+    counter: [saved.last_id, saved.reserved].max.unwrap!,
+    reserved: [saved.last_id, saved.reserved].max.unwrap!,
     lost_below: lost_below(events),
     log: events.drop([events.size - setup.keep_events, 0].max.unwrap!),
     history: saved.history,
@@ -972,11 +1082,11 @@ def restore(setup: Setup, saved: Store.Saved) -> State
     stripped: saved.stripped,
     display: saved.shown,
     turns: [saved.users, count(events, Protocol.EventKind.TurnStarted)].max.unwrap!,
-    approvals: count(events, Protocol.EventKind.ApprovalRequested),
+    approvals: saved.approvals,
     resolved: resolved_ids(events),
-    output: last_usage(events).output,
+    output: saved.usage.map { |u| u.output }.unwrap_or(0),
     context: last_usage(events).context,
-    cost: last_usage(events).session_cost,
+    cost: saved.usage.map { |u| u.session_cost }.unwrap_or(none),
     window: setup.window,
   )
 

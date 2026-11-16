@@ -41,6 +41,9 @@ export Routes.messages_path
 export Routes.approval_path
 export Routes.stop_path
 export Routes.compact_path
+export Routes.tree_path
+export Routes.branch_path
+export Routes.fork_path
 
 export Requests.Decision
 export Requests.NewSession
@@ -48,6 +51,8 @@ export Requests.SendMessage
 export Requests.Approve
 export Requests.UpdateSession
 export Requests.Compacted
+export Requests.Branch
+export Requests.Fork
 export Requests.EFFORTS
 export Requests.EFFORT_DEFAULT
 export Requests.decisions
@@ -63,6 +68,10 @@ export Requests.encode_update_session
 export Requests.decode_update_session
 export Requests.encode_compacted
 export Requests.decode_compacted
+export Requests.encode_branch
+export Requests.decode_branch
+export Requests.encode_fork
+export Requests.decode_fork
 
 export Replies.Role
 export Replies.Health
@@ -73,6 +82,9 @@ export Replies.SessionSummary
 export Replies.SessionList
 export Replies.Message
 export Replies.Session
+export Replies.TreeNode
+export Replies.SessionTree
+export Replies.Branched
 export Replies.roles
 export Replies.role_name
 export Replies.parse_role
@@ -88,6 +100,10 @@ export Replies.encode_session_list
 export Replies.decode_session_list
 export Replies.encode_session
 export Replies.decode_session
+export Replies.encode_session_tree
+export Replies.decode_session_tree
+export Replies.encode_branched
+export Replies.decode_branched
 
 export Errors.Failure
 export Errors.encode_failure

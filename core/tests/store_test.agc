@@ -3,6 +3,8 @@ import Protocol from "pkg/protocol/protocol"
 import Compaction from "../src/agent/compaction"
 import Store from "../src/session/store"
 
+LINEAR = "tests/fixtures/sessions/linear.jsonl"
+
 # Every kind of block reads back as it was written, so the history a restart gives the model is the same.
 def test_a_message_reads_back_with_every_kind_of_block() -> Result[Void]
   replay = try JSON.parse("{\"signature\":\"sig-1\",\"items\":[1,2]}")
@@ -78,7 +80,63 @@ def test_a_record_over_the_line_limit_is_refused() -> Result[Void]
   result
 end
 
+# A file written before sessions were trees loads as it did: one branch, the turns of every record.
+def test_a_session_file_of_the_linear_format_still_loads() -> Result[Void]
+  saved = try Store.load(LINEAR)
+  try Test.eq([saved.skipped, saved.users, saved.last_id, saved.reserved], [0, 2, 1005, 0])
+  try Test.eq(saved.shown.map { |m| m.text }, ["Hi", "Hi!", "Again.", "Yes."])
+  try Test.eq(saved.history.size, 4)
+  try Test.eq(saved.events.map { |l| l.id }, [1, 1002, 1003, 1004, 1005])
+  try Test.eq([saved.model, saved.effort], [some("m2"), some("low")])
+  try Test.eq(saved.usage.map { |u| u.session_cost }, some(some(0.5)))
+  tree = try Store.tree(LINEAR)
+  nodes = [
+    Protocol.TreeNode(id: 1, text: "Hi", answer: "Hi!", last: 8, active: true),
+    Protocol.TreeNode(id: 9, parent: some(1), text: "Again.", answer: "Yes.", last: 13, active: true),
+  ]
+
+  Test.eq(tree.nodes, nodes)
+end
+
+# A branch goes back before a message and the next records follow it; a branch to the end of a turn goes on from there.
+# The ids, the settings and the cost stay those of the whole file, and a copy keeps one branch.
+def test_a_branch_replays_its_own_records() -> Result[Void]
+  dir = try temp_dir()
+  result = branches(dir)
+  _ = Path.remove(dir)
+  result
+end
+
 private
+
+def branches(dir: String) -> Result[Void]
+  path = "#{dir}/s1-0123.jsonl"
+  try File.write_text(path, try File.read_text(LINEAR))
+  before = try Store.point(path, some(9))
+  try Test.eq(before, Store.Point(leaf: 8, text: "Again."))
+  try Test.error?(Store.point(path, some(3)))
+  try Store.append_branch(path, before.leaf)
+  try Store.append_user(path, "Other.")
+  try Store.append_event(path, started(1006))
+  try Store.append_answer(path, "Sure.")
+  try Store.append_settings(path, "m3", none)
+  moved = try Store.load(path)
+  try Test.eq(moved.shown.map { |m| m.text }, ["Hi", "Hi!", "Other.", "Sure."])
+  try Test.eq([moved.history.size, moved.users, moved.last_id, moved.skipped], [3, 2, 1006, 0])
+  try Test.eq([moved.model, moved.effort], [some("m3"), none])
+  tree = (try Store.tree(path)).nodes
+  try Test.eq(tree.map { |n| "#{n.id}<#{n.parent.unwrap_or(0)} #{n.active}" }, ["1<0 true", "9<1 false", "15<1 true"])
+  try Store.append_branch(path, (try Store.point(path, some(tree[1].last))).leaf)
+  back = try Store.load(path)
+  try Test.eq(back.shown.map { |m| m.text }, ["Hi", "Hi!", "Again.", "Yes."])
+  try Test.eq([back.events.size, back.last_id], [5, 1006])
+  header = Store.Header(id: "s2-4567", cwd: "/work", model: "m", created_ms: 8)
+  copy = try Store.copy(path, dir, header, (try Store.point(path, none)).leaf)
+  copied = try Store.load(copy)
+  try Test.eq(copied.shown, back.shown)
+  try Test.assert(not (try File.read_text(copy)).include?("branch"), "a copy keeps the branch records")
+  Test.eq((try Store.tree(copy)).nodes.map { |n| n.text }, ["Hi", "Again."])
+end
 
 # The answer a compaction keeps belongs to its turn: the next turn starts without it. An `answer` of the wrong type is
 # left out, not the compaction.

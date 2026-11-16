@@ -215,6 +215,13 @@ def answer(sessions: Sessions.Sessions, method: String, parts: List[String], byt
     "POST 2" if parts[1] == "compact" ->
       compacted = try Sessions.compact(sessions, parts[0])
       response(200, Protocol.encode_compacted(Protocol.Compacted(compacted: compacted)))
+    "GET 2" if parts[1] == "tree" -> response(200, Protocol.encode_session_tree(try Sessions.tree(sessions, parts[0])))
+    "POST 2" if parts[1] == "branch" ->
+      request = try Protocol.decode_branch(text)
+      response(200, Protocol.encode_branched(try Sessions.branch(sessions, parts[0], request.entry)))
+    "POST 2" if parts[1] == "fork" ->
+      request = try Protocol.decode_fork(text)
+      response(201, Protocol.encode_branched(try Sessions.fork(sessions, parts[0], request.entry)))
     "POST 2" if parts[1] == "stop" ->
       _ = try Sessions.stop_turn(sessions, parts[0])
       response(200, "{}")

@@ -3,6 +3,10 @@
 ## round of the model's history and per answer a client draws. A record is one line, written whole or cut by a crash:
 ## loading skips a line that does not parse or decode, and `reopen` ends a line that a crash left open.
 ##
+## The records form a tree. The number of its line is a record's entry, and each record follows the one before it,
+## except after a `branch` record: the records after it follow the entry it names. A load replays the branch that ends
+## at the last record. The event ids, the settings and the cost are the whole file's.
+##
 ## The file keeps the events and messages in plain text, tool output and file contents included, until it is removed.
 
 import LLM from "pkg/llm/llm"
@@ -56,6 +60,17 @@ struct Saved
   ## The model and the thinking level of the last `settings` record: what the session changed since its header.
   model: Optional[String] = none
   effort: Optional[String] = none
+  ## The last event id of the whole file, the number of its approval requests and its last `usage`.
+  last_id: Int = 0
+  approvals: Int = 0
+  usage: Optional[Protocol.Usage] = none
+end
+
+## Where a branch or a copy starts: the entry the next record follows, and the user message it goes back before ("" at
+## the end of a turn).
+struct Point
+  leaf: Int
+  text: String = ""
 end
 
 ## What a list of the sessions shows of one file: the model of its last `settings` record, and its first user message.
@@ -177,6 +192,52 @@ end
 
 def reopen(path: String) -> Result[Void] = write(path, "\n")
 
+## From now on the records follow entry `leaf`, a `Point` of the file.
+def append_branch(path: String, leaf: Int) -> Result[Void]
+  append(path, {"type": JSON.from("branch"), "parent": JSON.from(leaf)})
+end
+
+## The user messages of every branch.
+def tree(path: String) -> Result[Protocol.SessionTree]
+  entries = try read_entries(path)
+  ok(Protocol.SessionTree(nodes: turns(entries)))
+end
+
+## Where a branch from `entry` starts: before it when it is a user message, at it when it ends a turn (`last` of the
+## tree) or is the session's first line; the end of the current branch when none.
+def point(path: String, entry: Optional[Int]) -> Result[Point]
+  entries = try read_entries(path)
+  return ok(Point(leaf: entries.leaf)) if entry.none?
+
+  at = entry.unwrap!
+  return ok(Point(leaf: at)) if at == entries.start
+
+  for turn in turns(entries)
+    return ok(Point(leaf: entries.records[at].parent, text: turn.text)) if turn.id == at
+    return ok(Point(leaf: at)) if turn.last == at
+  end
+
+  error("no turn starts or ends at entry #{at}", kind: Protocol.KIND_INVALID)
+end
+
+## A new session file of `header` (0600) with the records of the branch that ends at `leaf`; its path. A copy that
+## fails is removed.
+def copy(path: String, dir: String, header: Header, leaf: Int) -> Result[String]
+  entries = try read_entries(path)
+  if leaf != entries.start and not entries.records.has_key?(leaf)
+    return error("no entry #{leaf}", kind: Protocol.KIND_INVALID)
+  end
+
+  created = try create(dir, header)
+  written = write(created, branch(entries, leaf).map { |record| "#{record.line}\n" }.join(""))
+  if not written.ok?
+    _ = Path.remove(created)
+  end
+
+  try written
+  ok(created)
+end
+
 ## The model from the file beside the session's, and the first user message from the first TITLE_LINES lines in the
 ## first TITLE_BYTES bytes (none when its line does not end in them).
 def listing(path: String) -> Result[Listing]
@@ -193,35 +254,24 @@ end
 def load(path: String) -> Result[Saved]
   lines = try File.foreach(path, MAX_LINE_BYTES).to_a
   size = (try File.stat(path)).size_bytes
-  header: Optional[Header] = none
+  entries = try entries_of(path, lines)
   saved = Saved(
-    header: Header(id: "", cwd: "", model: "", created_ms: 0),
+    header: entries.header,
     events: [],
     history: [],
     shown: [],
-    skipped: 0,
+    skipped: entries.skipped,
     open_end: size != lines.map { |text| text.bytesize + 1 }.sum,
   )
 
-  for text in lines
-    next if text.empty?
-
-    case JSON.parse(text)
-      ok(json) if header.none? -> header = some(try decode_header(json))
-      ok(json) ->
-        case added(saved, json)
-          ok(next_saved) -> saved = next_saved
-          error(_) -> saved = saved.with(skipped: saved.skipped + 1)
-        end
-
+  for record in branch(entries, entries.leaf)
+    case added(saved, record.json)
+      ok(next_saved) -> saved = next_saved
       error(_) -> saved = saved.with(skipped: saved.skipped + 1)
     end
   end
 
-  case header
-    some(h) -> ok(saved.with(header: h))
-    none -> error("#{path}: no session record")
-  end
+  ok(totals(saved, entries))
 end
 
 def encode_message(message: LLM.Message) -> JSON.Value
@@ -245,6 +295,206 @@ def decode_message(json: JSON.Value) -> Result[LLM.Message]
 end
 
 private
+
+# A record of the file: its line number is its entry, `parent` the entry it follows (the session's line for the first).
+struct Record
+  at: Int
+  kind: String
+  json: JSON.Value
+  line: String
+  parent: Int
+end
+
+struct Settings
+  model: Optional[String] = none
+  effort: Optional[String] = none
+end
+
+# The lines of a file as a tree. `start` is the line of the session, `records` every record but the branches by its
+# entry, `order` their entries in the file, and `leaf` the entry the next record follows.
+struct Entries
+  header: Header
+  start: Int
+  records: Map[Int, Record]
+  order: List[Int]
+  leaf: Int
+  skipped: Int
+end
+
+def read_entries(path: String) -> Result[Entries] = entries_of(path, try File.foreach(path, MAX_LINE_BYTES).to_a)
+
+# A line that does not parse, has no `type` or is a branch to an entry that is not before it is skipped.
+def entries_of(path: String, lines: List[String]) -> Result[Entries]
+  header: Optional[Header] = none
+  start = 0
+  records: Map[Int, Record] = {}
+  order: List[Int] = []
+  branches: Map[Int, Int] = {}
+  leaf = 0
+  skipped = 0
+  for at in 0...lines.size
+    text = lines[at]
+    next if text.empty?
+
+    case JSON.parse(text)
+      ok(json) if header.none? ->
+        header = some(try decode_header(json))
+        start = at
+        leaf = at
+      ok(json) ->
+        kind = field(json, "type").unwrap_or("")
+        target = branch_target(json, at, start, records, branches)
+        if kind == "branch" and target.some?
+          leaf = target.unwrap!
+          branches = branches.put(at, leaf)
+        elsif kind != "" and kind != "branch"
+          records = records.put(at, Record(at: at, kind: kind, json: json, line: text, parent: leaf))
+          order = order.push(at)
+          leaf = at
+        else
+          skipped = skipped + 1
+        end
+
+      error(_) -> skipped = skipped + 1
+    end
+  end
+
+  case header
+    some(h) -> ok(Entries(header: h, start: start, records: records, order: order, leaf: leaf, skipped: skipped))
+    none -> error("#{path}: no session record")
+  end
+end
+
+# The entry a branch record names, before it; a branch to a branch is to the entry that one names.
+def branch_target(
+  json: JSON.Value,
+  at: Int,
+  start: Int,
+  records: Map[Int, Record],
+  branches: Map[Int, Int],
+) -> Optional[Int]
+  parent = JSON.int(JSON.get(json, "parent").unwrap_or(JSON.null())).unwrap_or(-1)
+  return none if parent >= at
+  return some(parent) if parent == start or records.has_key?(parent)
+
+  branches.get(parent)
+end
+
+# The records from the session's line to `leaf`, in order.
+def branch(entries: Entries, leaf: Int) -> List[Record]
+  out: List[Record] = []
+  at = leaf
+  while at != entries.start
+    record = entries.records[at]
+    out = out.push(record)
+    at = record.parent
+  end
+
+  out.reverse
+end
+
+# The event ids, the settings and the cost of every branch: ids and approval ids are never given twice, and the model,
+# the effort and the cost are the session's whatever branch it is on.
+def totals(saved: Saved, entries: Entries) -> Saved
+  last_id = 0
+  reserved = 0
+  approvals = 0
+  usage: Optional[JSON.Value] = none
+  settings = Settings()
+  for at in entries.order
+    record = entries.records[at]
+    case record.kind
+      "event" ->
+        name = field(record.json, "name").unwrap_or("")
+        if Protocol.parse_kind(name).ok?
+          last_id = [last_id, JSON.int(JSON.get(record.json, "id").unwrap_or(JSON.null())).unwrap_or(0)].max.unwrap!
+          reserved = 0
+        end
+
+        if name == "approval_requested"
+          approvals = approvals + 1
+        end
+
+        if name == "usage"
+          usage = some(record.json)
+        end
+
+      "ids" -> reserved = JSON.int(JSON.get(record.json, "until").unwrap_or(JSON.null())).unwrap_or(reserved)
+      "settings" -> settings = settings_of(record.json).unwrap_or(settings)
+      _ -> nil
+    end
+  end
+
+  saved.with(
+    last_id: last_id,
+    reserved: reserved,
+    approvals: approvals,
+    usage: usage_of(usage),
+    model: settings.model,
+    effort: settings.effort,
+  )
+end
+
+def usage_of(json: Optional[JSON.Value]) -> Optional[Protocol.Usage]
+  for record in option_list(json)
+    data = JSON.encode(JSON.get(record, "data").unwrap_or(JSON.null()))
+    case Protocol.decode_event("usage", data)
+      ok(Protocol.Event.Usage(usage)) -> return some(usage)
+      _ -> nil
+    end
+  end
+
+  none
+end
+
+# The user messages as the nodes of a tree: the message before each on its branch, and the entry that ends its turn.
+def turns(entries: Entries) -> List[Protocol.TreeNode]
+  children: Map[Int, List[Int]] = {}
+  for at in entries.order
+    parent = entries.records[at].parent
+    children = children.put(parent, children.get(parent, []).push(at))
+  end
+
+  active = Set.new(branch(entries, entries.leaf).map { |record| record.at })
+  users = entries.order.select { |at| entries.records[at].kind == "user" }
+  users.map { |at| node(entries, children, active, at) }
+end
+
+def node(entries: Entries, children: Map[Int, List[Int]], active: Set[Int], at: Int) -> Protocol.TreeNode
+  record = entries.records[at]
+  last = at
+  answer = ""
+  while true
+    following = children.get(last, []).select { |child| entries.records[child].kind != "user" }
+    break if following.size != 1
+
+    last = following[0]
+    if entries.records[last].kind == "answer"
+      answer = field(entries.records[last].json, "text").unwrap_or("")
+    end
+  end
+
+  Protocol.TreeNode(
+    id: at,
+    parent: user_before(entries, record.parent),
+    text: optional_string(record.json, "typed").unwrap_or(field(record.json, "text").unwrap_or("")),
+    answer: answer,
+    last: last,
+    active: active.include?(at),
+  )
+end
+
+def user_before(entries: Entries, from: Int) -> Optional[Int]
+  at = from
+  while at != entries.start
+    record = entries.records[at]
+    return some(at) if record.kind == "user"
+
+    at = record.parent
+  end
+
+  none
+end
 
 def settings_model(path: String) -> Optional[String]
   text = File.read_text(settings_file(path)).unwrap_or("")
@@ -417,17 +667,22 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
     "stripped" -> ok(saved.with(stripped: true))
     "ids" -> ok(saved.with(reserved: try JSON.int(try JSON.get(json, "until"))))
     "settings" ->
-      effort = optional_string(json, "effort")
-      for level in option_list(effort)
-        return error("unknown effort #{level}") if not Protocol.EFFORTS.include?(level)
-      end
-
-      ok(saved.with(model: some(try field(json, "model")), effort: effort))
+      settings = try settings_of(json)
+      ok(saved.with(model: settings.model, effort: settings.effort))
     "answer" ->
       shown = Protocol.Message(role: Protocol.Role.Assistant, text: try field(json, "text"))
       ok(saved.with(shown: saved.shown.push(shown)))
     _ -> error("unknown record #{kind}")
   end
+end
+
+def settings_of(json: JSON.Value) -> Result[Settings]
+  effort = optional_string(json, "effort")
+  for level in option_list(effort)
+    return error("unknown effort #{level}") if not Protocol.EFFORTS.include?(level)
+  end
+
+  ok(Settings(model: some(try field(json, "model")), effort: effort))
 end
 
 def with_marks(fields: Map[String, JSON.Value], marks: List[String]) -> Map[String, JSON.Value]
