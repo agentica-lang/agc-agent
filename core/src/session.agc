@@ -535,7 +535,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[String]]) -> S
       return state.with(broken: some(e.message))
   end
 
-  turn_id = "turn-#{state.turns + 1}"
+  turn_id = new_turn_id(state.turns + 1)
   inbox: Channel[Msg] = Actor.inbox
   address = inbox.address
   setup = state.setup
@@ -993,11 +993,15 @@ def restore(setup: Setup, saved: Store.Saved) -> State
   return ended_cut if not saved.open_user
 
   # The server stopped between the user message of a turn and its `turn_started`.
-  turn_id = "turn-#{ended_cut.turns}"
+  turn_id = new_turn_id(ended_cut.turns)
   size = some(ended_cut.display.size)
   started = emit(ended_cut, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id, history_size: size)))
   end_cut_turn(started, Cut(turn_id: turn_id, approvals: []), started.history.size, none)
 end
+
+# The number of the turn and a random part: a server that lost the last records of a session never gives a turn the id
+# of another.
+def new_turn_id(number: Int) -> String = "turn-#{number}-#{OpenSSL.Random.hex(4)}"
 
 # The last id that no saved event has, below the last saved one: a delta that was not saved.
 def lost_below(events: List[Store.Logged]) -> Int

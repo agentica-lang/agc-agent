@@ -162,19 +162,19 @@ end
 ## The fields of the replies and the names of their values on the wire, for `Protocol.WIRE`.
 def shape() -> List[String]
   records = [
-    Health.members,
-    SessionCreated.members,
-    MessageAccepted.members,
-    SessionSummary.members,
-    SessionList.members,
-    Message.members,
-    Session.members,
-    ServerInfo.members,
-    MessageWire.members,
-    SessionWire.members,
+    Wire.record("Health", Health.members),
+    Wire.record("SessionCreated", SessionCreated.members),
+    Wire.record("MessageAccepted", MessageAccepted.members),
+    Wire.record("SessionSummary", SessionSummary.members),
+    Wire.record("SessionList", SessionList.members),
+    Wire.record("Message", Message.members),
+    Wire.record("Session", Session.members),
+    Wire.record("ServerInfo", ServerInfo.members),
+    Wire.record("MessageWire", MessageWire.members),
+    Wire.record("SessionWire", SessionWire.members),
   ]
 
-  Wire.fields(records) + roles().map(&role_name)
+  records + [Wire.values("Role", roles().map(&role_name))]
 end
 
 private

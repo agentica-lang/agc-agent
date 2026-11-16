@@ -88,10 +88,13 @@ def option_list[T](value: Optional[T]) -> List[T]
   end
 end
 
-## Each field of `records` as `name:type`, a record after another.
-def fields(records: List[List[StructMember]]) -> List[String]
-  records.map { |members| members.map { |m| "#{m.name}:#{m.type}" }.join(",") }
+## A record for `Protocol.wire_shape`: its name and each field as `name:type`.
+def record(name: String, members: List[StructMember]) -> String
+  "#{name}{#{members.map { |m| "#{m.name}:#{m.type}" }.join(",")}}"
 end
+
+## An enum for `Protocol.wire_shape`: its name and the names of its values on the wire.
+def values(name: String, names: List[String]) -> String = "#{name}[#{names.join(",")}]"
 
 private
 

@@ -32,3 +32,20 @@ KIND_APPROVAL_NOT_FOUND = "approval.not_found"
 ## An answer that came after the approval was resolved: the first answer won, a rule or the timeout answered, or the
 ## turn stopped (`409`). The `approval_resolved` event tells who answered.
 KIND_APPROVAL_RESOLVED = "approval.resolved"
+
+## The kinds, for `Protocol.wire_shape`.
+def shape() -> List[String]
+  [
+    KIND_INVALID,
+    KIND_UNKNOWN,
+    KIND_UNAUTHORIZED,
+    KIND_FORBIDDEN,
+    KIND_SESSION_NOT_FOUND,
+    KIND_SESSION_BUSY,
+    KIND_QUEUE_DROPPED,
+    KIND_SESSION_STORAGE,
+    KIND_SESSION_UNAVAILABLE,
+    KIND_APPROVAL_NOT_FOUND,
+    KIND_APPROVAL_RESOLVED,
+  ]
+end

@@ -40,7 +40,7 @@ def test_a_restarted_server_resumes_a_session_with_its_event_ids() -> Result[Voi
       try Test.eq(H.kinds(old.seen), ["resync"])
       c = try H.subscribe(r, id, some(before.last_event_id))
       sent = try H.send(r, id, "Hello.")
-      try Test.eq((try Protocol.decode_message_accepted(sent.text)).turn_id, "turn-2")
+      try Test.eq(number((try Protocol.decode_message_accepted(sent.text)).turn_id), "turn-2")
       c = try H.until(c, Protocol.EventKind.TurnFinished)
       H.close(c)
       first = before.last_event_id + 1
@@ -70,7 +70,11 @@ def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Re
     _ = try H.send(h, id, "Write hello.txt.")
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
     queued = try H.send(h, id, "Also say hi.")
-    try Test.eq([queued.status.to_s, (try Protocol.decode_message_accepted(queued.text)).turn_id], ["202", "turn-1"])
+    try Test.eq(
+      [queued.status.to_s, number((try Protocol.decode_message_accepted(queued.text)).turn_id)],
+      ["202", "turn-1"],
+    )
+
     a = try H.until(a, Protocol.EventKind.MessageQueued)
     _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
@@ -161,7 +165,7 @@ def test_a_late_read_leaves_the_queue_whole() -> Result[Void]
       end
     end
 
-    try Test.eq(turns, ["turn-2"])
+    try Test.eq(turns.map { |t| number(t) }, ["turn-2"])
     _ = try H.next_request(h)
     _ = try H.next_request(h)
     third = try H.request_messages(h, 1)
@@ -216,7 +220,7 @@ def test_a_turn_cut_by_a_restart_ends_cancelled() -> Result[Void]
     try Test.eq((try H.approval(a)).approval_id, "a2")
     H.close(a)
     before = try H.session(h, id)
-    try Test.eq(before.turn_id, some("turn-1"))
+    try Test.eq(before.turn_id.map { |t| number(t) }, some("turn-1"))
     H.restarted(h, setup, "") do |r|
       after = try H.session(r, id)
       try Test.eq([after.turn_id.some?, after.turn_from_event_id.some?], [false, false])
@@ -235,7 +239,7 @@ def test_a_turn_cut_by_a_restart_ends_cancelled() -> Result[Void]
       end
 
       sent = try H.send(r, id, "Write it again.")
-      try Test.eq((try Protocol.decode_message_accepted(sent.text)).turn_id, "turn-2")
+      try Test.eq(number((try Protocol.decode_message_accepted(sent.text)).turn_id), "turn-2")
       b = try H.until(b.with(seen: []), Protocol.EventKind.ApprovalRequested)
       try Test.eq((try H.approval(b)).approval_id, "a3")
       _ = try H.approve(r, id, "a3", Protocol.Decision.Deny)
@@ -261,12 +265,12 @@ def test_a_turn_cut_before_it_started_ends_cancelled() -> Result[Void]
       try Test.eq(after.history.map { |m| m.text }.drop(2), ["two"])
       b = try H.until(try H.subscribe(r, id, some(before.last_event_id)), Protocol.EventKind.TurnFinished)
       try Test.eq(H.kinds(b.seen), ["turn_started", "turn_finished"])
-      started = Protocol.TurnStarted(turn_id: "turn-2", history_size: some(3))
-      try Test.eq(b.seen[0].event, Protocol.Event.TurnStarted(started))
+      try Test.eq(started_turn(b.seen[0]), some("turn-2"))
+      try Test.eq(history_size(b.seen[0]), some(3))
       try Test.eq(H.stop_reason(b), "cancelled")
       try Test.eq(history_size(b.seen.last), some(3))
       sent = try H.send(r, id, "three")
-      try Test.eq((try Protocol.decode_message_accepted(sent.text)).turn_id, "turn-3")
+      try Test.eq(number((try Protocol.decode_message_accepted(sent.text)).turn_id), "turn-3")
       b = try H.until(b.with(seen: []), Protocol.EventKind.TurnFinished)
       H.close(b)
       try Test.eq(history_size(b.seen[0]), some(4))
@@ -295,7 +299,7 @@ def test_a_restart_after_unsaved_deltas_skips_their_ids() -> Result[Void]
       try Test.eq(all_seen.seen.map { |s| s.id }, [Protocol.format_event_id(last + 1001)])
       try Test.eq(H.stop_reason(all_seen), "cancelled")
       sent = try H.send(r, id, "three")
-      try Test.eq((try Protocol.decode_message_accepted(sent.text)).turn_id, "turn-3")
+      try Test.eq(number((try Protocol.decode_message_accepted(sent.text)).turn_id), "turn-3")
       all_seen = try H.until(all_seen.with(seen: []), Protocol.EventKind.TurnFinished)
       H.close(all_seen)
       Test.eq(all_seen.seen.first.id, Protocol.format_event_id(last + 1002))
@@ -553,7 +557,7 @@ def test_a_failed_write_stops_the_turn_and_reuses_no_id() -> Result[Void]
     try chmod("600", file)
     try File.append_text(file, "{\"type\":\"event\",\"id\":999,\"name\":\"text_de")
     sent = try H.send(h, id, "Hello.")
-    try Test.eq((try Protocol.decode_message_accepted(sent.text)).turn_id, "turn-3")
+    try Test.eq(number((try Protocol.decode_message_accepted(sent.text)).turn_id), "turn-3")
     a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
     H.close(a)
     try Test.eq(a.seen.first.id, Protocol.format_event_id(saved_last + 1))
@@ -570,6 +574,9 @@ private
 
 WAIT_MS = 20_000
 PROBE_MS = 300
+
+# A turn id without its random part.
+def number(turn_id: String) -> String = turn_id.split("-").take(2).join("-")
 
 def header(cwd: String, id: String, more: String) -> String
   "{\"type\":\"session\",\"id\":\"#{id}\",\"cwd\":\"#{cwd}\",\"model\":\"m\",\"created_ms\":1#{more}}\n"
@@ -598,6 +605,13 @@ end
 
 def roles() -> String
   ["system", "user", "assistant", "tool", "assistant", "user"].map { |r| JSON.encode(r) }.join(" ")
+end
+
+def started_turn(seen: H.Seen) -> Optional[String]
+  case seen.event
+    Protocol.Event.TurnStarted(started) -> some(number(started.turn_id))
+    _ -> none
+  end
 end
 
 def history_size(seen: H.Seen) -> Optional[Int]

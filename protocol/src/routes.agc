@@ -19,3 +19,17 @@ end
 def stop_path(session_id: String) -> String = "#{session_path(session_id)}/stop"
 
 def compact_path(session_id: String) -> String = "#{session_path(session_id)}/compact"
+
+## The paths and the header, for `Protocol.wire_shape`.
+def shape() -> List[String]
+  [
+    HEALTH_PATH,
+    SESSIONS_PATH,
+    LAST_EVENT_ID_HEADER,
+    events_path("ID"),
+    messages_path("ID"),
+    approval_path("ID", "A"),
+    stop_path("ID"),
+    compact_path("ID"),
+  ]
+end

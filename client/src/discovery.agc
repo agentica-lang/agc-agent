@@ -61,6 +61,19 @@ def connect(options: Launch, dir: String) -> Result[Client.Server]
   end
 end
 
+## Checks again that the server is of this client's version, as a client does before it reads the event stream again.
+## A server that does not answer is left to the reconnect.
+def recheck(server: Client.Server) -> Result[Void]
+  case Client.health(server)
+    ok(health) if health.wire != some(Protocol.wire_digest()) ->
+      error(
+        "the server now runs another version of Finn Agent than this client: start the client again",
+        kind: KIND_VERSION,
+      )
+    _ -> ok()
+  end
+end
+
 private
 
 enum Probe

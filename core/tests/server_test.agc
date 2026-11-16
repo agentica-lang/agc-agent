@@ -12,7 +12,11 @@ def test_a_turn_runs_tools_after_approvals_for_two_clients() -> Result[Void]
     b = try H.subscribe(h, id)
     sent = try H.send(h, id, "Write hello.txt, then show it.")
     try Test.eq(sent.status, 202)
-    try Test.eq((try Protocol.decode_message_accepted(sent.text)).turn_id, "turn-1")
+    try Test.assert(
+      (try Protocol.decode_message_accepted(sent.text)).turn_id.start_with?("turn-1-"),
+      "a numbered turn",
+    )
+
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
     write = try H.approval(a)
     try Test.eq([write.tool, write.preview, write.detail], ["write_file", "hello.txt", "hi\n"])

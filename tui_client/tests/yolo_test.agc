@@ -33,3 +33,27 @@ def test_a_turn_another_client_steers_is_asked() -> Result[Void]
   other = Yolo.steered(mine, Protocol.MessageQueued(turn_id: "turn-9", text: "x"))
   Test.eq(Yolo.allows?(other), true)
 end
+
+# A resync that skips the replay gives no turn_finished or turn_started: the snapshot says which turn runs.
+def test_a_snapshot_replaces_the_running_turn() -> Result[Void]
+  mine = Yolo.running(Yolo.started(Yolo.Yolo(on: true), "turn-2"), some("turn-2"))
+  idle = snapshot(none)
+  try Test.eq(Yolo.allows?(Yolo.attached(mine, idle)), false)
+  try Test.eq(Yolo.allows?(Yolo.attached(mine, snapshot(some("turn-3")))), false)
+  Test.eq(Yolo.allows?(Yolo.attached(Yolo.attached(mine, idle), snapshot(some("turn-2")))), true)
+end
+
+private
+
+def snapshot(turn: Optional[String]) -> Protocol.Session
+  Protocol.Session(
+    id: "s1",
+    cwd: "/w",
+    model: "m",
+    last_event_id: 9,
+    turn_id: turn,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+  )
+end

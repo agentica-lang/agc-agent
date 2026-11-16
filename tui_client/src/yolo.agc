@@ -22,6 +22,9 @@ def started(yolo: Yolo, turn_id: String) -> Yolo = yolo.with(own: yolo.own.push(
 
 def running(yolo: Yolo, turn: Optional[String]) -> Yolo = yolo.with(turn: turn)
 
+## The turn of a snapshot of the session, which may have ended or changed while the client read no event.
+def attached(yolo: Yolo, session: Protocol.Session) -> Yolo = running(yolo, session.turn_id)
+
 ## A message this client queued into the turn `turn_id`.
 def queued(yolo: Yolo, turn_id: String, text: String) -> Yolo
   return yolo if not yolo.own.include?(turn_id)
