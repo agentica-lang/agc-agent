@@ -51,6 +51,9 @@ def output(result: Result[String]) -> Output
   end
 end
 
+## `ctx` with the tools there are now, so they stay the same for a whole turn.
+def snapshot(ctx: Context) -> Context = ctx.with(tools: more_tools(ctx), late: none)
+
 def more_tools(ctx: Context) -> List[Tool]
   case ctx.late
     some(late) -> ctx.tools + late.call()

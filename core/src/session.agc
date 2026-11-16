@@ -20,6 +20,7 @@ import Agent from "agent"
 import Catalog from "catalog"
 import CodeMode from "code_mode"
 import Compaction from "compaction"
+import Spec from "spec"
 import Store from "store"
 import Tools from "tools"
 
@@ -311,7 +312,7 @@ def emit_counted(state: State, event: Protocol.Event) -> State
         turn_cost = turn_cost + call
       end
 
-      counted = usage.with(output: output, turn_cost: usage.cost.map { |_| turn_cost }, session_cost: cost)
+      counted = usage.with(output: output, turn_cost: cost.map { |_| turn_cost }, session_cost: cost)
       emitted = emit(state, Protocol.Event.Usage(counted))
       return emitted if emitted.counter == state.counter
 
@@ -448,7 +449,7 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
     system: setup.system,
     history: state.history,
     text: text,
-    ctx: setup.ctx,
+    ctx: Spec.snapshot(setup.ctx),
     link: link,
     extra: setup.extra,
     compaction: Compaction.Settings(

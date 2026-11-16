@@ -1,6 +1,7 @@
-## The models.dev catalog: the prices, window and flags of a model. Fetched from `FINN_MODELS_URL` (models.dev by
-## default, `off` for none) on first use, kept in `STATE_DIR/models.json` for a day, and read from there while offline;
-## no catalog at all only means no cost and no window from it.
+## The models.dev catalog: the prices, window and flags of a model. Loaded in the background from the start: from
+## `STATE_DIR/models.json` while it is less than a day old and from the same URL, else fetched from `FINN_MODELS_URL`
+## (models.dev by default; `off` for no catalog at all, cache included), else the older file while offline. Until it is
+## loaded, and with no catalog at all, a model has no cost and no window from it.
 ##
 ## A model is looked up by its provider id in models.dev and its own id: a model served elsewhere (a local
 ## llama-server) has no prices.
@@ -15,7 +16,12 @@ TTL_MS = 86_400_000
 RETRY_MS = 600_000
 FETCH_MS = 20_000
 MAX_BYTES = 33_554_432
-CALL_MS = 60_000
+## The cache holds less than the fetched JSON; a bigger file is not read.
+MAX_CACHE_BYTES = 67_108_864
+CALL_MS = 5000
+## The windows taken from the catalog; another value is a mistake of the data.
+MIN_WINDOW = 1000
+MAX_WINDOW = 2_000_000
 
 ## Prices in USD per million tokens.
 struct Prices
@@ -53,17 +59,33 @@ struct Catalog
   actor: Actor.Ref[State, Msg]
 end
 
+## Starts the catalog and its first load.
 def start(options: Options) -> Catalog
   init = -> { State(options: options) }
-  Catalog(actor: Actor.start(Actor.Behaviour(init: init, handle: &handle)))
+  catalog = Catalog(actor: Actor.start(Actor.Behaviour(init: init, handle: &handle)))
+  _ = Actor.cast(catalog.actor.address, Msg.Load)
+  catalog
+end
+
+## Waits up to `timeout_ms` for a load to end; whether the catalog has models.
+def wait(catalog: Catalog, timeout_ms: Int) -> Bool
+  deadline = Time.monotonic_ms() + timeout_ms
+  while Time.monotonic_ms() < deadline
+    answer: Result[String] = Actor.call(catalog.actor.address, CALL_MS) do |reply| Msg.Ready(reply) end
+    return answer == ok("loaded") if answer != ok("loading")
+
+    Task.sleep(20)
+  end
+
+  false
 end
 
 def stop(catalog: Catalog) -> Void
   _ = Actor.stop(catalog.actor, 5000)
 end
 
-## The model `id` of `provider` (a models.dev id: `anthropic`, `openai`, `fireworks-ai`); none when the catalog has no
-## such model or none could be read.
+## The model `id` of `provider` (a models.dev id: `anthropic`, `openai`, `fireworks-ai`) from what is loaded now; none
+## when the catalog has no such model or is not loaded (a failed load is tried again after `RETRY_MS`).
 def find(catalog: Catalog, provider: String, id: String) -> Optional[Model]
   answer: Result[Optional[Model]] = Actor.call(catalog.actor.address, CALL_MS) do |reply|
     Msg.Find(Query(provider: provider, id: id, reply: reply))
@@ -122,17 +144,23 @@ end
 
 enum Msg
   Find(Query)
+  Load
+  Loaded(Result[List[Model]])
+  ## `loading`, `loaded`, or `none` when a load failed or the catalog is off.
+  Ready(Channel[String])
 end
 
 struct State
   options: Options
   models: List[Model] = []
   loaded: Bool = false
+  loading: Bool = false
   ## When a load found nothing: the next try waits `RETRY_MS`.
   failed_ms: Int = 0
 end
 
 struct Cached
+  url: String
   fetched_ms: Int
   models: List[Model]
 end
@@ -140,9 +168,25 @@ end
 def handle(state: State, msg: Msg) -> Actor.Step[State]
   case msg
     Msg.Find(query) ->
-      ready = loaded(state)
-      _ = Actor.reply(query.reply, lookup(ready.models, query.provider, query.id))
-      Actor.continue(ready)
+      _ = Actor.reply(query.reply, lookup(state.models, query.provider, query.id))
+      Actor.continue(load(state))
+    Msg.Load -> Actor.continue(load(state))
+    Msg.Loaded(result) ->
+      case result
+        ok(models) -> Actor.continue(state.with(models: models, loaded: true, loading: false))
+        error(_) -> Actor.continue(state.with(loading: false, failed_ms: Time.monotonic_ms()))
+      end
+
+    Msg.Ready(reply) ->
+      phase = "loading"
+      if state.loaded
+        phase = "loaded"
+      elsif off?(state.options) or (state.failed_ms > 0 and not state.loading)
+        phase = "none"
+      end
+
+      _ = Actor.reply(reply, phase)
+      Actor.continue(state)
   end
 end
 
@@ -153,26 +197,36 @@ def lookup(models: List[Model], provider: String, id: String) -> Optional[Model]
   end
 end
 
-def loaded(state: State) -> State
-  return state if state.loaded
+def off?(options: Options) -> Bool = options.url == "off" or options.url.empty?
+
+# Starts a load in a task of its own, so a slow fetch holds up no one: not while one runs, not once loaded, not with
+# the catalog off, and not until `RETRY_MS` after one failed.
+def load(state: State) -> State
+  return state if state.loaded or state.loading or off?(state.options)
   return state if state.failed_ms > 0 and Time.monotonic_ms() - state.failed_ms < RETRY_MS
 
-  cached = read_cache(state.options.cache)
-  fresh = cached.select { |c| Time.now_ms() - c.fetched_ms < state.options.ttl_ms }
-  return state.with(models: fresh[0].models, loaded: true) if not fresh.empty?
+  inbox: Channel[Msg] = Actor.inbox
+  address = inbox.address
+  options = state.options
+  _ = Task.spawn { Actor.cast(address, Msg.Loaded(loaded_models(options))) }
+  state.with(loading: true)
+end
 
-  case fetch(state.options)
+def loaded_models(options: Options) -> Result[List[Model]]
+  cached = read_cache(options.cache).select { |c| c.url == options.url }
+  fresh = cached.select { |c| Time.now_ms() - c.fetched_ms < options.ttl_ms }
+  return ok(fresh[0].models) if not fresh.empty?
+
+  case fetch(options)
     ok(models) ->
-      _ = write_cache(state.options.cache, Cached(fetched_ms: Time.now_ms(), models: models))
-      state.with(models: models, loaded: true)
-    error(_) if not cached.empty? -> state.with(models: cached[0].models, loaded: true)
-    error(_) -> state.with(failed_ms: Time.monotonic_ms())
+      _ = write_cache(options.cache, Cached(url: options.url, fetched_ms: Time.now_ms(), models: models))
+      ok(models)
+    error(_) if not cached.empty? -> ok(cached[0].models)
+    error(e) -> error(e)
   end
 end
 
 def fetch(options: Options) -> Result[List[Model]]
-  return error("the catalog is off") if options.url == "off" or options.url.empty?
-
   http = HTTP.ClientOptions(timeout_ms: FETCH_MS, idle_timeout_ms: FETCH_MS, max_body_bytes: MAX_BYTES)
   response = try HTTP.get_response(options.url, http)
   return error("models.dev answered #{response.status}") if response.status != 200
@@ -191,9 +245,13 @@ end
 def read_big(path: String) -> Result[String]
   bytes = try File.open(path) do |file|
     pieces: List[Bytes] = []
+    size = 0
     while true
       piece = try File.read_bytes(file, 1_048_576)
       break if piece.size == 0
+
+      size = size + piece.size
+      return error("the cache is over #{MAX_CACHE_BYTES} bytes") if size > MAX_CACHE_BYTES
 
       pieces = pieces.push(piece)
     end
@@ -204,10 +262,11 @@ def read_big(path: String) -> Result[String]
   String.from_bytes(bytes)
 end
 
-# `File.replace` swaps the whole file at once, but only a file that is there.
+# `File.replace` swaps the whole file at once, but only a file that is there: a new one is made only the user's.
 def write_cache(path: String, cached: Cached) -> Result[Void]
   if not File.stat(path).ok?
-    try File.write_text(path, "")
+    handle = try File.open(path, "create_private")
+    try File.close(handle)
   end
 
   File.replace(path, JSON.encode(cached).bytes)
@@ -226,6 +285,10 @@ def model(provider: String, id: String, json: JSON.Value) -> Model
   window = int(limit, "input")
   if window.none?
     window = int(limit, "context")
+  end
+
+  if window.unwrap_or(0) < MIN_WINDOW or window.unwrap_or(0) > MAX_WINDOW
+    window = none
   end
 
   prices: Optional[Prices] = none
@@ -253,7 +316,8 @@ def prices_of(cost: JSON.Value) -> Prices
   )
 end
 
-# The context tiers, by size; the older `context_over_200k` is a tier above 200000 tokens.
+# The context tiers, by size; the older `context_over_200k` is a tier above 200000 tokens, when there is no `tiers`
+# (an entry with both gives the same tier twice).
 def tiers(cost: JSON.Value) -> List[Tier]
   out: List[Tier] = []
   listed: List[JSON.Value] = JSON.list(JSON.get(cost, "tiers").unwrap_or(JSON.array([]))).unwrap_or([])
@@ -268,7 +332,8 @@ def tiers(cost: JSON.Value) -> List[Tier]
   end
 
   case JSON.get(cost, "context_over_200k")
-    ok(over) if JSON.kind(over) == "object" -> out = out.push(Tier(above: 200_000, prices: prices_of(over)))
+    ok(over) if JSON.kind(over) == "object" and listed.empty? ->
+      out = out.push(Tier(above: 200_000, prices: prices_of(over)))
     _ -> nil
   end
 

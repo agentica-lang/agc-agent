@@ -61,12 +61,14 @@ def servers(read: Fn[String, Result[String]], state_dir: String) -> Result[List[
   ok(out)
 end
 
-## Starts each server and lists its tools in a task of its own; `warn` gets each warning as it comes.
+## Starts each server and lists its tools in a task of its own; `warn` gets each warning as it comes. The tools are
+## always in the order of the servers, so of two with the same name the one of the first server stays, whichever
+## answers first.
 def background(servers: List[Mcp.Server], warn: Fn[String, Void], options: Mcp.Options = Mcp.Options()) -> Board
   init = -> { Listed(started: Started(clients: [], tools: [], warnings: []), warn: warn) }
   actor = Actor.start(Actor.Behaviour(init: init, handle: &handle))
   address = actor.address
-  tasks = servers.map { |server| Task.spawn { list(address, server, options) } }
+  tasks = (0...servers.size).to_a.map { |i| Task.spawn { list(address, i, servers[i], options) } }
   Board(actor: actor, tasks: tasks)
 end
 
@@ -100,9 +102,11 @@ private
 struct Listed
   started: Started
   warn: Fn[String, Void]
+  listings: List[Listing] = []
 end
 
 struct Listing
+  order: Int
   server: Mcp.Server
   client: Mcp.Client
   listed: Result[List[Mcp.Tool]]
@@ -116,21 +120,33 @@ end
 def handle(state: Listed, msg: Msg) -> Actor.Step[Listed]
   case msg
     Msg.Add(listing) ->
-      started = added(state.started, listing.server, listing.client, listing.listed)
-      for warning in started.warnings.drop(state.started.warnings.size)
+      listings = state.listings.push(listing).sort_by { |l| l.order }
+      started = Started(clients: [], tools: [], warnings: [])
+      for each in listings
+        started = added(started, each.server, each.client, each.listed)
+      end
+
+      name = listing.server.name
+      own = started.warnings.select { |w| w.start_with?("mcp #{name}:") or w.start_with?("mcp #{name} ") }
+      for warning in own
         state.warn.call(warning)
       end
 
-      Actor.continue(state.with(started: started))
+      Actor.continue(state.with(started: started, listings: listings))
     Msg.Get(reply) ->
       _ = Actor.reply(reply, state.started)
       Actor.continue(state)
   end
 end
 
-def list(address: Address[Msg], server: Mcp.Server, options: Mcp.Options) -> Void
+def list(address: Address[Msg], order: Int, server: Mcp.Server, options: Mcp.Options) -> Void
   client = Mcp.start(server, options)
-  listing = Listing(server: server, client: client, listed: Mcp.tools(client))
+  listed = Mcp.tools(client)
+  if not listed.ok?
+    Mcp.stop(client)
+  end
+
+  listing = Listing(order: order, server: server, client: client, listed: listed)
   _ = Actor.cast(address, Msg.Add(listing))
 end
 
@@ -153,7 +169,6 @@ end
 
 def added(started: Started, server: Mcp.Server, client: Mcp.Client, listed: Result[List[Mcp.Tool]]) -> Started
   if not listed.ok?
-    Mcp.stop(client)
     return started.with(warnings: started.warnings.push("mcp #{server.name} left out: #{listed.message}"))
   end
 

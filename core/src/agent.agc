@@ -125,28 +125,37 @@ struct Folded
 end
 
 # The session keeps a window once the API answered; after a failed request a later turn asks again.
+# A local server (llama-server) knows the window it runs with (`/props`): it goes first there; elsewhere the catalog.
 def known_window(turn: Turn) -> Int
   return turn.compaction.window if turn.compaction.window != 0
 
-  for model in option_list(turn.listed)
-    for tokens in option_list(model.window)
-      turn.link.window.call(tokens)
-      return tokens
+  listed = turn.listed.map { |model| model.window.unwrap_or(0) }.unwrap_or(0)
+  asked = 0
+  if local?(turn.compaction.props_url) or listed == 0
+    asked = case Compaction.window(turn.provider, turn.model, turn.compaction)
+      ok(tokens) -> tokens
+      error(_) -> 0
     end
   end
 
-  case Compaction.window(turn.provider, turn.model, turn.compaction)
-    ok(tokens) ->
-      turn.link.window.call(tokens)
-      if tokens < 0
-        message = "the API does not give the model's window: no compaction (set FINN_CONTEXT_WINDOW)"
-        turn.link.emit.call(Protocol.Event.Error(Protocol.Failure(kind: Compaction.KIND_NO_WINDOW, message: message)))
-      end
-
-      tokens
-    error(_) -> 0
+  tokens = asked
+  if asked <= 0 and listed > 0
+    tokens = listed
   end
+
+  if tokens != 0
+    turn.link.window.call(tokens)
+  end
+
+  if tokens < 0
+    message = "the API does not give the model's window: no compaction (set FINN_CONTEXT_WINDOW)"
+    turn.link.emit.call(Protocol.Event.Error(Protocol.Failure(kind: Compaction.KIND_NO_WINDOW, message: message)))
+  end
+
+  tokens
 end
+
+def local?(url: String) -> Bool = url.start_with?("http://127.0.0.1:") or url.start_with?("http://localhost:")
 
 # Past the part of the window the settings give, the history from the first task to the running turn becomes a
 # summary. A summary that fails is an `error` event, and the turn tries no more; so is a fold after which the next call

@@ -59,8 +59,9 @@ struct Setup
   before_load: Optional[Fn[String, Void]] = none
   ## The model API of the server, as `FINN_API` names it; the fixtures come from the folder of its format.
   api: String = "openai"
-  ## The tools of MCP servers.
+  ## The tools of MCP servers, and those that come after the start.
   tools: List[Tools.Tool] = []
+  late_tools: Optional[Fn[List[Tools.Tool]]] = none
   ## Code mode on a fake Monty worker that replays this fixture of `tests/fixtures/monty`.
   monty: String = ""
   ## Deny rules of the config, as `bash(rm *)`.
@@ -122,6 +123,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     props_url: props_url(setup, fake),
     before_load: setup.before_load,
     tools: setup.tools,
+    late_tools: setup.late_tools,
     code_mode: code_mode(setup.monty),
     catalog: setup.catalog,
   )

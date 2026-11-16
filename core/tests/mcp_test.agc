@@ -31,6 +31,23 @@ def test_a_session_calls_an_mcp_tool_after_an_approval() -> Result[Void]
   end
 end
 
+# Tools that a server lists after the start reach a session that started before them.
+def test_tools_listed_late_reach_the_sessions() -> Result[Void]
+  within_mcp do |started|
+    H.using(H.Setup(replies: ["mcp_echo.sse", "text.sse"], late_tools: some(-> { started.tools }))) do |h|
+      id = try H.new_session(h)
+      a = try H.subscribe(h, id)
+      _ = try H.send(h, id, "Echo it.")
+      a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+      _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+      _ = try H.until(a, Protocol.EventKind.TurnFinished)
+      H.close(a)
+      first = try JSON.parse((try H.next_request(h)).body)
+      Test.assert(JSON.encode(try JSON.get(first, "tools")).include?("\"mcp__fake__echo\""), "no MCP tool offered")
+    end
+  end
+end
+
 # A rule allows a call; a crash is an error result and the next call starts the server again; a big result is cut.
 def test_mcp_tools_follow_the_rules_and_survive_a_crash() -> Result[Void]
   within_mcp do |started|

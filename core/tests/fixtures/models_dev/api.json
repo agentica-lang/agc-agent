@@ -11,24 +11,110 @@
    "claude-opus-5-5": {
     "id": "claude-opus-5-5",
     "name": "Claude Opus 5.5",
+    "description": "Claude model for long-running agentic coding and knowledge work",
+    "family": "claude-opus",
+    "attachment": true,
     "reasoning": true,
+    "reasoning_options": [
+     {
+      "type": "effort",
+      "values": [
+       "low",
+       "medium",
+       "high",
+       "xhigh",
+       "max"
+      ]
+     }
+    ],
     "tool_call": true,
+    "structured_output": true,
+    "temperature": false,
+    "knowledge": "2026-06",
+    "release_date": "2026-09-22",
+    "last_updated": "2026-09-22",
+    "modalities": {
+     "input": [
+      "text",
+      "image",
+      "pdf"
+     ],
+     "output": [
+      "text"
+     ]
+    },
+    "open_weights": false,
     "limit": {
      "context": 1000000,
      "output": 128000
+    },
+    "experimental": {
+     "modes": {
+      "fast": {
+       "cost": {
+        "input": 8,
+        "output": 40,
+        "cache_read": 0.4,
+        "cache_write": 10
+       },
+       "provider": {
+        "body": {
+         "speed": "fast"
+        },
+        "headers": {
+         "anthropic-beta": "fast-mode-2026-02-01"
+        }
+       }
+      }
+     }
     },
     "cost": {
      "input": 4,
      "output": 20,
      "cache_read": 0.2,
      "cache_write": 5
-    }
+    },
+    "canonical_model_id": "anthropic/claude-opus-5-5"
    },
    "claude-haiku-5-5": {
     "id": "claude-haiku-5-5",
     "name": "Claude Haiku 5.5",
+    "description": "Fast Claude model for responsive assistance, classification, and lightweight agents",
+    "family": "claude-haiku",
+    "attachment": true,
     "reasoning": true,
+    "reasoning_options": [
+     {
+      "type": "toggle"
+     },
+     {
+      "type": "effort",
+      "values": [
+       "low",
+       "medium",
+       "high",
+       "xhigh",
+       "max"
+      ]
+     }
+    ],
     "tool_call": true,
+    "structured_output": true,
+    "temperature": false,
+    "knowledge": "2026-06",
+    "release_date": "2026-10-07",
+    "last_updated": "2026-10-07",
+    "modalities": {
+     "input": [
+      "text",
+      "image",
+      "pdf"
+     ],
+     "output": [
+      "text"
+     ]
+    },
+    "open_weights": false,
     "limit": {
      "context": 1000000,
      "output": 128000
@@ -50,7 +136,8 @@
        }
       }
      ]
-    }
+    },
+    "canonical_model_id": "anthropic/claude-haiku-5-5"
    }
   }
  },
@@ -66,18 +153,182 @@
    "gpt-5.1": {
     "id": "gpt-5.1",
     "name": "GPT-5.1",
+    "description": "Sharper GPT-5 generation for coding, product work, and tool-assisted tasks",
+    "family": "gpt",
+    "attachment": true,
     "reasoning": true,
+    "reasoning_options": [
+     {
+      "type": "effort",
+      "values": [
+       "none",
+       "low",
+       "medium",
+       "high"
+      ]
+     }
+    ],
     "tool_call": true,
+    "structured_output": true,
+    "temperature": true,
+    "knowledge": "2024-09-30",
+    "release_date": "2025-11-13",
+    "last_updated": "2025-11-13",
+    "modalities": {
+     "input": [
+      "text",
+      "image"
+     ],
+     "output": [
+      "text"
+     ]
+    },
+    "open_weights": false,
     "limit": {
      "context": 400000,
      "input": 272000,
      "output": 128000
+    },
+    "experimental": {
+     "modes": {
+      "fast": {
+       "cost": {
+        "input": 2.5,
+        "output": 20,
+        "cache_read": 0.25
+       },
+       "provider": {
+        "body": {
+         "service_tier": "priority"
+        }
+       }
+      },
+      "flex": {
+       "cost": {
+        "input": 0.625,
+        "output": 5,
+        "cache_read": 0.0625
+       },
+       "provider": {
+        "body": {
+         "service_tier": "flex"
+        }
+       }
+      }
+     }
     },
     "cost": {
      "input": 1.25,
      "output": 10,
      "cache_read": 0.125
     }
+   },
+   "gpt-6.1-terra": {
+    "id": "gpt-6.1-terra",
+    "name": "GPT-6.1 Terra",
+    "description": "Fast, efficient model for visual reasoning, precise computer use, and clear, natural writing.",
+    "family": "gpt-terra",
+    "attachment": true,
+    "reasoning": true,
+    "reasoning_options": [
+     {
+      "type": "effort",
+      "values": [
+       "none",
+       "low",
+       "medium",
+       "high",
+       "xhigh",
+       "max"
+      ]
+     }
+    ],
+    "tool_call": true,
+    "structured_output": true,
+    "temperature": true,
+    "knowledge": "2026-06-01",
+    "release_date": "2026-10-26",
+    "last_updated": "2026-10-26",
+    "modalities": {
+     "input": [
+      "text",
+      "image",
+      "pdf"
+     ],
+     "output": [
+      "text"
+     ]
+    },
+    "open_weights": false,
+    "limit": {
+     "context": 1050000,
+     "input": 922000,
+     "output": 128000
+    },
+    "experimental": {
+     "modes": {
+      "fast": {
+       "cost": {
+        "input": 2,
+        "output": 10,
+        "cache_read": 0.1,
+        "cache_write": 2.5
+       },
+       "provider": {
+        "body": {
+         "service_tier": "priority"
+        }
+       }
+      },
+      "flex": {
+       "cost": {
+        "input": 0.5,
+        "output": 2.5,
+        "cache_read": 0.025,
+        "cache_write": 0.625
+       },
+       "provider": {
+        "body": {
+         "service_tier": "flex"
+        }
+       }
+      },
+      "pro": {
+       "provider": {
+        "body": {
+         "reasoning": {
+          "mode": "pro"
+         }
+        }
+       }
+      }
+     }
+    },
+    "cost": {
+     "input": 1,
+     "output": 5,
+     "cache_read": 0.05,
+     "cache_write": 1.25,
+     "tiers": [
+      {
+       "input": 2,
+       "output": 7.5,
+       "cache_read": 0.1,
+       "cache_write": 2.5,
+       "tier": {
+        "type": "context",
+        "size": 272000
+       }
+      }
+     ],
+     "context_over_200k": {
+      "input": 2,
+      "output": 7.5,
+      "cache_read": 0.1,
+      "cache_write": 2.5
+     }
+    },
+    "canonical_model_id": "openai/gpt-6.1-terra"
    }
   }
  },
@@ -94,17 +345,68 @@
    "accounts/fireworks/models/deepseek-v4p1-flash-1017": {
     "id": "accounts/fireworks/models/deepseek-v4p1-flash-1017",
     "name": "DeepSeek V4.1 Flash 1017",
+    "description": "October 17 update of DeepSeek V4.1 Flash with improved reasoning, coding, agentic tasks, and visual understanding",
+    "family": "deepseek-flash",
+    "attachment": true,
     "reasoning": true,
+    "reasoning_options": [
+     {
+      "type": "toggle"
+     },
+     {
+      "type": "effort",
+      "values": [
+       "low",
+       "high",
+       "max"
+      ]
+     }
+    ],
     "tool_call": true,
+    "interleaved": {
+     "field": "reasoning_content"
+    },
+    "structured_output": true,
+    "temperature": true,
+    "knowledge": "2025-05",
+    "release_date": "2026-10-17",
+    "last_updated": "2026-10-17",
+    "modalities": {
+     "input": [
+      "text",
+      "image"
+     ],
+     "output": [
+      "text"
+     ]
+    },
+    "open_weights": true,
     "limit": {
      "context": 1000000,
      "output": 384000
+    },
+    "experimental": {
+     "modes": {
+      "priority": {
+       "cost": {
+        "input": 0.375,
+        "output": 1.5,
+        "cache_read": 0.0075
+       },
+       "provider": {
+        "body": {
+         "service_tier": "priority"
+        }
+       }
+      }
+     }
     },
     "cost": {
      "input": 0.3,
      "output": 1.2,
      "cache_read": 0.006
-    }
+    },
+    "canonical_model_id": "deepseek/deepseek-v4.1-flash-1017"
    }
   }
  },
@@ -121,8 +423,37 @@
    "gpt-5.1": {
     "id": "gpt-5.1",
     "name": "gpt-5.1",
+    "description": "Sharper GPT-5 generation for coding, product work, and tool-assisted tasks",
+    "family": "gpt",
+    "attachment": true,
     "reasoning": true,
+    "reasoning_options": [
+     {
+      "type": "effort",
+      "values": [
+       "none",
+       "low",
+       "medium",
+       "high"
+      ]
+     }
+    ],
     "tool_call": true,
+    "structured_output": true,
+    "temperature": false,
+    "knowledge": "2024-09-30",
+    "release_date": "2025-11-13",
+    "last_updated": "2025-11-13",
+    "modalities": {
+     "input": [
+      "text",
+      "image"
+     ],
+     "output": [
+      "text"
+     ]
+    },
+    "open_weights": false,
     "limit": {
      "context": 400000,
      "input": 272000,
@@ -131,7 +462,8 @@
     "cost": {
      "input": 1.25,
      "output": 10
-    }
+    },
+    "canonical_model_id": "openai/gpt-5.1"
    }
   }
  }

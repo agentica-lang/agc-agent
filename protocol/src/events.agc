@@ -105,8 +105,9 @@ struct Usage
   cache_read: Int
   cache_write: Int
   context: Int
-  ## In USD, from the prices of the model catalog: this call, the turn so far and the session so far. None when the
-  ## catalog has no prices for the model.
+  ## In USD, from the prices of the model catalog: this call, the turn so far and the session so far (the sums
+  ## count the calls that had a price). None when the catalog has no prices for the model. The calls that write a
+  ## compaction's summary are not counted.
   cost: Optional[Float] = none
   turn_cost: Optional[Float] = none
   session_cost: Optional[Float] = none
