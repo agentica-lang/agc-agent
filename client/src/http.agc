@@ -111,14 +111,18 @@ def open_events(server: Server, id: String, last_event_id: Int) -> Result[HTTP.S
       .push(HTTP.Header(name: Protocol.LAST_EVENT_ID_HEADER, value: Protocol.format_event_id(last_event_id)))
   )
 
-  options = HTTP.ClientOptions(timeout_ms: EVENTS_TIMEOUT_MS, idle_timeout_ms: EVENTS_TIMEOUT_MS)
-  http = try network(HTTP.open("GET", "#{server.url}#{Protocol.events_path(id)}", "".bytes, headers, options))
+  http = try network(HTTP.open("GET", "#{server.url}#{Protocol.events_path(id)}", "".bytes, headers, events_options()))
   return ok(http) if http.status >= 200 and http.status < 300
 
   rejected: Result[HTTP.Stream] = failure(http.status, http.headers, drain(http))
   Task.cancel(http.done)
   _ = Task.await(http.done)
   rejected
+end
+
+## The limits of an event stream, which is quiet while the model thinks: no call or idle timeout cuts it.
+def events_options() -> HTTP.ClientOptions
+  HTTP.ClientOptions(timeout_ms: EVENTS_TIMEOUT_MS, idle_timeout_ms: EVENTS_TIMEOUT_MS)
 end
 
 private

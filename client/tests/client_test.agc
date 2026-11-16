@@ -1,5 +1,6 @@
 import Protocol from "pkg/protocol/protocol"
 import Client from "../client"
+import Http from "../src/http"
 
 # A port nothing listens on: the one of a server that was just closed.
 CLOSED = Client.Server(url: "http://127.0.0.1:9", token: "t")
@@ -7,6 +8,13 @@ CLOSED = Client.Server(url: "http://127.0.0.1:9", token: "t")
 def test_the_state_folder_option_wins_and_is_resolved() -> Result[Void]
   launch = Client.Launch(main: "cli/main.agc", state_dir: some("/tmp/../tmp/finn-test-none"))
   Test.eq(Client.state_dir(launch), ok("/tmp/finn-test-none"))
+end
+
+# An event stream is quiet while the model thinks: its limits are a day, not the 30 s of a call.
+def test_an_event_stream_is_never_cut_by_a_timeout() -> Result[Void]
+  options = Http.events_options()
+  try Test.assert(options.timeout_ms >= 3_600_000, "timeout #{options.timeout_ms}")
+  Test.assert(options.idle_timeout_ms >= 3_600_000, "idle #{options.idle_timeout_ms}")
 end
 
 def test_a_server_that_does_not_listen_is_unreachable() -> Result[Void]

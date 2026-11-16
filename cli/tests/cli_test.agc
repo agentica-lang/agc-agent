@@ -7,8 +7,8 @@ import Routes from "support/routes"
 
 PLAIN = ["--cwd", "/work"]
 PROMPT = Routes.PROMPT
-# Longer than the 10 s the client once waited for a piece of the stream.
-QUIET_MS = 12_000
+# A gap with nothing on the stream; that no timeout cuts a quiet one is checked in client_test.
+QUIET_MS = 1_000
 
 def test_a_turn_streams_text_tools_and_usage() -> Result[Void]
   Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["turn.sse"])], &a_turn)

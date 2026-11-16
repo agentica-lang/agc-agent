@@ -10,20 +10,26 @@ MEMBER = "pydantic_monty_runtime-1.6.0.data/scripts/monty"
 def test_the_worker_is_fetched_once_and_only_its_member_is_extracted() -> Result[Void]
   served = try serve()
   cache = try fresh_dir()
+  checked = fetched_once(served, cache)
+  HTTP.close_server(served.server)
+  _ = HTTP.wait(served.server)
+  _ = Path.remove(cache)
+  checked
+end
+
+def fetched_once(served: Served, cache: String) -> Result[Void]
   url = "http://127.0.0.1:#{HTTP.local_port(served.server)}/monty.whl"
   path = try Monty.binary(cache, Monty.Wheel(url: url, sha256: WHEEL_SHA256))
   again = try Monty.binary(cache, Monty.Wheel(url: url, sha256: WHEEL_SHA256))
   process = try Process.spawn_captured(path, ["subprocess"])
   _ = try Process.wait(process, 5_000)
   output = try Process.output(process, 5_000)
-  HTTP.close_server(served.server)
   try Test.eq([path, again], ["#{cache}/monty-1.6.0/#{MEMBER}", "#{cache}/monty-1.6.0/#{MEMBER}"])
   try Test.eq(output.stdout, "fake monty subprocess\n")
   try Test.eq(Dir.list("#{cache}/monty-1.6.0"), ok(["pydantic_monty_runtime-1.6.0.data"]))
   try Test.eq(Dir.list(cache), ok(["monty-1.6.0"]))
   try Test.eq(served.requests.recv(0), ok("/monty.whl"))
-  try Test.error?(served.requests.recv(0))
-  Path.remove(cache)
+  Test.error?(served.requests.recv(0))
 end
 
 def test_a_wheel_with_another_hash_installs_nothing() -> Result[Void]
@@ -32,6 +38,7 @@ def test_a_wheel_with_another_hash_installs_nothing() -> Result[Void]
   url = "http://127.0.0.1:#{HTTP.local_port(served.server)}/monty.whl"
   result = Monty.binary(cache, Monty.Wheel(url: url, sha256: "0" * 64))
   HTTP.close_server(served.server)
+  _ = HTTP.wait(served.server)
   try Test.eq(result.ok?, false)
   try Test.assert(result.message.include?("sha256"), "the hash is named: #{result.message}")
   try Test.eq(Dir.list(cache), ok([]))

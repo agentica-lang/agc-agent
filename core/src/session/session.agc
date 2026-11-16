@@ -506,6 +506,7 @@ def entry(
     catalog: options.catalog,
     catalog_provider: catalog_provider(options.models_provider, api.provider),
     take_ms: options.take_ms,
+    catalog_wait_ms: options.catalog_wait_ms,
     approvals: opened.approvals,
   )
 

@@ -12,7 +12,7 @@ CACHED_COST = (30.0 * 1.25 + 7.0 * 10.0 + 120.0 * 0.125) / 1_000_000.0
 
 # Each call's usage carries its cost and the turn's and session's so far; the snapshot has the session's, which a
 # restart keeps; the window comes from the catalog, so no `GET /models` is made. The first turn waits for a catalog
-# that takes a second to load.
+# that loads while it runs.
 def test_a_session_counts_what_its_calls_cost() -> Result[Void]
   within_models do |served, dir|
     slow = served.url.replace("/api.json", "/slow.json")
@@ -28,6 +28,7 @@ def test_a_session_counts_what_its_calls_cost() -> Result[Void]
       id = try H.new_session(h)
       a = try H.subscribe(h, id)
       _ = try H.send(h, id, "Hi.")
+      served.gate.close
       a = try H.until(a, Protocol.EventKind.TurnFinished)
       _ = try H.send(h, id, "Again.")
       a = try H.until(a, Protocol.EventKind.TurnFinished)
@@ -49,14 +50,15 @@ end
 # turn asks again: a local server's `/props` first.
 def test_a_window_the_api_did_not_give_is_asked_again() -> Result[Void]
   within_models do |served, dir|
-    slower = served.url.replace("/api.json", "/slower.json")
-    catalog = Catalog.start(Catalog.Options(url: slower, cache: "#{dir}/models.json"))
+    slow = served.url.replace("/api.json", "/slow.json")
+    catalog = Catalog.start(Catalog.Options(url: slow, cache: "#{dir}/models.json"))
     setup = H.Setup(
       replies: ["models_none.json", "models_none.json", "text.sse", "props_small.json", "text.sse"],
       context_window: 0,
       props: true,
       model: "gpt-5.1",
       catalog: some(catalog),
+      catalog_wait_ms: 50,
     )
 
     result = H.using(setup) do |h|
@@ -64,6 +66,7 @@ def test_a_window_the_api_did_not_give_is_asked_again() -> Result[Void]
       a = try H.subscribe(h, id)
       _ = try H.send(h, id, "Hi.")
       a = try H.until(a, Protocol.EventKind.TurnFinished)
+      served.gate.close
       try Test.assert(Catalog.wait(catalog, 10_000), "the catalog did not load")
       _ = try H.send(h, id, "Again.")
       a = try H.until(a, Protocol.EventKind.TurnFinished)
@@ -158,6 +161,7 @@ def test_a_slow_fetch_does_not_hold_up_find() -> Result[Void]
     began = Time.monotonic_ms()
     model = Catalog.find(catalog, "openai", "gpt-5.1")
     took = Time.monotonic_ms() - began
+    served.gate.close
     try Test.assert(Catalog.wait(catalog, 10_000), "the catalog did not load")
     Catalog.stop(catalog)
     try Test.eq(model, none)
@@ -237,9 +241,11 @@ end
 
 private
 
+## `gate` holds the answers of `/slow.json` until the test closes it.
 struct Served
   http: HTTP.Server
   url: String
+  gate: Channel[Bool]
 end
 
 def within_models(body: Fn[Served, String, Result[Void]]) -> Result[Void]
@@ -247,32 +253,24 @@ def within_models(body: Fn[Served, String, Result[Void]]) -> Result[Void]
   dir = "#{tmp}/core-models-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)
   json = try Fake.fixture("models_dev/api.json")
-  handler = ->(request: HTTP.Request) { answer(dir, json, request) }
+  gate: Channel[Bool] = Channel.new(1)
+  handler = ->(request: HTTP.Request) { answer(dir, json, gate, request) }
   http = try HTTP.serve("127.0.0.1", 0, HTTP.app(handler))
-  result = body.call(Served(http: http, url: "http://127.0.0.1:#{HTTP.local_port(http)}/api.json"), dir)
+  result = body.call(Served(http: http, url: "http://127.0.0.1:#{HTTP.local_port(http)}/api.json", gate: gate), dir)
+  gate.close
   HTTP.close_server(http)
-  settled()
+  _ = HTTP.wait(http)
   _ = Path.remove(dir)
   result
 end
 
-# `/slow.json` answers after 1 s and `/slower.json` after 3 s; every path fails while the file `down` is there.
-# Waits up to a second for the tasks of the run to end: the server's connections close a moment after the server.
-def settled() -> Void
-  deadline = Time.monotonic_ms() + 1000
-  while Task.pending_count() > 0 and Time.monotonic_ms() < deadline
-    Task.sleep(10)
-  end
-end
-
-def answer(dir: String, json: Bytes, request: HTTP.Request) -> Result[HTTP.Response]
+# `/slow.json` answers when the gate is closed; every path fails while the file `down` is there.
+def answer(dir: String, json: Bytes, gate: Channel[Bool], request: HTTP.Request) -> Result[HTTP.Response]
   return ok(HTTP.Response(status: 503, headers: [], body: "".bytes)) if File.stat("#{dir}/down").ok?
 
   try File.append_text("#{dir}/hits", "#{request.path}\n")
   if request.path == "/slow.json"
-    Task.sleep(1000)
-  elsif request.path == "/slower.json"
-    Task.sleep(3000)
+    _ = gate.recv(10_000)
   end
 
   ok(HTTP.Response(status: 200, headers: [HTTP.Header(name: "Content-Type", value: "application/json")], body: json))

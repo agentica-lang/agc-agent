@@ -112,13 +112,14 @@ end
 # A message that comes while the final answer streams is read after it: the same turn calls the model again. Past 20
 # messages, or past the size of one message together, the queue refuses with 409.
 def test_the_queue_is_read_after_a_final_answer_and_has_a_limit() -> Result[Void]
-  replies = ["text.sse@1500", "text.sse", "write_file.sse", "text.sse@3000", "text.sse"]
+  replies = ["text.sse@hold", "text.sse", "write_file.sse", "text.sse@hold", "text.sse"]
   H.using(H.Setup(replies: replies)) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Hi.")
     a = try H.until(a, Protocol.EventKind.TurnStarted)
     _ = try H.send(h, id, "More.")
+    H.release(h)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     try Test.eq(H.kinds(a.seen).select { |k| k == "turn_started" }.size, 1)
     after = try H.session(h, id)
@@ -144,6 +145,7 @@ def test_the_queue_is_read_after_a_final_answer_and_has_a_limit() -> Result[Void
     big = try H.send(h, id, "x" * 600_000)
     bigger = try H.send(h, id, "y" * 500_000)
     H.close(a)
+    H.release(h)
     try Test.eq([big.status, bigger.status], [202, 409])
     shown = (try H.idle(h, id)).history.map { |m| m.text.size }
     Test.eq(shown.include?(600_000), true)
@@ -189,16 +191,18 @@ end
 
 # A final answer cut by the token limit or refused ends the turn: the message sent meanwhile starts the next one.
 def test_a_cut_or_refused_answer_ends_the_turn() -> Result[Void]
-  replies = ["text_length.sse@1500", "text_refused.sse@1500", "text.sse"]
+  replies = ["text_length.sse@hold", "text_refused.sse@hold", "text.sse"]
   H.using(H.Setup(replies: replies)) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Hi.")
     a = try H.until(a, Protocol.EventKind.TurnStarted)
     _ = try H.send(h, id, "More.")
+    H.release(h)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     a = try H.until(a, Protocol.EventKind.TurnStarted)
     _ = try H.send(h, id, "Again.")
+    H.release(h)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
