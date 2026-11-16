@@ -65,7 +65,8 @@ struct Setup
   late_tools: Optional[Fn[List[Tools.Tool]]] = none
   ## Code mode on a fake Monty worker that replays this fixture of `tests/fixtures/monty`.
   monty: String = ""
-  ## Deny rules of the config, as `bash(rm *)`.
+  ## The approval extension, with the deny rules of the config, as `bash(rm *)`.
+  approvals: Bool = true
   deny: List[String] = []
   model: String = "qwen2.5-0.5b-instruct"
   catalog: Optional[Catalog.Catalog] = none
@@ -146,7 +147,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     api: setup.api,
     model: setup.model,
     env: &fake_env,
-    rules: try Approval.parse_rules([], setup.deny),
+    approvals: try approval_rules(setup),
     keep_events: setup.keep_events,
     approval_timeout_ms: setup.approval_timeout_ms,
     context_window: window(setup.context_window),
@@ -195,6 +196,12 @@ def restarted(h: Harness, setup: Setup, cut: String, body: Fn[Harness, Result[Vo
   result
 end
 
+def approval_rules(setup: Setup) -> Result[Optional[Approval.Rules]]
+  return ok(none) if not setup.approvals
+
+  ok(some(try Approval.parse_rules([], setup.deny)))
+end
+
 def sessions(h: Harness) -> String = "#{h.data_dir}/sessions"
 
 def session_file(h: Harness, id: String) -> String = "#{sessions(h)}/#{id}.jsonl"
@@ -239,8 +246,6 @@ def window(tokens: Int) -> Optional[Int]
 
   some(tokens)
 end
-
-def no_rules() -> Tools.Rules = Tools.Rules(allow: [], deny: [])
 
 ## A name is a fixture under `dir`, `STATUS:name.json`, or a path; `name@MS` answers after MS milliseconds.
 def fixtures(names: List[String], dir: String = "openai_chat") -> Result[List[Fake.Reply]]

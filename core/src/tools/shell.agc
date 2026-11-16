@@ -8,7 +8,8 @@
 ## - The files a call reaches are checked before they are used, not as they are used: a command that runs in parallel
 ##   can swap a folder for a link between the check and the use.
 
-import Approval from "../approval/approval"
+import Shell from "pkg/shell/shell"
+import Sandbox from "sandbox"
 import Spec from "spec"
 
 DEFAULT_TIMEOUT_MS = 120000
@@ -31,7 +32,7 @@ def bash(ctx: Spec.Context, input: JSON.Value) -> Result[String]
 
   options = Process.Options(chdir: ctx.root, pgroup: true, timeout_ms: timeout_ms)
   env = environment(ctx.env)
-  if Approval.read_only?(ctx.root, args.command)
+  if read_only?(ctx.root, args.command)
     env = env.select { |word| not word.start_with?("PATH=") }.push("PATH=#{READ_ONLY_PATH}")
   end
 
@@ -60,6 +61,11 @@ def environment(read: Fn[String, Result[String]]) -> List[String]
   else
     words.push("PATH=#{DEFAULT_PATH}")
   end
+end
+
+## Whether `command` only reads inside `root` (`Shell.verdict`, its paths resolved by `Sandbox`).
+def read_only?(root: String, command: String) -> Bool
+  Shell.verdict(command, ->(path) { Sandbox.resolve(root, path).ok? }) == Shell.Verdict.Safe
 end
 
 private

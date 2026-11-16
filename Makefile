@@ -20,8 +20,9 @@ export AGC_TEST_SECRET = sk-test-secret-must-not-reach-bash
 none = rg -n $(2); case $$? in 1) ;; 0) echo "coupling: $(1)" >&2; exit 1 ;; *) exit 2 ;; esac
 
 # $(call core_imports,FOLDER,ALLOWED): the rg arguments that find an import of core/src/FOLDER from another core folder
-# than those of ALLOWED (a|b). Needs rg with PCRE2; without it rg fails, and so does the rule.
-core_imports = -P -g 'core/src/$(1)/**' '^import \w+ from "\.\./(?!($(2))/)' .
+# than those of ALLOWED (a|b), or with a `..` after its first folder. Needs rg with PCRE2; without it rg fails, and so
+# does the rule.
+core_imports = -P -g 'core/src/$(1)/**' '^import \w+ from "\.\./((?!($(2))/)|[^"]*/\.\.(/|"))' .
 
 # The llama-server of `smoke-llama`, fetched by scripts/ into .tools/ (gitignored). LLAMA_URL uses a running one.
 LLAMA_SERVER ?= $(CURDIR)/.tools/llama.cpp/llama-server
@@ -49,13 +50,14 @@ coupling:
 	@$(call none,a client depends on the server or the llm or another client,-g 'client/**' -g 'cli/**' -g 'tui_client/**' \
 	  -e 'subdir *= *"($(NOT_FOR_CLIENTS))"' -e '"pkg/($(NOT_FOR_CLIENTS))/' .)
 	@$(call none,a package imports another package's src/ (use its public module),-g '*.agc' 'pkg/[a-z0-9_-]+/src/' .)
-	@$(call none,core/src/tools imports a core folder but approval,$(call core_imports,tools,approval))
+	@$(call none,core/src/tools imports another core folder,$(call core_imports,tools,tools))
 	@$(call none,core/src/approval imports a core folder but tools,$(call core_imports,approval,tools))
 	@$(call none,core/src/ext imports a core folder but tools,$(call core_imports,ext,tools))
 	@$(call none,core/src/agent imports a core folder but tools and approval,$(call core_imports,agent,tools|approval))
 	@$(call none,core/src/session imports http,$(call core_imports,session,agent|tools|ext|approval|config))
 	@$(call none,core/src/config imports a core folder but tools approval and agent,$(call core_imports,config,tools|approval|agent))
 	@$(call none,core/src/http imports a core folder but session and config,$(call core_imports,http,session|config))
+	@$(call none,core/src/http imports a file of session but session.agc,-g 'core/src/http/**' '^import \w+ from "\.\./session/(?!session")' -P .)
 
 fmt-check:
 	for pkg in $(PACKAGES); do (cd $$pkg && $(AGENTICA) fmt --check .) || exit 1; done

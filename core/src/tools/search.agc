@@ -2,7 +2,6 @@
 ## nothing outside the session folder is reached through one.
 
 import Regex from "std/regex"
-import Approval from "../approval/approval"
 import Sandbox from "sandbox"
 import Spec from "spec"
 
@@ -145,9 +144,12 @@ def walk(base: String, dir: String, depth: Int, found: Walked) -> Result[Walked]
   ok(walked)
 end
 
-## The files of the walk that no deny rule of `read_file` covers.
+## The files of the walk that the context does not hide.
 def readable(ctx: Spec.Context, base: String, files: List[String]) -> List[String]
-  files.select { |file| not Approval.read_denied?(ctx.rules, Sandbox.relative(ctx.root, child(base, file))) }
+  case ctx.hidden
+    some(hidden) -> files.select { |file| not hidden.call(Sandbox.relative(ctx.root, child(base, file))) }
+    none -> files
+  end
 end
 
 def cut_note(cut: Bool) -> String
