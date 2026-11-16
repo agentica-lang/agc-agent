@@ -1,0 +1,12 @@
+id: 5
+event: approval_resolved
+data: {"approval_id":"a1","decision":"deny","source":"client"}
+
+id: 6
+event: tool_finished
+data: {"call_id":"c1","ok":false,"summary":"the user denied this call","duration_ms":0}
+
+id: 7
+event: turn_finished
+data: {"turn_id":"t1","stop_reason":"end_turn"}
+
