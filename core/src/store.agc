@@ -44,6 +44,8 @@ struct Saved
   reserved: Int = 0
   ## The answer of the last turn so far at its last compaction, which may have folded part of it.
   folded: Optional[Folded] = none
+  ## A `stripped` record and no compaction after it.
+  stripped: Bool = false
   ## The names that extensions noted in the session (the skills it loaded), in order.
   marks: List[String] = []
   ## The model and the thinking level of the last `settings` record: what the session changed since its header.
@@ -130,6 +132,9 @@ def append_compaction(path: String, compaction: Compaction.Compaction, answer: L
     },
   )
 end
+
+## From now until the next compaction the session's Anthropic requests go without thinking blocks.
+def append_stripped(path: String) -> Result[Void] = append(path, {"type": JSON.from("stripped")})
 
 ## The model and thinking level the session uses from now on.
 def append_settings(path: String, model: String, effort: Optional[String]) -> Result[Void]
@@ -318,7 +323,8 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
         folded = some(Folded(texts: texts, at: history.size))
       end
 
-      ok(saved.with(history: history, folded: folded))
+      ok(saved.with(history: history, folded: folded, stripped: false))
+    "stripped" -> ok(saved.with(stripped: true))
     "ids" -> ok(saved.with(reserved: try JSON.int(try JSON.get(json, "until"))))
     "settings" ->
       effort = optional_string(json, "effort")

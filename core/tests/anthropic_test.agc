@@ -62,6 +62,60 @@ def test_anthropic_folds_only_between_turns() -> Result[Void]
   end
 end
 
+# A turn that stripped its thinking blocks leaves the session stripped until a fold: after a failed summary, and
+# after a
+# restart, the requests still go without them.
+def test_a_stripped_session_stays_stripped_until_a_fold() -> Result[Void]
+  replies = ["thinking_tool_use.sse", "text_large.sse", "400:unauthorized.json", "text.sse", "text.sse"]
+  setup = H.Setup(api: "anthropic", context_window: 100, replies: replies)
+  H.using(setup) do |h|
+    try File.write_text("#{h.work}/README.md", "# Readme\n")
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Read the README.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "Again.")
+    a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.stop_reason(a), "end_turn")
+    for _i in 1..3
+      _ = try H.next_request(h)
+    end
+
+    after_failed = try messages_of(h)
+    try Test.eq(thinking(after_failed), [])
+    H.restarted(h, setup, "") do |r|
+      b = try H.subscribe(r, id)
+      _ = try H.send(r, id, "Once more.")
+      b = try H.until(b, Protocol.EventKind.TurnFinished)
+      H.close(b)
+      Test.eq(thinking(try messages_of(r)), [])
+    end
+  end
+end
+
+# A token fetched again stays with the session: the next turn's summary call carries it.
+def test_a_fresh_token_stays_for_the_next_calls() -> Result[Void]
+  replies = ["401:unauthorized.json", "text_large.sse", "text.sse", "text.sse"]
+  H.using(H.Setup(api: "anthropic", fresh_token: "fresh", context_window: 100, replies: replies)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hi.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    _ = try H.send(h, id, "Again.")
+    a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
+    H.close(a)
+    _ = try H.next_request(h)
+    _ = try H.next_request(h)
+    summary = try H.next_request(h)
+    try Test.eq((try JSON.list(try JSON.get(try JSON.parse(summary.body), "messages"))).size, 1)
+    Test.eq(
+      [header(summary, "authorization"), header(try H.next_request(h), "authorization")],
+      ["Bearer fresh", "Bearer fresh"],
+    )
+  end
+end
+
 # After a 401 the token is fetched again once, and the call is made again with it.
 def test_a_401_fetches_the_token_again() -> Result[Void]
   setup = H.Setup(api: "anthropic", fresh_token: "fresh", replies: ["401:unauthorized.json", "text.sse"])
@@ -125,6 +179,10 @@ end
 
 def messages_of(h: H.Harness) -> Result[List[JSON.Value]]
   JSON.list(try JSON.get(try JSON.parse((try H.next_request(h)).body), "messages"))
+end
+
+def thinking(messages: List[JSON.Value]) -> List[String]
+  messages.flat_map { |m| types(m) }.select { |t| t.include?("thinking") }
 end
 
 def types(message: JSON.Value) -> List[String]
