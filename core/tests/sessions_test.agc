@@ -865,7 +865,7 @@ def test_a_shell_command_runs_and_its_output_reaches_the_next_turn() -> Result[V
     _ = try shell(h, id, "echo full", true)
     a = try H.until(a.with(seen: []), Protocol.EventKind.ShellFinished)
     full = try finished(a)
-    try Test.eq([full.context, full.output.include?("[not given to the model")], [false, true])
+    try Test.eq([full.context, full.output.include?("already wait for the next message]")], [false, true])
     _ = try shell(h, id, "echo two", false)
     a = try H.until(a.with(seen: []), Protocol.EventKind.ShellFinished)
     try Test.eq((try finished(a)).output, "two\n")
@@ -913,6 +913,27 @@ def test_a_command_cut_by_a_restart_ends() -> Result[Void]
       cut = try finished(b)
       try Test.eq([cut.ok, cut.context, cut.output == "the server stopped while it ran"], [false, false, true])
       Test.eq((try H.session(r, id)).shell_id, none)
+    end
+  end
+end
+
+# A command whose end an older server did not write, with a turn after it, ended before that turn: no end is written.
+def test_a_cut_command_before_a_turn_is_not_ended_again() -> Result[Void]
+  setup = H.Setup(replies: [])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try shell(h, id, "sleep 30", true)
+    a = try H.until(a, Protocol.EventKind.ShellStarted)
+    H.close(a)
+    last = (try H.session(h, id)).last_event_id
+    started = "{\"type\":\"event\",\"id\":#{last + 1},\"name\":\"turn_started\",\"data\":{\"turn_id\":\"t9\"}}\n"
+    data = "{\"turn_id\":\"t9\",\"stop_reason\":\"end_turn\"}"
+    finished = "{\"type\":\"event\",\"id\":#{last + 2},\"name\":\"turn_finished\",\"data\":#{data}}\n"
+    H.restarted(h, setup, started + finished) do |r|
+      after = try H.session(r, id)
+      try Test.eq(after.last_event_id, last + 2)
+      Test.eq(after.shell_id, none)
     end
   end
 end

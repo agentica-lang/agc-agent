@@ -1319,10 +1319,13 @@ def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
         aside = "not sent to the model"
       end
 
-      entries = Transcript.tool_finished(Transcript.tool_started(shown.entries, start), tool, aside)
+      # A command that a restart cut has no duration.
+      timed = done.duration_ms > 0
+      entries = Transcript.tool_finished(Transcript.tool_started(shown.entries, start), tool, aside, timed)
       shown.with(shell: false, stopping: false, entries: entries)
+    # An error (a write of `shell_finished` that failed) also ends a command: no other event of it comes.
     Protocol.Event.Error(failure) ->
-      failed = noted(shown, "error: #{failure.kind}: #{failure.message}")
+      failed = noted(shown.with(shell: false), "error: #{failure.kind}: #{failure.message}")
       case shown.new_model
         some(model) -> noted(failed.with(new_model: none), "warning: #{Client.model_warning(model)}")
         none -> failed

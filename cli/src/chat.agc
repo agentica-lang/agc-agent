@@ -259,8 +259,10 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
     Protocol.Event.TurnStarted(started) ->
       known = started.history_size.unwrap_or(shown.known)
       shown.with(turn: true, stopping: false, known: known, yolo: Yolo.running(shown.yolo, some(started.turn_id)))
+    # An error (a write of `shell_finished` that failed) also ends a command: no other event of it comes.
     Protocol.Event.Error(_) if not repeated and shown.new_model.some? ->
-      note(shown.with(new_model: none), "[warning] #{Client.model_warning(shown.new_model.unwrap!)}")
+      note(shown.with(new_model: none, shell: false), "[warning] #{Client.model_warning(shown.new_model.unwrap!)}")
+    Protocol.Event.Error(_) -> shown.with(shell: false)
     Protocol.Event.TurnFinished(finished) ->
       shown.with(
         new_model: none,
