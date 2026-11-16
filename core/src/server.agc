@@ -221,10 +221,22 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
       end
 
     Msg.Delete(id, reply) ->
-      case delete_session(registry, id)
-        ok(_) ->
-          Actor.reply(reply, ok())
-          Actor.continue(registry.with(sessions: registry.sessions.select { |entry| entry.summary.id != id }))
+      found = registry.sessions.select { |entry| entry.summary.id == id }
+      if found.empty?
+        Actor.reply(reply, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
+        return Actor.continue(registry)
+      end
+
+      case ended(found[0])
+        ok(entry) ->
+          removed = remove_file(entry.file)
+          Actor.reply(reply, removed)
+          sessions = registry.sessions.map { |e| replaced(e, entry) }
+          if removed.ok?
+            sessions = sessions.select { |e| e.summary.id != id }
+          end
+
+          Actor.continue(registry.with(sessions: sessions))
         error(e) ->
           Actor.reply(reply, error(e))
           Actor.continue(registry)
@@ -258,17 +270,21 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   ok(entry(options, header, context, file, none))
 end
 
-# A running session ends first, refused while a turn runs; then its file goes.
-def delete_session(registry: Registry, id: String) -> Result[Void]
-  found = registry.sessions.select { |entry| entry.summary.id == id }
-  return error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND) if found.empty?
-
-  for session in option_list(found[0].session)
+# The entry with its session ended, refused while a turn runs; it loads again on its next use.
+def ended(listed: Entry) -> Result[Entry]
+  for session in option_list(listed.session)
     try Session.end_session(session.address)
     _ = Task.await(session.task, CALL_MS)
   end
 
-  Path.remove(found[0].file)
+  ok(listed.with(session: none))
+end
+
+def remove_file(file: String) -> Result[Void]
+  info = try File.lstat(file)
+  return error("#{file}: not a regular file") if info.kind != "file"
+
+  Path.remove(file)
 end
 
 def replaced(entry: Entry, by: Entry) -> Entry
@@ -502,7 +518,12 @@ def no_route(method: String, path: String) -> HTTP.Response
   failure_response(404, "not_found", "no route for #{method} #{path}")
 end
 
-def failure(e: Error) -> HTTP.Response = failure_response(status_of(e.kind), e.kind, e.message)
+def failure(e: Error) -> HTTP.Response
+  # A request that reached a session as it was deleted.
+  return failure_response(404, Protocol.KIND_SESSION_NOT_FOUND, "session deleted") if e.kind == "channel.gone"
+
+  failure_response(status_of(e.kind), e.kind, e.message)
+end
 
 def status_of(kind: String) -> Int
   return 400 if [Protocol.KIND_INVALID, Protocol.KIND_UNKNOWN].include?(kind)

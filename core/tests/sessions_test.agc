@@ -173,7 +173,8 @@ def test_a_session_is_loaded_when_first_used() -> Result[Void]
     try Path.remove(gone_cwd)
     file = H.session_file(h, id)
     late = (
-      "{\"type\":\"session\",\"id\":\"a-late\",\"cwd\":\"#{h.work}\",\"model\":\"m\",\"created_ms\":#{Time.now_ms + 1_000_000}}\n"
+      "{\"type\":\"session\",\"id\":\"a-late\",\"cwd\":\"#{h.work}\",\"model\":\"m\"," +
+      "\"created_ms\":#{Time.now_ms + 1_000_000}}\n"
     )
 
     try File.write_text(H.session_file(h, "a-late"), late)
@@ -198,7 +199,8 @@ def test_a_session_is_loaded_when_first_used() -> Result[Void]
   end
 end
 
-# A session is deleted with its file, but not while a turn runs; one not loaded since a restart is deleted too.
+# A session is deleted with its file, but not while a turn runs; one whose file stays loads again; one not loaded
+# since a restart is deleted too.
 def test_a_session_is_deleted() -> Result[Void]
   setup = H.Setup(replies: ["write_file.sse", "text.sse"])
   H.using(setup) do |h|
@@ -217,6 +219,13 @@ def test_a_session_is_deleted() -> Result[Void]
     try Test.eq((try H.call(h, "DELETE", Protocol.session_path(id), "", H.auth(h))).status, 404)
     try Test.eq(a.stream.body.recv(5000).ok?, false)
     H.close(a)
+    kept = try H.new_session(h)
+    try chmod("500", H.sessions(h))
+    failed = H.call(h, "DELETE", Protocol.session_path(kept), "", H.auth(h))
+    try chmod("700", H.sessions(h))
+    try Test.eq((try failed).status, 500)
+    try Test.eq((try H.get(h, Protocol.session_path(kept))).status, 200)
+    try Test.eq((try H.call(h, "DELETE", Protocol.session_path(kept), "", H.auth(h))).status, 200)
     H.restarted(h, setup, "") do |r|
       try Test.eq((try H.call(r, "DELETE", Protocol.session_path(other), "", H.auth(r))).status, 200)
       try Test.eq(File.stat(H.session_file(r, other)).ok?, false)
