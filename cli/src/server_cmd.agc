@@ -8,6 +8,7 @@ LOG_LINES = 100
 FOLLOW_MS = 200
 CHECK_EVERY = 10
 READ_BYTES = 65_536
+REPLACEMENT = String.from_code(65533)
 ## Exit code of `status` when no server runs.
 NOT_RUNNING = 1
 
@@ -54,6 +55,11 @@ def uptime(seconds: Int) -> String
 end
 
 private
+
+struct Chunk
+  text: String
+  pending: Bytes
+end
 
 ## The last lines of a file, and the start of the line the file ends in.
 struct Tail
@@ -135,20 +141,17 @@ def read_tail(file: File.Handle) -> Result[Tail]
     piece = try File.read_bytes(file, READ_BYTES)
     break if piece.size == 0
 
-    pending = Bytes.concat([pending, piece])
-    # A piece may end inside a character: it waits for the next one.
-    case String.from_bytes(pending)
-      ok(text) ->
-        pending = "".bytes
-        parts = (rest + text).split("\n")
-        rest = parts[parts.size - 1]
-        lines = lines + parts.take(parts.size - 1)
-        lines = lines.drop([lines.size - LOG_LINES, 0].max.unwrap!)
-      error(_) -> nil
-    end
+    chunk = decode_chunk(Bytes.concat([pending, piece]), false)
+    pending = chunk.pending
+    parts = (rest + chunk.text).split("\n")
+    rest = parts[parts.size - 1]
+    lines = lines + parts.take(parts.size - 1)
+    lines = lines.drop([lines.size - LOG_LINES, 0].max.unwrap!)
   end
 
-  ok(Tail(lines: lines, rest: rest))
+  parts = (rest + decode_chunk(pending, true).text).split("\n")
+  lines = lines + parts.take(parts.size - 1)
+  ok(Tail(lines: lines.drop([lines.size - LOG_LINES, 0].max.unwrap!), rest: parts[parts.size - 1]))
 end
 
 # Prints what the file gets, by the position of the handle; every `CHECK_EVERY` idle polls it asks whether the
@@ -166,23 +169,43 @@ def follow_log(file: File.Handle, dir: String, start: String) -> Result[Void]
       Task.sleep(FOLLOW_MS)
     else
       idle = 0
-      pending = Bytes.concat([pending, piece])
-      case String.from_bytes(pending)
-        ok(text) ->
-          pending = "".bytes
-          parts = (rest + text).split("\n")
-          rest = parts[parts.size - 1]
-          for line in parts.take(parts.size - 1)
-            puts(line)
-          end
-
-          IO.flush()
-        error(_) -> nil
+      chunk = decode_chunk(Bytes.concat([pending, piece]), false)
+      pending = chunk.pending
+      parts = (rest + chunk.text).split("\n")
+      rest = parts[parts.size - 1]
+      for line in parts.take(parts.size - 1)
+        puts(line)
       end
+
+      IO.flush()
     end
   end
 
   ok()
+end
+
+# The text of `bytes` with U+FFFD for each byte that is not UTF-8. Unless `final`, the end that may be the start of a
+# character (at most 3 bytes) stays in `pending` for the next piece.
+def decode_chunk(bytes: Bytes, final: Bool) -> Chunk
+  text = ""
+  rest = bytes
+  while rest.size > 0
+    case rest.decode("utf-8")
+      ok(done) ->
+        text = text + done
+        rest = Bytes.slice(rest, 0, 0)
+      error(e) ->
+        parts = e.message.split(" ")
+        at = parts[parts.size - 1].to_i.unwrap_or(0)
+        text = text + Bytes.slice(rest, 0, at).decode("utf-8").unwrap_or("")
+        return Chunk(text: text, pending: Bytes.slice(rest, at, rest.size - at)) if not final and at >= rest.size - 3
+
+        text = text + REPLACEMENT
+        rest = Bytes.slice(rest, at + 1, rest.size - at - 1)
+    end
+  end
+
+  Chunk(text: text, pending: rest)
 end
 
 def running?(dir: String) -> Bool
