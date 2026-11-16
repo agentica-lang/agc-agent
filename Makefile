@@ -5,13 +5,13 @@ override AGENTICA := $(if $(findstring /,$(AGENTICA)),$(abspath $(AGENTICA)),$(A
 export AGENTICA
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
-PACKAGES = sse llm mcp protocol monty client core cli tui_client
+PACKAGES = sse llm mcp protocol monty shell client core cli tui_client
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
-LEAVES = llm mcp sse protocol monty
+LEAVES = llm mcp sse protocol monty shell
 SERVER_AND_CLIENTS = core|client|cli|tui_client|web_client
 # A client, and `client` (the code every client shares), reach the server only through the protocol: they never
 # depend on these (or on another client).
-NOT_FOR_CLIENTS = core|llm|mcp|monty|cli|tui_client|web_client
+NOT_FOR_CLIENTS = core|llm|mcp|monty|shell|cli|tui_client|web_client
 
 # A fake key in the environment of every recipe: the bash test of core checks that the tool does not pass it on.
 export AGC_TEST_SECRET = sk-test-secret-must-not-reach-bash
@@ -30,7 +30,7 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check unit smoke pty test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
+.PHONY: install check coupling fmt-check unit smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (agentica-tui) go into the package's deps/ (gitignored).
 install:
@@ -69,7 +69,11 @@ smoke: install
 pty: install
 	python3 -m unittest tui_client/tests/test_pty.py -v
 
-test: check unit smoke pty
+# The bash parser of `shell` against real bash (Python standard library only).
+peer:
+	python3 -m unittest shell/tests/test_bash_peer.py -v
+
+test: check unit smoke pty peer
 
 # The llm tests against a real llama-server with Qwen2.5-0.5B (fetched and checked by sha256 first), or the one at
 # LLAMA_URL.
