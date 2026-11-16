@@ -106,6 +106,12 @@ def test_write_file_creates_and_never_writes_outside() -> Result[Void]
   done(s)
 end
 
+# The approval of an edit marks every old line `-` and every new line `+`, so a bare "-" in the old text reads as text.
+def test_edit_detail_marks_each_line() -> Result[Void]
+  input = JSON.from({"path": "a.py", "old_string": "-", "new_string": "  return a + b\n"})
+  Test.eq(Tools.detail("edit_file", input), "- -\n+   return a + b\n+ ")
+end
+
 def test_edit_file_replaces_exactly() -> Result[Void]
   s = try setup()
   try Test.eq(call(s, "edit_file", {"path": "a.txt", "old_string": "two", "new_string": "2"}).is_error, false)
