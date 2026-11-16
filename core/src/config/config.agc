@@ -18,6 +18,7 @@
 
 import LLM from "pkg/llm/llm"
 import Monty from "pkg/monty/monty"
+import Approval from "../approval/approval"
 import Catalog from "../agent/catalog"
 import CodeMode from "../tools/code_mode"
 import Permissions from "../approval/permissions"
@@ -57,7 +58,8 @@ struct Options
   api: String
   model: String
   env: Fn[String, Result[String]]
-  rules: Tools.Rules
+  ## The rules of the approval extension; none turns it off, and every tool call runs without asking.
+  approvals: Optional[Approval.Rules] = none
   ## The tools of the MCP servers, and those of the servers that list them after the start.
   tools: List[Tools.Tool] = []
   late_tools: Optional[Fn[List[Tools.Tool]]] = none
@@ -125,7 +127,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       api: api,
       model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,
-      rules: try Permissions.user_rules(read),
+      approvals: some(try Permissions.user_rules(read)),
       context_window: try context_window(read),
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(base_url),

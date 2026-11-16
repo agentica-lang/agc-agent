@@ -59,6 +59,20 @@ def test_a_turn_runs_tools_after_approvals_for_two_clients() -> Result[Void]
   end
 end
 
+# Without the approval extension, the calls run without asking.
+def test_without_the_approval_extension_every_call_runs() -> Result[Void]
+  H.using(H.Setup(replies: ["write_file.sse", "bash.sse", "text.sse"], approvals: false)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt, then show it.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.kinds(a.seen).select { |k| k.start_with?("approval_") }, [])
+    try Test.eq(finished_ok(a), [true, true])
+    Test.eq(File.read_text("#{h.work}/copy.txt"), ok("hi\n"))
+  end
+end
+
 # With no client attached, an approval is denied after the timeout, and the model gets the denial as an error.
 def test_an_approval_nobody_answers_is_denied_and_sent_back_as_an_error() -> Result[Void]
   H.using(H.Setup(replies: ["write_file.sse", "text.sse"], approval_timeout_ms: 200)) do |h|
@@ -284,7 +298,6 @@ def test_requests_need_the_token_a_local_host_and_no_foreign_origin() -> Result[
         api: "openai",
         model: "m",
         env: &H.fake_env,
-        rules: H.no_rules(),
       ),
     )
 
@@ -300,7 +313,6 @@ def test_requests_need_the_token_a_local_host_and_no_foreign_origin() -> Result[
       api: "openai",
       model: "m",
       env: &H.fake_env,
-      rules: H.no_rules(),
     )
 
     try Test.error?(Server.start(options))
@@ -322,7 +334,6 @@ def foreign_owner(h: H.Harness) -> Result[Void]
     api: "openai",
     model: "m",
     env: &H.fake_env,
-    rules: H.no_rules(),
   )
 
   case Server.start(options)

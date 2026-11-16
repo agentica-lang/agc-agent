@@ -74,10 +74,10 @@ end
 def test_mcp_tools_follow_the_rules_and_survive_a_crash() -> Result[Void]
   within_mcp do |started|
     rules = try Approval.parse_rules(["mcp__fake__echo(*)"], [])
-    ctx = try Tools.context(".", &H.fake_env, rules, started.tools)
+    ctx = try Tools.context(".", &H.fake_env, started.tools)
     input = JSON.object({"text": JSON.from("hi")})
-    try Test.eq(Tools.verdict(ctx, "mcp__fake__echo", input), Tools.Verdict.Allow)
-    try Test.eq(Tools.verdict(ctx, "mcp__fake__fail", input), Tools.Verdict.Ask)
+    try Test.eq(Approval.verdict(rules, ctx, "mcp__fake__echo", input), Tools.Verdict.Allow)
+    try Test.eq(Approval.verdict(rules, ctx, "mcp__fake__fail", input), Tools.Verdict.Ask)
     crashed = Tools.run(ctx, "mcp__fake__crash", JSON.object({}))
     again = Tools.run(ctx, "mcp__fake__echo", input)
     failed = Tools.run(ctx, "mcp__fake__fail", JSON.object({}))
@@ -117,7 +117,7 @@ def test_a_server_gets_a_short_environment_and_unique_tools() -> Result[Void]
     end
 
     started = McpTools.start(servers)
-    ctx = try Tools.context(".", &H.fake_env, try Approval.parse_rules([], []), started.tools)
+    ctx = try Tools.context(".", &H.fake_env, started.tools)
     probe = ->(name: String) { Tools.run(ctx, "mcp__odd__probe", JSON.object({"text": JSON.from(name)})).text }
     key = probe.call("SECRET_API_KEY")
     greeting = probe.call("FAKE_MCP_GREETING")
