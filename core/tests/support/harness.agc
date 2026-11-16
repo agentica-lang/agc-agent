@@ -17,6 +17,7 @@ struct Harness
   base: String
   work: String
   state_dir: String
+  data_dir: String
   url: String
   token: String
   provider: LLM.Provider
@@ -86,6 +87,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   try Dir.mkdir(work)
   options = Server.Options(
     state_dir: "#{base}/state",
+    data_dir: "#{base}/data",
     provider: LLM.openai_chat(fake.url, "test-key", LLM.Options(timeout_ms: 5000, retry_base_ms: 1)),
     model: "qwen2.5-0.5b-instruct",
     env: &fake_env,
@@ -102,11 +104,40 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
       base: base,
       work: work,
       state_dir: options.state_dir,
+      data_dir: options.data_dir,
       url: "http://127.0.0.1:#{server.port}",
       token: server.token,
       provider: options.provider,
     ),
   )
+end
+
+## Stops the server and starts a new one on the same folders and fake; `body` gets it, and it stops after. `cut` is
+## added to the end of every session file in between, as a write that a crash cut.
+def restarted(h: Harness, setup: Setup, cut: String, body: Fn[Harness, Result[Void]]) -> Result[Void]
+  Server.stop(h.server)
+  if not cut.empty?
+    for name in try Dir.list(sessions(h))
+      try File.append_text("#{sessions(h)}/#{name}", cut)
+    end
+  end
+
+  again = try start(setup, h.base, h.fake)
+  result = body.call(again)
+  Server.stop(again.server)
+  result
+end
+
+def sessions(h: Harness) -> String = "#{h.data_dir}/sessions"
+
+def session_file(h: Harness, id: String) -> String = "#{sessions(h)}/#{id}.jsonl"
+
+## Runs a program and gives its exit code.
+def run(program: String, args: List[String]) -> Result[Int]
+  process = try Process.spawn(program, args)
+  code = Process.wait(process, 5000)
+  Process.close(process)
+  code
 end
 
 def no_rules() -> Tools.Rules = Tools.Rules(allow: [], deny: [])

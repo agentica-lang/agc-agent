@@ -15,3 +15,4 @@
 - `protocol`: `ServerInfo`, the record of `server.json`; `ApprovalRequested.detail`, the content a call would write.
 - `read_file`: a line over 1 MiB in a file over 1 MiB keeps the lines before it and adds a note; a clamped `limit` adds the "continue with offset" note.
 - `cli`: the state folder is resolved with its symlinks, and a symlink that is not yours is refused.
+- `core serve` keeps each session in a JSON Lines file of the data folder (`AGC_AGENT_DATA_DIR`) and loads them all at start: a session resumes after a restart with its history and event ids, and a turn the restart cut ends as `cancelled`. The files are plain text (tool output and file contents included), keep every event and are all read at start; remove a session's file to delete it. When a file cannot be written, the turn stops with a `session.storage` error.

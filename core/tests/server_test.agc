@@ -273,10 +273,31 @@ def test_requests_need_the_token_a_local_host_and_no_foreign_origin() -> Result[
     try Test.eq((try File.stat("#{h.state_dir}/server.json")).mode % 512, 384)
     try Test.eq((try File.stat(h.state_dir)).mode % 512, 448)
     second = Server.start(
-      Server.Options(state_dir: h.state_dir, provider: h.provider, model: "m", env: &H.fake_env, rules: H.no_rules()),
+      Server.Options(
+        state_dir: h.state_dir,
+        data_dir: h.data_dir,
+        provider: h.provider,
+        model: "m",
+        env: &H.fake_env,
+        rules: H.no_rules(),
+      ),
     )
 
-    Test.error?(second)
+    try Test.error?(second)
+    open_data = "#{h.base}/open-data"
+    try Dir.mkdir("#{open_data}/sessions")
+    try Test.eq(try H.run("chmod", ["700", open_data]), 0)
+    try Test.eq(try H.run("chmod", ["755", "#{open_data}/sessions"]), 0)
+    options = Server.Options(
+      state_dir: "#{h.base}/other-state",
+      data_dir: open_data,
+      provider: h.provider,
+      model: "m",
+      env: &H.fake_env,
+      rules: H.no_rules(),
+    )
+
+    Test.error?(Server.start(options))
   end
 end
 

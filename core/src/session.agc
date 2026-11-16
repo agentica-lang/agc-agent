@@ -4,12 +4,17 @@
 ## The events are numbered from 1. The session keeps the last `keep_events` of them, and every event of the running
 ## turn however many, so a client that attaches from `turn_from_event_id` replays the whole turn. A `Last-Event-ID`
 ## outside what it keeps gets `resync`.
+##
+## Every event and message goes to the session's file before a client sees it, so a session started again from its
+## file keeps its ids. A turn that a restart cut ends then as `cancelled`. When a write fails, the event gets no id:
+## the clients get an `error` without one, the running turn stops, and no turn starts until a write works again.
 
 import Actor from "std/actor"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
 import Agent from "agent"
+import Store from "store"
 import Tools from "tools"
 
 CALL_MS = 5000
@@ -25,6 +30,7 @@ struct Setup
   ctx: Tools.Context
   keep_events: Int
   approval_timeout_ms: Int
+  file: String
 end
 
 enum Msg
@@ -38,11 +44,6 @@ enum Msg
   Expire(String)
   Commit(String, List[LLM.Message])
   Finished(String, Protocol.StopReason)
-end
-
-struct Logged
-  id: Int
-  event: Protocol.Event
 end
 
 struct Waiting
@@ -62,7 +63,7 @@ end
 struct State
   setup: Setup
   counter: Int = 0
-  log: List[Logged] = []
+  log: List[Store.Logged] = []
   subscribers: List[Channel[Bytes]] = []
   history: List[LLM.Message] = []
   display: List[Protocol.Message] = []
@@ -70,16 +71,26 @@ struct State
   turns: Int = 0
   pending: List[Waiting] = []
   approvals: Int = 0
-  ## The approvals answered in the running turn, so a late answer is told it came late.
+  ## The approvals answered, so a late answer is told it came late.
   resolved: List[String] = []
   ## The `tool` and target pairs that `allow_session` allowed.
   allowed: List[String] = []
   ## Since when no client is attached.
   alone_since: Optional[Int] = none
+  ## Why the last write to the file failed; none once one works.
+  broken: Optional[String] = none
 end
 
-def start(setup: Setup) -> Actor.Ref[State, Msg]
-  Actor.start(Actor.Behaviour(init: -> { State(setup: setup) }, handle: &handle, terminate: some(&terminate)))
+## Starts a session; from what its file saved when there is one.
+def start(setup: Setup, saved: Optional[Store.Saved] = none) -> Actor.Ref[State, Msg]
+  init = -> {
+    case saved
+      some(s) -> restore(setup, s)
+      none -> State(setup: setup)
+    end
+  }
+
+  Actor.start(Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate)))
 end
 
 def snapshot(address: Address[Msg]) -> Result[Protocol.Session]
@@ -113,6 +124,12 @@ struct Job
   address: Address[Msg]
 end
 
+# A turn that a restart cut, with its approvals still waiting.
+struct Cut
+  turn_id: String
+  approvals: List[String]
+end
+
 def handle(state: State, msg: Msg) -> Actor.Step[State]
   case msg
     Msg.Snapshot(reply) ->
@@ -127,7 +144,7 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Emit(turn_id, event) -> Actor.continue(if_current(state, turn_id, ->(s) { emit(s, event) }))
     Msg.Ask(turn_id, call, reply) -> Actor.continue(if_current(state, turn_id, ->(s) { ask(s, call, reply) }))
     Msg.Expire(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { expire(s) }))
-    Msg.Commit(turn_id, history) -> Actor.continue(if_current(state, turn_id, ->(s) { s.with(history: history) }))
+    Msg.Commit(turn_id, history) -> Actor.continue(if_current(state, turn_id, ->(s) { commit(s, history) }))
     Msg.Finished(turn_id, reason) -> Actor.continue(if_current(state, turn_id, ->(s) { finish(s, reason) }))
   end
 end
@@ -211,10 +228,37 @@ end
 
 def emit(state: State, event: Protocol.Event) -> State
   id = state.counter + 1
-  text = frame(Protocol.format_event_id(id), event)
-  live = state.subscribers.select { |out| out.send(text.bytes, 0).ok? or close(out) }
-  log = trim(state.log.push(Logged(id: id, event: event)), state)
-  prune(state.with(counter: id, log: log, subscribers: live))
+  logged = Store.Logged(id: id, event: event)
+  case Store.append_event(state.setup.file, logged)
+    ok(_) ->
+      live = broadcast(state, frame(Protocol.format_event_id(id), event))
+      prune(state.with(counter: id, log: trim(state.log.push(logged), state), subscribers: live))
+    error(e) -> broke(state, e)
+  end
+end
+
+def broadcast(state: State, text: String) -> List[Channel[Bytes]]
+  state.subscribers.select { |out| out.send(text.bytes, 0).ok? or close(out) }
+end
+
+# A write failed: the clients are told without an id, which only a saved event gets, and the running turn stops.
+def broke(state: State, e: Error) -> State
+  message = "the session file cannot be written: #{e.message}"
+  IO.warn("session #{state.setup.id}: #{message}")
+  failure = Protocol.Failure(kind: Protocol.KIND_SESSION_STORAGE, message: message)
+  out = state.with(broken: some(message), subscribers: broadcast(state, frame("", Protocol.Event.Error(failure))))
+  case out.turn
+    some(turn) ->
+      Task.cancel(turn.task)
+      for waiting in out.pending
+        _ = waiting.reply.send(Protocol.Decision.Deny, 0)
+      end
+
+      cancelled = Protocol.TurnFinished(turn_id: turn.id, stop_reason: Protocol.StopReason.Cancelled)
+      live = broadcast(out, frame("", Protocol.Event.TurnFinished(cancelled)))
+      out.with(turn: none, pending: [], subscribers: live)
+    none -> out
+  end
 end
 
 def close(out: Channel[Bytes]) -> Bool
@@ -222,7 +266,7 @@ def close(out: Channel[Bytes]) -> Bool
   false
 end
 
-def trim(log: List[Logged], state: State) -> List[Logged]
+def trim(log: List[Store.Logged], state: State) -> List[Store.Logged]
   keep_from = state.turn.map { |t| t.from_event_id }.unwrap_or(state.counter + 1)
   drop = 0
   while log.size - drop > state.setup.keep_events and log[drop].id <= keep_from
@@ -236,6 +280,17 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
   if state.turn.some?
     Actor.reply(reply, error("a turn is running", kind: Protocol.KIND_SESSION_BUSY))
     return state
+  end
+
+  case Store.append_user(state.setup.file, text)
+    ok(_) -> nil
+    error(e) ->
+      Actor.reply(
+        reply,
+        error("the session file cannot be written: #{e.message}", kind: Protocol.KIND_SESSION_STORAGE),
+      )
+
+      return state.with(broken: some(e.message))
   end
 
   turn_id = "turn-#{state.turns + 1}"
@@ -261,8 +316,14 @@ def start_turn(state: State, text: String, reply: Channel[Result[String]]) -> St
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
   running = Running(id: turn_id, task: task, from_event_id: state.counter, first_message: state.history.size)
-  user = Protocol.Message(role: Protocol.Role.User, text: text)
-  started = state.with(turn: some(running), turns: state.turns + 1, display: state.display.push(user))
+  started = state.with(
+    turn: some(running),
+    turns: state.turns + 1,
+    history: state.history.push(LLM.Message(role: LLM.Role.User, content: [Agent.text_block(text)])),
+    display: state.display.push(Protocol.Message(role: Protocol.Role.User, text: text)),
+    broken: none,
+  )
+
   Actor.reply(reply, ok(turn_id))
   emit(started, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id)))
 end
@@ -390,16 +451,120 @@ end
 
 def finish(state: State, reason: Protocol.StopReason) -> State
   case state.turn
-    some(turn) ->
-      finished = Protocol.Event.TurnFinished(Protocol.TurnFinished(turn_id: turn.id, stop_reason: reason))
-      texts = state.history.drop(turn.first_message + 1).select { |m| m.role == LLM.Role.Assistant }
-      text = texts.map { |m| Agent.assistant_text(m) }.select { |t| not t.empty? }.join("\n\n")
-      display = state.display
-      if not text.empty?
-        display = display.push(Protocol.Message(role: Protocol.Role.Assistant, text: text))
-      end
-
-      emit(state.with(display: display), finished).with(turn: none, resolved: [])
+    some(turn) -> ended(state, turn.id, turn.first_message, reason).with(turn: none)
     none -> state
+  end
+end
+
+# Shows the answer of the turn whose user message is at `first_message` of the history, then ends the turn.
+def ended(state: State, turn_id: String, first_message: Int, reason: Protocol.StopReason) -> State
+  texts = state.history.drop(first_message + 1).select { |m| m.role == LLM.Role.Assistant }
+  text = texts.map { |m| Agent.assistant_text(m) }.select { |t| not t.empty? }.join("\n\n")
+  shown = state
+  if not text.empty?
+    case Store.append_answer(state.setup.file, text)
+      ok(_) ->
+        shown = state.with(display: state.display.push(Protocol.Message(role: Protocol.Role.Assistant, text: text)))
+      error(e) -> return broke(state, e)
+    end
+  end
+
+  emit(shown, Protocol.Event.TurnFinished(Protocol.TurnFinished(turn_id: turn_id, stop_reason: reason)))
+end
+
+# The history of a turn only grows, so only its new messages go to the file.
+def commit(state: State, history: List[LLM.Message]) -> State
+  added = history.drop(state.history.size)
+  return state if added.empty?
+
+  case Store.append_messages(state.setup.file, added)
+    ok(_) -> state.with(history: history)
+    error(e) -> broke(state, e)
+  end
+end
+
+def restore(setup: Setup, saved: Store.Saved) -> State
+  events = saved.events
+  state = State(
+    setup: setup,
+    counter: events.map { |logged| logged.id }.max.unwrap_or(0),
+    log: events.drop([events.size - setup.keep_events, 0].max.unwrap!),
+    history: saved.history,
+    display: saved.shown,
+    turns: count(events, Protocol.EventKind.TurnStarted),
+    approvals: count(events, Protocol.EventKind.ApprovalRequested),
+    resolved: resolved_ids(events),
+  )
+
+  case cut_turn(events)
+    some(cut) -> end_cut_turn(state, cut)
+    none -> state
+  end
+end
+
+def count(events: List[Store.Logged], kind: Protocol.EventKind) -> Int
+  events.select { |logged| Protocol.event_kind(logged.event) == kind }.size
+end
+
+def resolved_ids(events: List[Store.Logged]) -> List[String]
+  ids: List[String] = []
+  for logged in events
+    case logged.event
+      Protocol.Event.ApprovalResolved(resolved) -> ids = ids.push(resolved.approval_id)
+      _ -> nil
+    end
+  end
+
+  ids
+end
+
+def cut_turn(events: List[Store.Logged]) -> Optional[Cut]
+  cut: Optional[Cut] = none
+  for logged in events
+    case logged.event
+      Protocol.Event.TurnStarted(started) -> cut = some(Cut(turn_id: started.turn_id, approvals: []))
+      Protocol.Event.TurnFinished(_) -> cut = none
+      Protocol.Event.ApprovalRequested(request) ->
+        cut = cut.map { |c| c.with(approvals: c.approvals.push(request.approval_id)) }
+      Protocol.Event.ApprovalResolved(resolved) ->
+        cut = cut.map { |c| c.with(approvals: c.approvals.select { |a| a != resolved.approval_id }) }
+      _ -> nil
+    end
+  end
+
+  cut
+end
+
+def end_cut_turn(state: State, cut: Cut) -> State
+  out = state
+  for approval_id in cut.approvals
+    resolved = Protocol.ApprovalResolved(
+      approval_id: approval_id,
+      decision: Protocol.Decision.Deny,
+      source: Protocol.ApprovalSource.Stop,
+    )
+
+    out = emit(out.with(resolved: out.resolved.push(approval_id)), Protocol.Event.ApprovalResolved(resolved))
+  end
+
+  ended(out, cut.turn_id, turn_message(out.history), Protocol.StopReason.Cancelled)
+end
+
+# Where the last turn began: its user message is the last one with text (tool results have none).
+def turn_message(history: List[LLM.Message]) -> Int
+  at = history.size
+  for i in 0...history.size
+    if (history[i].role == LLM.Role.User and history[i].content.any? { |b| text_block?(b) })
+      at = i
+    end
+  end
+
+  at
+end
+
+def text_block?(block: LLM.Block) -> Bool
+  case block
+    LLM.Block.Text(_) -> true
+    _ -> false
   end
 end
