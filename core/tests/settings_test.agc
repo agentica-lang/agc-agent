@@ -39,11 +39,18 @@ def test_a_session_changes_its_model_and_thinking_level() -> Result[Void]
       _ = try H.idle(r, id)
       try asked_with(try JSON.parse((try H.next_request(r)).body), "other-model", "high")
       reset = try patch(r, id, Protocol.encode_update_session(Protocol.UpdateSession(effort: some("default"))))
-      try Test.eq(reset.status, 200)
+      try Test.eq([reset.status.to_s, reset.text], ["200", "{}"])
       try Test.eq((try H.session(r, id)).effort, none)
       _ = try H.send(r, id, "Plain.")
       _ = try H.idle(r, id)
-      Test.eq(JSON.get(try JSON.parse((try H.next_request(r)).body), "reasoning").ok?, false)
+      try Test.eq(JSON.get(try JSON.parse((try H.next_request(r)).body), "reasoning").ok?, false)
+      restarted = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
+      try Test.eq(restarted.sessions.select { |l| l.id == id }.map { |l| l.model }, ["other-model"])
+      side = "#{H.sessions(r)}/#{id}.settings.json"
+      try Test.eq((try File.stat(side)).mode % 512, 384)
+      deleted = try H.call(r, "DELETE", Protocol.session_path(id), "", H.auth(r))
+      try Test.eq(deleted.status, 200)
+      Test.eq(File.stat(side).ok?, false)
     end
   end
 end

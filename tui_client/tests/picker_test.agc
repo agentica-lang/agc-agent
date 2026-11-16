@@ -29,7 +29,7 @@ def test_rows_keep_the_selected_session_in_sight() -> Result[Void]
   try Test.eq(rows.size, 6)
   try Test.eq(rows[0], "resume a session (20 of 20)")
   try Test.eq(rows[4], "› s15  /w/s15  m  2h  task 15")
-  try Test.eq(rows[5], Picker.KEYS)
+  try Test.eq(rows[5], Picker.KEYS.join(" · "))
   Test.eq(
     ["now", "5m", "3h", "2d"],
     [Picker.ago(100, 90), Picker.ago(400, 100), Picker.ago(11000, 0), Picker.ago(200000, 0)],
