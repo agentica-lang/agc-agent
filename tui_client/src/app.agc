@@ -28,7 +28,11 @@ MAX_RECONNECTS = 3
 MAX_RESYNCS = 2
 SCROLL_STEP = 3
 YOLO_WARNING = "--yolo: the tool calls of turns sent from here run without asking"
-HINTS = "Enter send · ^J newline · ^T thinking · Esc stop · PgUp/PgDn · ^C quit"
+HINTS = "Enter send · ^J newline · ⇧Tab thinking level · ^T show thinking · Esc stop · PgUp/PgDn · ^C quit"
+SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+SPIN_MS = 80
+## The thinking levels Shift+Tab goes through, none for the model's default.
+LEVELS: List[Optional[String]] = [none, some("low"), some("medium"), some("high")]
 
 struct Model
   server: Client.Server
@@ -71,6 +75,13 @@ struct Model
   yolo: Yolo.Yolo
   ## The thinking of the model is drawn.
   thinking: Bool = false
+  ## The thinking level the rules show, none for the model's default; the server's own is `confirmed`.
+  effort: Optional[String] = none
+  confirmed: Optional[String] = none
+  ## The level whose change is on its way: one at a time, and the reply sends the latest one wanted.
+  level_sending: Optional[String] = none
+  ## The frame of the spinner while a turn runs.
+  spin: Int = 0
   approvals: Approvals.Panel
   ## The colors of the screen.
   theme: Theme.Theme
@@ -100,12 +111,23 @@ enum Msg
   Sent(Int, String, Result[Protocol.MessageAccepted])
   ## The reply to a stop.
   Stopped(Result[Void])
+  ## The spinner moves on.
+  Spin
+  ## The reply to a change of the thinking level.
+  Leveled(Result[Void])
 end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
 def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
   signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
+  palette = Theme.colors256?(System.env("TERM").unwrap_or(""), System.env("COLORTERM").unwrap_or(""))
+  output = TUI.OutputMode.Colors256
   start = try opened(seed(server, options, signals, TUI.Raw.width(screen), TUI.Raw.height(screen)))
+  if not palette
+    output = TUI.OutputMode.Normal
+    start = start.with(theme: Theme.basic())
+  end
+
   app = TUI.App(
     model: start.with(effects: []),
     update: &update,
@@ -114,6 +136,7 @@ def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) ->
     cmds: start.effects,
     input: TUI.InputMode.Esc,
     mouse: true,
+    output: output,
   )
 
   last = try TUI.Raw.program(screen, app)
@@ -174,7 +197,12 @@ end
 
 def view(model: Model) -> TUI.Node = Screen.view(framed(model), model.theme)
 
-def subscriptions(_model: Model) -> List[TUI.Sub[Msg]] = [TUI.Sub.Events(->(event) { Msg.Key(event) })]
+def subscriptions(model: Model) -> List[TUI.Sub[Msg]]
+  keys = TUI.Sub.Events(->(event) { Msg.Key(event) })
+  return [keys] if not model.turn
+
+  [keys, TUI.Sub.Tick(SPIN_MS, Msg.Spin)]
+end
 
 private
 
@@ -200,6 +228,8 @@ def handled(app: Model, msg: Msg) -> Model
       released(next_send(sent_reply(app.with(outbox: app.outbox.drop(1)), text, result)))
     Msg.Sent(_, _, _) -> app
     Msg.Stopped(result) -> stop_reply(app, result)
+    Msg.Spin -> app.with(spin: (app.spin + 1) % SPINNER.size)
+    Msg.Leveled(result) -> level_reply(app, result)
     Msg.Rechecked(generation, result) if generation == app.generation -> rechecked(app, result)
     Msg.Rechecked(_, _) -> app
   end
@@ -314,6 +344,8 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
     opened: app.opened + 1,
     entries: Transcript.from_history(session.history),
     turn: session.turn_id.some?,
+    effort: session.effort,
+    confirmed: session.effort,
     stopping: false,
     shown_id: from,
     approvals: Approvals.replaced(app.approvals, session.pending_approvals, app.now),
@@ -380,6 +412,7 @@ def on_key(app: Model, event: TUI.Event) -> Model
     TUI.Event.Key(TUI.Key.End, _) -> app.with(cursor: app.prompt.length)
     TUI.Event.Mouse(TUI.Mouse.Left, x, y, mods) if not mods.motion -> clicked(app, x, y)
     TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals, app.now))
+    TUI.Event.Key(TUI.Key.BackTab, _) -> leveled(app)
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
       app.with(approvals: Approvals.toggled(app.approvals, app.now))
     TUI.Event.Key(TUI.Key.Escape, _) -> stop(app)
@@ -539,6 +572,7 @@ end
 def fresh(app: Model) -> Model
   seed(app.server, app.options, app.signals, app.width, app.height).with(
     thinking: app.thinking,
+    theme: app.theme,
     stream: app.stream,
     feed: app.feed,
     generation: app.generation,
@@ -588,6 +622,10 @@ end
 def changed(app: Model, change: Protocol.UpdateSession, done: String) -> Result[Model]
   try Client.update_session(app.server, app.id, change)
   shown = noted(app, done)
+  for effort in option_list(change.effort)
+    shown = shown.with(effort: level_of(effort), confirmed: level_of(effort))
+  end
+
   return ok(shown) if change.model.none?
 
   ok(shown.with(new_model: change.model))
@@ -747,48 +785,113 @@ def reconnect(app: Model, reason: String) -> Model
 end
 
 def framed(app: Model) -> Screen.Frame
-  prompt = Prompt.view(app.prompt, cursor(app), app.width, app.height)
+  parts = Screen.Parts(
+    prompt: Prompt.view(app.prompt, cursor(app), app.width, app.height),
+    picker: ->(room: Int) { picker_rows(app, room) },
+    panel: ->(room: Int) { approval_rows(app, room) },
+    label: label(app),
+    level: app.effort,
+    status: status(app, app.width),
+  )
+
   Screen.frame(
     app.width,
     app.height,
     Transcript.tail(app.entries, app.width, app.thinking, app.height + app.scroll),
     app.scroll,
-    ->(room: Int) { panel_rows(app, app.width, room) },
-    status(app, app.width),
-    prompt,
+    parts,
   )
 end
 
-# The rows of the panel over the prompt, without the transcript: a key needs only these.
+# The rows of the approval panel, without the transcript: a key needs only these.
 def panel(app: Model) -> List[Layout.Row]
   rows = Prompt.view(app.prompt, cursor(app), app.width, app.height).rows.size
-  panel_rows(app, app.width, Screen.panel_room(app.height, rows))
+  approval_rows(app, Screen.panel_room(app.height, rows))
 end
 
-# The panel over the prompt: the session picker, else the approval asked.
-def panel_rows(app: Model, width: Int, room: Int) -> List[Layout.Row]
+# The session picker of `/resume`, in the editor's place.
+def picker_rows(app: Model, room: Int) -> List[Layout.Row]
   case app.picker
-    some(picker) -> Picker.rows(picker, width, room, app.clock_s)
-    none -> Approvals.rows(app.approvals, width, room)
+    some(picker) -> Picker.rows(picker, app.width, room, app.clock_s)
+    none -> []
   end
 end
 
+# The approval asked, under the editor; none while the picker is open.
+def approval_rows(app: Model, room: Int) -> List[Layout.Row]
+  return [] if app.picker.some?
+
+  Approvals.rows(app.approvals, app.width, room)
+end
+
+# The spinner and what the turn does, in the top rule.
+def label(app: Model) -> String
+  return "#{SPINNER[app.spin]} Stopping" if app.stopping
+  return "#{SPINNER[app.spin]} Working" if app.turn
+
+  ""
+end
+
+# Shift+Tab: the next thinking level; the rules take its color at once.
+def leveled(app: Model) -> Model
+  at = LEVELS.find_index { |level| level == app.effort }.unwrap_or(0)
+  wanted = app.with(effort: LEVELS[(at + 1) % LEVELS.size])
+  return wanted if wanted.level_sending.some?
+
+  send_level(wanted)
+end
+
+def send_level(app: Model) -> Model
+  name = level_name(app.effort)
+  server = app.server
+  id = app.id
+  change = Protocol.UpdateSession(effort: some(name))
+  effect(
+    app.with(level_sending: some(name)),
+    TUI.Cmd.Run(-> { Msg.Leveled(Client.update_session(server, id, change)) }),
+  )
+end
+
+# A level wanted while the change was on its way goes next; the note comes once the level settles, and a failure
+# with nothing newer wanted goes back to the server's level.
+def level_reply(app: Model, result: Result[Void]) -> Model
+  sent = app.level_sending.unwrap_or("")
+  done = app.with(level_sending: none)
+  if result.ok?
+    done = done.with(confirmed: level_of(sent))
+  end
+
+  return send_level(done) if level_name(app.effort) != sent
+
+  case result
+    ok(_) -> noted(done, "thinking #{sent} from the next turn")
+    error(e) -> noted(done.with(effort: done.confirmed), "error: the thinking level was not set: #{e.message}")
+  end
+end
+
+def level_of(effort: String) -> Optional[String]
+  return none if effort == Protocol.EFFORT_DEFAULT
+
+  some(effort)
+end
+
+def level_name(level: Optional[String]) -> String = level.unwrap_or(Protocol.EFFORT_DEFAULT)
+
+# What the turn does is in the top rule; the status line says when the client is ready.
 def status(app: Model, width: Int) -> String
-  state = "ready"
-  if app.stopping
-    state = "stopping"
-  elsif app.turn
-    state = "working"
+  parts: List[String] = []
+  if app.options.yolo
+    parts = parts.push("YOLO")
+  end
+
+  if not app.turn
+    parts = parts.push("ready")
   end
 
   if not app.approvals.pending.empty?
-    state = "#{state} · approval waiting"
+    parts = parts.push("approval waiting")
   end
 
-  if app.options.yolo
-    state = "YOLO · #{state}"
-  end
-
-  text = " #{state} · #{HINTS}"
+  text = " #{(parts + [HINTS]).join(" · ")}"
   text + " " * [width - Width.text(text), 0].max.unwrap!
 end

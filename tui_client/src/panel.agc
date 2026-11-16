@@ -1,6 +1,7 @@
 ## The layout of a panel over the prompt (an approval, the session picker): a head, a body and the key rows, fitted
-## in the rows left on the screen. The keys stay when rows are cut, then the head; the body gets what is left. Only a
-## key row has buttons, at the spans of its labels; the head and the body never do. Pure.
+## in the rows left on the screen. When rows are cut, the first row of the head stays, then the first key rows, then
+## the rest of the head; the body gets what is left. Only a key row has buttons, at the spans of its labels; the head
+## and the body never do. Pure.
 
 import TUI from "pkg/tui/tui"
 import Transcript from "transcript"
@@ -41,8 +42,8 @@ end
 def fit(head: String, keys: List[Key], body: Fn[Int, List[Row]], width: Int, room: Int) -> List[Row]
   return [] if room <= 0
 
-  packed = key_rows(keys, width)
-  packed = packed.drop([packed.size - room, 0].max.unwrap!)
+  # The first row of the head stays, so the panel always says what it asks; the last key rows go first.
+  packed = key_rows(keys, width).take(room - 1)
   left = room - packed.size
   head_rows = Transcript.wrap(head, width).take(left).map { |line| Row(text: line, look: Look.Head) }
   body_rows = body.call(left - head_rows.size)

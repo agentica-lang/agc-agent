@@ -5,6 +5,8 @@ import Markdown from "markdown"
 import Width from "width"
 
 FOLDED_THINKING = "▸ thinking (click or ^T shows it)"
+## Every row starts one column in.
+INDENT = " "
 
 enum Kind
   User
@@ -192,7 +194,7 @@ def tool?(entry: Entry) -> Bool = entry.kind == Kind.Tool or entry.kind == Kind.
 
 def entry_lines(entry: Entry, width: Int, thinking: Bool) -> List[Line]
   if entry.kind == Kind.Thinking and not open?(entry, thinking)
-    return [Line(kind: entry.kind, spans: [Markdown.Span(text: FOLDED_THINKING, look: Markdown.Look.Plain)])]
+    return [Line(kind: entry.kind, spans: [Markdown.Span(text: INDENT + FOLDED_THINKING, look: Markdown.Look.Plain)])]
   end
 
   if tool?(entry) and entry.call != "" and open?(entry, false)
@@ -204,18 +206,14 @@ def entry_lines(entry: Entry, width: Int, thinking: Bool) -> List[Line]
     # An answer that only called tools has no text and no row.
     return [] if entry.text.strip == ""
 
-    return Markdown.rows(entry.text, width).map { |spans| Line(kind: entry.kind, spans: spans) }
+    lead = Markdown.Span(text: INDENT, look: Markdown.Look.Plain)
+    rows = Markdown.rows(entry.text, width - INDENT.length)
+    return rows.map { |spans| Line(kind: entry.kind, spans: [lead] + spans) }
   end
 
-  prefix = case entry.kind
-    Kind.User -> "> "
-    Kind.Notice -> "· "
-    _ -> ""
+  wrap(entry.text, width - INDENT.length).map do |row|
+    Line(kind: entry.kind, spans: [Markdown.Span(text: INDENT + row, look: Markdown.Look.Plain)])
   end
-
-  rows = wrap(entry.text, width - prefix.length)
-  led = [prefix + rows[0]] + rows.drop(1).map { |row| " " * prefix.length + row }
-  led.map { |row| Line(kind: entry.kind, spans: [Markdown.Span(text: row, look: Markdown.Look.Plain)]) }
 end
 
 def wrap_paragraph(paragraph: String, width: Int) -> List[String]
