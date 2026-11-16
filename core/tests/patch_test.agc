@@ -2,9 +2,9 @@
 # the Codex patch format as models write it.
 
 import Protocol from "pkg/protocol/protocol"
-import Approval from "../src/approval"
-import Patch from "../src/patch"
-import Tools from "../src/tools"
+import Approval from "../src/approval/approval"
+import Patch from "../src/tools/patch"
+import Tools from "../src/tools/tools"
 import H from "support/harness"
 
 def test_a_model_on_the_responses_api_patches_files() -> Result[Void]

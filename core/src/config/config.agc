@@ -18,10 +18,10 @@
 
 import LLM from "pkg/llm/llm"
 import Monty from "pkg/monty/monty"
-import Catalog from "catalog"
-import CodeMode from "code_mode"
-import Permissions from "permissions"
-import Server from "server"
+import Catalog from "../agent/catalog"
+import CodeMode from "../tools/code_mode"
+import Permissions from "../approval/permissions"
+import Server from "../http/server"
 
 STATE_DIR_ENV = "FINN_STATE_DIR"
 DATA_DIR_ENV = "FINN_DATA_DIR"

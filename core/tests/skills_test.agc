@@ -3,8 +3,8 @@
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
-import Skills from "../src/skills"
-import Tools from "../src/tools"
+import Skills from "../src/ext/skills"
+import Tools from "../src/tools/tools"
 import H from "support/harness"
 
 RELEASE = "---\nname: release\ndescription: Cut a release: tag, notes, publish.\n---\n\n# Release\n\nRun the steps.\n"

@@ -9,9 +9,9 @@
 import Actor from "std/actor"
 import Regex from "std/regex"
 import Mcp from "pkg/mcp/mcp"
-import Sandbox from "sandbox"
-import Shell from "shell"
-import Spec from "spec"
+import Sandbox from "../tools/sandbox"
+import Shell from "../tools/shell"
+import Spec from "../tools/spec"
 
 CONFIG_ENV = "FINN_MCP_CONFIG"
 NAME = /\A[A-Za-z0-9_-]{1,64}\z/

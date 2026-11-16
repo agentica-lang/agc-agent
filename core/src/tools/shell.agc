@@ -8,7 +8,7 @@
 ## - The files a call reaches are checked before they are used, not as they are used: a command that runs in parallel
 ##   can swap a folder for a link between the check and the use.
 
-import Approval from "approval"
+import Approval from "../approval/approval"
 import Spec from "spec"
 
 DEFAULT_TIMEOUT_MS = 120000

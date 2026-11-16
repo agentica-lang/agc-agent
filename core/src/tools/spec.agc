@@ -1,6 +1,6 @@
 ## What a tool is, and what it needs to run.
 
-import Approval from "approval"
+import Approval from "../approval/approval"
 
 MAX_OUTPUT_CHARS = 30000
 

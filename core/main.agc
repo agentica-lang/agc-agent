@@ -1,9 +1,9 @@
 import HTTP from "std/http"
-import Catalog from "src/catalog"
-import Cli from "src/cli"
-import Config from "src/config"
-import McpTools from "src/mcp_tools"
-import Server from "src/server"
+import Catalog from "src/agent/catalog"
+import Cli from "src/config/cli"
+import Config from "src/config/config"
+import McpTools from "src/ext/mcp"
+import Server from "src/http/server"
 
 def main() -> Void
   case Cli.parse(System.args())

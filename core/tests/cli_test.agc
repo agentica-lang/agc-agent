@@ -1,6 +1,6 @@
 import LLM from "pkg/llm/llm"
-import Cli from "../src/cli"
-import Config from "../src/config"
+import Cli from "../src/config/cli"
+import Config from "../src/config/config"
 
 def test_version_names_core_and_llm() -> Result[Void]
   try Test.eq(Cli.parse(["--version"]), ok(Cli.Command.Version))
