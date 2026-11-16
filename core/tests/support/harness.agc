@@ -10,6 +10,7 @@ import Approval from "../../src/approval/approval"
 import Catalog from "../../src/agent/catalog"
 import CodeMode from "../../src/tools/code_mode"
 import Config from "../../src/config/config"
+import Providers from "../../src/config/providers"
 import Server from "../../src/http/server"
 import Tools from "../../src/tools/tools"
 import Fake from "fake_llm"
@@ -25,7 +26,8 @@ struct Harness
   data_dir: String
   url: String
   token: String
-  apis: Map[String, Config.ModelApi]
+  providers: Map[String, Config.Provider]
+  provider: String
 end
 
 struct Answer
@@ -65,6 +67,11 @@ struct Setup
   late_tools: Optional[Fn[List[Tools.Tool]]] = none
   ## Code mode on a fake Monty worker that replays this fixture of `tests/fixtures/monty`.
   monty: String = ""
+  ## Providers of the config file, each at `/NAME` of the fake with the OpenAI chat API (`NAME:openai_responses` for
+  ## the Responses API), the server's provider (empty for that of `api`) and the key variables of providers.
+  providers: List[String] = []
+  provider: String = ""
+  key_envs: Map[String, String] = {}
   ## The approval extension, with the deny rules of the config, as `bash(rm *)`.
   approvals: Bool = true
   deny: List[String] = []
@@ -137,6 +144,22 @@ def apis(setup: Setup, fake: Fake.Fake) -> Map[String, Config.ModelApi]
   all.put("anthropic", all["anthropic"].with(refresh: some(refresh)))
 end
 
+def providers(setup: Setup, fake: Fake.Fake) -> Map[String, Config.Provider]
+  all = Config.builtin(apis(setup, fake), setup.api)
+  root = fake.url.slice(0, fake.url.length - "/v1".length)
+  customs = setup.providers.map do |given|
+    parts = given.split(":").push("openai")
+    Providers.Custom(name: parts[0], api: parts[1], base_url: "#{root}/#{parts[0]}", models: ["m1"])
+  end
+
+  more = Providers.offered(customs, &fake_env, LLM.Options(timeout_ms: 5000, retry_base_ms: 1))
+  for name in more.keys
+    all = all.put(name, more[name])
+  end
+
+  all
+end
+
 def placed(reply: Fake.Reply, base: String) -> Fake.Reply
   case String.from_bytes(reply.body)
     ok(text) if text.include?("@BASE@") -> reply.with(body: text.replace("@BASE@", base).bytes)
@@ -150,8 +173,9 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   options = Config.Options(
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
-    apis: apis(setup, fake),
-    api: setup.api,
+    providers: providers(setup, fake),
+    provider: server_provider(setup),
+    key_envs: setup.key_envs,
     model: setup.model,
     env: &fake_env,
     approvals: try approval_rules(setup),
@@ -183,7 +207,8 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
       data_dir: options.data_dir,
       url: "http://127.0.0.1:#{server.port}",
       token: server.token,
-      apis: options.apis,
+      providers: options.providers,
+      provider: options.provider,
     ),
   )
 end
@@ -202,6 +227,12 @@ def restarted(h: Harness, setup: Setup, cut: String, body: Fn[Harness, Result[Vo
   result = body.call(again)
   Server.stop(again.server)
   result
+end
+
+def server_provider(setup: Setup) -> String
+  return Config.default_provider(setup.api) if setup.provider.empty?
+
+  setup.provider
 end
 
 def approval_rules(setup: Setup) -> Result[Optional[Approval.Rules]]
@@ -309,8 +340,13 @@ def post(h: Harness, path: String, body: String) -> Result[Answer] = call(h, "PO
 
 def new_session(h: Harness) -> Result[String] = new_session_in(h, h.work)
 
-def new_session_in(h: Harness, cwd: String, api: Optional[String] = none) -> Result[String]
-  asked = Protocol.NewSession(cwd: cwd, model: none, api: api)
+def new_session_in(
+  h: Harness,
+  cwd: String,
+  api: Optional[String] = none,
+  provider: Optional[String] = none,
+) -> Result[String]
+  asked = Protocol.NewSession(cwd: cwd, model: none, api: api, provider: provider)
   answer = try post(h, Protocol.SESSIONS_PATH, Protocol.encode_new_session(asked))
 
   return error("POST /v1/sessions: #{answer.status} #{answer.text}") if answer.status != 201
