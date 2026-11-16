@@ -123,12 +123,12 @@ end
 
 def call(fields: List[Proto.Field]) -> Result[Call]
   values = try nodes(Proto.data(fields, 7))
-  used: List[Node] = []
+  size = 0
   args: List[JSON.Value] = []
   for index in try Proto.packed(fields, 2)
     arg = try node_at(values, index)
+    size = try grown(size, arg.size)
     args = args.push(arg.value)
-    used = used.push(arg)
   end
 
   kwargs: Map[String, JSON.Value] = {}
@@ -136,11 +136,11 @@ def call(fields: List[Proto.Field]) -> Result[Call]
     pair_fields = try Proto.fields(pair)
     name = try node_at(values, Proto.uint(pair_fields, 1))
     value = try node_at(values, Proto.uint(pair_fields, 2))
+    size = try grown(size, name.size + value.size)
     kwargs = kwargs.put(key_text(name.value), value.value)
-    used = used + [name, value]
   end
 
-  _ = try container(JSON.null(), used)
+  _ = size
 
   ok(
     Call(
@@ -231,13 +231,26 @@ def node_at(done: List[Node], index: Int) -> Result[Node]
   ok(done[index])
 end
 
-def leaf(value: JSON.Value, chars: Int = 0) -> Result[Node] = ok(Node(value: value, size: 1 + chars))
+# A leaf counts its characters.
+def leaf(value: JSON.Value, chars: Int = 0) -> Result[Node] = ok(Node(value: value, size: try grown(1, chars)))
+
+def text_leaf(text: String) -> Result[Node] = leaf(JSON.from(text), text.length)
 
 def container(value: JSON.Value, children: List[Node]) -> Result[Node]
-  size = 1 + children.map { |child| child.size }.sum
-  return error("monty: a value expands past #{MAX_EXPANDED} nodes and characters") if size > MAX_EXPANDED
+  size = 1
+  for child in children
+    size = try grown(size, child.size)
+  end
 
   ok(Node(value: value, size: size))
+end
+
+# A running size, checked as it grows, so nothing past the cap is copied or encoded.
+def grown(size: Int, more: Int) -> Result[Int]
+  total = size + more
+  return error("monty: a value expands past #{MAX_EXPANDED} nodes and characters") if total > MAX_EXPANDED
+
+  ok(total)
 end
 
 def key_text(key: JSON.Value) -> String
@@ -276,9 +289,7 @@ def node_value(data: Bytes, done: List[Node]) -> Result[Node]
     5 -> leaf(JSON.from(Proto.unzigzag(field.value)))
     6 -> leaf(JSON.from("<int too large>"))
     7 -> leaf(JSON.from(Float.from_bits(field.value)))
-    8, 9, 26, 27, 29, 30, 33 ->
-      text = Proto.utf8(field.data)
-      leaf(JSON.from(text), text.length)
+    8, 9, 26, 27, 29, 30, 33 -> text_leaf(Proto.utf8(field.data))
     11, 12, 15, 16 ->
       items: List[Node] = []
       for index in try Proto.packed(body, 1)
@@ -290,29 +301,29 @@ def node_value(data: Bytes, done: List[Node]) -> Result[Node]
       names = Proto.all_data(body, 2).map { |name| Proto.utf8(name) }
       indexes = try Proto.packed(body, 3)
       out: Map[String, JSON.Value] = {}
-      children: List[Node] = []
+      size = 1
       for i in 0...[names.size, indexes.size].min.unwrap!
         child = try node_at(done, indexes[i])
+        size = try grown(size, names[i].length + child.size)
         out = out.put(names[i], child.value)
-        children = children.push(child)
       end
 
-      container(JSON.object(out), children)
+      ok(Node(value: JSON.object(out), size: size))
     14 ->
       out: Map[String, JSON.Value] = {}
-      children: List[Node] = []
+      size = 1
       for pair in Proto.all_data(body, 1)
         pair_fields = try Proto.fields(pair)
         name = try node_at(done, Proto.uint(pair_fields, 1))
         child = try node_at(done, Proto.uint(pair_fields, 2))
+        size = try grown(size, name.size + child.size)
         out = out.put(key_text(name.value), child.value)
-        children = children + [name, child]
       end
 
-      container(JSON.object(out), children)
-    22 -> leaf(JSON.from("#{Proto.text(body, 1)}(#{Proto.text(body, 2).inspect})"))
-    23 -> leaf(JSON.from("<class #{Proto.text(body, 1)}>"))
-    25 -> leaf(JSON.from("<function #{Proto.text(body, 1)}>"))
+      ok(Node(value: JSON.object(out), size: size))
+    22 -> text_leaf("#{Proto.text(body, 1)}(#{Proto.text(body, 2).inspect})")
+    23 -> text_leaf("<class #{Proto.text(body, 1)}>")
+    25 -> text_leaf("<function #{Proto.text(body, 1)}>")
     _ -> leaf(JSON.from("<value of kind #{field.number}>"))
   end
 end

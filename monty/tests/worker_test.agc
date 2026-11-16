@@ -55,10 +55,17 @@ def host(call: Monty.Call) -> Monty.Answer
   end
 end
 
-# Frames a broken or hostile worker could send: each ends the script with an error, never a crash of the host.
+# Frames a broken or hostile worker could send: each ends the script with an error, never a crash of the host. Two
+# args that share a big node, and the long name of a function shared five times, count toward the cap on how far a
+# value expands.
 def test_bad_frames_are_protocol_errors() -> Result[Void]
-  for name in ["negative_index.json", "negative_child.json", "expand.json", "frame_cap.json"]
-    case Monty.run(Rig.fake(name), "1", [], &host)
+  bad = [
+    "negative_index.json", "negative_child.json", "expand.json", "frame_cap.json", "shared_args.json",
+    "long_name.json",
+  ]
+
+  for name in bad
+    case Monty.run(Rig.fake(name), "1", ["f"], &host)
       ok(outcome) -> return error("#{name} gave #{outcome}")
       error(e) -> try Test.eq([name, e.kind], [name, "monty.protocol"])
     end
