@@ -246,6 +246,22 @@ def test_a_wrapper_or_a_tool_that_fails_fails_its_call() -> Result[Void]
   Test.eq(outputs.map { |o| o.is_error }, [true, true, true])
 end
 
+# An extension tool's call names its session, so the tool can keep what it does apart per session.
+def test_an_extension_tool_gets_the_id_of_its_session() -> Result[Void]
+  tool = crashing_tool().with(run: ->(call: Core.Call) { call.session.to_result("no session") })
+  H.using(
+    H.Setup(replies: ["word_count.sse", "text.sse"], registry: some(Core.registry() |> Core.add_tool(tool))),
+  ) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Count.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    second = try H.request_messages(h, 2)
+    Test.eq(JSON.get(second.last, "content"), ok(JSON.from(id)))
+  end
+end
+
 # An extension tool that crashes in a turn ends as a failed tool result, and the turn goes on.
 def test_an_extension_tool_that_crashes_fails_in_the_turn() -> Result[Void]
   registry = Core.registry() |> Core.add_tool(crashing_tool())

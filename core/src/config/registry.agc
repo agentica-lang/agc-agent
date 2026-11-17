@@ -34,6 +34,8 @@ struct Call
   root: String
   input: JSON.Value
   resolve: Fn[String, Result[String]]
+  ## The id of the session of the call; none in `Core.call`.
+  session: Optional[String] = none
 end
 
 ## A tool of an extension. `target` is what the approval shows and its rules match (a path, a command); a tool that
@@ -534,7 +536,7 @@ def spec_tool(tool: Tool, ms: Int) -> Spec.Tool
 end
 
 def call_of(ctx: Spec.Context, input: JSON.Value) -> Call
-  Call(root: ctx.root, input: input, resolve: ->(path: String) { resolve(ctx, path) })
+  Call(root: ctx.root, input: input, resolve: ->(path: String) { resolve(ctx, path) }, session: ctx.session)
 end
 
 def wrapped(wrappers: List[Wrapper], ms: Int, name: String, run: Spec.Run) -> Spec.Run

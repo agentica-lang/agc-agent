@@ -640,7 +640,11 @@ def entry(
     provider: endpoint.provider,
     system: system,
     base_system: system,
-    ctx: context.with(read_roots: Extensions.read_roots(builtins), before: before_of(options, header.id)),
+    ctx: context.with(
+      read_roots: Extensions.read_roots(builtins),
+      before: before_of(options, header.id),
+      session: some(header.id),
+    ),
     builtins: builtins,
     keep_events: options.keep_events,
     approval_timeout_ms: options.approval_timeout_ms,

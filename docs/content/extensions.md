@@ -77,7 +77,7 @@ end
 
 `Core.add_tool(registry, word_count())` adds it.
 
-- `run` gets a `Core.Call`: the session folder (`root`) and the model's `input`. Its error goes back to the model as a failed call.
+- `run` gets a `Core.Call`: the session folder (`root`), the session's id (`session`, none in `Core.call`) and the model's `input`. Its error goes back to the model as a failed call.
 - `target` is what the approval shows and the rules match, such as a path or a command. It has 5 seconds.
 - `asks: true` makes a call wait for an answer when the approvals are on and no rule allows it.
 - `Core.resolve(call, path)` resolves a path inside the session folder, and fails outside it or for a file that a deny rule hides.

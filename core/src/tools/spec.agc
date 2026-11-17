@@ -28,6 +28,8 @@ struct Context
   wrap: Optional[Fn[String, Run, Run]] = none
   ## What the extensions make of the input of a call before anything else sees it (`Core.Event.ToolBefore`).
   before: Optional[Before] = none
+  ## The id of the session, none outside one.
+  session: Optional[String] = none
 end
 
 type Run = Fn[Context, JSON.Value, Result[String]]

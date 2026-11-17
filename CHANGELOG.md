@@ -29,6 +29,7 @@
 
 ### Added
 
+- An extension tool's `Core.Call` names its session (`session`).
 - Extensions can change or stop a tool call before its approval: `Core.Event.ToolBefore(fn)` gives `Core.Check.Go`, `Input(json)` or `Stop(reason)`.
 - Extensions can observe the sessions: `Core.Event.Seen(names, fn)` gets the events it names, with `session_started` and `session_ended`, and never slows a turn.
 - `finn login chatgpt` (`/login chatgpt`) signs in with a ChatGPT Plus or Pro plan: Finn shows a URL and a code, then runs the Codex models of the plan.
