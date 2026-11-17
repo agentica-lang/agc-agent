@@ -5,11 +5,11 @@ override AGENTICA := $(if $(findstring /,$(AGENTICA)),$(abspath $(AGENTICA)),$(A
 export AGENTICA
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
-PACKAGES = sse llm mcp protocol monty client core cli tui_client examples/extension
+PACKAGES = sse llm mcp protocol monty bash client core cli tui_client examples/extension
 # How many files, packages or checks run at once.
 JOBS ?= 4
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
-LEAVES = llm mcp sse protocol monty
+LEAVES = llm mcp sse protocol monty bash
 SERVER_AND_CLIENTS = core|client|cli|tui_client|web_client
 # A client, and `client` (the code every client shares), reach the server only through the protocol: they never
 # depend on these (or on another client).
@@ -38,7 +38,7 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check unit unit-package smoke pty test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
+.PHONY: install check coupling fmt-check native-header native-check unit unit-package smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
 install:
@@ -70,6 +70,16 @@ coupling:
 	@$(call none,core/src/config imports a core folder but tools approval and providers,$(call core_imports,config,tools|approval|providers))
 	@$(call none,core/src/http imports a core folder but session config and providers,$(call core_imports,http,session|config|providers))
 	@$(call none,core/src/http imports a file of session but session.agc,-g 'core/src/http/**' '^import \w+ from "\.\./session/(?!session")' -P .)
+
+# The header of bash's native module, made by native-gen from the extern block (bash/src/tree.agc); native-check fails
+# when the committed one is stale.
+NATIVE_GEN = .tools/native-gen-0.4.0
+$(NATIVE_GEN):
+	git clone -q --depth 1 --branch native-gen-0.4.0 https://github.com/agentica-lang/packages $@
+native-header: $(NATIVE_GEN)
+	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h
+native-check: $(NATIVE_GEN)
+	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h --check
 
 fmt-check:
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} sh -c 'cd {} && $(AGENTICA) fmt --check .'
@@ -114,7 +124,11 @@ smoke: install
 pty: install
 	JOBS=$(JOBS) python3 tui_client/tests/run_pty.py
 
-test: check unit smoke pty
+# The commands bash's parser finds against those real bash runs (Python standard library only).
+peer:
+	python3 -m unittest bash/tests/test_bash_peer.py -v
+
+test: check native-check unit smoke pty peer
 
 # The llm tests against a real llama-server with Qwen2.5-0.5B (fetched and checked by sha256 first), or the one at
 # LLAMA_URL. Local only, never in CI.
