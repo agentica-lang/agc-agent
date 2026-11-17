@@ -153,6 +153,10 @@ def attach(app: State.Model, session: Protocol.Session, skip_replay: Bool) -> St
   from = Client.replay_from(session, skip_replay)
 
   entries = Transcript.from_history(session.history)
+  if not session.todos.empty?
+    entries = Transcript.note(entries, todos(session.todos))
+  end
+
   fresh = app.with(
     serving: State.serving_of(session),
     opened: app.opened + 1,
@@ -276,22 +280,11 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
   end
 end
 
-## The model's todo list as a notice, one item a line: `[x]` completed, `[>]` in progress, `[ ]` pending.
+## The model's todo list as a notice, one item a line.
 def todos(list: List[Protocol.Todo]) -> String
   return "todos: none" if list.empty?
 
-  items = list.map do |todo|
-    box = "[ ]"
-    case todo.status
-      "completed" -> box = "[x]"
-      "in_progress" -> box = "[>]"
-      _ -> nil
-    end
-
-    "#{box} #{Client.printable(todo.content)}"
-  end
-
-  (["todos:"] + items).join("\n")
+  (["todos:"] + Client.todo_lines(list)).join("\n")
 end
 
 def finished(app: State.Model, reason: Protocol.StopReason) -> State.Model

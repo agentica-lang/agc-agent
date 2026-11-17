@@ -285,6 +285,7 @@ def decode_session(text: String) -> Result[Session]
   try Wire.non_negative("last_event_id", wire.last_event_id)
   try Wire.non_negative("turn_from_event_id", wire.turn_from_event_id.unwrap_or(0))
   try check_turn(wire)
+  try Events.check_todos(wire.todos.unwrap_or([]))
   usage: Optional[Events.Usage] = none
   for given in Wire.option_list(Wire.optional(wire.usage))
     usage = some(try Events.usage_of_wire(given))

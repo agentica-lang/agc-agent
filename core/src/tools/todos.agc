@@ -7,6 +7,12 @@ NAME = "todo_write"
 STATUSES = ["pending", "in_progress", "completed"]
 MAX_TODOS = 100
 MAX_CONTENT = 500
+# The characters that show nothing: Unicode spaces, zero-width and bidi controls, the byte order mark.
+INVISIBLE = Set.new([
+  0x00A0, 0x061C, 0x1680, 0x180E, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2007, 0x2008, 0x2009,
+  0x200A, 0x200B, 0x200C, 0x200D, 0x200E, 0x200F, 0x2028, 0x2029, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x202F,
+  0x205F, 0x2060, 0x2061, 0x2062, 0x2063, 0x2064, 0x2066, 0x2067, 0x2068, 0x2069, 0x3000, 0xFEFF,
+])
 
 struct Todo
   content: String
@@ -32,16 +38,21 @@ def tool() -> Spec.Tool
   )
 end
 
-## The list of a call, checked: at most `MAX_TODOS` items, each with some text and a known status, one in progress at
-## most.
+## The list of a call, checked: at most `MAX_TODOS` items, each with a known status and some text that shows, without
+## control characters, and one in progress at most.
 def todos(input: JSON.Value) -> Result[List[Todo]]
   args = try Spec.args(input, TodoWriteArgs.codec)
   return error("at most #{MAX_TODOS} todos") if args.todos.size > MAX_TODOS
 
   for todo in args.todos
-    return error("a todo has no content") if todo.content.strip.empty?
+    chars = todo.content.split("")
+    if (chars.any? { |c| c.code < 0x20 or (c.code >= 0x7f and c.code < 0xa0) })
+      return error("a todo has a control character")
+    end
+
+    return error("a todo has no content") if (chars.all? { |c| c.strip.empty? or INVISIBLE.include?(c.code) })
     return error("a todo is over #{MAX_CONTENT} characters") if todo.content.length > MAX_CONTENT
-    return error("unknown status #{todo.status}: use #{STATUSES.join(", ")}") if not STATUSES.include?(todo.status)
+    return error("unknown status: use #{STATUSES.join(", ")}") if not STATUSES.include?(todo.status)
   end
 
   return error("at most one todo is in_progress") if (args.todos.count { |t| t.status == "in_progress" } > 1)

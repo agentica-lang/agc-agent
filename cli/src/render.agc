@@ -88,6 +88,13 @@ def put(flow: Flow, out: Out) -> Written
   Written(text: text, flow: out.flow)
 end
 
+## The model's todo list, one item a line.
+def todos(list: List[Protocol.Todo]) -> String
+  return "[todos] none" if list.empty?
+
+  (["[todos]"] + Client.todo_lines(list).map { |item| "  #{item}" }).join("\n")
+end
+
 private
 
 # What the call would write, one indented line at a time, so the user sees what they approve.
@@ -119,24 +126,6 @@ def finished(tool: Protocol.ToolFinished) -> String
   return "[tool ok] #{tool.summary} (#{tool.duration_ms} ms)" if tool.ok
 
   "[tool failed] #{tool.summary} (#{tool.duration_ms} ms)"
-end
-
-# The list, one item a line: `[x]` completed, `[>]` in progress, `[ ]` pending.
-def todos(list: List[Protocol.Todo]) -> String
-  return "[todos] none" if list.empty?
-
-  items = list.map do |todo|
-    box = "[ ]"
-    case todo.status
-      "completed" -> box = "[x]"
-      "in_progress" -> box = "[>]"
-      _ -> nil
-    end
-
-    "  #{box} #{Client.printable(todo.content)}"
-  end
-
-  (["[todos]"] + items).join("\n")
 end
 
 def shell_started(started: Protocol.ShellStarted) -> String

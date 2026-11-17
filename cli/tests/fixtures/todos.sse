@@ -1,0 +1,12 @@
+id: 1
+event: turn_started
+data: {"turn_id":"t1"}
+
+id: 2
+event: todos
+data: {"todos":[{"content":"Fix the bug","status":"completed"},{"content":"red \u001b[31m alert","status":"in_progress"},{"content":"‮evil","status":"pending"}]}
+
+id: 3
+event: turn_finished
+data: {"turn_id":"t1","stop_reason":"end_turn"}
+

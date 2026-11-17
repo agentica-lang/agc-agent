@@ -104,6 +104,14 @@ struct Turn
   gate: Optional[Fn[Tools.Context, String, JSON.Value, Tools.Verdict]] = none
   ## What a compaction puts after its summary, from the marks and the messages it keeps.
   on_fold: Optional[Fn[List[String], List[LLM.Message], String]] = none
+  ## The model's todo list when the turn starts; a fold gives the model its list again.
+  todos: List[Todos.Todo] = []
+end
+
+# A `todo_write` call and its list.
+struct TodoCall
+  id: String
+  todos: List[Todos.Todo]
 end
 
 # A tool call's result block and the mark its tool made.
@@ -191,6 +199,7 @@ def run(given: Turn) -> Outcome
         turn.link.stripped.call()
       end
     else
+      turn = turn.with(todos: current_todos(messages, turn.todos))
       folded = compacted(turn, context, folded.with(messages: messages), marks)
       turn = renewed(turn, folded.fresh)
       folded = folded.with(fresh: none)
@@ -232,6 +241,24 @@ def assistant_text(message: LLM.Message) -> String = message.content.map { |b| t
 
 ## Whether `url` is on this machine, where a llama-server knows the window it runs with.
 def local?(url: String) -> Bool = LOCAL_HOSTS.any? { |host| url.start_with?(host) }
+
+## What a fold adds for the todo list: the list of the last `todo_write` call in `messages` that worked, else `known`;
+## nothing for an empty list or when a message that stays has that call.
+def folded_todos(messages: List[LLM.Message], staying: List[LLM.Message], known: List[Todos.Todo]) -> String
+  list = current_todos(messages, known)
+  return "" if list.empty?
+
+  for call in option_list(last_todo_call(messages))
+    return "" if (staying.any? { |m| m.content.any? { |b| use_id(b) == call.id } })
+  end
+
+  "\n\nYour todo list (`todo_write`) when the history was summarized:\n#{Todos.shown(list)}"
+end
+
+## The list of the last `todo_write` call in `messages` that worked, else `known`.
+def current_todos(messages: List[LLM.Message], known: List[Todos.Todo]) -> List[Todos.Todo]
+  last_todo_call(messages).map { |call| call.todos }.unwrap_or(known)
+end
 
 private
 
@@ -319,10 +346,15 @@ def compacted(turn: Turn, context: Int, folded: Folded, marks: List[String]) -> 
     case renewal.result
       ok(summary) ->
         compaction = summary
+        staying = Compaction.staying(folded.messages, summary)
         for on_fold in option_list(turn.on_fold)
-          extra = on_fold.call(marks, Compaction.staying(folded.messages, summary))
+          extra = on_fold.call(marks, staying)
           compaction = summary.with(summary: "#{summary.summary}#{extra}")
         end
+
+        compaction = compaction.with(
+          summary: "#{compaction.summary}#{folded_todos(folded.messages, staying, turn.todos)}",
+        )
 
         turn.link.compacted.call(compaction)
         return fresh.with(messages: Compaction.apply(folded.messages, compaction), just: true)
@@ -627,5 +659,39 @@ def option_list[T](value: Optional[T]) -> List[T]
   case value
     some(v) -> [v]
     none -> []
+  end
+end
+
+# The last `todo_write` call of `messages` whose list is valid and whose result is not an error.
+def last_todo_call(messages: List[LLM.Message]) -> Optional[TodoCall]
+  blocks = messages.flat_map { |m| m.content }
+  failed = blocks.flat_map { |b| failed_id(b) }
+  found: Optional[TodoCall] = none
+  for block in blocks
+    case block
+      LLM.Block.ToolUse(call) if call.name == Todos.NAME and not failed.include?(call.id) ->
+        case Todos.todos(call.input)
+          ok(list) -> found = some(TodoCall(id: call.id, todos: list))
+          error(_) -> nil
+        end
+
+      _ -> nil
+    end
+  end
+
+  found
+end
+
+def failed_id(block: LLM.Block) -> List[String]
+  case block
+    LLM.Block.ToolResult(result) if result.is_error -> [result.tool_use_id]
+    _ -> []
+  end
+end
+
+def use_id(block: LLM.Block) -> String
+  case block
+    LLM.Block.ToolUse(call) -> call.id
+    _ -> ""
   end
 end
