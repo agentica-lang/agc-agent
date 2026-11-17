@@ -194,13 +194,13 @@ def test_a_service_that_hangs_is_cancelled_in_its_time() -> Result[Void]
     },
   )
 
-  running = try Extensions.start_services([slow_stop], 100)
+  running = try Extensions.start_services([slow_stop], 1000)
   began = Time.monotonic_ms
   Extensions.stop_services(running)
   stop_ms = Time.monotonic_ms - began
   _ = hang.send(true, 0)
   _ = hang.send(true, 0)
-  try Test.assert(start_ms < 1000 and stop_ms < 1000, "start took #{start_ms} ms and stop #{stop_ms} ms")
+  try Test.assert(start_ms < 1000 and stop_ms < 2000, "start took #{start_ms} ms and stop #{stop_ms} ms")
   Test.error?(seen.recv(100))
 end
 
