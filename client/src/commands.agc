@@ -21,7 +21,7 @@ COMMANDS = [
     name: "/export",
     args: "[--force] [PATH]",
     about: "write the session's branch to a Markdown file (default: ID.md here)",
-    more: "the file (0600) holds what the session holds; --force replaces a file that exists",
+    more: "PATH is the rest of the line; the file (0600) holds what the session holds; --force replaces a file",
   ),
   Usage(
     name: "/model",
@@ -99,8 +99,7 @@ def parse_command(line: String) -> Optional[Result[Command]]
   name = words[0]
   return none if (not COMMANDS.any? { |usage| usage.name == name })
 
-  argument = words.drop(1).join(" ")
-  some(command(name, argument))
+  some(command(name, text.slice(name.length, text.length - name.length).strip))
 end
 
 ## The command of a line `!CMD` (its output goes to the model) or `!!CMD` (it does not); none for another line or
@@ -285,11 +284,11 @@ def command(name: String, argument: String) -> Result[Command]
   end
 end
 
-# `--force` anywhere; the other words are the path.
+# The path is the rest of the line, spaces kept; `--force` is a flag only as the first word.
 def exporting(argument: String) -> Result[Command]
-  words = argument.split(" ").select { |word| word != "" }
-  path = words.select { |word| word != "--force" }.join(" ")
-  ok(Command.Export(given(path), words.include?("--force")))
+  return ok(Command.Export(given(argument), false)) if argument != "--force" and not argument.start_with?("--force ")
+
+  ok(Command.Export(given(argument.slice(7, argument.length - 7).strip), true))
 end
 
 def bare(command: Command, name: String, argument: String) -> Result[Command]

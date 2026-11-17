@@ -173,7 +173,8 @@ struct SessionTree
 end
 
 ## A line of `SessionExport`: a message (`kind` "user" or "assistant", with its `text`), or a tool call in short
-## (`kind` "tool", `tool` its name, `text` what it was called on, `ok` its result, none when it has none).
+## (`kind` "tool", `tool` its name, `text` what it was called on, `ok` its result, none when it has none), or where
+## the history was compacted (`kind` "compaction").
 struct ExportEntry
   kind: String
   text: String

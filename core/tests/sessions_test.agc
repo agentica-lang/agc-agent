@@ -98,15 +98,19 @@ def test_the_todo_list_is_sent_and_kept() -> Result[Void]
 end
 
 # The export follows the branch the session is on: its messages in order, each tool call in short with its result,
-# and the todo list. A message of another branch is left out.
+# the todo list, and where the history was compacted. A message of another branch is left out.
 def test_the_export_follows_the_branch() -> Result[Void]
-  H.using(H.Setup(replies: ["todo_write.sse", "todo_bad.sse", "text.sse", "text.sse", "text.sse"])) do |h|
+  replies = ["todo_write.sse", "todo_bad.sse", "text.sse", "text.sse", "text.sse", "summary.sse", "text.sse"]
+  H.using(H.Setup(replies: replies)) do |h|
     id = try H.new_session(h)
     try turn(h, id, "Plan it.")
     try turn(h, id, "Two.")
     nodes = try tree(h, id)
     _ = try H.post(h, Protocol.branch_path(id), Protocol.encode_branch(Protocol.Branch(entry: nodes[1].id)))
     try turn(h, id, "Three.")
+    folded = try H.post(h, Protocol.compact_path(id), "")
+    try Test.eq(Protocol.decode_compacted(folded.text), ok(Protocol.Compacted(compacted: true)))
+    try turn(h, id, "Four.")
     exported = try Protocol.decode_session_export((try H.get(h, Protocol.export_path(id))).text)
     shown = exported.entries.map { |e| "#{e.kind} #{e.tool} #{e.text.split("\n")[0]} #{e.ok}" }
     try Test.eq([exported.id, exported.title, exported.todos.size.to_s], [id, "Plan it.", "3"])
@@ -119,6 +123,9 @@ def test_the_export_follows_the_branch() -> Result[Void]
         "tool todo_write todo_write some(false)",
         answer,
         "user  Three. none",
+        answer,
+        "compaction   none",
+        "user  Four. none",
         answer,
       ],
     )

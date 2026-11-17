@@ -16,6 +16,7 @@ def of(file: Store.Ref) -> Result[Protocol.SessionExport]
         entries = entries.push(message("user", text_of(json, "typed").unwrap_or(text_of(json, "text").unwrap_or(""))))
       "queued" -> entries = entries.push(message("user", text_of(json, "text").unwrap_or("")))
       "answer" -> entries = entries.push(message("assistant", text_of(json, "text").unwrap_or("")))
+      "compaction" -> entries = entries.push(message("compaction", ""))
       "event" ->
         case event_of(json)
           some(Protocol.Event.ToolStarted(started)) ->

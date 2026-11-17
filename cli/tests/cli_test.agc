@@ -466,7 +466,10 @@ def test_export_writes_the_session_to_a_markdown_file() -> Result[Void]
     id: "s1",
     title: "Hi",
     created_ms: 0,
-    entries: [Protocol.ExportEntry(kind: "user", text: "Hi")],
+    entries: [
+      Protocol.ExportEntry(kind: "user", text: "Hi"),
+      Protocol.ExportEntry(kind: "assistant", text: "x" * 1_200_000),
+    ],
     todos: [],
   )
 
@@ -484,7 +487,7 @@ def exports(rig: Driver.Rig) -> Result[Void]
   path = "#{rig.dir}/out.md"
   done = try Driver.exited(try Driver.start(rig.dir, ["export", "s1", path]))
   try Test.eq([done.lines, [done.code.to_s]], [["[session s1 exported to #{path}]"], ["0"]])
-  try Test.eq((try File.stat(path)).mode.to_s, "384")
+  try Test.eq([(try File.stat(path)).mode.to_s, ((try File.stat(path)).size_bytes > 1_200_000).to_s], ["384", "true"])
   refused = try Driver.exited(try Driver.start(rig.dir, ["export", "s1", path]))
   try Test.eq([refused.code.to_s, refused.errors.include?("#{path} exists: add --force").to_s], ["1", "true"])
   try File.write_text(path, "old")
@@ -494,7 +497,8 @@ def exports(rig: Driver.Rig) -> Result[Void]
   try Driver.read_until(cli, "[exported to #{path}]")
   try Driver.say(cli, "/quit")
   try Test.eq((try Driver.finish(cli)).code, 0)
-  try Test.assert((try File.read_text(path)).start_with?("# Hi\n"), "the export replaced the file")
+  first: Result[String] = File.open(path) do |file| File.read_line(file) end
+  try Test.eq(first, ok("# Hi"))
   Test.eq(Fake.strays(rig.fake), 0)
 end
 
