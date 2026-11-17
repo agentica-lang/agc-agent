@@ -136,5 +136,9 @@ def status(app: State.Model, width: Int) -> String
     model = Footer.model(app.serving, app.effort)
   end
 
+  if not app.profile.empty?
+    model = [app.profile, model].select { |part| not part.empty? }.join(" · ")
+  end
+
   Footer.status(state, app.usage, HINTS, model, width)
 end

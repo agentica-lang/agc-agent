@@ -507,9 +507,8 @@ def lines(text: String) -> List[String]
 end
 
 # `todo_write` refuses each bad list: over 100 items, an item over 500 characters, one whose text shows nothing
-# (spaces, NBSP, a zero-width space, an ideographic space, a soft hyphen, a Hangul filler, a blank braille cell,
-# VS16, a
-# tag character) or has a control character, an unknown status, two in progress. A line end or a tab is a space.
+# (spaces, NBSP, a zero-width space, an ideographic space, a soft hyphen, a Hangul filler, a blank braille cell, VS16,
+# a tag character) or has a control character, an unknown status, two in progress. A line end or a tab is a space.
 def test_todo_write_refuses_a_bad_list() -> Result[Void]
   ctx = try Tools.context(System.env("TMPDIR").unwrap_or("/tmp"), &fake_env)
   item = ->(content: String, status: String) {
@@ -532,7 +531,12 @@ def test_todo_write_refuses_a_bad_list() -> Result[Void]
     try refused(run.call(items))
   end
 
-  good = run.call([item.call("x" * 500, "completed"), item.call("fix\n", "in_progress"), item.call("a\tb", "pending")])
-  try Test.eq([good.is_error, good.text.include?("[>] fix\n[ ] a b")], [false, true])
+  good = run.call([
+    item.call("x" * 500, "completed"),
+    item.call("fix\n", "in_progress"),
+    item.call("a\tb\rc", "pending"),
+  ])
+
+  try Test.eq([good.is_error, good.text.include?("[>] fix\n[ ] a b c")], [false, true])
   Test.assert(not run.call([item.call("one", "done")]).text.include?("done"), "the status is not echoed")
 end

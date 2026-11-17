@@ -22,6 +22,7 @@ struct Backend
   fork: Fn[String, Optional[Int], Result[Protocol.Branched]]
   list_sessions: Fn[Result[Protocol.SessionList]]
   list_providers: Fn[Result[Protocol.ProviderList]]
+  list_profiles: Fn[String, Result[Protocol.ProfileList]]
   list_logins: Fn[Result[Protocol.LoginList]]
   login: Fn[String, String, Result[Protocol.LoginStatus]]
   login_url: Fn[String, String, Result[Protocol.LoginStatus]]
@@ -38,7 +39,7 @@ end
 ## The calls on `server` over HTTP.
 def http_backend(server: Http.Server) -> Backend
   Backend(
-    create_session: ->(request) { Http.create_session(server, request) },
+    create_session: ->(request) { created_id(Http.create_session(server, request)) },
     session: ->(id) { Http.session(server, id) },
     send_message: ->(id, text) { Http.send_message(server, id, text) },
     approve: ->(id, approval_id, decision) { Http.approve(server, id, approval_id, decision) },
@@ -52,6 +53,7 @@ def http_backend(server: Http.Server) -> Backend
     fork: ->(id, entry) { Http.fork(server, id, entry) },
     list_sessions: -> { Http.list_sessions(server) },
     list_providers: -> { Http.list_providers(server) },
+    list_profiles: ->(id) { Http.list_profiles(server, id) },
     list_logins: -> { Http.list_logins(server) },
     login: ->(provider, key) { Http.login(server, provider, key) },
     login_url: ->(provider, url) { Http.login_url(server, provider, url) },
@@ -83,6 +85,7 @@ def unreachable_backend() -> Backend
     fork: ->(_id, _entry) { failed() },
     list_sessions: -> { failed() },
     list_providers: -> { failed() },
+    list_profiles: ->(_id) { failed() },
     list_logins: -> { failed() },
     login: ->(_provider, _key) { failed() },
     login_url: ->(_provider, _url) { failed() },
@@ -97,3 +100,10 @@ end
 private
 
 def failed[T]() -> Result[T] = error("no server in this test", kind: Http.KIND_UNREACHABLE)
+
+def created_id(created: Result[Protocol.SessionCreated]) -> Result[String]
+  case created
+    ok(c) -> ok(c.id)
+    error(e) -> error(e)
+  end
+end

@@ -12,7 +12,7 @@ PASTE_CHARS = 1000
 ## The most files the `@` list shows.
 MAX_MATCHES = 8
 ## The commands whose argument the list completes.
-ARGUMENT_COMMANDS = ["/model", "/resume", "/tree", "/fork", "/thinking"]
+ARGUMENT_COMMANDS = ["/model", "/resume", "/tree", "/fork", "/thinking", "/profile"]
 
 ## What a list under the editor completes.
 enum Source
@@ -103,7 +103,7 @@ def command_word(text: String, cursor: Int) -> Optional[Mention]
   some(Mention(start: 0, query: word.slice(1, word.length - 1), source: Source.Commands))
 end
 
-## The argument of `/model`, `/resume`, `/tree`, `/fork` or `/thinking` on the first line, while the cursor ends the
+## The argument of `/model`, `/resume`, `/tree`, `/fork`, `/thinking` or `/profile` on the first line, while the cursor ends the
 ## line.
 def argument_word(text: String, cursor: Int) -> Optional[Mention]
   line = text.split("\n")[0]

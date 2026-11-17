@@ -61,13 +61,45 @@ def create(app: State.Model) -> Result[State.Model]
   request = try Client.new_session(options.cwd, options.model, options.api, options.provider, options.profile)
   cwd = request.cwd
   id = try app.backend.create_session.call(request)
-  serving = State.serving_of(try app.backend.session.call(id))
-  made = app.with(id: id, cwd: cwd, opened: app.opened + 1, serving: serving, usage: none, branch: "")
-  ok(read_branch(subscribe(State.noted(made, "session #{id}"), 0)))
+  session = try app.backend.session.call(id)
+  serving = State.serving_of(session)
+  made = app.with(
+    id: id,
+    cwd: cwd,
+    opened: app.opened + 1,
+    serving: serving,
+    usage: none,
+    branch: "",
+    profile: profile_name(session),
+  )
+
+  ok(read_branch(subscribe(profile_notices(State.noted(made, "session #{id}"), session), 0)))
 end
 
 def resume(app: State.Model, id: String) -> Result[State.Model]
-  ok(State.noted(attach(app.with(id: id), try app.backend.session.call(id), false), "session #{id}"))
+  session = try app.backend.session.call(id)
+  ok(profile_notices(State.noted(attach(app.with(id: id), session, false), "session #{id}"), session))
+end
+
+## The warnings of the server about the session's profile, as notices.
+def profile_notices(app: State.Model, session: Protocol.Session) -> State.Model
+  lines = Client.profile_lines(session.profile).select { |line| line.start_with?("warning: ") }
+  noted = app
+  for line in lines
+    noted = State.noted(noted, line)
+  end
+
+  noted
+end
+
+## The name of the session's profile for the footer; empty for the built-in `build`.
+def profile_name(session: Protocol.Session) -> String
+  case session.profile
+    some(p) if p.name == "build" and p.source == "built-in" -> ""
+    some(p) if p.source.empty? -> "#{Client.printable(p.name)} (does not load)"
+    some(p) -> Client.printable(p.name)
+    none -> ""
+  end
 end
 
 ## The stream held while messages were sent goes on once every reply came.
@@ -159,6 +191,7 @@ def attach(app: State.Model, session: Protocol.Session, skip_replay: Bool) -> St
 
   fresh = app.with(
     serving: State.serving_of(session),
+    profile: profile_name(session),
     opened: app.opened + 1,
     cwd: session.cwd,
     usage: session.usage,

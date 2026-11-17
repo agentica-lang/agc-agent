@@ -132,14 +132,14 @@ end
 
 def create(chat: Chat, options: Args.Options) -> Result[Chat]
   request = try Client.new_session(options.cwd, options.model, options.api, options.provider, options.profile)
-  id = try Client.create_session(chat.server, request)
-
-  ok(subscribe(note(chat, "[session #{id}]").with(id: id), 0))
+  created = try Client.create_session(chat.server, request)
+  id = created.id
+  ok(subscribe(profile_notes(note(chat, "[session #{id}]"), created.profile).with(id: id), 0))
 end
 
 def resume(chat: Chat, id: String) -> Result[Chat]
   session = try Client.session(chat.server, id)
-  opened = attach(note(chat, "[session #{id}]"), session, false)
+  opened = attach(profile_notes(note(chat, "[session #{id}]"), session.profile), session, false)
   return ok(opened) if session.todos.empty?
 
   ok(note(opened, Render.todos(session.todos)))
@@ -345,8 +345,26 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Clone -> moved_command(chat, -> { Client.fork(chat.server, chat.id, none) })
     Client.Command.Model(model) -> model_command(chat, model)
     Client.Command.Thinking(level) -> setting_command(chat, "thinking", level, Protocol.UpdateSession(effort: level))
+    Client.Command.Profile(name) -> tried(chat, profile_command(chat, name))
     Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
   end
+end
+
+# `/profile` lists the profiles, `*` before the session's; `/profile NAME` changes it, and says what it changed.
+def profile_command(chat: Chat, name: Optional[String]) -> Result[Chat]
+  for wanted in option_list(name)
+    try Client.update_session(chat.server, chat.id, Protocol.UpdateSession(profile: some(wanted)))
+    session = try Client.session(chat.server, chat.id)
+    done = note(chat, "[profile #{Client.printable(wanted)} from the next turn: #{Client.printable(session.model)}]")
+    for line in (Client.profile_lines(session.profile).select { |l| l.start_with?("warning: ") })
+      done = note(done, "[#{line}]")
+    end
+
+    return ok(done)
+  end
+
+  current = (try Client.session(chat.server, chat.id)).profile.map { |p| p.name }.unwrap_or("")
+  ok(note(chat, Client.profile_listing(try Client.list_profiles(chat.server, chat.id), current).join("\n")))
 end
 
 def logout_command(chat: Chat, name: Optional[String]) -> Result[Step]
@@ -626,6 +644,15 @@ def decided(chat: Chat, decision: Protocol.Decision) -> Chat
 end
 
 def note(chat: Chat, text: String) -> Chat = show(chat, some(Render.line(text)))
+
+def profile_notes(chat: Chat, profile: Optional[Protocol.Profile]) -> Chat
+  shown = chat
+  for line in Client.profile_lines(profile)
+    shown = note(shown, "[#{line}]")
+  end
+
+  shown
+end
 
 # A one-shot run prints only the answer on stdout; its other lines go to stderr, and so does its thinking.
 def show(chat: Chat, out: Optional[Render.Out]) -> Chat

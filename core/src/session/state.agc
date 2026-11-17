@@ -8,6 +8,7 @@ import Catalog from "../providers/catalog"
 import CodeMode from "../tools/code_mode"
 import Compaction from "../agent/compaction"
 import Extensions from "../config/registry"
+import Profiles from "../config/profiles"
 import Store from "store"
 import Tools from "../tools/tools"
 
@@ -73,6 +74,13 @@ struct Setup
   registry: Optional[Extensions.Registry] = none
   ## Whether the session's profile shows a tool to the model; none shows every tool.
   shows: Optional[Fn[String, Bool]] = none
+  ## The session's profile as clients see it, and why it does not load (empty when it does): a turn is refused then,
+  ## also after a provider switch. `system` is `base_system` with the profile's text.
+  profile: Optional[Protocol.Profile] = none
+  profile_refused: String = ""
+  base_system: String = ""
+  ## The profiles of the session's folders, read again at each call.
+  profiles: Optional[Fn[Profiles.Loaded]] = none
 end
 
 enum Msg
@@ -233,7 +241,13 @@ def busy_reason(state: State) -> String
 end
 
 def choice(setup: Setup) -> Store.Choice
-  Store.Choice(model: setup.model, effort: setup.effort, provider: setup.provider_name, api: setup.api)
+  Store.Choice(
+    model: setup.model,
+    effort: setup.effort,
+    provider: setup.provider_name,
+    api: setup.api,
+    profile: setup.profile.map { |p| p.name },
+  )
 end
 
 def last_todos(events: List[Store.Logged]) -> List[Protocol.Todo]

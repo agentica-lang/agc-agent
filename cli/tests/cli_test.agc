@@ -686,6 +686,53 @@ def test_session_commands() -> Result[Void]
   end
 end
 
+# /profile lists the profiles with the session's marked; /profile NAME changes it and shows the server's warnings.
+def test_the_profile_command() -> Result[Void]
+  warned = Protocol.Profile(name: "ro", source: "user", warnings: ["profile ro: no tool is named gerp"])
+  session = Protocol.Session(
+    id: "s1",
+    cwd: "/work",
+    model: "m",
+    last_event_id: 0,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+    profile: some(warned),
+  )
+
+  listed = Protocol.ProfileList(
+    profiles: [Protocol.Profile(name: "build", source: "built-in", description: "every tool"), warned],
+  )
+
+  snapshot = Fake.Reply(body: Protocol.encode_session(session))
+  routes = [
+    Routes.created(),
+    Routes.held_events(),
+    Routes.session([snapshot, snapshot]),
+    Fake.Route(
+      method: "GET",
+      path: Protocol.profiles_path("s1"),
+      replies: [Fake.Reply(body: Protocol.encode_profile_list(listed))],
+    ),
+    Fake.Route(method: "PATCH", path: Protocol.session_path("s1"), replies: [Fake.Reply(body: "{}")]),
+  ]
+
+  Driver.within(routes) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN)
+    try Driver.read_until(cli, "[session s1]")
+    try Driver.say(cli, "/profile")
+    try Driver.read_until(cli, "* ro (user)")
+    try Driver.say(cli, "/profile ro")
+    try Driver.read_until(cli, "[profile ro from the next turn: m]")
+    try Driver.read_until(cli, "[warning: profile ro: no tool is named gerp]")
+    try Driver.say(cli, "/quit")
+    _ = try Driver.finish(cli)
+    patch = try Fake.request(rig.fake, "PATCH", Protocol.session_path("s1"))
+    Test.eq(Protocol.decode_update_session(patch.body), ok(Protocol.UpdateSession(profile: some("ro"))))
+  end
+end
+
 # /tree lists the messages and goes back before one of that listing (a session drawn again needs a new listing),
 # drawing the session again with the message it went back before;
 # /fork starts a new session from a message and /clone copies the session.

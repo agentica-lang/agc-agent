@@ -59,6 +59,7 @@ export Routes.branch_path
 export Routes.fork_path
 export Routes.shell_path
 export Routes.files_path
+export Routes.profiles_path
 export Routes.auth_path
 
 export Requests.Decision
@@ -113,6 +114,7 @@ export Replies.SessionSummary
 export Replies.SessionList
 export Replies.ProviderInfo
 export Replies.ProviderList
+export Replies.Profile
 export Replies.Message
 export Replies.Session
 export Replies.TreeNode
@@ -137,6 +139,9 @@ export Replies.encode_session_list
 export Replies.decode_session_list
 export Replies.encode_provider_list
 export Replies.decode_provider_list
+export Replies.ProfileList
+export Replies.encode_profile_list
+export Replies.decode_profile_list
 export Replies.encode_session
 export Replies.decode_session
 export Replies.encode_session_tree

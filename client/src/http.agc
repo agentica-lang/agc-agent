@@ -59,10 +59,9 @@ def stop_server(server: Server, now: Bool) -> Result[Void]
   ok()
 end
 
-def create_session(server: Server, request: Protocol.NewSession) -> Result[String]
+def create_session(server: Server, request: Protocol.NewSession) -> Result[Protocol.SessionCreated]
   body = try call(server, "POST", Protocol.SESSIONS_PATH, Protocol.encode_new_session(request))
-  created = try Protocol.decode_session_created(body)
-  ok(created.id)
+  Protocol.decode_session_created(body)
 end
 
 def session(server: Server, id: String) -> Result[Protocol.Session]
@@ -103,6 +102,10 @@ end
 
 def list_providers(server: Server) -> Result[Protocol.ProviderList]
   Protocol.decode_provider_list(try call(server, "GET", Protocol.PROVIDERS_PATH, ""))
+end
+
+def list_profiles(server: Server, id: String) -> Result[Protocol.ProfileList]
+  Protocol.decode_profile_list(try call(server, "GET", Protocol.profiles_path(id), ""))
 end
 
 def list_logins(server: Server) -> Result[Protocol.LoginList]
