@@ -6,9 +6,7 @@ weight: 100
 
 # Extensions
 
-An extension is Agentica code that runs inside Finn's server. You write a
-small program that builds a registry of what you add, then serves the core
-with it, in place of `finn serve`.
+An extension is Agentica code that runs inside Finn's server. You write a small program that builds a registry of what you add, then serves the core with it, in place of `finn serve`.
 
 What an extension can add:
 
@@ -18,9 +16,7 @@ What an extension can add:
 - **event handlers** for a user message or a compaction;
 - **services** that run as long as the server.
 
-The code of an extension runs in a task of its own, with a time limit. A crash
-or a hang fails that one tool call, refuses that message, or adds nothing to
-that compaction. It never stops a session or the server.
+The code of an extension runs in a task of its own, with a time limit. A crash or a hang fails that one tool call, refuses that message, or adds nothing to that compaction, and does not stop a session or a running server. A service that fails to start is the exception: it stops the server's start.
 
 ## The smallest one
 
@@ -32,13 +28,11 @@ def main() -> Void
 end
 ```
 
-`Core.serve` reads the same environment as `finn serve`, and runs until a
-signal or `finn server stop`.
+`Core.serve` reads the same environment as `finn serve`, and runs until a signal or `finn server stop`.
 
 ## Run it
 
-The program depends on the `core` package of the agc-agent repository, as
-`examples/extension/agentica.toml` does. Start it in place of the server:
+The program depends on the `core` package of the agc-agent repository, as `examples/extension/agentica.toml` does. Outside the repository's workspace, run `agentica install` in its folder first, to fetch `core` and what it depends on. That needs the tag the dependency names (`core-0.0.1`), and the repository has no tags yet: until it does, keep your program in a clone, as a member of the workspace (`agentica.toml` at the root). Then start it in place of the server:
 
 ```sh
 agentica my_finn/main.agc        # the server, in the foreground
@@ -77,22 +71,15 @@ end
 
 `Core.add_tool(registry, word_count())` adds it.
 
-- `run` gets a `Core.Call`: the session folder (`root`) and the model's
-  `input`. Its error goes back to the model as a failed call.
-- `target` is what the approval shows and the rules match, such as a path or a
-  command. It has 5 seconds.
-- `asks: true` makes a call wait for an answer when the approvals are on and no
-  rule allows it.
-- `Core.resolve(call, path)` resolves a path inside the session folder, and
-  fails outside it or for a file that a deny rule hides.
-- The name must not be one of the built-in tools, `apply_patch`, `run_script`,
-  `activate_skill` or another extension's, and must not start with `mcp__`:
-  the server refuses to start.
+- `run` gets a `Core.Call`: the session folder (`root`) and the model's `input`. Its error goes back to the model as a failed call.
+- `target` is what the approval shows and the rules match, such as a path or a command. It has 5 seconds.
+- `asks: true` makes a call wait for an answer when the approvals are on and no rule allows it.
+- `Core.resolve(call, path)` resolves a path inside the session folder, and fails outside it or for a file that a deny rule hides.
+- The name must not be one of the built-in tools, `apply_patch`, `run_script`, `activate_skill` or another extension's, and must not start with `mcp__`: the server refuses to start.
 
 ## A wrapper
 
-A wrapper gets the tool's name, the call, and the run it wraps, and gives the
-output:
+A wrapper gets the tool's name, the call, and the run it wraps, and gives the output:
 
 ```agentica
 def timed(name: String, _call: Core.Call, next: Fn[Result[String]]) -> Result[String]
@@ -102,20 +89,13 @@ def timed(name: String, _call: Core.Call, next: Fn[Result[String]]) -> Result[St
 end
 ```
 
-`Core.wrap_tools(registry, &timed)` puts it around every tool but
-`activate_skill` and `run_script` (the calls a script makes are wrapped). The
-first wrapper added is the outermost. The approval decides first, and `next`
-runs on the input the approval saw. Keep a wrapper free of state of its own.
+`Core.wrap_tools(registry, &timed)` puts it around every tool but `activate_skill` and `run_script` (the calls a script makes are wrapped). The first wrapper added is the outermost. The approval decides first, and `next` runs on the input the approval saw. Keep a wrapper free of state of its own.
 
 ## Prompts and events
 
-- `Core.add_prompt(registry, text)` adds text after the system prompt of each
-  new session.
-- `Core.on(registry, Core.Event.Message(fn))` gets the text of each user
-  message and gives the text the model gets. The session file keeps what was
-  typed too. A crash or a hang refuses the message.
-- `Core.on(registry, Core.Event.Fold(fn))` gets the messages that stay when
-  the history folds, and gives text to add after the summary.
+- `Core.add_prompt(registry, text)` adds text after the system prompt of each new session.
+- `Core.on(registry, Core.Event.Message(fn))` gets the text of each user message and gives the text the model gets. The session file keeps what was typed too. A crash or a hang refuses the message.
+- `Core.on(registry, Core.Event.Fold(fn))` gets the messages that stay when the history folds, and gives text to add after the summary.
 
 The handlers of one event have 2 seconds together.
 
@@ -125,20 +105,15 @@ The handlers of one event have 2 seconds together.
 Core.add_service(registry, Core.Service(name: "greeter", start: &greet, stop: &farewell))
 ```
 
-`start` runs once the server holds its lock, before it listens; `stop` runs
-after it stops listening. Both run in one task of the service's own, so what
-`start` opens stays open until `stop`. A start that fails, crashes or takes
-over 30 seconds stops the server's start.
+`start` runs once the server holds its lock, before it listens; `stop` runs after it stops listening. Both run in one task of the service's own, so what `start` opens stays open until `stop`. A start that fails, crashes or takes over 30 seconds stops the server's start.
 
 ## Test it
 
-`Core.call(root, input)` builds a call in the folder `root`, with no deny rule,
-so a test can run a tool's `run` and `target` directly.
+`Core.call(root, input)` builds a call in the folder `root`, with no deny rule, so a test can run a tool's `run` and `target` directly.
 
 ## The example
 
-`examples/extension` in the repository adds the `word_count` tool, the `timed`
-wrapper and the `greeter` service. Its `main.agc`:
+`examples/extension` in the repository adds the `word_count` tool, the `timed` wrapper and the `greeter` service. Its `main.agc`:
 
 ```agentica
 import Core from "pkg/core/core"
@@ -149,5 +124,4 @@ def main() -> Void
 end
 ```
 
-Other ways to add to Finn need no code: [skills](skills.md) and
-[MCP servers](mcp.md).
+Other ways to add to Finn need no code: [skills](skills.md) and [MCP servers](mcp.md).

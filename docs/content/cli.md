@@ -6,9 +6,7 @@ weight: 40
 
 # CLI and TUI
 
-Finn has two clients for a session: `finn`, a line-mode client, and
-`finn tui`, a full-screen one. Both start the server when none runs and leave
-it running when they quit.
+Finn has two clients for a session: `finn`, a line-mode client, and `finn tui`, a full-screen one. Both start the server when none runs and leave it running when they quit.
 
 ## Commands
 
@@ -23,8 +21,7 @@ it running when they quit.
 | `finn server ACTION` | `status`, `start`, `stop`, `restart` or `logs` of the server |
 | `finn --version` | the versions of the server and the client |
 
-`finn --help`, `finn chat --help`, `finn tui --help`, `finn serve --help` and
-`finn server --help` list every option.
+`finn --help`, `finn chat --help`, `finn tui --help`, `finn serve --help` and `finn server --help` list every option.
 
 ### Options of a session
 
@@ -32,7 +29,7 @@ These work for `finn` and `finn tui`:
 
 | Option | What it does |
 |---|---|
-| `--session ID` | resume that session (default: a new one) |
+| `--session ID` | resume that session ([Sessions](sessions.md#resume)); default: a new one |
 | `--cwd DIR` | the folder of a new session (default: the current folder) |
 | `--provider NAME` | the provider of a new session |
 | `--model NAME` | the model of a new session |
@@ -41,14 +38,11 @@ These work for `finn` and `finn tui`:
 | `--yolo` | with the approvals on, allow the tool calls of the turns this client starts |
 | `--state-dir DIR` | the folder of `server.json` (default: `FINN_STATE_DIR`) |
 
-`finn` also takes `--delete ID` (delete a session and its file) and
-`--server-command` (the program that starts a server).
+`finn` also takes `--delete ID` ([Sessions](sessions.md#resume)) and `--server-command` (the program that starts a server).
 
 ### One task
 
-`finn -p TASK` sends one task and exits when the turn ends. The answer goes to
-stdout and the rest to stderr. With the approvals on, a call that would ask is
-denied unless you add `--yolo`. The exit status:
+`finn -p TASK` sends one task and exits when the turn ends. The answer goes to stdout and the rest to stderr. With the approvals on, a call that would ask is denied unless you add `--yolo`. The exit status:
 
 - `0`: the turn ended normally, also after a denied call;
 - `130`: the turn was cancelled;
@@ -56,9 +50,7 @@ denied unless you add `--yolo`. The exit status:
 
 ### The server
 
-`finn server stop` waits for the running turns to end (`FINN_DRAIN_MS`, a
-minute by default), and `--now` cancels them. `finn server logs` prints the end
-of the server's log, and `-f` follows it.
+`finn server stop` waits for the running turns to end (`FINN_DRAIN_MS`, a minute by default), and `--now` cancels them. `finn server logs` prints the end of the server's log, and `-f` follows it.
 
 ## Slash commands
 
@@ -80,23 +72,24 @@ Type them in either client:
 | `/help` | the list |
 | `/quit` | leave |
 
-Any other `/name` goes to the agent as a message, so `/name` of a
-[skill](skills.md) loads that skill.
+Any other `/name` goes to the agent as a message, so `/name` of a [skill](skills.md) loads that skill. What `/tree`, `/fork` and `/compact` do is on [Sessions](sessions.md).
 
 ## Shell commands
 
-- `!CMD` runs `CMD` in the session folder; the model gets its output with your
-  next message.
+- `!CMD` runs `CMD` in the session folder; the model gets its output with your next message.
 - `!!CMD` runs it without giving the output to the model.
 
-The command runs as the `bash` tool would. A deny rule still refuses it, but it
-never asks: you typed it.
+The command runs as the `bash` tool would, with a timeout of 10 minutes. A deny rule still refuses it, but it never asks: you typed it.
+
+## Stop
+
+`/stop`, Esc (`finn tui`) or Ctrl+C (`finn`) stops the running turn or shell command. In `finn`, a second Ctrl+C leaves, and so does Ctrl+C when nothing runs.
 
 ## Keys of finn tui
 
 | Key | What it does |
 |---|---|
-| Enter | send |
+| Enter | send; during a turn, the turn reads it before its next model call ([Sessions](sessions.md#send-while-a-turn-runs)) |
 | Alt+Enter | send after the running turn ends (a follow-up) |
 | Ctrl+J | a new line |
 | Esc | stop the running turn |
@@ -108,14 +101,9 @@ never asks: you typed it.
 | `/` | complete a command; Esc then Enter sends the text as typed |
 | Up | the earlier messages you sent |
 | PgUp, PgDn | scroll |
+| Ctrl+Y, Ctrl+N | allow or deny the call that waits for an approval |
+| Tab | move to the approval panel: `y` allow, `n` deny, `a` allow the same call for the session; Tab or Esc goes back |
 
-The mouse answers the keys of a panel, opens a tool call or the thinking, and
-moves the cursor in the prompt.
+The mouse answers the keys of a panel, opens a tool call or the thinking, and moves the cursor in the prompt.
 
-A message you send while a turn runs joins that turn: the model reads it
-before its next call.
-
-## Keys of finn
-
-Ctrl+C stops the running turn; a second Ctrl+C leaves. With no turn running,
-Ctrl+C leaves.
+In `finn`, answer an approval with `y`, `n` or `a` and Enter. The answers are on [Approvals and security](security.md#answer).

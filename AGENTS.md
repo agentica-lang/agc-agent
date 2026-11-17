@@ -34,6 +34,8 @@ tui_client/          the TUI client on agentica-tui (pinned commit): client, pro
                      entry point; tests/test_pty.py runs it under a pty against core and a fake model
 examples/extension/  how to extend Finn: a program that serves core with a tool and a wrapper; core's
                      tests/extension_test.agc runs it
+docs/                the user guide (Hugo, the docs theme as a submodule in docs/themes/docs-theme):
+                     hugo.toml, content/ one page per topic
 <pkg>/tests/         *_test.agc tests of that package; fixtures/ the recorded data they read
 llm/smoke/           tests against a real llama-server (make smoke-llama): local only, never in CI
 llm/live/, core/live/ tests against a paid API (live-fireworks, smoke-anthropic, live-anthropic-core): never in CI
@@ -89,6 +91,10 @@ A package is added by the phase that needs it, never as an empty folder.
   same credentials and rules as `smoke-anthropic`.
 - After a change of a package's dependencies: `agentica update` in that
   package's folder, and commit its `agentica.lock`.
+- `make docs`: builds the user guide into `docs/public` (Hugo 0.167 or later,
+  Dart Sass, Node; `git submodule update --init docs/themes/docs-theme` first);
+  a Hugo warning, such as a link to no page, fails it. CI runs it in the `docs`
+  job. `make docs-serve` serves it while you write.
 
 ## Rules
 
@@ -147,7 +153,9 @@ A package is added by the phase that needs it, never as an empty folder.
 - Every user-visible change adds a line under `## [Unreleased]` of
   `CHANGELOG.md`.
 - A user-visible change updates its page of the user guide in
-  `docs/content/` (`make docs` builds it).
+  `docs/content/` (`make docs` builds it). A page keeps one line per paragraph
+  or list item, as the other sites of the docs theme do; a link to another
+  page names its file (`[Tools](tools.md)`).
 - The repo is private. Do not create other repos.
 - A line that is only `end` is followed by an empty line, except before
   another `end`, `else`, `elsif`, a closing `)` or `]`, or the end of the file
