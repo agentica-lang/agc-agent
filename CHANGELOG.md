@@ -22,6 +22,7 @@
 
 ### Added
 
+- `files.command` in the user's config names the program that lists the files for `@`, such as `rg --files`.
 - Slash commands: `/NAME` sends the prompt of `NAME.md` in `~/.config/finn/commands/` or a trusted `.finn/commands/`, with `$ARGUMENTS`.
 - With approvals on, a file change under `.finn/` always asks, as one under `.git/` does.
 - Profiles: `--profile NAME` or `/profile NAME` picks the tools the model sees, and may set its model and thinking level; `build` (every tool) and `plan` (reads only) are built in, `NAME.md` files add more, and the footer names the profile.

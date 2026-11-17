@@ -800,7 +800,8 @@ def test_up_recalls_prompts_and_a_large_paste_is_one_token() -> Result[Void]
 end
 
 # `@` asks the server for the files of the session's folder each time it is typed; the list under the editor narrows
-# as the word grows, Tab puts the selected path in its place, and Esc closes the list. A failed read is a note.
+# as the word grows, Tab puts the selected path in its place, and Esc closes the list. A failed read is a note, and so
+# is the server's note on the list (once).
 def test_at_lists_the_files_and_tab_completes_one() -> Result[Void]
   model = model_of(40, 10).with(id: "s1", prompt: "see ", cursor: 4)
   asked = App.update(model, App.Msg.Key(TUI.Event.Char("@", TUI.Mods())))
@@ -814,6 +815,20 @@ def test_at_lists_the_files_and_tab_completes_one() -> Result[Void]
   try Test.eq(
     App.update(cut, App.Msg.Files(model.opened, ok(listed.with(truncated: true)))).model.entries.size,
     cut.entries.size,
+  )
+
+  noted = App.update(
+    model,
+    App.Msg.Files(model.opened, ok(listed.with(note: "files.command failed: exit code 1"))),
+  ).model
+
+  try Test.eq(noted.entries.last.text, "@ files: files.command failed: exit code 1")
+  try Test.eq(
+    App.update(
+      noted,
+      App.Msg.Files(model.opened, ok(listed.with(note: "files.command failed: exit code 1"))),
+    ).model.entries.size,
+    noted.entries.size,
   )
 
   again = App.update(model.with(prompt: "", cursor: 0), App.Msg.Key(TUI.Event.Char("@", TUI.Mods())))

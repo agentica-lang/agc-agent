@@ -211,6 +211,50 @@ def test_the_files_route_lists_the_session_folder() -> Result[Void]
   end
 end
 
+# A files command only proposes paths: a file stays only when the walk could show it, so not a deny rule's, a link's,
+# one outside the folder, a folder or a name with a control character. Endless output is cut. A command that fails or
+# does not end in time gives the walk, with a note.
+def test_a_files_command_lists_only_what_the_walk_allows() -> Result[Void]
+  H.using(H.Setup(replies: [], deny: ["read_file(secrets/**)"], files_command: ["cat", "../list.txt"])) do |h|
+    root = "#{h.work}/project"
+    outside = "#{h.work}/outside"
+    for dir in [root, outside, "#{root}/src", "#{root}/secrets"]
+      try Dir.mkdir(dir)
+    end
+
+    odd = "bad#{String.from_code(27)}.txt"
+    for file in ["a.txt", "b.txt", ".env", "src/main.agc", "secrets/key.txt", odd]
+      try File.write_text("#{root}/#{file}", "x")
+    end
+
+    try File.write_text("#{outside}/secret.txt", "x")
+    try link(outside, "#{root}/out_dir")
+    try link("#{root}/a.txt", "#{root}/linked.txt")
+    proposed = ["a.txt", "./b.txt", ".env", "src/main.agc", "secrets/key.txt", odd, "linked.txt", "out_dir/secret.txt"]
+    proposed = proposed + ["../outside/secret.txt", "#{outside}/secret.txt", "missing.txt", "src", "a.txt"]
+    proposed = proposed + ["src//main.agc", "src/../a.txt"]
+    try File.write_text("#{h.work}/list.txt", proposed.join("\n") + "\n")
+    id = try H.new_session_in(h, root)
+    answer = try Protocol.decode_file_list((try H.get(h, Protocol.files_path(id))).text)
+    try Test.eq(answer, Protocol.FileList(files: ["a.txt", "b.txt", ".env", "src/main.agc"]))
+    walk = Folder.files(root, none)
+    failed = Folder.listed(root, none, ["false"], &unset)
+    slow = Folder.listed(root, none, ["sleep", "5"], &unset, 100)
+    endless = Folder.listed(root, none, ["yes", "a.txt"], &unset)
+    try Test.eq(endless, Protocol.FileList(files: ["a.txt"], truncated: true))
+    try Test.eq([failed.files, slow.files], [walk.files, walk.files])
+    Test.eq(
+      [failed.note, slow.note],
+      [
+        "files.command failed, so the built-in walk listed the files: exit code 1",
+        "files.command failed, so the built-in walk listed the files: it did not end in time",
+      ],
+    )
+  end
+end
+
+def unset(_name: String) -> Result[String] = error("unset")
+
 def test_stop_while_an_approval_waits_denies_it() -> Result[Void]
   H.using(H.Setup(replies: ["write_file.sse"])) do |h|
     id = try H.new_session(h)

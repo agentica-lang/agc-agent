@@ -71,6 +71,8 @@ struct Model
   arguments_failed: Optional[String] = none
   ## The last list read was cut: said once, until a whole one comes.
   files_cut: Bool = false
+  ## The note of the last list of files (why the server's walk listed them), said once until it changes.
+  files_note: String = ""
   ## After a read that timed out, while the server may still walk the folder, `@` asks again only from this time on.
   files_again_at: Int = 0
   mention_selected: Int = 0
