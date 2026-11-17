@@ -25,12 +25,12 @@ Finn reads environment variables when the server starts, and a few JSON files. A
 
 | Key | What it does |
 |---|---|
-| `approvals` | `true` asks before a tool call that no rule allows |
+| `approvals` | `true` makes a call of a [tool that asks](security.md#what-asks) wait for your answer, unless a rule allows it |
 | `allow` | rules of calls that run without asking, with the approvals on |
-| `deny` | rules of calls that are refused, with the approvals on or off |
+| `deny` | rules of calls that are refused, with the approvals on or off (see the [known gap](security.md#known-gap-allow-rules-and-bash)) |
 | `providers` | OpenAI-compatible APIs of your own ([Providers](providers.md#your-own-provider)) |
 
-Every key is optional, and so is the file. How the rules work, and where they fall short, is on [Approvals and security](security.md#rules).
+Every key is optional, and so is the file. How the rules work is on [Approvals and security](security.md#rules), and where they fall short in [Known gap](security.md#known-gap-allow-rules-and-bash).
 
 ## The project file
 

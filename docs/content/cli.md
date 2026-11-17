@@ -79,7 +79,7 @@ Any other `/name` goes to the agent as a message, so `/name` of a [skill](skills
 - `!CMD` runs `CMD` in the session folder; the model gets its output with your next message.
 - `!!CMD` runs it without giving the output to the model.
 
-The command runs as the `bash` tool would, with a timeout of 10 minutes. A deny rule still refuses it, but it never asks: you typed it.
+The command runs as the `bash` tool would, with a timeout of 10 minutes. It never asks: you typed it. With the approvals off, the deny rules refuse it as they refuse a call of `bash`. With them on, only a deny rule that matches the whole command refuses it ([known gap](security.md#known-gap-allow-rules-and-bash)).
 
 ## Stop
 

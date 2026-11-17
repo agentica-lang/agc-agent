@@ -49,6 +49,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `GET /v1/sessions/ID/tree` | the user messages of every branch |
 | `POST /v1/sessions/ID/branch` | go on from an earlier message |
 | `POST /v1/sessions/ID/fork` | a new session from an earlier message |
+| `GET /v1/sessions/ID/files` | the files of the session folder that the deny rules do not hide, for the `@` completion |
 | `POST /v1/sessions/ID/shell` | run `{"command": "...", "context": true}` in the session folder |
 
 A decision is `allow`, `deny`, `allow_session`, `allow_prefix` or `allow_tool` ([Answer](security.md#answer)).

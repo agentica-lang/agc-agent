@@ -37,7 +37,7 @@ A server name is letters, digits, `_` and `-`, with no `__`. A server has either
 
 `command`, `args` and `env` start the server as a child process.
 
-- It gets the short environment of the `bash` tool plus its `env`, passed on as given. Put the keys it needs there: it does not see the rest of the server's environment.
+- It gets the short environment of the `bash` tool plus its `env`, passed on as given. Put the keys it needs there: it does not see the rest of Finn's environment.
 - Its stderr goes to `mcp/NAME.log` in the state folder.
 - A server that crashed or hung gives an error result, and starts again on the next call.
 
@@ -45,7 +45,7 @@ A server name is letters, digits, `_` and `-`, with no `__`. A server has either
 
 `url` and `headers` connect to a server on streamable HTTP.
 
-- `${NAME}` in a header value is the variable `NAME` of the server's environment, so a key stays out of the file. The variable must be set. Its value is never shown in an error or a log.
+- `${NAME}` in a header value is the variable `NAME` of Finn's environment, so a key stays out of the file. The variable must be set. Its value is never shown in an error or a log.
 - The URL is `http://` or `https://`, with no user part (`https://user:key@host` is refused: put the key in `headers`).
 - Headers over `http://` are refused unless the host is this machine (`localhost`, `127.x.x.x` or `[::1]`), since they would cross the network in clear text.
 - A header that the transport sets is refused: `Accept`, `Connection`, `Content-Length`, `Content-Type`, `Host`, `Last-Event-ID`, `Mcp-Protocol-Version`, `Mcp-Session-Id` and `Transfer-Encoding`.

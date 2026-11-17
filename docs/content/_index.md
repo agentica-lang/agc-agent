@@ -23,7 +23,7 @@ bin/finn tui          # chat on the full screen in this folder
 - **Sessions you can go back in.** Resume a session, go back to an earlier message, fork or clone it. Long histories fold into a summary.
 - **Skills and MCP.** `SKILL.md` folders and MCP servers add what the model can do.
 - **Extensions.** An Agentica program can serve Finn with its own tools, wrappers and services.
-- **Approvals when you want them.** Off by default; deny rules always count. See [Approvals and security](security.md).
+- **Approvals when you want them.** Off by default; deny rules count either way, with a [known gap](security.md#known-gap-allow-rules-and-bash). See [Approvals and security](security.md).
 
 ## Before you start
 
