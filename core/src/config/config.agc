@@ -60,7 +60,8 @@ struct Options
   logins: Optional[Logins.Holder] = none
   env: Fn[String, Result[String]]
   ## The rules of the approval extension; none turns it off, and every tool call runs. `asking`: a call that no rule
-  ## allows waits for an answer; off, only the deny rules count.
+  ## allows waits for an answer; off, only the deny rules count. They reach the sessions only through
+  ## `registry.approver` (`Builtins.approvals`): `Server.start` without it has no approval.
   approvals: Optional[Approval.Rules] = none
   asking: Bool = false
   ## The tools after the built-in ones: those of the extensions (the MCP servers' come later, through `registry`).

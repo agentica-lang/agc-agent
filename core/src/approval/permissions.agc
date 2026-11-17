@@ -26,8 +26,9 @@ PROJECT_FILE = ".finn/config.json"
 EDITS = ["write_file", "edit_file", "apply_patch"]
 ## Programs that run the command in their arguments, and interpreters: an answer allows only the same call.
 RUNNERS = [
-  "env", "xargs", "sh", "bash", "zsh", "python", "python3", "node", "ruby", "perl", "sudo", "nice", "nohup", "timeout",
-  "command", "time",
+  "env", "xargs", "sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python3", "node", "ruby", "perl", "sudo",
+  "doas", "nice", "nohup", "timeout", "command", "time", "stdbuf", "chrt", "ionice", "setsid", "flock", "watch",
+  "script",
 ]
 ## Programs whose second word picks what they do: their prefix is two words.
 TWO_WORDS = [
