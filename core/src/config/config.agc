@@ -1,17 +1,17 @@
 ## The options of `serve`, from the environment: `FINN_STATE_DIR` (else `$XDG_STATE_HOME/finn`, else
-## `~/.local/state/finn`), `FINN_DATA_DIR` for the sessions (else `$XDG_DATA_HOME/finn`, else
-## `~/.local/share/finn`), and the model API: `FINN_API` (`openai`, chat completions, by default, or
-## `openai_responses`), `FINN_BASE_URL` (a local llama-server by default), `FINN_API_KEY` and
-## `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for compaction; `FINN_DRAIN_MS` (how long a stop waits for the turns,
-## 60000); `FINN_MODELS_URL` (the models.dev
-## catalog of prices and windows, `off` for none) and `FINN_MODELS_PROVIDER` (the provider of the model there).
-## `FINN_CODE_MODE=1` adds code mode, whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is
-## not checked), else the pinned one fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be private to the user). Skills:
-## those of the home folder always, those of a session folder only under a folder of `FINN_TRUSTED_DIRS` (separated by
-## `:`). Approval rules: the user's config file (`FINN_CONFIG`, else `$XDG_CONFIG_HOME/finn/config.json`, else
-## `~/.config/finn/config.json`) and the project file `.finn/config.json` (`Permissions`); the deny rules always count,
-## and a call no rule allows asks only when `FINN_APPROVALS=1`, or the user's file has `"approvals": true` and
-## `FINN_APPROVALS` is not `0`. The names of before Finn still work: `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder is there.
+## `~/.local/state/finn`), `FINN_DATA_DIR` for the sessions (else `$XDG_DATA_HOME/finn`, else `~/.local/share/finn`),
+## and the model API: `FINN_API` (`openai`, chat completions, by default, or `openai_responses`), `FINN_BASE_URL` (a
+## local llama-server by default), `FINN_API_KEY` and `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for
+## compaction; `FINN_DRAIN_MS` (how long a stop waits for the turns, 60000); `FINN_MODELS_URL` (the models.dev catalog
+## of prices and windows, `off` for none) and `FINN_MODELS_PROVIDER` (the provider of the model there).
+## `FINN_CODE_MODE=1` adds code mode, whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is not
+## checked), else the pinned one fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be
+## private to the user). Skills: those of the home folder always, those of a session folder only under a folder of
+## `FINN_TRUSTED_DIRS` (separated by `:`). Approval rules: the user's config file (`FINN_CONFIG`, else
+## `$XDG_CONFIG_HOME/finn/config.json`, else `~/.config/finn/config.json`) and the project file `.finn/config.json`
+## (`Permissions`); the deny rules always count, and a call no rule allows asks only when `FINN_APPROVALS=1`, or the
+## user's file has `"approvals": true` and `FINN_APPROVALS` is not `0`. The names of before Finn still work:
+## `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder is there.
 ##
 ## The `anthropic` API is at `ANTHROPIC_BASE_URL` (else Anthropic's), with `ANTHROPIC_API_KEY`, else
 ## `ANTHROPIC_AUTH_TOKEN`, else the token that `ant auth print-credentials --access-token` prints: at start when

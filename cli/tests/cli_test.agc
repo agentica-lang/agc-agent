@@ -458,6 +458,31 @@ def test_one_shot_prints_the_answer_on_stdout_and_the_rest_on_stderr() -> Result
   end
 end
 
+# On a server whose approvals are off, `--yolo` says it changes nothing.
+def test_yolo_says_it_changes_nothing_when_the_approvals_are_off() -> Result[Void]
+  status = Protocol.ServerStatus(
+    pid: 1,
+    version: "0.0.1",
+    started_s: 0,
+    sessions: 0,
+    running_turns: 0,
+    stopping: false,
+    approvals: some(false),
+  )
+
+  off = Fake.Route(
+    method: "GET",
+    path: Protocol.SERVER_PATH,
+    replies: [Fake.Reply(status: 200, body: Protocol.encode_server_status(status))],
+  )
+
+  Driver.within([off, Routes.created(), Routes.held_events(), Routes.accepting(["turn.sse"])]) do |rig|
+    done = try Driver.exited(try Driver.start(rig.dir, PLAIN + ["--yolo", "-p", "hello"]))
+    try Test.assert(done.errors.include?("--yolo changes nothing: the approvals of this server are off"), done.errors)
+    Test.eq(done.code, 0)
+  end
+end
+
 def test_one_shot_denies_approvals_and_yolo_allows_them() -> Result[Void]
   for yolo in [false, true]
     end_pushes = ["denied_end.sse"]

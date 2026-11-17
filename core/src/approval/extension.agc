@@ -6,6 +6,8 @@ import Approval from "approval"
 import Permissions from "permissions"
 import Spec from "../tools/spec"
 
+BASH = "bash"
+
 struct Approvals
   rules: Approval.Rules
   ## The session folder.
@@ -24,12 +26,23 @@ end
 ## Whether tool calls pass the hook: when it asks, or when a deny rule may refuse one.
 def gated?(a: Approvals) -> Bool = a.asking or not a.rules.deny.empty?
 
-## The hook a tool call passes before it runs; with the asking off, a call that would ask runs.
+## The hook a tool call passes before it runs. With the asking off, a call that would ask runs, but for a `bash`
+## command that the deny rules cannot clear: one a `bash` rule may match (checked as `Permissions.allows?` does, and
+## refused when it cannot be parsed), or any command while a `read_file` rule exists, since it could read the file.
 def verdict(a: Approvals, ctx: Spec.Context, name: String, input: JSON.Value) -> Spec.Verdict
   found = Approval.verdict(a.rules, ctx, name, input)
-  return Spec.Verdict.Allow if found == Spec.Verdict.Ask and not a.asking
+  return found if a.asking or found != Spec.Verdict.Ask
+  return Spec.Verdict.Allow if name != BASH
 
-  found
+  command = case JSON.get(input, "command")
+    ok(value) -> JSON.string(value).unwrap_or("")
+    error(_) -> ""
+  end
+
+  return Spec.Verdict.Deny if Permissions.bash_denied?(a.rules, command)
+  return Spec.Verdict.Deny if (a.rules.deny.any? { |rule| rule.tool == "read_file" })
+
+  Spec.Verdict.Allow
 end
 
 ## Whether the session's answers or mode allow a call that asks.

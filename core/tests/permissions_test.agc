@@ -115,6 +115,32 @@ def test_the_deny_rules_count_with_the_approvals_on_or_off() -> Result[Void]
   ok()
 end
 
+# With the approvals off nobody can be asked: a bash command that the deny rules cannot clear (not plain, or any while
+# a `read_file` rule exists) is refused from the model and as a `!` command, and a `write_file` rule refuses a write.
+def test_with_the_approvals_off_a_command_the_deny_rules_cannot_clear_is_refused() -> Result[Void]
+  replies = ["bash_rm_then_true.sse", "bash_rm_quoted.sse", "bash_cat_secret.sse", "write_open.sse", "text.sse"]
+  deny = ["read_file(secret*)", "bash(rm *)", "write_file(open*)"]
+  H.using(H.Setup(replies: replies, approvals: false, deny: deny)) do |h|
+    try File.write_text("#{h.work}/secret.txt", "s3cr3t")
+    try File.write_text("#{h.work}/open.txt", "x")
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Remove open.txt, show secret.txt, then change open.txt.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    text = try File.read_text(H.session_file(h, id))
+    statuses: List[Int] = []
+    for command in ["rm open.txt; true", "rm \"open.txt\"", "cat secret.txt"]
+      run = Protocol.RunShell(command: command, context: true)
+      statuses = statuses.push((try H.post(h, Protocol.shell_path(id), Protocol.encode_run_shell(run))).status)
+    end
+
+    try Test.eq(File.read_text("#{h.work}/open.txt"), ok("x"))
+    try Test.eq([text.include?("s3cr3t"), H.kinds(a.seen).include?("approval_requested")], [false, false])
+    Test.eq(statuses, [403, 403, 403])
+  end
+end
+
 # The default, from an environment with no switch and no config file: a call runs without asking, and a project file
 # cannot turn the approvals on.
 def test_by_default_tools_run_without_asking_and_a_project_cannot_ask() -> Result[Void]
