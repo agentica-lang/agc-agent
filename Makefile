@@ -163,3 +163,25 @@ live-anthropic-core:
 	fi; \
 	mkdir -p core/_build; export ANTHROPIC_LIVE_REPORT='$(CURDIR)/core/_build/anthropic-live.txt'; \
 	rm -f "$$ANTHROPIC_LIVE_REPORT"; $(call tests,core,live/anthropic_test.agc,1); cat "$$ANTHROPIC_LIVE_REPORT"
+
+# The user guide (docs/, Hugo with the docs theme, a submodule): Hugo 0.167 or later, Dart Sass on PATH (or in
+# DART_SASS) and Node for the highlighter of the agentica blocks. A Hugo warning fails it, a broken page link too.
+DOCS_THEME := docs/themes/docs-theme
+DART_SASS ?= $(HOME)/.local/opt/dart-sass
+
+.PHONY: docs docs-serve
+
+$(DOCS_THEME)/highlight/node_modules: $(DOCS_THEME)/highlight/package.json $(DOCS_THEME)/highlight/package-lock.json
+	npm ci --prefix $(DOCS_THEME)/highlight --ignore-scripts --no-audit --no-fund
+	touch $@
+
+docs docs-serve: export PATH := $(DART_SASS):$(PATH)
+
+docs: $(DOCS_THEME)/highlight/node_modules
+	@test -e $(DOCS_THEME)/hugo.toml || { echo "docs needs its theme: git submodule update --init $(DOCS_THEME)" >&2; exit 1; }
+	hugo --cleanDestinationDir --source docs --panicOnWarning $(HUGO_FLAGS)
+	@# The highlighter fails on a site with no agentica block.
+	if grep -rqE 'class="?agc-code' docs/public; then node $(DOCS_THEME)/highlight/highlight.mjs docs/public; fi
+
+docs-serve:
+	hugo server --source docs
