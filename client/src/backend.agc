@@ -1,6 +1,6 @@
-## The calls a client makes on the server of one session at a time, as a record of functions (a port): `http_backend` fills
-## it from the HTTP client, and a test fills it with what it needs (`unreachable_backend` fails every call) to run a client
-## without a server.
+## The calls a client makes on the server of one session at a time, as a record of functions (a port):
+## `http_backend` fills it from the HTTP client, and a test fills it with what it needs (`unreachable_backend` fails
+## every call) to run a client without a server.
 
 import Protocol from "pkg/protocol/protocol"
 import Discovery from "discovery"
@@ -90,7 +90,7 @@ def unreachable_backend() -> Backend
     skip_login: -> { failed() },
     recheck: -> { failed() },
     subscribe: ->(_id, _from, tell) { Task.spawn(-> { _ = tell.call(Events.Item.Ended("no server")) }) },
-    yolo_warning: -> { "--yolo: the tool calls of the turns this client starts run without asking" },
+    yolo_warning: -> { Http.YOLO_ASKS_NOT },
   )
 end
 

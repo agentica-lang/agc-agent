@@ -165,10 +165,7 @@ def test_the_session_rules_both_clients_share() -> Result[Void]
 
   try Test.eq((try Client.new_session(none, some("m"), none, none)).cwd, try Path.cwd())
   try Test.eq((try Client.new_session(some("/w"), none, none, none)).cwd, "/w")
-  try Test.eq(
-    [Client.compacted(ok(true)), Client.compacted(ok(false))],
-    [ok("compacted"), ok("nothing to compact yet")],
-  )
+  try Test.eq([Client.compacted(true), Client.compacted(false)], ["compacted", "nothing to compact yet"])
 
   Test.eq(Client.thinking(running.with(effort: some("high"))), "thinking high")
 end

@@ -1232,8 +1232,8 @@ def compact_command(app: Model) -> Model
 end
 
 def compacted(backend: Client.Backend, id: String) -> String
-  case Client.compacted(backend.compact.call(id))
-    ok(text) -> text
+  case backend.compact.call(id)
+    ok(folded) -> Client.compacted(folded)
     error(e) -> "error: #{e.message}"
   end
 end

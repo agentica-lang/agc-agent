@@ -8,6 +8,8 @@ CALL_TIMEOUT_MS = 10_000
 ## A login waits for the check of the key at the provider (at most 10 s on the server).
 LOGIN_TIMEOUT_MS = 20_000
 PROBE_TIMEOUT_MS = 2_000
+## What `--yolo` does on a server whose approvals are on, or not known.
+YOLO_ASKS_NOT = "--yolo: the tool calls of the turns this client starts run without asking"
 COMPACT_TIMEOUT_MS = 600_000
 # A session can be quiet for as long as the model thinks, and the protocol has no heartbeat: the stream is read without
 # a timeout of practical size.
@@ -40,7 +42,7 @@ def yolo_warning(server: Server) -> String
   case server_status(server)
     ok(status) if status.approvals == some(false) ->
       "--yolo changes nothing: the approvals of this server are off, so every tool call runs without asking"
-    _ -> "--yolo: the tool calls of the turns this client starts run without asking"
+    _ -> YOLO_ASKS_NOT
   end
 end
 
