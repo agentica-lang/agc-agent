@@ -159,9 +159,15 @@ def shell(server: Server, id: String, request: Protocol.RunShell) -> Result[Prot
   Protocol.decode_shell_accepted(try call(server, "POST", Protocol.shell_path(id), Protocol.encode_run_shell(request)))
 end
 
-def stop(server: Server, id: String) -> Result[Void]
-  _ = try call(server, "POST", Protocol.stop_path(id), "")
+## Stops the running turn or shell command; with `turn_id`, only that turn while it runs.
+def stop(server: Server, id: String, turn_id: Optional[String] = none) -> Result[Void]
+  _ = try call(server, "POST", Protocol.stop_path(id), Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: turn_id)))
   ok()
+end
+
+## The files of the session's folder, for the `@` list.
+def files(server: Server, id: String) -> Result[List[String]]
+  ok((try Protocol.decode_file_list(try call(server, "GET", Protocol.files_path(id), ""))).files)
 end
 
 ## The event stream of a session from the event after `last_event_id`. A failed answer is read and becomes the error.

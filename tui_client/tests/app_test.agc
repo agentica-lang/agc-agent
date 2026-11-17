@@ -426,18 +426,31 @@ def test_up_recalls_prompts_and_a_large_paste_is_one_token() -> Result[Void]
   try Test.eq(pasted.prompt, "see [paste #1 +12 lines]")
   sent = App.update(pasted, enter()).model
   try Test.eq(sent.outbox, ["see #{text}"])
-  Test.eq(App.update(sent, App.Msg.Key(TUI.Event.Key(TUI.Key.Up, TUI.Mods()))).model.prompt, "see #{text}")
+  try Test.eq(App.update(sent, App.Msg.Key(TUI.Event.Key(TUI.Key.Up, TUI.Mods()))).model.prompt, "see #{text}")
+  # A paste that holds the token of a later paste keeps it as text: each token is put back once.
+  inner = "#{"x" * 1001} [paste #2 +12 lines]"
+  both = App.update(
+    App.update(model_of(40, 8).with(id: "s1"), App.Msg.Key(TUI.Event.Paste(inner))).model,
+    App.Msg.Key(TUI.Event.Paste(text)),
+  ).model
+
+  try Test.eq(both.prompt, "[paste #1 1022 chars][paste #2 +12 lines]")
+  Test.eq(App.update(both, enter()).model.outbox, ["#{inner}#{text}"])
 end
 
-# `@` reads the files of the session's folder once; the list under the editor narrows as the word grows, Tab puts the
-# selected path in its place, and Esc closes the list.
+# `@` asks the server for the files of the session's folder each time it is typed; the list under the editor narrows
+# as the word grows, Tab puts the selected path in its place, and Esc closes the list. A failed read is a note.
 def test_at_lists_the_files_and_tab_completes_one() -> Result[Void]
-  model = model_of(40, 10).with(id: "s1", cwd: "tests/fixtures", prompt: "see ", cursor: 4)
+  model = model_of(40, 10).with(id: "s1", prompt: "see ", cursor: 4)
   asked = App.update(model, App.Msg.Key(TUI.Event.Char("@", TUI.Mods())))
-  files = asked.cmds.flat_map { |cmd| run(cmd) }
-  try Test.eq(files.size, 1)
-  model = App.update(asked.model, files[0]).model
-  try Test.assert(model.files.unwrap_or([]).include?("README.md"), "the files are read")
+  try Test.eq([asked.cmds.size.to_s, asked.model.reading_files.to_s], ["1", "true"])
+  model = App.update(asked.model, App.Msg.Files(asked.model.opened, ok(["README.md", "thinking.sse"]))).model
+  try Test.eq(model.files, some(["README.md", "thinking.sse"]))
+  again = App.update(model.with(prompt: "", cursor: 0), App.Msg.Key(TUI.Event.Char("@", TUI.Mods())))
+  try Test.eq(again.cmds.size, 1)
+  failed = App.update(again.model, App.Msg.Files(again.model.opened, error("refused")))
+  try Test.eq([failed.model.reading_files.to_s, failed.model.files.unwrap_or([]).size.to_s], ["false", "2"])
+  try Test.assert(failed.model.entries.last.text.include?("the files were not listed"), failed.model.entries.last.text)
   for char in ["t", "h", "k"]
     model = App.update(model, App.Msg.Key(TUI.Event.Char(char, TUI.Mods()))).model
   end

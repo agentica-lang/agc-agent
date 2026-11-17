@@ -40,14 +40,28 @@ def token(number: Int, text: String) -> String
   "[paste ##{number} +#{lines} lines]"
 end
 
-## `text` with each token of `pastes` put back as the paste it stands for.
+## `text` with the first copy of each token of `pastes` put back as the paste it stands for, in one pass over `text`:
+## a token inside a paste stays as it is.
 def expanded(text: String, pastes: List[String]) -> String
-  out = text
+  found: List[List[Int]] = []
   for i in 0...pastes.size
-    out = out.replace(token(i + 1, pastes[i]), pastes[i])
+    case text.index_of(token(i + 1, pastes[i]))
+      some(at) -> found = found.push([at, i])
+      none -> nil
+    end
   end
 
-  out
+  out = ""
+  from = 0
+  for pair in (found.sort_by { |pair| pair[0] })
+    next if pair[0] < from
+
+    piece = token(pair[1] + 1, pastes[pair[1]])
+    out = out + text.slice(from, pair[0] - from) + pastes[pair[1]]
+    from = pair[0] + piece.length
+  end
+
+  out + text.slice(from, text.length - from)
 end
 
 ## The `@` word the cursor ends, when the `@` starts a word and no space follows it.

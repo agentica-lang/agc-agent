@@ -101,7 +101,7 @@ enum Msg
   Subscribe(Optional[Int], Channel[Channel[Bytes]])
   Send(String, Channel[Result[Protocol.MessageAccepted]])
   Answer(String, Protocol.Decision, Channel[Result[Void]])
-  Stop(Channel[Bool])
+  Stop(Optional[String], Channel[Bool])
   Close(Channel[Result[Void]])
   Emit(String, Protocol.Event)
   Ask(String, Agent.Ask, Channel[Protocol.Decision])
@@ -335,7 +335,9 @@ def shell(address: Address[Msg], request: Protocol.RunShell) -> Result[Protocol.
 end
 
 ## Stops the running turn or command; whether one ran.
-def stop(address: Address[Msg]) -> Result[Bool] = Actor.call(address, CALL_MS) do |reply| Msg.Stop(reply) end
+def stop(address: Address[Msg], turn_id: Optional[String]) -> Result[Bool]
+  Actor.call(address, CALL_MS) do |reply| Msg.Stop(turn_id, reply) end
+end
 
 ## The user messages of every branch of the session.
 def tree(address: Address[Msg]) -> Result[Protocol.SessionTree]
@@ -401,7 +403,10 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
 
       Actor.reply(reply, ok())
       Actor.done(state)
-    Msg.Stop(reply) ->
+    Msg.Stop(turn_id, reply) if not stops?(state, turn_id) ->
+      Actor.reply(reply, false)
+      Actor.continue(state)
+    Msg.Stop(_, reply) ->
       Actor.reply(reply, state.turn.some? or state.shell.some?)
       Actor.continue(stop_shell(stop_turn(state)))
     Msg.Emit(turn_id, event) -> Actor.continue(if_current(state, turn_id, ->(s) { emit_counted(s, event) }))
@@ -932,6 +937,11 @@ def resolve(state: State, approval_id: String, decision: Protocol.Decision, sour
       emit(next_state, Protocol.Event.ApprovalResolved(resolved))
     error(_) -> state
   end
+end
+
+# A stop for a turn that is no longer the running one stops nothing.
+def stops?(state: State, turn_id: Optional[String]) -> Bool
+  turn_id.none? or state.turn.map { |turn| turn.id } == turn_id
 end
 
 def stop_turn(state: State) -> State

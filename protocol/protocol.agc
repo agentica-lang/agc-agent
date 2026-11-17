@@ -53,6 +53,7 @@ export Routes.tree_path
 export Routes.branch_path
 export Routes.fork_path
 export Routes.shell_path
+export Routes.files_path
 export Routes.auth_path
 
 export Requests.Decision
@@ -85,6 +86,9 @@ export Requests.encode_branch
 export Requests.decode_branch
 export Requests.encode_stop_server
 export Requests.decode_stop_server
+export Requests.StopTurn
+export Requests.encode_stop_turn
+export Requests.decode_stop_turn
 export Requests.encode_fork
 export Requests.decode_fork
 export Requests.encode_run_shell
@@ -135,6 +139,9 @@ export Replies.encode_server_status
 export Replies.decode_server_status
 export Replies.encode_shell_accepted
 export Replies.decode_shell_accepted
+export Replies.FileList
+export Replies.encode_file_list
+export Replies.decode_file_list
 export Replies.encode_login_status
 export Replies.decode_login_status
 export Replies.encode_login_list

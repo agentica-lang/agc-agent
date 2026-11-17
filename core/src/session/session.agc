@@ -17,6 +17,7 @@ import Sandbox from "../tools/sandbox"
 import Spec from "../tools/spec"
 import Tools from "../tools/tools"
 import SessionActor from "actor"
+import Folder from "folder"
 import Prompt from "prompt"
 import Store from "store"
 
@@ -117,7 +118,7 @@ end
 def cancel_turns(sessions: Sessions) -> Result[Int]
   stopped = 0
   for session in loaded(try entries(sessions))
-    if SessionActor.stop(session) == ok(true)
+    if SessionActor.stop(session, none) == ok(true)
       stopped = stopped + 1
     end
   end
@@ -151,8 +152,15 @@ end
 
 def compact(sessions: Sessions, id: String) -> Result[Bool] = SessionActor.compact_now(try find(sessions, id))
 
-## Stops the running turn or shell command of a session.
-def stop_turn(sessions: Sessions, id: String) -> Result[Bool] = SessionActor.stop(try find(sessions, id))
+## Stops the running turn or shell command of a session; with `turn_id`, only that turn while it runs.
+def stop_turn(sessions: Sessions, id: String, turn_id: Optional[String]) -> Result[Bool]
+  SessionActor.stop(try find(sessions, id), turn_id)
+end
+
+## The files of the session's folder, read in the caller's task.
+def files(sessions: Sessions, id: String) -> Result[Protocol.FileList]
+  ok(Protocol.FileList(files: Folder.files((try snapshot(sessions, id)).cwd)))
+end
 
 def answer(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
   SessionActor.answer(try find(sessions, id), approval_id, decision)

@@ -152,6 +152,46 @@ def test_stop_during_a_long_bash_kills_it_and_ends_the_turn() -> Result[Void]
   end
 end
 
+# A stop for a turn that is not the running one stops nothing; one for the running turn stops it.
+def test_a_stop_for_another_turn_stops_nothing() -> Result[Void]
+  H.using(H.Setup(replies: ["write_file.sse"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    turn_id = (try H.session(h, id)).turn_id
+    other = Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: some("t-gone")))
+    try Test.eq((try H.post(h, Protocol.stop_path(id), other)).status, 200)
+    try Test.eq((try H.session(h, id)).turn_id, turn_id)
+    try Test.eq((try H.post(h, Protocol.stop_path(id), "{\"turn\": 1}")).status, 400)
+    _ = try H.post(h, Protocol.stop_path(id), Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: turn_id)))
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    Test.eq(H.stop_reason(a), "cancelled")
+  end
+end
+
+# The files of the session folder, for a client's `@` list: breadth first, without hidden files and the folders of
+# dependencies.
+def test_the_files_route_lists_the_session_folder() -> Result[Void]
+  H.using(H.Setup(replies: [])) do |h|
+    root = "#{h.work}/project"
+    for dir in [root, "#{root}/src", "#{root}/node_modules", "#{root}/.git"]
+      try Dir.mkdir(dir)
+    end
+
+    for file in ["b.txt", "a.txt", ".env", "src/main.agc", "node_modules/x.js", ".git/HEAD"]
+      try File.write_text("#{root}/#{file}", "x")
+    end
+
+    id = try H.new_session_in(h, root)
+    answer = try H.get(h, Protocol.files_path(id))
+    try Test.eq(answer.status, 200)
+    try Test.eq((try Protocol.decode_file_list(answer.text)).files, ["a.txt", "b.txt", "src/main.agc"])
+    Test.eq((try H.get(h, Protocol.files_path("s-none"))).status, 404)
+  end
+end
+
 def test_stop_while_an_approval_waits_denies_it() -> Result[Void]
   H.using(H.Setup(replies: ["write_file.sse"])) do |h|
     id = try H.new_session(h)

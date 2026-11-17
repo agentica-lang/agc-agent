@@ -328,6 +328,21 @@ def test_a_shell_command_round_trips() -> Result[Void]
   Test.eq(Protocol.decode_shell_accepted(Protocol.encode_shell_accepted(accepted)), ok(accepted))
 end
 
+# A stop names the turn it is for, or none: an empty body is the stop of an older client.
+def test_a_stop_and_a_file_list_round_trip() -> Result[Void]
+  stop = Protocol.StopTurn(turn_id: some("t1"))
+  try Test.eq(Protocol.decode_stop_turn(Protocol.encode_stop_turn(stop)), ok(stop))
+  try Test.eq(
+    [Protocol.decode_stop_turn(""), Protocol.decode_stop_turn(Protocol.encode_stop_turn(Protocol.StopTurn()))],
+    [ok(Protocol.StopTurn()), ok(Protocol.StopTurn())],
+  )
+
+  try Test.eq(error_kind(Protocol.decode_stop_turn("{\"turn_id\": \"\"}")), "protocol.invalid")
+  files = Protocol.FileList(files: ["a.txt", "src/b.agc"])
+  try Test.eq(Protocol.decode_file_list(Protocol.encode_file_list(files)), ok(files))
+  Test.eq(Protocol.files_path("s1"), "/v1/sessions/s1/files")
+end
+
 def test_a_login_round_trips() -> Result[Void]
   login = Protocol.Login(key: "sk-1")
   try Test.eq(Protocol.decode_login(Protocol.encode_login(login)), ok(login))

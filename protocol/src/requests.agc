@@ -72,6 +72,12 @@ struct StopServer
   now: Optional[Bool] = none
 end
 
+## `POST /v1/sessions/ID/stop`: stops the running turn or shell command; with `turn_id`, only that turn while it runs.
+## An empty body stops what runs.
+struct StopTurn
+  turn_id: Optional[String] = none
+end
+
 ## `POST /v1/sessions/ID/shell`: runs `command` in the session folder as the `bash` tool would, while no turn runs, for
 ## up to 10 minutes. With `context`, its output goes to the model before the next message.
 struct RunShell
@@ -163,6 +169,16 @@ def encode_stop_server(body: StopServer) -> String = JSON.encode(body)
 
 def decode_stop_server(text: String) -> Result[StopServer] = Wire.decode_strict(text, StopServer.codec)
 
+def encode_stop_turn(body: StopTurn) -> String = JSON.encode(body)
+
+def decode_stop_turn(text: String) -> Result[StopTurn]
+  return ok(StopTurn()) if text == ""
+
+  body = try Wire.decode_strict(text, StopTurn.codec)
+  try Wire.non_empty_if_present("turn_id", body.turn_id)
+  ok(body)
+end
+
 def encode_run_shell(body: RunShell) -> String = JSON.encode(body)
 
 def decode_run_shell(text: String) -> Result[RunShell]
@@ -190,6 +206,7 @@ def shape() -> List[String]
     Wire.record("Branch", Branch.members),
     Wire.record("Fork", Fork.members),
     Wire.record("StopServer", StopServer.members),
+    Wire.record("StopTurn", StopTurn.members),
     Wire.record("RunShell", RunShell.members),
     Wire.record("Login", Login.members),
     Wire.record("ApproveWire", ApproveWire.members),
