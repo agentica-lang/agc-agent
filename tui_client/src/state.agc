@@ -30,6 +30,8 @@ struct Model
   prompt: String = ""
   ## The cursor in the prompt, a character index (clamped to the text when used).
   cursor: Int = 0
+  ## The column Up and Down keep while they move the cursor across shorter rows.
+  goal_column: Optional[Int] = none
   ## Rows above the bottom of the transcript, 0 to follow its end.
   scroll: Int = 0
   turn: Bool = false

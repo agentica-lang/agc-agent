@@ -57,7 +57,7 @@ def decision(panel: Panel, event: TUI.Event, now: Int, shown: Bool) -> Optional[
 
   case event
     TUI.Event.Key(TUI.Key.Ctrl(c), _) -> shortcut(c)
-    TUI.Event.Char(c, _) if panel.focused -> letter(c)
+    TUI.Event.Char(c, mods) if panel.focused and not mods.alt -> letter(c)
     _ -> none
   end
 end

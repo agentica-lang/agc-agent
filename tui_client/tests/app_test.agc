@@ -497,8 +497,6 @@ def test_a_command_running_on_attach_waits_for_its_end() -> Result[Void]
   Test.eq([ended.shell, shown.include?("$ make"), shown.any? { |row| row.include?("Took") }], [false, true, false])
 end
 
-# Up on an empty prompt goes back through the prompts sent, Down comes forward to an empty prompt; a large paste is
-# one token that the send puts back.
 # The editing keys of pi: by word (letters and punctuation are words of their own), to the line's ends, forward; Ctrl+D
 # quits on an empty prompt.
 def test_editing_keys_cut_and_move_by_word_and_line() -> Result[Void]
@@ -512,7 +510,7 @@ def test_editing_keys_cut_and_move_by_word_and_line() -> Result[Void]
     ctrl("e"),
     key(TUI.Key.Left, TUI.Mods(ctrl: true)),
     App.Msg.Key(TUI.Event.Char("f", TUI.Mods(alt: true))),
-    App.Msg.Key(TUI.Event.Char("b", TUI.Mods(alt: true))),
+    App.Msg.Key(TUI.Event.Char("B", TUI.Mods(alt: true))),
     ctrl("k"),
     ctrl("k"),
     ctrl("u"),
@@ -547,13 +545,52 @@ def test_editing_keys_cut_and_move_by_word_and_line() -> Result[Void]
   try Test.eq([joined.prompt, "#{joined.cursor}"], ["abcd", "2"])
   try Test.eq(App.update(model_of(40, 8).with(prompt: "ab\ncd", cursor: 2), ctrl("k")).model.prompt, "abcd")
   try Test.eq(App.update(model_of(40, 8).with(prompt: "ab", cursor: 0), ctrl("d")).model.prompt, "b")
+  # An edit that deletes nothing keeps the prompt recalled.
+  recalled = model_of(40, 8).with(prompt: "ab", cursor: 2, history: ["ab"], recall: some(0))
+  for edit in [ctrl("k"), key(TUI.Key.Delete, TUI.Mods()), ctrl("e")]
+    try Test.eq(App.update(recalled, edit).model.recall, some(0))
+  end
+
+  try Test.eq(App.update(recalled.with(cursor: 0), ctrl("u")).model.recall, some(0))
   quit = App.update(model_of(40, 8), ctrl("d"))
   try Test.eq(quit.model.exit, some(0))
-  Test.assert(quit.cmds.any? { |cmd| quit?(cmd) }, "Ctrl+D quits")
+  try Test.assert(quit.cmds.any? { |cmd| quit?(cmd) }, "Ctrl+D quits")
+  busy = App.update(model_of(40, 8).with(turn: true), ctrl("d"))
+  Test.eq([busy.model.exit.none?, busy.cmds.empty?], [true, true])
 end
 
-# Up and Down move between the rows of the prompt, cut lines included; Up from the first row recalls a prompt only
-# while one is recalled or the prompt is empty, and Down from the last row goes on through the recalled ones.
+# A word move or Ctrl+W stops at a line end: at a line's start it takes only the line end. Delete takes a character
+# with the zero-width ones joined to it; words of CJK are words too.
+def test_words_stop_at_line_ends_and_delete_takes_a_whole_character() -> Result[Void]
+  model = model_of(40, 8).with(prompt: "ab cd\n  ef", cursor: 10)
+  places: List[String] = []
+  for step in [alt_left(), alt_left(), alt_left(), alt_left(), alt_right(), alt_right()]
+    model = App.update(model, step).model
+    places = places.push("#{model.cursor}")
+  end
+
+  try Test.eq(places, ["8", "6", "5", "3", "5", "6"])
+  cut = App.update(model_of(40, 8).with(prompt: "ab\ncd", cursor: 3), ctrl("w")).model
+  try Test.eq([cut.prompt, "#{cut.cursor}"], ["abcd", "2"])
+  spaces = App.update(model_of(40, 8).with(prompt: "ab\n  cd", cursor: 5), ctrl("w")).model
+  try Test.eq(spaces.prompt, "ab\ncd")
+  accent = "e#{String.from_code(0x301)}x"
+  try Test.eq(App.update(model_of(40, 8).with(prompt: accent, cursor: 0), ctrl("d")).model.prompt, "x")
+  coder = "#{String.from_code(0x1F469)}#{String.from_code(0x200D)}#{String.from_code(0x1F4BB)}!"
+  try Test.eq(
+    App.update(model_of(40, 8).with(prompt: coder, cursor: 0), key(TUI.Key.Delete, TUI.Mods())).model.prompt,
+    "!",
+  )
+
+  cjk = model_of(40, 8).with(prompt: "中文 字", cursor: 4)
+  left = App.update(cjk, alt_left()).model
+  Test.eq(["#{left.cursor}", "#{App.update(left, alt_left()).model.cursor}"], ["3", "0"])
+end
+
+# Up and Down move between the rows of the prompt, cut lines included, and keep their column across shorter rows; Up
+# from the first row recalls a prompt only while one is recalled or the prompt is empty, and Down from the last
+# row goes
+# on through the recalled ones.
 def test_up_and_down_move_between_rows_and_recall_from_the_edges() -> Result[Void]
   model = model_of(40, 8).with(id: "s1", history: ["first", "second\nline"])
   places: List[String] = []
@@ -566,14 +603,32 @@ def test_up_and_down_move_between_rows_and_recall_from_the_edges() -> Result[Voi
 
   typed = model_of(40, 8).with(prompt: "ab\ncdef", cursor: 6)
   higher = App.update(typed, up()).model
-  try Test.eq(["#{higher.cursor}", "#{App.update(higher, down()).model.cursor}"], ["2", "5"])
+  try Test.eq(["#{higher.cursor}", "#{App.update(higher, down()).model.cursor}"], ["2", "6"])
   try Test.eq(App.update(higher, up()).model.cursor, 2)
+  try Test.eq(App.update(App.update(higher, key(TUI.Key.Left, TUI.Mods())).model, down()).model.cursor, 4)
+  # The column is kept across a short row.
+  short = model_of(40, 8).with(prompt: "abcdef\nab\nabcdef", cursor: 5)
+  across = App.update(App.update(short, down()).model, down()).model
+  try Test.eq(across.cursor, 15)
   # 8 columns leave 6 to the text: "abcdef" and "ghij" are two rows of one line.
   long = model_of(8, 8).with(prompt: "abcdefghij", cursor: 9)
   try Test.eq(App.update(long, up()).model.cursor, 3)
-  Test.eq(App.update(long.with(cursor: 5), down()).model.cursor, 10)
+  try Test.eq(App.update(long.with(cursor: 5), down()).model.cursor, 10)
+  # On a screen 1 or 2 columns wide each character is a row.
+  for width in [1, 2]
+    narrow = model_of(width, 8).with(prompt: "abc", cursor: 1)
+    try Test.eq([App.update(narrow, up()).model.cursor, App.update(narrow, down()).model.cursor], [0, 2])
+  end
+
+  # A wide character takes two columns: a column inside it goes to its start.
+  wide = model_of(40, 8).with(prompt: "中文字\nab", cursor: 5)
+  try Test.eq([App.update(wide, up()).model.cursor, App.update(wide.with(cursor: 6), up()).model.cursor], [0, 1])
+  emoji = model_of(40, 8).with(prompt: "#{String.from_code(0x1F600)}x\nabc", cursor: 6)
+  Test.eq(App.update(emoji, up()).model.cursor, 2)
 end
 
+# Up on an empty prompt goes back through the prompts sent, Down comes forward to an empty prompt; a large paste is
+# one token that the send puts back.
 def test_up_recalls_prompts_and_a_large_paste_is_one_token() -> Result[Void]
   model = model_of(40, 8).with(id: "s1")
   for text in ["first", "/help"]
@@ -780,6 +835,24 @@ def test_the_command_list_gives_way_to_an_approval_and_to_esc() -> Result[Void]
   Test.eq(App.update(closed, escape()).model.stopping, true)
 end
 
+# Alt+y (or Escape and y read together) on a focused approval panel answers nothing and types nothing; y allows.
+def test_alt_y_does_not_answer_an_approval() -> Result[Void]
+  request = Protocol.ApprovalRequested(
+    approval_id: "a1",
+    call_id: "c1",
+    tool: "write_file",
+    preview: "x.txt",
+    detail: "",
+  )
+
+  panel = Approvals.requested(Approvals.Panel(guard_ms: 0), request, 0).with(focused: true)
+  asked = model_of(80, 20).with(id: "s1", turn: true, approvals: panel)
+  alt = App.update(asked, App.Msg.Key(TUI.Event.Char("y", TUI.Mods(alt: true))))
+  try Test.eq([alt.model.approvals.answering.none?, alt.cmds.empty?, alt.model.prompt == ""], [true, true, true])
+  plain = App.update(asked, key_char("y"))
+  Test.eq([plain.model.approvals.answering, some("#{plain.cmds.size}")], [some("a1"), some("1")])
+end
+
 def model_of(width: Int, height: Int) -> App.Model
   options = Args.Options(
     state_dir: none,
@@ -939,6 +1012,10 @@ def backspace() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Backspace, TUI.Mo
 def down() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))
 
 def up() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Up, TUI.Mods()))
+
+def alt_left() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Left, TUI.Mods(alt: true)))
+
+def alt_right() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Right, TUI.Mods(alt: true)))
 
 def ctrl(c: String) -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Ctrl(c), TUI.Mods()))
 

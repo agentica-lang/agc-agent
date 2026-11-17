@@ -47,7 +47,7 @@ end
 ## The key goes only into the command that sends it; the model keeps no copy.
 def on_secret_key(app: State.Model, name: String, event: TUI.Event) -> State.Model
   case event
-    TUI.Event.Char(char, _) -> app.with(secret: app.secret + char)
+    TUI.Event.Char(char, mods) if not mods.alt -> app.with(secret: app.secret + char)
     TUI.Event.Paste(text) -> app.with(secret: app.secret + Prompt.pasted(text).strip)
     TUI.Event.Key(TUI.Key.Backspace, _) ->
       app.with(secret: app.secret.slice(0, [app.secret.length - 1, 0].max.unwrap!))
