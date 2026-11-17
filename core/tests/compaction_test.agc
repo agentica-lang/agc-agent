@@ -297,14 +297,10 @@ def test_a_fold_on_anthropic_drops_the_thinking_of_the_kept_messages() -> Result
   try Test.eq(folded.take(1), history.take(1))
   kept = Compaction.apply(history, span.with(summary: "S"))
   try Test.eq(kept.drop(kept.size - 2), history.drop(history.size - 2))
-  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/finn-fold-#{Random.int(0, 999_999_999)}"
-  try Dir.mkdir(dir)
-  file = try Store.create(dir, Store.Header(id: "s", cwd: "/", model: "m", created_ms: 0))
+  file = try Store.create(Store.memory(), "/memory", Store.Header(id: "s", cwd: "/", model: "m", created_ms: 0))
   try Store.append_messages(file, history)
   try Store.append_compaction(file, stripped, [])
-  saved = Store.load(file)
-  _ = Path.remove(dir)
-  Test.eq((try saved).history, folded)
+  Test.eq((try Store.load(file)).history, folded)
 end
 
 # A summary that fails, comes back empty or is cut at the token limit is an `error` event; the turn goes on with its

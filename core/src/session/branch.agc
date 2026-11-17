@@ -37,7 +37,7 @@ def copied(state: Session.State, entry: Optional[Int], to: Session.Copying) -> R
   file = try Store.copy(state.setup.file, to.dir, to.header, point.leaf)
   settings = Store.append_settings(file, Session.choice(state.setup))
   if not settings.ok?
-    _ = Path.remove(file)
+    _ = Store.remove(file)
   end
 
   try settings

@@ -8,10 +8,14 @@
 ## at the last record. The event ids, the settings and the cost are the whole file's.
 ##
 ## The file keeps the events and messages in plain text, tool output and file contents included, until it is removed.
+## The files are kept by a `Storage.Port`: `disk` in the data folder, `memory` for tests.
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Compaction from "../agent/compaction"
+import Storage from "storage"
+
+export Storage.Port
 
 EXTENSION = ".jsonl"
 ## Beside a session file: the model of its last `settings` record, so a list of the sessions need not read the file.
@@ -133,12 +137,27 @@ struct Folded
   at: Int
 end
 
+## A session file: its path in the port that keeps it.
+struct Ref
+  port: Storage.Port
+  path: String
+end
+
+def disk() -> Storage.Port = Storage.disk(MAX_LINE_BYTES, MAX_WRITE_BYTES)
+
+def memory() -> Storage.Port = Storage.memory(MAX_LINE_BYTES)
+
 def file_of(dir: String, id: String) -> String = "#{dir}/#{id}#{EXTENSION}"
 
-## Creates the file of a new session (0600); its path.
-def create(dir: String, header: Header) -> Result[String]
-  path = file_of(dir, header.id)
-  handle = try File.open(path, "create_private")
+## The session files of `dir`, by their extension.
+def all(port: Storage.Port, dir: String) -> Result[List[Ref]]
+  names = (try port.names.call(dir)).select { |name| name.end_with?(EXTENSION) }
+  ok(names.map { |name| Ref(port: port, path: "#{dir}/#{name}") })
+end
+
+## Creates the file of a new session (0600).
+def create(port: Storage.Port, dir: String, header: Header) -> Result[Ref]
+  file = Ref(port: port, path: file_of(dir, header.id))
   fields = {
     "type": JSON.from("session"),
     "id": JSON.from(header.id),
@@ -150,23 +169,31 @@ def create(dir: String, header: Header) -> Result[String]
     "provider": JSON.from(header.provider),
   }
 
-  written = File.write(handle, try line(fields))
-  try File.close(handle)
-  try written
-  ok(path)
+  try port.create.call(file.path, try line(fields))
+  ok(file)
 end
 
-def append_event(path: String, logged: Logged) -> Result[Void]
+## Removes a session file and the file beside it.
+def remove(file: Ref) -> Result[Void]
+  try file.port.remove.call(file.path)
+  _ = file.port.remove.call(settings_file(file.path))
+  ok()
+end
+
+## The size of the file and its time of change.
+def changed(file: Ref) -> Result[Storage.Stat] = file.port.stat.call(file.path)
+
+def append_event(file: Ref, logged: Logged) -> Result[Void]
   data = try JSON.parse(Protocol.encode_event(logged.event))
   name = Protocol.event_name(logged.event)
-  append(path, {"type": JSON.from("event"), "id": JSON.from(logged.id), "name": JSON.from(name), "data": data})
+  append(file, {"type": JSON.from("event"), "id": JSON.from(logged.id), "name": JSON.from(name), "data": data})
 end
 
 ## The message that starts a turn, the first of the turn's history; `typed` is what is shown when not empty (the text
 ## without what extensions put before it) and `marks` the names they noted. With `shells`, the model's message starts
 ## with the output of the commands since the last user message, which their `shell_finished` events hold.
 def append_user(
-  path: String,
+  file: Ref,
   text: String,
   typed: String = "",
   marks: List[String] = [],
@@ -181,32 +208,32 @@ def append_user(
     fields = fields.put("shells", JSON.from(true))
   end
 
-  append(path, with_marks(fields, marks))
+  append(file, with_marks(fields, marks))
 end
 
 ## A message sent during a turn, once the turn read it: shown as a user message that starts no turn. The history has it
 ## in the `messages` record that follows.
-def append_queued(path: String, text: String) -> Result[Void]
-  append(path, {"type": JSON.from("queued"), "text": JSON.from(text)})
+def append_queued(file: Ref, text: String) -> Result[Void]
+  append(file, {"type": JSON.from("queued"), "text": JSON.from(text)})
 end
 
 ## The messages a round added to the history, in one record so that a call never goes without its result, with the
 ## names extensions noted in the round.
-def append_messages(path: String, messages: List[LLM.Message], marks: List[String] = []) -> Result[Void]
+def append_messages(file: Ref, messages: List[LLM.Message], marks: List[String] = []) -> Result[Void]
   fields = {"type": JSON.from("messages"), "messages": JSON.array(messages.map { |m| encode_message(m) })}
-  append(path, with_marks(fields, marks))
+  append(file, with_marks(fields, marks))
 end
 
 ## Ids up to `until` may go to events that are not saved (deltas), so a restart starts after them. A saved event
 ## after it ends the reservation.
-def append_reserved(path: String, until: Int) -> Result[Void]
-  append(path, {"type": JSON.from("ids"), "until": JSON.from(until)})
+def append_reserved(file: Ref, until: Int) -> Result[Void]
+  append(file, {"type": JSON.from("ids"), "until": JSON.from(until)})
 end
 
 ## A compaction of the history as the records before it left it, with the answer texts of the running turn so far.
-def append_compaction(path: String, compaction: Compaction.Compaction, answer: List[String]) -> Result[Void]
+def append_compaction(file: Ref, compaction: Compaction.Compaction, answer: List[String]) -> Result[Void]
   append(
-    path,
+    file,
     {
       "type": JSON.from("compaction"),
       "from": JSON.from(compaction.from),
@@ -219,65 +246,55 @@ def append_compaction(path: String, compaction: Compaction.Compaction, answer: L
 end
 
 ## From now until the next compaction the session's Anthropic requests go without thinking blocks.
-def append_stripped(path: String) -> Result[Void] = append(path, {"type": JSON.from("stripped")})
+def append_stripped(file: Ref) -> Result[Void] = append(file, {"type": JSON.from("stripped")})
 
 ## The model and thinking level the session uses from now on, also in the file beside it (0600, replaced whole). The
 ## record goes first: the session restores from it, and the side file only feeds the list of the sessions, so a side
 ## file that cannot be written leaves the list with the model before while the change holds.
-def append_settings(path: String, settings: Choice) -> Result[Void]
+def append_settings(file: Ref, settings: Choice) -> Result[Void]
   chosen = {
     "model": JSON.from(settings.model),
     "provider": JSON.from(settings.provider),
     "api": JSON.from(settings.api),
   }
 
-  try append(path, chosen.put("type", JSON.from("settings")).put("effort", JSON.from(settings.effort)))
-  _ = write_side(settings_file(path), JSON.encode(JSON.object(chosen)))
+  try append(file, chosen.put("type", JSON.from("settings")).put("effort", JSON.from(settings.effort)))
+  _ = file.port.replace.call(settings_file(file.path), JSON.encode(JSON.object(chosen)))
   ok()
 end
 
-def write_side(side: String, text: String) -> Result[Void]
-  return File.replace(side, text.bytes) if File.stat(side).ok?
-
-  temporary = "#{side}.tmp"
-  _ = Path.remove(temporary)
-  handle = try File.open(temporary, "create_private")
-  written = File.write(handle, text)
-  try File.close(handle)
-  try written
-  Path.rename(temporary, side)
-end
-
-def settings_file(path: String) -> String = "#{path.slice(0, path.length - EXTENSION.length)}#{SETTINGS_EXTENSION}"
-
 ## The answer of a turn, as a client draws it.
-def append_answer(path: String, text: String) -> Result[Void]
-  append(path, {"type": JSON.from("answer"), "text": JSON.from(text)})
+def append_answer(file: Ref, text: String) -> Result[Void]
+  append(file, {"type": JSON.from("answer"), "text": JSON.from(text)})
 end
 
-def reopen(path: String) -> Result[Void] = write(path, "\n")
+def reopen(file: Ref) -> Result[Void] = write(file, "\n")
 
 ## From now on the records follow entry `leaf`, a `Point` of the file. The branch takes event id `until`, so a client
 ## that saw an id before it gets `resync`, after a restart too.
-def append_branch(path: String, leaf: Int, until: Int) -> Result[Void]
+def append_branch(file: Ref, leaf: Int, until: Int) -> Result[Void]
   branch = try line({"type": JSON.from("branch"), "parent": JSON.from(leaf)})
-  write(path, branch + try line({"type": JSON.from("ids"), "until": JSON.from(until)}))
+  write(file, branch + try line({"type": JSON.from("ids"), "until": JSON.from(until)}))
 end
 
 ## The tree of the file, reading only the lines after those `known` read when the file grew since: the session's
 ## file only grows, and only its session writes it. A last line with no newline yet is left for a later read.
-def entries(path: String, known: Optional[Entries] = none) -> Result[Entries]
-  size = (try File.stat(path)).size_bytes
+def entries(file: Ref, known: Optional[Entries] = none) -> Result[Entries]
   for old in option_list(known)
+    size = (try changed(file)).size
     return ok(old) if old.size == size
-    if old.size < size
-      added = ended(try File.foreach(path, MAX_LINE_BYTES).drop(old.lines).to_a, size - old.size)
+  end
+
+  read = try file.port.read.call(file.path)
+  for old in option_list(known)
+    if old.size < read.size
+      added = ended(read.lines.drop(old.lines), read.size - old.size)
       return ok(extended(old, added, false).with(size: old.size + bytes_of(added)))
     end
   end
 
-  lines = ended(try File.foreach(path, MAX_LINE_BYTES).to_a, size)
-  ok((try entries_of(path, lines, false)).with(size: bytes_of(lines)))
+  lines = ended(read.lines, read.size)
+  ok((try entries_of(file.path, lines, false)).with(size: bytes_of(lines)))
 end
 
 ## The user messages of every branch.
@@ -299,16 +316,16 @@ def point(entries: Entries, entry: Optional[Int]) -> Result[Point]
   error("no turn starts or ends at entry #{at}", kind: Protocol.KIND_INVALID)
 end
 
-## A new session file of `header` (0600) with the records of the branch that ends at `leaf`; its path. A copy that
+## A new session file of `header` (0600) with the records of the branch that ends at `leaf`. A copy that
 ## fails is removed.
-def copy(path: String, dir: String, header: Header, leaf: Int) -> Result[String]
-  entries = try read_entries(path)
+def copy(file: Ref, dir: String, header: Header, leaf: Int) -> Result[Ref]
+  entries = try read_entries(file)
   return error("no entry #{leaf}", kind: Protocol.KIND_INVALID) if not entry?(entries, leaf)
 
-  created = try create(dir, header)
+  created = try create(file.port, dir, header)
   written = write(created, branch(entries, leaf).map { |record| "#{record.line}\n" }.join(""))
   if not written.ok?
-    _ = Path.remove(created)
+    _ = created.port.remove.call(created.path)
   end
 
   try written
@@ -317,10 +334,9 @@ end
 
 ## The model from the file beside the session's, and the first user message from the first TITLE_LINES lines in the
 ## first TITLE_BYTES bytes (none when its line does not end in them).
-def listing(path: String) -> Result[Listing]
-  start = try File.open(path, "read") do |handle| File.read_bytes(handle, TITLE_BYTES) end
-  title = first_user(decoded(start))
-  side = side_settings(path)
+def listing(file: Ref) -> Result[Listing]
+  title = first_user(decoded(try file.port.head.call(file.path, TITLE_BYTES)))
+  side = side_settings(file)
   ok(
     Listing(
       model: side_field(side, "model"),
@@ -332,15 +348,12 @@ def listing(path: String) -> Result[Listing]
 end
 
 ## The first line of a file: the session, without reading the rest.
-def header(path: String) -> Result[Header]
-  File.open(path, "read") do |handle| decode_header(try JSON.parse(try File.read_line(handle))) end
-end
+def header(file: Ref) -> Result[Header] = decode_header(try JSON.parse(try file.port.first_line.call(file.path)))
 
 ## The branch that ends at `leaf`, a `Point` of the file; the current one when none.
-def load(path: String, leaf: Optional[Int] = none) -> Result[Saved]
-  lines = try File.foreach(path, MAX_LINE_BYTES).to_a
-  size = (try File.stat(path)).size_bytes
-  entries = try entries_of(path, lines, true)
+def load(file: Ref, leaf: Optional[Int] = none) -> Result[Saved]
+  read = try file.port.read.call(file.path)
+  entries = try entries_of(file.path, read.lines, true)
   end_at = leaf.unwrap_or(entries.leaf)
   return error("no entry #{end_at}", kind: Protocol.KIND_INVALID) if not entry?(entries, end_at)
 
@@ -350,7 +363,7 @@ def load(path: String, leaf: Optional[Int] = none) -> Result[Saved]
     history: [],
     shown: [],
     skipped: entries.skipped,
-    open_end: size != lines.map { |text| text.bytesize + 1 }.sum,
+    open_end: read.size != bytes_of(read.lines),
   )
 
   for record in branch(entries, end_at)
@@ -406,7 +419,9 @@ struct Settings
 end
 
 # Every record of the file with its JSON and its line, for a load or a copy.
-def read_entries(path: String) -> Result[Entries] = entries_of(path, try File.foreach(path, MAX_LINE_BYTES).to_a, true)
+def read_entries(file: Ref) -> Result[Entries]
+  entries_of(file.path, (try file.port.read.call(file.path)).lines, true)
+end
 
 # A line that does not parse, has no `type` or is a branch to an entry that is not before it is skipped. Without
 # `whole`, a record keeps only its `text`.
@@ -719,20 +734,9 @@ def line(fields: Map[String, JSON.Value]) -> Result[String]
   ok(text)
 end
 
-def append(path: String, fields: Map[String, JSON.Value]) -> Result[Void] = write(path, try line(fields))
+def append(file: Ref, fields: Map[String, JSON.Value]) -> Result[Void] = write(file, try line(fields))
 
-def write(path: String, text: String) -> Result[Void]
-  bytes = text.bytes
-  File.open(path, "append") do |handle|
-    start = 0
-    while start < bytes.size
-      try File.write_bytes(handle, bytes.drop(start).take(MAX_WRITE_BYTES))
-      start = start + MAX_WRITE_BYTES
-    end
-
-    ok()
-  end
-end
+def write(file: Ref, text: String) -> Result[Void] = file.port.append.call(file.path, text)
 
 def field(json: JSON.Value, key: String) -> Result[String] = JSON.string(try JSON.get(json, key))
 
@@ -986,9 +990,11 @@ def option_list[T](value: Optional[T]) -> List[T]
 end
 
 # An empty object when the file is missing or broken.
-def side_settings(path: String) -> JSON.Value
-  JSON.parse(File.read_text(settings_file(path)).unwrap_or("")).unwrap_or(JSON.object({}))
+def side_settings(file: Ref) -> JSON.Value
+  JSON.parse(file.port.read_text.call(settings_file(file.path)).unwrap_or("")).unwrap_or(JSON.object({}))
 end
+
+def settings_file(path: String) -> String = "#{path.slice(0, path.length - EXTENSION.length)}#{SETTINGS_EXTENSION}"
 
 def side_field(side: JSON.Value, name: String) -> Optional[String]
   case field(side, name)
