@@ -32,7 +32,15 @@ end
 
 ## Run it
 
-The program depends on the `core` package of the agc-agent repository, as `examples/extension/agentica.toml` does. Outside the repository's workspace, run `agentica install` in its folder first, to fetch `core` and what it depends on. That needs the tag the dependency names (`core-0.0.1`), and the repository has no tags yet: until it does, keep your program in a clone, as a member of the workspace (`agentica.toml` at the root). Then start it in place of the server:
+The program depends on the `core` package of the agc-agent repository by its tag (`core-0.0.1`), as `examples/extension/agentica.toml` does. To start one outside the repository:
+
+1. Copy `examples/extension` to a folder of your own.
+2. Remove its `agentica.lock`: it lists `core` as a member of the repository's workspace, so `agentica install` refuses it there.
+3. Run `agentica update` in the folder. It fetches `core` and the packages it depends on, by their tags, and writes a new lock.
+
+While the repository is private, git needs your credentials for github.com (a credential helper or SSH) to fetch them.
+
+Then start the program in place of the server:
 
 ```sh
 agentica my_finn/main.agc        # the server, in the foreground
