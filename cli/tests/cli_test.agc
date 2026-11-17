@@ -686,7 +686,8 @@ def test_session_commands() -> Result[Void]
   end
 end
 
-# /profile lists the profiles with the session's marked; /profile NAME changes it and shows the server's warnings.
+# /profile lists the profiles with the session's marked; /profile NAME changes it and shows the server's warnings, or
+# why it cannot now.
 def test_the_profile_command() -> Result[Void]
   warned = Protocol.Profile(name: "ro", source: "user", warnings: ["profile ro: no tool is named gerp"])
   session = Protocol.Session(
@@ -698,6 +699,7 @@ def test_the_profile_command() -> Result[Void]
     turn_from_event_id: none,
     pending_approvals: [],
     history: [],
+    provider: "local",
     profile: some(warned),
   )
 
@@ -706,6 +708,7 @@ def test_the_profile_command() -> Result[Void]
   )
 
   snapshot = Fake.Reply(body: Protocol.encode_session(session))
+  busy = Protocol.Failure(kind: Protocol.KIND_SESSION_BUSY, message: "a turn is running: change the profile after it")
   routes = [
     Routes.created(),
     Routes.held_events(),
@@ -715,21 +718,31 @@ def test_the_profile_command() -> Result[Void]
       path: Protocol.profiles_path("s1"),
       replies: [Fake.Reply(body: Protocol.encode_profile_list(listed))],
     ),
-    Fake.Route(method: "PATCH", path: Protocol.session_path("s1"), replies: [Fake.Reply(body: "{}")]),
+    Fake.Route(
+      method: "PATCH",
+      path: Protocol.session_path("s1"),
+      replies: [Fake.Reply(status: 409, body: Protocol.encode_failure(busy)), Fake.Reply(body: "{}")],
+    ),
   ]
 
   Driver.within(routes) do |rig|
     cli = try Driver.start(rig.dir, PLAIN)
     try Driver.read_until(cli, "[session s1]")
+    try Driver.say(cli, "/profile ro")
+    try Driver.read_until(cli, "a turn is running: change the profile after it")
     try Driver.say(cli, "/profile")
     try Driver.read_until(cli, "* ro (user)")
     try Driver.say(cli, "/profile ro")
-    try Driver.read_until(cli, "[profile ro from the next turn: m]")
+    try Driver.read_until(cli, "[profile ro from the next turn: local/m]")
     try Driver.read_until(cli, "[warning: profile ro: no tool is named gerp]")
     try Driver.say(cli, "/quit")
     _ = try Driver.finish(cli)
-    patch = try Fake.request(rig.fake, "PATCH", Protocol.session_path("s1"))
-    Test.eq(Protocol.decode_update_session(patch.body), ok(Protocol.UpdateSession(profile: some("ro"))))
+    for _i in 1..2
+      patch = try Fake.request(rig.fake, "PATCH", Protocol.session_path("s1"))
+      try Test.eq(Protocol.decode_update_session(patch.body), ok(Protocol.UpdateSession(profile: some("ro"))))
+    end
+
+    ok()
   end
 end
 

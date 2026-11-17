@@ -1,6 +1,9 @@
+import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Profiles from "../src/config/profiles"
-import Profile from "../src/session/profile"
+import SessionActor from "../src/session/actor"
+import Store from "../src/session/store"
+import Tools from "../src/tools/tools"
 import Fake from "support/fake_llm"
 import H from "support/harness"
 
@@ -87,16 +90,18 @@ def test_an_untrusted_project_profile_is_not_read() -> Result[Void]
     try H.using(H.Setup(replies: [], skills: trusted)) do |h|
       try write("#{h.work}/.finn/profiles/mine.md", "---\ndescription: mine\n---\n")
       try Test.eq(H.new_session_in(h, h.work, profile: some("mine")).ok?, trusted)
-      Test.eq(H.new_session_in(h, h.work, profile: some("nope")).ok?, false)
+      try Test.eq(H.new_session_in(h, h.work, profile: some("nope")).ok?, false)
+      id = try H.new_session(h)
+      listed = try Protocol.decode_profile_list((try H.get(h, Protocol.profiles_path(id))).text)
+      Test.eq(listed.profiles.any? { |p| p.name == "mine" }, trusted)
     end
   end
 
   ok()
 end
 
-# A stray file is skipped with a warning and a broken one fails only its own name; a BOM is fine, an
-# empty `tools_allow`
-# and a project file that replaces a profile warn, and a profile only an untrusted project has says so.
+# A stray file is skipped with a warning and a broken one fails only its own name; a BOM is fine, an empty
+# `tools_allow` and a project file that replaces a profile warn, and a profile only an untrusted project has says so.
 def test_a_stray_or_broken_file_fails_only_its_own_name() -> Result[Void]
   base = try fresh()
   user = "#{base}/user"
@@ -146,7 +151,8 @@ def test_a_session_whose_profile_does_not_load_fails_closed() -> Result[Void]
         try Test.eq(profile.map { |p| [p.source, p.warnings.size.to_s] }, some(["", "1"]))
       end
 
-      Test.eq(Profile.shows_of(error("gone")).call("read_file"), false)
+      try Test.eq(try patched(r, ids[0], "build"), 200)
+      Test.eq((try H.send(r, ids[0], "Hi.")).status, 202)
     end
   end
 end
@@ -244,6 +250,74 @@ def test_a_profile_brings_its_model_and_thinking() -> Result[Void]
 
     Test.assert(listed.profiles[0].warnings.join(" ").include?("thinking"), listed.profiles[0].warnings.join(" "))
   end
+end
+
+# A profile that does not load shows no tool and refuses turns; a good one after it clears the refusal.
+def test_a_good_profile_clears_a_refusal() -> Result[Void]
+  loaded = Profiles.Loaded(profiles: Profiles.builtins())
+  broken = SessionActor.applied(try bare_setup(), loaded, "nope")
+  try Test.eq([broken.shows.unwrap!.call("read_file"), broken.profile_refused.empty?], [false, false])
+  good = SessionActor.applied(broken, loaded, "plan")
+  shows = good.shows.unwrap!
+  checks = [shows.call("read_file"), shows.call("bash"), good.profile_refused.empty?, good.system.include?("planning")]
+  Test.eq(checks, [true, false, true, true])
+end
+
+# A profile is changed between turns: while a turn runs, the change is refused as busy.
+def test_a_profile_change_waits_for_the_turn() -> Result[Void]
+  H.using(H.Setup(replies: ["text.sse@hold"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hi.")
+    a = try H.until(a, Protocol.EventKind.TurnStarted)
+    try Test.eq(try patched(h, id, "plan"), 409)
+    H.release(h)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(try patched(h, id, "plan"), 200)
+    Test.eq((try H.session(h, id)).profile.map { |p| p.name }, some("plan"))
+  end
+end
+
+# A model or provider of the request wins over the profile's; `thinking: default` gives the model's own level; a
+# project's profile keeps the session's provider, its whole `model` a name there.
+def test_what_a_profile_model_gives_way_to() -> Result[Void]
+  setup = H.Setup(replies: [], profiles: true, providers: ["other"], skills: true)
+  H.using(setup) do |h|
+    dir = "#{h.base}/config/finn/profiles"
+    try write("#{dir}/fast.md", "---\nmodel: other/small\nthinking: high\n---\n")
+    try write("#{dir}/plain.md", "---\nthinking: default\n---\n")
+    try write("#{h.work}/.finn/profiles/proj.md", "---\nmodel: other/small\n---\n")
+    named = try H.session(h, try H.new_session_in(h, h.work, profile: some("fast"), model: some("big")))
+    try Test.eq([named.provider, named.model, named.effort.unwrap_or("")], ["other", "big", "high"])
+    own = try H.session(h, try H.new_session_in(h, h.work, profile: some("fast"), provider: some(h.provider)))
+    try Test.eq([own.provider == h.provider, own.model == "small"], [true, false])
+    project = try H.session(h, try H.new_session_in(h, h.work, profile: some("proj")))
+    try Test.eq([project.provider == h.provider, project.model == "other/small"], [true, true])
+    try Test.eq(try patched(h, named.id, "plain"), 200)
+    Test.eq((try H.session(h, named.id)).effort, none)
+  end
+end
+
+def bare_setup() -> Result[SessionActor.Setup]
+  nothing: List[LLM.Model] = []
+  provider = LLM.Provider(name: "none", stream: ->(_r: LLM.Request) { error("no model") }, models: -> { ok(nothing) })
+  dir = try fresh()
+  ctx = try Tools.context(dir, ->(_name: String) { error("not set") })
+  ok(
+    SessionActor.Setup(
+      id: "s",
+      cwd: dir,
+      model: "m",
+      provider: provider,
+      system: "base",
+      base_system: "base",
+      ctx: ctx,
+      keep_events: 10,
+      approval_timeout_ms: 1000,
+      file: Store.Ref(port: Store.memory([]), path: "#{dir}/s.jsonl"),
+    ),
+  )
 end
 
 def patched(h: H.Harness, id: String, profile: String) -> Result[Int]

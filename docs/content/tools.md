@@ -27,7 +27,7 @@ The model sees at most 30000 characters of a tool's output; the rest is cut, wit
 
 ## Profiles
 
-A profile decides which tools the model of a session sees. Pick one for a new session with `--profile NAME`, or change it with `/profile NAME` from the next turn on (`/profile` alone lists them). The session keeps its profile across a restart, a `/tree` move and a fork. There are two built in:
+A profile decides which tools the model of a session sees. Pick one for a new session with `--profile NAME`, or change it with `/profile NAME` between turns (`/profile` alone lists them; while a turn runs the change is refused). The session keeps its profile across a restart, a `/tree` move and a fork. There are two built in:
 
 - `build`, the default: every tool;
 - `plan`: `read_file`, `glob`, `grep`, `todo_write` and `activate_skill`, with a note in the system prompt to change nothing. No `bash`, no writes, no MCP tools.
@@ -46,10 +46,10 @@ Plan the change. Do not edit files.
 
 - `description` says what the profile is for.
 - `tools_allow` shows only the tools it names, and `tools_deny` all but those; set one of them, or neither for every tool. A `*` matches any text, so `mcp__github__*` covers one MCP server. An empty `tools_allow` shows no tool, with a warning.
-- `model` (`[PROVIDER/]NAME`) and `thinking` (`low`, `medium`, `high` or `default`) change the session's model and thinking level when the profile is chosen; a `--model`, `--provider` or `/model` given then wins, and a later profile without them keeps the session's.
+- `model` (`[PROVIDER/]NAME`) and `thinking` (`low`, `medium`, `high` or `default`) change the session's model and thinking level when the profile is chosen; a `--model`, `--provider` or `/model` given then wins, and a later profile without them keeps the session's. A project's profile stays on the session's provider: its whole `model` is a model name there.
 - The text after the front matter goes after the system prompt.
 
-A file that does not load (an unknown key, both lists) fails only its own name: choosing it is an error with the file and the key, and the server warns about it when it starts. A name in a list that no tool has is a warning the clients show. A saved session whose profile is gone or broken stays closed: it shows no tool and refuses its turns until the file loads again.
+A file that does not load (an unknown key, both lists) fails only its own name: choosing it is an error with the file and the key, and the server warns about it when it starts. A name in a list that no tool has is a warning the clients show. A saved session whose profile is gone or broken stays closed: it shows no tool and refuses its turns. It opens again with `/profile NAME`, or on a restart once the file is back and loads.
 
 A profile only hides tools from the model: a call to a hidden one is refused, and the [approval rules](security.md) still decide on the calls of the tools it shows. A profile never allows what a rule denies. A `!command` you type is yours: a profile does not limit it.
 
