@@ -247,7 +247,7 @@ end
 def test_session_allows_keep_the_deny_rules() -> Result[Void]
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
   rules = try Approval.parse_rules(["deny bash(rm -rf *)", "deny bash(git push*)"])
-  always = ["rm *", "git push *", "ls *", "du *"].map { |p|
+  always = ["rm *", "git push *", "ls *", "df *"].map { |p|
     Approval.Rule(action: Tools.Verdict.Allow, tool: "bash", pattern: p)
   }
 
@@ -260,7 +260,7 @@ def test_session_allows_keep_the_deny_rules() -> Result[Void]
 
   refused = ["ls; git status", "ls $(id)", "ls && rm -rf x"]
   try Test.eq(refused.select { |c| Permissions.allows?(answers, rules, root, "bash", c) }, [])
-  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "ls -la | du"), true)
+  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "ls -la | df"), true)
   Test.eq(Permissions.allows?(whole, rules, root, "bash", "ls -la"), true)
 end
 

@@ -92,14 +92,15 @@ def test_always_keeps_the_name_of_a_plain_program_only() -> Result[Void]
   try Test.eq(always.call("ls 'foo' \"bar\""), ["ls *"])
   try Test.eq(always.call("{ ls x; } > f"), ["exact ls x"])
   try Test.eq(always.call("head ~/.ssh/x"), ["#{System.env("HOME").unwrap_or("")}/.ssh/*", "exact head ~/.ssh/x"])
-  try Test.eq(always.call("LANG=C ls -la | du -s"), ["exact LANG=C ls -la", "du *"])
+  try Test.eq(always.call("LANG=C ls -la | df -h"), ["exact LANG=C ls -la", "df *"])
   try Test.eq(always.call("cd sub && ls x"), ["ls *"])
   try Test.eq(always.call("ls $(pwd)"), ["exact ls $(pwd)", "pwd *"])
   for command in [
     "git", "make", "make all", "npm install", "docker run x", "git grep x", "poetry run x", "git status --short",
     "echo hi > f", "cat <<EOF\nx\nEOF", "git $X", "echo \"$HOME\"", "sudo rm x", "env A=1 make", "xargs rm",
     "export A=1", "FOO=1 rm x", ">log rm x", "rm=1 rm x", "ls*", "exec ls", ". x.sh", "find . -exec rm {} +",
-    "awk 1 x", "python x.py", "tree -o f", "ps eww", "grep x y", "grep -r foo", "cat x", "wc -l x", "unknown x",
+    "awk 1 x", "python x.py", "tree -o f", "ps eww", "grep x y", "grep -r foo", "cat x", "wc -l x",
+    "du --files0-from=.env x", "unknown x",
   ]
     try Test.eq(always.call(command), ["exact #{command}"])
   end
@@ -121,15 +122,15 @@ end
 def test_an_always_answer_allows_the_prefix_of_each_command() -> Result[Void]
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
   rules = try Approval.parse_rules(["ask bash(*)", "deny bash(ls --evil*)"])
-  allows = Permissions.answered(Permissions.Allows(), "allow_prefix", root, "bash", "ls -la | du -s")
+  allows = Permissions.answered(Permissions.Allows(), "allow_prefix", root, "bash", "ls -la | df -h")
   tried = [
-    "ls x", "ls -a && du", "ls \"x\" y", "ls x; rm x", "git push", "ls --evil", "echo hi", "ls x >> ~/.bashrc",
-    "du $(rm x)", "ls `x`", "ls \"$x\"", "{ ls x; } >> f", "(ls x) > f", "ls x | du > f",
+    "ls x", "ls -a && df", "ls \"x\" y", "ls x; rm x", "git push", "ls --evil", "echo hi", "ls x >> ~/.bashrc",
+    "df $(rm x)", "ls `x`", "ls \"$x\"", "{ ls x; } >> f", "(ls x) > f", "ls x | df > f",
     "for i in 1; do ls x; done > f",
   ]
 
   allowed = tried.select { |c| Permissions.allows?(allows, rules, root, "bash", c) }
-  try Test.eq(allowed, ["ls x", "ls -a && du", "ls \"x\" y"])
+  try Test.eq(allowed, ["ls x", "ls -a && df", "ls \"x\" y"])
   # An exact command is kept as it is, not as a glob: its `*` matches only itself.
   exact = Permissions.answered(Permissions.Allows(), "allow_prefix", root, "bash", "sudo rm -rf ./build/*")
   tried = ["sudo rm -rf ./build/*", "sudo rm -rf ./build/ /", "sudo rm -rf ./build/x"]
@@ -152,8 +153,14 @@ def test_the_files_a_bash_command_reads_meet_the_read_rules() -> Result[Void]
     ["Verdict.Ask", "Verdict.Ask", "Verdict.Allow", "Verdict.Ask"],
   )
 
+  for command in [
+    "grep -f .env x", "grep -- -x .env", "grep --regexp=x .env", "grep -efoo .env", "grep -rf .env x", "cp -t d .env",
+  ]
+    try Test.eq([command, verdict.call(rules, command)], [command, "Verdict.Ask"])
+  end
+
   try Test.eq(
-    ["grep -rn process.env src", "grep -e a.env x", "cp x .env", "grep x .env"].map { |c| verdict.call(denied, c) },
+    ["grep -rn process.env src", "grep -c a.env x", "cp x .env", "grep x .env"].map { |c| verdict.call(denied, c) },
     ["Verdict.Allow", "Verdict.Allow", "Verdict.Allow", "Verdict.Deny"],
   )
 

@@ -13,6 +13,9 @@ READ = "read_file"
 # Best effort: a glob, `$`, `--opt=FILE`, a link or a folder read whole is not seen.
 READS = ["cat", "head", "tail", "grep", "wc", "diff", "cp"]
 DIGITS = "0123456789"
+# The options that give `grep` its pattern, and `cp` its target folder.
+PATTERN_GIVEN = ["--regexp", "--file"]
+TARGET_GIVEN = ["-t", "--target-directory"]
 
 struct Resource
   tool: String
@@ -74,7 +77,7 @@ FILES = [
   "wc", "diff", "du",
 ]
 # The programs that no argument makes run another program or write a file.
-PREFIXES = ["echo", "ls", "pwd", "sleep", "which", "du", "df"]
+PREFIXES = ["echo", "ls", "pwd", "sleep", "which", "df"]
 PLAIN = ["command_name", "word", "string", "raw_string"]
 
 def added(found: Scan, r: Resource) -> Scan
@@ -115,30 +118,26 @@ def outside(root: String, name: String, tokens: List[String]) -> List[String]
   folders
 end
 
-# The files that a command of `READS` reads: not its options or numbers (`head -n 5`), nor the pattern of `grep` (its
-# first word or the value of `-e`), or the last argument of `cp`, which it writes.
+# The files that a command of `READS` reads: its words but options and numbers (`head -n 5`); nor the first one of
+# `grep`, its pattern, unless an option gives the pattern or `--` ends the options; nor the last one of `cp`, which it
+# writes, unless `-t` names that folder. A word too many only asks once more.
 def read_args(name: String, tokens: List[String]) -> List[String]
-  args: List[String] = []
-  pattern = name == "grep"
-  skip = false
-  for word in tokens.drop(1)
-    if skip
-      skip = false
-    elsif name == "grep" and word == "-e"
-      pattern = false
-      skip = true
-    elsif (word.start_with?("-") or word.split("").all? { |c| DIGITS.include?(c) })
-      nil
-    elsif pattern
-      pattern = false
-    else
-      args = args.push(word)
-    end
+  options = tokens.drop(1).select { |w| w.start_with?("-") }
+  given = options.any? { |o| given?(o) }
+  words = tokens.drop(1).select { |w| not w.start_with?("-") and not w.split("").all? { |c| DIGITS.include?(c) } }
+  return words.drop(1) if name == "grep" and not given and not options.include?("--")
+  if (name == "cp" and not options.any? { |o| TARGET_GIVEN.any? { |p| o.start_with?(p) } })
+    return words.take(words.size - 1)
   end
 
-  return args.take(args.size - 1) if name == "cp"
+  words
+end
 
-  args
+# Whether a `grep` option gives the pattern: `-e`, `-f` or their long names, alone or in a group of short options.
+def given?(option: String) -> Bool
+  return PATTERN_GIVEN.any? { |p| option.start_with?(p) } if option.start_with?("--")
+
+  option.include?("e") or option.include?("f")
 end
 
 # The target of `read_file` for a path: relative to `root` inside it.
