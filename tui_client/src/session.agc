@@ -73,12 +73,27 @@ def create(app: State.Model) -> Result[State.Model]
     profile: profile_name(session),
   )
 
-  ok(read_branch(subscribe(profile_notices(State.noted(made, "session #{id}"), session), 0)))
+  ok(
+    read_branch(
+      subscribe(profile_notices(State.noted(with_custom(made, id, session.cwd), "session #{id}"), session), 0),
+    ),
+  )
 end
 
 def resume(app: State.Model, id: String) -> Result[State.Model]
   session = try app.backend.session.call(id)
   ok(profile_notices(State.noted(attach(app.with(id: id), session, false), "session #{id}"), session))
+end
+
+## The slash commands of session `id` in folder `cwd`, read when the list is of another folder; none when the server
+## does not list them.
+def with_custom(app: State.Model, id: String, cwd: String) -> State.Model
+  return app if app.custom_dir == some(cwd)
+
+  case app.backend.list_commands.call(id)
+    ok(list) -> app.with(custom: Client.custom(list), custom_dir: some(cwd))
+    error(_) -> app.with(custom: [], custom_dir: some(cwd))
+  end
 end
 
 ## The warnings of the server about the session's profile, as notices.
@@ -129,6 +144,8 @@ def fresh(app: State.Model) -> State.Model
     clock_s: app.clock_s,
     effects: app.effects,
     opened: app.opened,
+    custom: app.custom,
+    custom_dir: app.custom_dir,
   )
 end
 
@@ -210,7 +227,7 @@ def attach(app: State.Model, session: Protocol.Session, skip_replay: Bool) -> St
     yolo: Yolo.attached(app.yolo, session.turn_id, not skip_replay),
   )
 
-  subscribed = read_branch(subscribe(fresh, from))
+  subscribed = read_branch(subscribe(with_custom(fresh, session.id, session.cwd), from))
   return subscribed if session.turn_id.some?
 
   # The end of the turn they waited for was not seen.

@@ -61,6 +61,7 @@ export Routes.fork_path
 export Routes.shell_path
 export Routes.files_path
 export Routes.profiles_path
+export Routes.commands_path
 export Routes.auth_path
 
 export Requests.Decision
@@ -145,6 +146,10 @@ export Replies.decode_provider_list
 export Replies.ProfileList
 export Replies.encode_profile_list
 export Replies.decode_profile_list
+export Replies.CommandInfo
+export Replies.CommandList
+export Replies.encode_command_list
+export Replies.decode_command_list
 export Replies.encode_session
 export Replies.decode_session
 export Replies.encode_session_tree

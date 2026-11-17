@@ -664,13 +664,18 @@ def test_yolo_asks_an_approval_of_a_turn_it_did_not_start() -> Result[Void]
 end
 
 # The session commands: /model and /thinking change the session, a bad level is refused before any request,
-# /resume lists the sessions and switches to the one picked, /new makes another one, and /help lists them all.
+# /resume lists the sessions and switches to the one picked, /new makes another one, and /help lists them all with
+# the session's slash commands.
 def test_session_commands() -> Result[Void]
   list = Protocol.SessionList(
     sessions: [
       Protocol.SessionSummary(id: "s1", cwd: "/work", model: "m", api: "openai"),
       Protocol.SessionSummary(id: "s2", cwd: "/other", model: "m2", api: "openai"),
     ],
+  )
+
+  custom = Protocol.CommandList(
+    commands: [Protocol.CommandInfo(name: "review", source: "user", description: "Review a change")],
   )
 
   routes = [
@@ -698,6 +703,11 @@ def test_session_commands() -> Result[Void]
     Fake.Route(method: "GET", path: Protocol.session_path("s2"), replies: [Fake.Reply(session: "session_idle.json")]),
     Fake.Route(method: "GET", path: Protocol.events_path("s2"), replies: [Fake.Reply(hold: true)]),
     Fake.Route(method: "GET", path: Protocol.events_path("s3"), replies: [Fake.Reply(hold: true)]),
+    Fake.Route(
+      method: "GET",
+      path: Protocol.commands_path("s3"),
+      replies: [Fake.Reply(body: Protocol.encode_command_list(custom))],
+    ),
   ]
 
   Driver.within(routes) do |rig|
@@ -716,7 +726,7 @@ def test_session_commands() -> Result[Void]
     try Driver.say(cli, "/new")
     try Driver.read_until(cli, "[session s3]")
     try Driver.say(cli, "/help")
-    try Driver.read_until(cli, "/quit                      leave")
+    try Driver.read_until(cli, "/review [TEXT]             Review a change")
     try Driver.say(cli, "/quit")
     done = try Driver.finish(cli)
     try Test.eq(done.code, 0)

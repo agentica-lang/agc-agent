@@ -119,9 +119,9 @@ def parse_shell(line: String) -> Optional[Protocol.RunShell]
   some(Protocol.RunShell(command: rest.strip, context: context))
 end
 
-## The lines of `/help`.
-def help() -> List[String]
-  rows = listed().flat_map do |usage|
+## The lines of `/help`, with the session's slash commands (`custom`) after the clients' own.
+def help(custom: List[Usage] = []) -> List[String]
+  rows = (listed() + custom).flat_map do |usage|
     head = "#{usage.name} #{usage.args}".strip
     line = "#{head}#{" " * [ABOUT_COLUMN - head.length, 2].max.unwrap!}#{usage.about}"
     [line] + [usage.more].select { |m| m != "" }.map { |m| "#{" " * ABOUT_COLUMN}#{m}" }
@@ -135,6 +135,18 @@ def help() -> List[String]
       "any other /name goes to the agent as a message",
     ]
   )
+end
+
+## The session's slash commands as the help and the suggestions show them; one that does not load says so.
+def custom(list: Protocol.CommandList) -> List[Usage]
+  list.commands.map do |c|
+    about = printable(c.description)
+    if c.source.empty?
+      about = "does not load: #{printable(c.warnings.join("; "))}"
+    end
+
+    Usage(name: "/#{printable(c.name)}", args: "[TEXT]", about: about)
+  end
 end
 
 ## The commands the help and the suggestions show.

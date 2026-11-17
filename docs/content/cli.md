@@ -76,7 +76,24 @@ Type them in either client:
 | `/help` | the list |
 | `/quit` | leave |
 
-Any other `/name` goes to the agent as a message, so `/name` of a [skill](skills.md) loads that skill. What `/tree`, `/fork` and `/compact` do is on [Sessions](sessions.md).
+Any other `/name` goes to the agent as a message, so `/name` of a [skill](skills.md) loads that skill, and a [slash command](#slash-commands) puts its prompt there. What `/tree`, `/fork` and `/compact` do is on [Sessions](sessions.md).
+
+## Slash commands
+
+A slash command is a prompt you keep in a file and send with `/NAME`. It is a file `NAME.md` in `~/.config/finn/commands/` (`$XDG_CONFIG_HOME/finn/commands/`), or in `.finn/commands/` of a [trusted](config.md#trusted-folders) project, which wins over yours with a warning.
+
+```markdown
+---
+description: Review a change
+---
+Review $ARGUMENTS: look for bugs first, then for missing tests.
+```
+
+- `/review src/a.agc` sends the prompt with `$ARGUMENTS` replaced by `src/a.agc`. Without `$ARGUMENTS`, the text after the name goes after the prompt, after a blank line.
+- The model gets the prompt; your history shows what you typed. The file is read again at each use.
+- NAME is lowercase letters, digits, `-` and `_`; the front matter (only `description`) is optional, and the file holds at most 64 KiB. Another file there is skipped with a warning, and a broken one fails only its own name.
+- The clients' own commands keep their names: a `model.md` is skipped. A command wins over a [skill](skills.md) of the same name, with a warning.
+- `/help` lists the session's commands, and `finn` suggests them after `/`.
 
 ## Shell commands
 

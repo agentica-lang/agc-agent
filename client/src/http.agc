@@ -107,6 +107,10 @@ def list_providers(server: Server) -> Result[Protocol.ProviderList]
   Protocol.decode_provider_list(try call(server, "GET", Protocol.PROVIDERS_PATH, ""))
 end
 
+def list_commands(server: Server, id: String) -> Result[Protocol.CommandList]
+  Protocol.decode_command_list(try call(server, "GET", Protocol.commands_path(id), ""))
+end
+
 def list_profiles(server: Server, id: String) -> Result[Protocol.ProfileList]
   Protocol.decode_profile_list(try call(server, "GET", Protocol.profiles_path(id), ""))
 end

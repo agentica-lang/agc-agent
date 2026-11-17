@@ -225,6 +225,14 @@ def test_the_profile_command_changes_the_footer() -> Result[Void]
 end
 
 # The status line names the session's profile, unless it is the built-in `build`.
+# The session's slash commands are suggested after `/` with the clients' own, and Tab completes one.
+def test_the_session_commands_are_suggested() -> Result[Void]
+  custom = [Client.Usage(name: "/review", args: "[TEXT]", about: "Review a change")]
+  typed = model_of(80, 20).with(id: "s1", custom: custom, prompt: "/rev", cursor: 4)
+  try Test.assert(rows(typed).any? { |row| row.include?("Review a change") }, rows(typed).join("\n"))
+  Test.eq(App.update(typed, tab()).model.prompt, "/review ")
+end
+
 def test_the_footer_names_the_profile() -> Result[Void]
   for profile in [
     Protocol.Profile(name: "plan", source: "built-in"),
