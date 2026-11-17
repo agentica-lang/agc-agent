@@ -37,13 +37,14 @@ One server runs per state folder: it holds a lock there, and a client that finds
 | `mcp` | the client for MCP servers, on stdio and streamable HTTP |
 | `protocol` | the commands, replies and events between the server and its clients, with JSON codecs |
 | `monty` | Python scripts in pydantic's Monty sandbox, for code mode |
+| `bash` | the simple commands of a bash line, read by tree-sitter-bash (a native module built on first use) |
 | `core` | the server: agent loop, tools, approval, sessions, extensions |
 | `client` | what the clients share: finding or starting the server, the HTTP calls, the event reader |
 | `cli` | the line-mode client |
 | `tui_client` | the full-screen client, on [agentica-tui](https://github.com/agentica-lang/agentica-tui) |
 | `examples/extension` | a program that serves `core` with its own tool, wrapper and service |
 
-`sse`, `llm`, `mcp`, `protocol`, and `monty` depend on no server or client package, so each could move to a repository of its own. `make coupling` checks these rules.
+`sse`, `llm`, `mcp`, `protocol`, `monty` and `bash` depend on no server or client package, so each could move to a repository of its own. `make coupling` checks these rules.
 
 ## For agents
 

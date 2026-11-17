@@ -10,3 +10,7 @@
 **/tests/fixtures/** -text
 # Open PRs all add lines under [Unreleased] of a CHANGELOG.md: keep both sides when merging.
 CHANGELOG.md merge=union
+# The vendored C of tree-sitter and tree-sitter-bash, and the header native-gen makes.
+bash/native/runtime/** linguist-vendored
+bash/native/grammar/** linguist-vendored -diff
+bash/native/bash_native.h linguist-generated

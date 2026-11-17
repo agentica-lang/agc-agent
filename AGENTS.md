@@ -16,6 +16,9 @@ protocol/            commands, replies and events between server and clients, wi
 monty/               Python scripts in pydantic's Monty sandbox: the pinned `monty subprocess` worker (fetched
                      with its sha256), its protobuf codec, and a fake worker that replays recorded frames
                      (`serve_fake`); monty.agc is its public module; real/ the tests on the real worker
+bash/                the simple commands of a bash line, read by tree-sitter-bash; native/ holds the vendored C
+                     (runtime/, grammar/, MIT) and the module, whose header native-gen makes (`make native-header`);
+                     bash.agc is its public module; tests/test_bash_peer.py checks it against real bash
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point, core.agc the public module (`Core.serve` with a registry
                      of extensions)
@@ -57,7 +60,8 @@ A package is added by the phase that needs it, never as an empty folder.
   below, with `rg`), `unit` (`agentica test tests` in each package; a package
   that passes no test fails), `smoke` (runs `core/main.agc`), `pty`
   (`tui_client/tests/run_pty.py`: one process per test of `test_pty.py`, the
-  client and the core compiled once), Python standard library only. `install`
+  client and the core compiled once) and `peer` (`bash/tests/test_bash_peer.py`), both Python standard library
+  only. `native-check` fails when `bash/native/bash_native.h` is stale (native-gen, cloned into `.tools/`). `install`
   fetches bond into `core/deps/` and agentica-tui into `tui_client/deps/` (gitignored); `check`,
   `smoke` and `pty` run it first.
 - `cli` tests run the client as a child process on pipes (the Makefile
