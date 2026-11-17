@@ -59,7 +59,7 @@ def key(picker: Picker, event: TUI.Event) -> Step
     TUI.Event.Key(TUI.Key.Enter, _) -> picked(picker)
     TUI.Event.Key(TUI.Key.Backspace, _) ->
       Step.Stay(picker.with(filter: picker.filter.slice(0, [picker.filter.length - 1, 0].max.unwrap!), selected: 0))
-    TUI.Event.Char(c, _) -> Step.Stay(filtered(picker, c))
+    TUI.Event.Char(c, mods) if not mods.alt -> Step.Stay(filtered(picker, c))
     TUI.Event.Paste(text) -> Step.Stay(filtered(picker, Prompt.pasted(text).replace("\n", " ").replace("\t", " ")))
     _ -> Step.Stay(picker)
   end

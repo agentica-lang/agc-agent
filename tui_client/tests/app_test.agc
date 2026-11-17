@@ -835,6 +835,24 @@ def test_the_command_list_gives_way_to_an_approval_and_to_esc() -> Result[Void]
   Test.eq(App.update(closed, escape()).model.stopping, true)
 end
 
+# Alt+y (or Escape and y read together) on a focused approval panel answers nothing and types nothing; y allows.
+def test_alt_y_does_not_answer_an_approval() -> Result[Void]
+  request = Protocol.ApprovalRequested(
+    approval_id: "a1",
+    call_id: "c1",
+    tool: "write_file",
+    preview: "x.txt",
+    detail: "",
+  )
+
+  panel = Approvals.requested(Approvals.Panel(guard_ms: 0), request, 0).with(focused: true)
+  asked = model_of(80, 20).with(id: "s1", turn: true, approvals: panel)
+  alt = App.update(asked, App.Msg.Key(TUI.Event.Char("y", TUI.Mods(alt: true))))
+  try Test.eq([alt.model.approvals.answering.none?, alt.cmds.empty?, alt.model.prompt == ""], [true, true, true])
+  plain = App.update(asked, key_char("y"))
+  Test.eq([plain.model.approvals.answering, some("#{plain.cmds.size}")], [some("a1"), some("1")])
+end
+
 def model_of(width: Int, height: Int) -> App.Model
   options = Args.Options(
     state_dir: none,

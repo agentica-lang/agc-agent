@@ -43,13 +43,14 @@ private
 
 SCROLL_STEP = 3
 
-# A typed character, a paste or Backspace replaces a selected prompt; any other key keeps it as text.
+# A typed character, a paste or Backspace replaces a selected prompt; any other key keeps it as text. An Alt key
+# types nothing.
 def unselected(app: State.Model, event: TUI.Event) -> State.Model
   return app if not app.prefilled
 
   case event
-    TUI.Event.Char(_, _), TUI.Event.Paste(_), TUI.Event.Key(TUI.Key.Backspace, _) ->
-      app.with(prompt: "", cursor: 0, prefilled: false)
+    TUI.Event.Char(_, mods) if not mods.alt -> app.with(prompt: "", cursor: 0, prefilled: false)
+    TUI.Event.Paste(_), TUI.Event.Key(TUI.Key.Backspace, _) -> app.with(prompt: "", cursor: 0, prefilled: false)
     _ -> app.with(prefilled: false)
   end
 end
@@ -101,7 +102,7 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     TUI.Event.Key(TUI.Key.PageDown, _) -> State.scrolled(app, -State.page(app))
     TUI.Event.Mouse(TUI.Mouse.WheelUp, _, _, _) -> State.scrolled(app, SCROLL_STEP)
     TUI.Event.Mouse(TUI.Mouse.WheelDown, _, _, _) -> State.scrolled(app, -SCROLL_STEP)
-    TUI.Event.Char(char, _) -> typed(app, char)
+    TUI.Event.Char(char, mods) if not mods.alt -> typed(app, char)
     TUI.Event.Paste(text) -> pasted(app, Prompt.pasted(text))
     _ -> app
   end
