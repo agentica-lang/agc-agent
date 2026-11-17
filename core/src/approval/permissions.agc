@@ -37,10 +37,19 @@ RUNNERS = [
 LAUNCHERS = [
   "env", "xargs", "sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python3", "node", "ruby", "perl", "sudo",
   "doas", "nice", "nohup", "timeout", "command", "time", "stdbuf", "chrt", "ionice", "setsid", "flock", "watch",
-  "script", "eval", "exec", "builtin",
+  "script", "eval", "exec", "builtin", "!", "if", "then", "elif", "else", "while", "until", "do",
 ]
 ## Shells whose `-c` takes a script, checked as a command of its own.
 SHELLS = ["sh", "bash", "zsh", "dash", "ksh", "fish"]
+## Programs that run code the deny rules cannot read: a shell without `-c` (a script file or its input), an
+## interpreter, and the shell's own `source`.
+INTERPRETERS = [
+  "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "busybox", "python", "python2", "python3", "perl", "ruby",
+  "node", "nodejs", "deno", "bun", "php", "lua", "luajit", "tclsh", "wish", "awk", "gawk", "mawk", "nawk", "Rscript",
+  "pwsh", "osascript", "source", ".",
+]
+## How deep a shell's `-c` script or `eval` is checked inside another: deeper cannot be cleared.
+MAX_DEPTH = 8
 ## The options of `find` whose next word is a program.
 FIND_RUNS = ["-exec", "-execdir", "-ok", "-okdir"]
 ## The longest `bash` command checked against the deny rules: a longer one cannot be cleared.
@@ -162,7 +171,7 @@ def bash_denial(rules: Approval.Rules, root: String, target: String) -> Denial
   return Denial.Clear if checks.bash.empty? and not checks.reads
   return Denial.Uncleared if target.bytesize > MAX_CHECKED
 
-  script_denial(checks, target)
+  script_denial(checks, target, 0)
 end
 
 ## What an answer adds; `allow_prefix` without a prefix allows the same call.
@@ -276,11 +285,13 @@ def command_allowed?(prefixes: List[List[String]], command: Shell.Command, root:
   not writes and not output and prefixes.any? { |p| words.take(p.size) == p }
 end
 
-def script_denial(checks: Checks, text: String) -> Denial
+def script_denial(checks: Checks, text: String, depth: Int) -> Denial
+  return Denial.Uncleared if depth > MAX_DEPTH
+
   case Shell.parse(text)
     ok(script) ->
       commands = script.pipelines.flat_map { |p| p.commands }
-      worst(commands.map { |c| command_denial(checks, c) })
+      worst(commands.map { |c| command_denial(checks, c, depth) })
     error(_) -> Denial.Uncleared
   end
 end
@@ -292,23 +303,35 @@ def worst(found: List[Denial]) -> Denial
   Denial.Clear
 end
 
-# A shell's `-c` script and the words of `eval` are a command of their own; the other words are checked here.
-def command_denial(checks: Checks, command: Shell.Command) -> Denial
+# A shell's `-c` script and the words of `eval` are a command of their own; the other words are checked here. Any
+# other program of INTERPRETERS that the command runs cannot be cleared.
+def command_denial(checks: Checks, command: Shell.Command, depth: Int) -> Denial
   words = Shell.argv(command)
   program = name_of(words.take(1).join(""))
   inner: List[Denial] = []
   checked = words
   at = words.index("-c")
+  from = 0
   if SHELLS.include?(program) and at.some? and at.unwrap! + 1 < words.size
-    inner = [script_denial(checks, words[at.unwrap! + 1])]
+    inner = [script_denial(checks, words[at.unwrap! + 1], depth + 1)]
     checked = words.take(at.unwrap! + 1) + words.drop(at.unwrap! + 2)
-  elsif program == "eval"
-    inner = [script_denial(checks, words.drop(1).join(" "))]
+    from = 1
+  elsif (program == "eval" and words.drop(1).any? { |word| not simple?(word) })
+    # Plain words after `eval` read again as the same words, which the tails check as a program.
+    inner = [script_denial(checks, words.drop(1).join(" "), depth + 1)]
     checked = words.take(1)
   end
 
+  interpreted = (from...checked.size).to_a.any? { |i|
+    runs?(checked, i) and INTERPRETERS.include?(name_of(checked[i]))
+  }
+
+  if interpreted
+    inner = inner.push(Denial.Uncleared)
+  end
+
   paths = redirect_paths(command)
-  unplain = (checked + paths).any? { |word| word.empty? or word.include?(" ") or not Approval.plain?(word) }
+  unplain = (checked + paths).any? { |word| not simple?(word) }
   found = inner + [tails_denial(checks, checked), names_denial(checks, checked + paths)]
   if unplain
     found = found.push(Denial.Uncleared)
@@ -316,6 +339,9 @@ def command_denial(checks: Checks, command: Shell.Command) -> Denial
 
   worst(found)
 end
+
+# A word bash reads as itself: plain, not empty, without a space.
+def simple?(word: String) -> Bool = not word.empty? and not word.include?(" ") and Approval.plain?(word)
 
 def redirect_paths(command: Shell.Command) -> List[String]
   paths = command.redirects.map do |r|
@@ -374,9 +400,9 @@ def names_denial(checks: Checks, words: List[String]) -> Denial
   return Denial.Clear if not checks.reads
 
   hidden = words.any? do |word|
-    value = word.split("=").last
-    names = [word, value, value.replace("./", ""), name_of(value)] + located(checks.root, value)
-    names.any? do |name|
+    names = parts_of(word).flat_map { |part| names_of(checks.root, part) }
+
+    names.uniq.any? do |name|
       not name.empty? and (Approval.read_denied?(checks.rules, name) or Approval.folder_denied?(checks.rules, name))
     end
   end
@@ -386,6 +412,29 @@ def names_denial(checks: Checks, words: List[String]) -> Denial
   else
     Denial.Clear
   end
+end
+
+# A part with a `/` also by its last name and resolved against `root`; `./x` resolves to `x`.
+def names_of(root: String, part: String) -> List[String]
+  return [part] if not part.include?("/")
+
+  [part, name_of(part)] + located(root, part)
+end
+
+# The texts of a word that may name a file: the word, after its first `=` and its last `=` (`--file=x`), after its
+# last `@` (`curl -d @x`), and after a one-letter option joined to it (`-Cdir`).
+def parts_of(word: String) -> List[String]
+  parts = [word, word.split("=").last, word.split("@").last]
+  equals = word.index_of("=")
+  if equals.some?
+    parts = parts.push(word.slice(equals.unwrap! + 1, word.length - equals.unwrap! - 1))
+  end
+
+  if word.length > 2 and word.start_with?("-") and not word.start_with?("--")
+    parts = parts.push(word.slice(2, word.length - 2))
+  end
+
+  parts.uniq
 end
 
 # The path relative to `root` that `path` names, with `.` and `..` taken away without reading the disk; none outside.

@@ -66,23 +66,33 @@ A rule is `tool(pattern)`, where `*` matches any text. In a `bash` rule, a `*` r
 }
 ```
 
-- **Deny rules count with the approvals on or off.** They are checked before the answers, but see the [known gap](#known-gap-allow-rules-and-bash) below.
+- **Deny rules count with the approvals on or off.** They win over every allow rule and answer ([How deny rules check bash](#how-deny-rules-check-bash)).
 - **Allow rules** let a call run without asking, with the approvals on.
 - The rules come from your config file and from the project's `.finn/config.json` ([Configuration](config.md)). The project's deny rules always count; its allow rules count only under a [trusted folder](config.md#trusted-folders).
 - A deny rule of `read_file` also denies `edit_file`, and hides the file from `glob`, `grep` and the `@` completion of `finn tui`.
 
-### Known gap: allow rules and bash
+### How deny rules check bash
 
-Until [#197](https://github.com/agentica-lang/agc-agent/issues/197) is fixed, an allow rule that matches a `bash` command skips two deny checks, in both modes: the match of a `bash` deny rule on a tail of the command (after `sudo`, `env` or `timeout 5`), and the check of the file names a `read_file` deny rule hides. A `bash` deny rule that matches the whole command still wins. With `deny: ["read_file(.env*)"]` and `allow: ["bash(cat *)"]`, `cat .env` runs. With `deny: ["bash(rm *)"]` and `allow: ["bash(sudo *)"]`, `sudo rm -rf x` runs. Do not write an allow rule for `bash` that covers a command a deny rule must stop.
+Finn reads each `bash` command with its parser of bash, without running it, and the deny rules give one of three answers:
 
-With the approvals on, the tail match does not refuse a command either: it only keeps a session answer (`a`) or an allow rule from letting the command through, so the command asks. Only a deny rule that matches the whole command refuses it. Under `deny: ["bash(rm *)"]`, `sudo rm -rf x` asks, and no allow rule or session answer lets it run; a one-time allow (`y`) runs it. [#199](https://github.com/agentica-lang/agc-agent/issues/199) closes this gap.
+- **Matched: refused**, with the approvals on or off, before any allow rule or answer. A `bash` rule matches a program the command runs: its first word, also by its name (`/bin/rm`, `./rm`), a word after a program that runs another one (`sudo`, `env`, `timeout 5`, `xargs`, `nice`, `then`, `do`), a command in `sh -c '...'` or after `eval`, or after `find -exec`. A `read_file` rule matches a word that names a file it hides: as written, after a `=` (`--file=.env`) or a `@` (`curl -d @.env`), after a one-letter option joined to it (`-Csecrets`), by its last name, or resolved against the session folder (`sub/../secrets/key`, an absolute path); a word that names the folder of a `dir/**` rule matches too (`grep -r KEY secrets`).
+- **Not cleared: asks** with the approvals on and is **refused** with them off; no allow rule or answer lets it through. While a deny rule exists, that is a command the parser cannot check: it does not parse, is longer than 16 KB or nests `sh -c` or `eval` more than 8 deep, has a word that is not plain text (a quote, a `$`, a glob such as `.e*`), or runs a shell on a script file or its input (`... | sh`, `bash x.sh`) or an interpreter (`python`, `perl`, `node`, `source`). A `bash` rule that matches words which are not a program (`echo rm`, `git commit -m rm`) also leaves the command not cleared.
+- **Clear:** the deny rules do not stop it.
+
+A `!` command in the clients runs only when it is clear, with the approvals on or off.
 
 ## What rules cannot do
 
-A rule is a convenience, not a sandbox.
+A rule is a convenience, not a sandbox. The deny rules see only what the command shows, so they cannot catch:
 
-- A deny rule of `bash` sees a command as far as Finn's parser of bash does. With the approvals off it matches each simple command of a line, also after `sudo`, `env` or `timeout 5`; with them on, see the [known gap](#known-gap-allow-rules-and-bash). While a deny rule of `bash` exists, a command whose words the parser cannot check (a quote, a `$`, a glob) is refused with the approvals off, and asks with them on, where no rule or answer lets it through.
-- With the approvals off, a `read_file` deny rule refuses the `bash` commands that name the file, but it cannot see a name that bash builds as it runs: `cat $(printf .env)` still reads `.env`.
-- Allowing a program allows all of its options and config: `bash(git *)` allows `git -c core.fsmonitor=./x.sh status`, which runs `x.sh`. Allow only what is harmless with any argument.
+- a program made as the command runs (`ln -s /bin/rm r && ./r`);
+- an interpreter or a shell running a file, beyond refusing it while a deny rule exists;
+- a program that reads a whole folder (`grep -r KEY .`) or one it changed into (`cd secrets && cat key`);
+- names that come from another program's output (`ls | xargs cat`);
+- a link to a hidden file, or a path through a link to the session folder: the check reads no disk;
+- an option that does what a rule names, since a rule names a program and not an effect (`find . -delete` under `bash(rm *)`);
+- the options of a program in another order than a narrow rule's;
+- a tool whose config runs programs: `bash(git *)` allows `git -c core.fsmonitor=./x.sh status`, which runs `x.sh`, and make or npm scripts run whatever they hold;
+- a name in other case on a filesystem that ignores case (macOS): the rules match case.
 
 Only a sandbox or a container keeps the model in.

@@ -38,6 +38,7 @@ end
 
 def relative(root: String, path: String) -> String
   return "." if path == root
+  return path.slice(1, path.length - 1) if root == "/"
 
   path.slice(root.length + 1, path.length - root.length - 1)
 end
