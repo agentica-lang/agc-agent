@@ -25,8 +25,10 @@ core/src/            one folder per domain: config/ (settings, CLI, the extensio
                      session/ (the registry of sessions; one session's actor, which calls turn.agc, stream.agc
                      (the event fan-out) and branch.agc, with its state in state.agc; its store and prompt;
                      builtins.agc: the skills, MCP and the approval on the extension registry), agent/ (the
-                     loop, compaction, the model catalog), tools/ (the tools and their sandbox), ext/ (MCP,
-                     skills), approval/ (the approval extension: rules, session allows); core/tests stay flat
+                     loop, compaction), providers/ (the presets and the user's providers, what a server offers,
+                     the stored keys and logins, the model catalog), tools/ (the tools and their sandbox), ext/
+                     (MCP, skills), approval/ (the approval extension: rules, session allows); core/tests stay
+                     flat
 client/              what every client shares: finding or starting the server, the HTTP calls, the event reader;
                      client.agc is its public module
 cli/                 the line-mode client: depends only on client and protocol; main.agc is the entry point
