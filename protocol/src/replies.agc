@@ -36,6 +36,8 @@ struct ServerStatus
   approvals: Optional[Bool] = none
   ## Whether the server offers code mode (`run_script`); none from a server older than this field.
   code_mode: Optional[Bool] = none
+  ## Code mode is off because the server's machine has no Monty worker; none from a server older than this field.
+  no_worker: Optional[Bool] = none
 end
 
 ## The answer of `POST /v1/sessions`.

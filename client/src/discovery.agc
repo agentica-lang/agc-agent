@@ -101,7 +101,7 @@ end
 def code_mode_note(server: Client.Server, wanted: Optional[Bool]) -> String
   for want in option_list(wanted)
     case Client.server_status(server)
-      ok(status) if status.code_mode == some(not want) -> return code_mode_line(want)
+      ok(status) if status.code_mode == some(not want) -> return code_mode_line(want, status.no_worker == some(true))
       _ -> nil
     end
   end
@@ -323,7 +323,8 @@ def start(options: Launch, dir: String, why_not: String) -> Result[Client.Server
   end
 end
 
-def code_mode_line(wanted: Bool) -> String
+def code_mode_line(wanted: Bool, no_worker: Bool) -> String
+  return "code mode isn't available on this system: there is no Monty worker for it" if wanted and no_worker
   return "the running server has code mode off; `finn server restart` applies it" if wanted
 
   "the running server has code mode on; `finn server restart --no-codemode` applies it"

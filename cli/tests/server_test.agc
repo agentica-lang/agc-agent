@@ -76,6 +76,30 @@ def steps(dir: String, command: List[String]) -> Result[Void]
   Test.eq(gone.code, 1)
 end
 
+# A server started with --no-codemode has no code mode: the status, which `GET /v1/server` gives, says so.
+def test_a_server_started_without_code_mode_says_so() -> Result[Void] = Driver.within_dir(&without_code_mode)
+
+def without_code_mode(dir: String) -> Result[Void]
+  command = try Driver.core_command()
+  result = started_without_code_mode(dir, command)
+  stop_leftover(dir)
+  result
+end
+
+def started_without_code_mode(dir: String, command: List[String]) -> Result[Void]
+  started = try run(dir, ["start", "--no-codemode"], command)
+  try Test.assert(started.code == 0, "start: #{started.errors}")
+  status = try run(dir, ["status"])
+  try Test.assert(status.lines.include?("  code mode off"), "status: #{status.lines}")
+  # Without the flag, a restart has code mode, unless this machine has no worker.
+  restarted = try run(dir, ["restart"], command)
+  try Test.assert(restarted.code == 0, "restart: #{restarted.errors}")
+  again = try run(dir, ["status"])
+  try Test.assert(not again.lines.include?("  code mode off"), "status: #{again.lines}")
+  stopped = try run(dir, ["stop"])
+  Test.eq(stopped.code, 0)
+end
+
 # A signal that ends a container stops the server cleanly: its file goes and its log says it stopped.
 def test_a_term_signal_stops_the_server_cleanly() -> Result[Void]
   Driver.within_dir(->(dir) { cleaned(dir, &signalled) })

@@ -45,8 +45,16 @@ def render(status: Protocol.ServerStatus, url: String, dir: String, now_s: Int) 
       "  stopping #{stopping_word(status.stopping)}",
       "  state folder #{dir}",
     ] +
-    status.approvals.map { |on| ["  approvals #{approvals_word(on)}"] }.unwrap_or([])
+    status.approvals.map { |on| ["  approvals #{approvals_word(on)}"] }.unwrap_or([]) +
+    status.code_mode.map { |on| ["  code mode #{code_mode_word(on, status.no_worker == some(true))}"] }.unwrap_or([])
   )
+end
+
+def code_mode_word(on: Bool, no_worker: Bool) -> String
+  return "on" if on
+  return "off (no Monty worker for this system)" if no_worker
+
+  "off"
 end
 
 def approvals_word(on: Bool) -> String

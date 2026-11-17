@@ -50,6 +50,8 @@ DEFAULT_MODEL = "default"
 APIS = ["openai", "openai_responses", "anthropic"]
 ## What a failed fetch of the worker says: how to go on without code mode.
 NO_CODE_MODE = "finn --no-codemode (or FINN_CODE_MODE=0) turns code mode off"
+## How long a failed fetch of the worker is given again without a new try.
+FAILED_FETCH_MS = 600_000
 
 struct Options
   state_dir: String
@@ -98,6 +100,8 @@ struct Options
   after_load: Optional[Fn[String, Void]] = none
   ## Code mode: the model may also call the tools from a Python script (`run_script`).
   code_mode: Optional[CodeMode.Settings] = none
+  ## Code mode is off because this machine has no Monty worker, not because `FINN_CODE_MODE=0` asked.
+  no_worker: Bool = false
   ## The models.dev catalog (`main.agc` starts it from `models_url`), for the cost of the calls and the window.
   catalog: Optional[Catalog.Catalog] = none
   models_url: String = Catalog.URL
@@ -216,6 +220,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       props_url: props_url(server.base_url),
       api_key: api_key,
       code_mode: try code_mode(read),
+      no_worker: no_worker?(read, &Monty.platform),
       models_url: set(read, "FINN_MODELS_URL").unwrap_or(Catalog.URL),
       models_provider: set(read, "FINN_MODELS_PROVIDER").unwrap_or(""),
       home: set(read, "HOME").unwrap_or(""),
@@ -273,6 +278,16 @@ def code_mode(read: Fn[String, Result[String]]) -> Result[Optional[CodeMode.Sett
   code_mode_on(read, &Monty.platform)
 end
 
+## Whether code mode, unless `FINN_CODE_MODE=0`, finds no worker on a machine whose platform `platform` says.
+def no_worker?(read: Fn[String, Result[String]], platform: Fn[Result[String]]) -> Bool
+  return false if set(read, "FINN_CODE_MODE") == some("0") or set(read, "FINN_MONTY").some?
+
+  case platform.call()
+    ok(found) -> not Monty.wheel(found).ok?
+    error(_) -> true
+  end
+end
+
 ## `code_mode` on a machine whose platform `platform` says.
 def code_mode_on(read: Fn[String, Result[String]], platform: Fn[Result[String]]) -> Result[Optional[CodeMode.Settings]]
   switch = set(read, "FINN_CODE_MODE").unwrap_or("1")
@@ -287,8 +302,37 @@ def code_mode_on(read: Fn[String, Result[String]], platform: Fn[Result[String]])
     end
   end
 
-  worker = -> { worker_command(binary, read) }
+  worker = remembered(-> { worker_command(binary, read) }, FAILED_FETCH_MS, &Time.monotonic_ms)
   ok(some(CodeMode.Settings(worker: worker, limits: Monty.Limits())))
+end
+
+## `worker`, whose failure is given again for `keep_ms` (by the clock `now_ms`) without trying again: a script cannot
+## start a new download on each call.
+def remembered(worker: Fn[Result[List[String]]], keep_ms: Int, now_ms: Fn[Int]) -> Fn[Result[List[String]]]
+  failed: ATS[String, String] = ATS.new()
+  -> { worker_or_failure(worker, keep_ms, now_ms, failed) }
+end
+
+def worker_or_failure(
+  worker: Fn[Result[List[String]]],
+  keep_ms: Int,
+  now_ms: Fn[Int],
+  failed: ATS[String, String],
+) -> Result[List[String]]
+  case failed.get("until")
+    ok(until) if now_ms.call() < until.to_i.unwrap_or(0) ->
+      return error(failed.get("message").unwrap_or(""), kind: failed.get("kind").unwrap_or(""))
+    _ -> nil
+  end
+
+  case worker.call()
+    ok(words) -> ok(words)
+    error(e) ->
+      failed.put("message", e.message)
+      failed.put("kind", e.kind)
+      failed.put("until", (now_ms.call() + keep_ms).to_s)
+      error(e.message, kind: e.kind)
+  end
 end
 
 def worker_command(binary: Optional[String], read: Fn[String, Result[String]]) -> Result[List[String]]
