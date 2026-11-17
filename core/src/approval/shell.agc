@@ -10,7 +10,9 @@ import Sandbox from "../tools/sandbox"
 EXTERNAL = "external_directory"
 READ = "read_file"
 # The programs whose files are checked as `read_file` targets too (a `.env` file asks), `cp` since its copy is read.
+# Best effort: a glob, `$`, `--opt=FILE`, a link or a folder read whole is not seen.
 READS = ["cat", "head", "tail", "grep", "wc", "diff", "cp"]
+DIGITS = "0123456789"
 
 struct Resource
   tool: String
@@ -46,7 +48,7 @@ def scan(root: String, command: String) -> Scan
       end
 
       if READS.include?(name)
-        for path in paths(root, name, tokens)
+        for path in (read_args(name, tokens).flat_map { |arg| resolved(root, arg) })
           read = Resource(tool: READ, pattern: read_target(root, path), literal: true)
           found = found.with(asked: pushed(found.asked, read))
         end
@@ -72,7 +74,7 @@ FILES = [
   "wc", "diff", "du",
 ]
 # The programs that no argument makes run another program or write a file.
-PREFIXES = ["cat", "echo", "grep", "ls", "pwd", "sleep", "tail", "head", "wc", "which", "diff", "du", "df"]
+PREFIXES = ["echo", "ls", "pwd", "sleep", "which", "du", "df"]
 PLAIN = ["command_name", "word", "string", "raw_string"]
 
 def added(found: Scan, r: Resource) -> Scan
@@ -111,6 +113,32 @@ def outside(root: String, name: String, tokens: List[String]) -> List[String]
   end
 
   folders
+end
+
+# The files that a command of `READS` reads: not its options or numbers (`head -n 5`), nor the pattern of `grep` (its
+# first word or the value of `-e`), or the last argument of `cp`, which it writes.
+def read_args(name: String, tokens: List[String]) -> List[String]
+  args: List[String] = []
+  pattern = name == "grep"
+  skip = false
+  for word in tokens.drop(1)
+    if skip
+      skip = false
+    elsif name == "grep" and word == "-e"
+      pattern = false
+      skip = true
+    elsif (word.start_with?("-") or word.split("").all? { |c| DIGITS.include?(c) })
+      nil
+    elsif pattern
+      pattern = false
+    else
+      args = args.push(word)
+    end
+  end
+
+  return args.take(args.size - 1) if name == "cp"
+
+  args
 end
 
 # The target of `read_file` for a path: relative to `root` inside it.

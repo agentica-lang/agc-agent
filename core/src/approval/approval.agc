@@ -7,9 +7,9 @@
 ## A `bash` command is checked by its parts (`Shell`): each command of the line by its text, and each folder outside
 ## the session folder that `cd`, `rm`, `cp` and the like name, as `external_directory(FOLDER/*)`. Any deny denies, else
 ## any ask asks. A line that tree-sitter-bash cannot read or misreads asks, unless a deny rule matches it whole or one
-## of its commands. The rules of `read_file` also check the files that `cat`, `grep` and the like name (`Shell.READS`);
-## those of `edit_file` and `write_file` the file tools only. A rule is a convenience and not a sandbox: see the
-## security model of `Tools`.
+## of its commands. The rules of `read_file` also check, best effort, the files that `cat`, `grep` and the like name
+## (`Shell.READS`); those of `edit_file` and `write_file` the file tools only. A rule is a convenience and not a
+## sandbox: see the security model of `Tools`.
 ##
 ## A change to a path under `.git/` (`write_file`, `edit_file`, `apply_patch`) always asks, because `.git/config` and
 ## the hooks run programs (`core.fsmonitor`, aliases) the next time git runs; the name is compared without case and

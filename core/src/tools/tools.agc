@@ -8,7 +8,8 @@
 ##   what is harmless with every option and argument.
 ## - A bash rule matches each command of the line as tree-sitter-bash reads it, so a deny rule of `bash` is best
 ##   effort: `bash(rm *)` refuses `true; rm x` but not `sudo rm x`, `/bin/rm x` or `sh -c 'rm x'`.
-## - A deny rule of `read_file` also denies `edit_file` and hides the file from `glob` and `grep`, but not from `bash`.
+## - A deny rule of `read_file` also denies `edit_file` and hides the file from `glob` and `grep`; in `bash` it only
+##   sees the files that `cat`, `grep` and the like name, best effort (`Shell.READS`).
 ## - Bash runs as the user of the server and can read what the server reads (see `Shell`). A path is checked before it
 ##   is used, and bash is the only way to run something in parallel, so the check can race with a swapped link.
 ## - On a case-insensitive filesystem a rule on `.env` may not match `.ENV`.

@@ -6,21 +6,25 @@ import Permissions from "../src/approval/permissions"
 import Tools from "../src/tools/tools"
 import H from "support/harness"
 
-# `allow_prefix` allows the next `wc`, `allow_tool` every bash call after it; the request says what each
+# `allow_prefix` allows the next `ls`, `allow_tool` every bash call after it; the request says what each
 # command's "always" allows, and after the first answer only the `cat | tee` asks.
 def test_session_answers_allow_a_prefix_or_the_whole_tool() -> Result[Void]
-  replies = ["wc_a.sse", "wc_b.sse", "bash.sse", "bash_echo.sse", "text.sse"]
+  replies = ["ls_a.sse", "ls_b.sse", "bash.sse", "bash_echo.sse", "text.sse"]
   H.using(H.Setup(replies: replies)) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Add both, then show and echo.")
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
     add = try H.approval(a)
-    try Test.eq([add.preview, add.prefix.unwrap_or("")], ["wc -l a.txt", "wc *"])
+    try Test.eq([add.preview, add.prefix.unwrap_or("")], ["ls -l a.txt", "ls *"])
     _ = try H.approve(h, id, add.approval_id, Protocol.Decision.AllowPrefix)
     a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
     cat = try H.approval(a)
-    try Test.eq([cat.preview, cat.prefix.unwrap_or("none")], ["cat hello.txt | tee copy.txt", "cat *, tee copy.txt"])
+    try Test.eq(
+      [cat.preview, cat.prefix.unwrap_or("none")],
+      ["cat hello.txt | tee copy.txt", "cat hello.txt, tee copy.txt"],
+    )
+
     _ = try H.approve(h, id, cat.approval_id, Protocol.Decision.AllowTool)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
@@ -239,12 +243,11 @@ def test_by_default_tools_run_without_asking_and_a_project_cannot_ask() -> Resul
 end
 
 # A session allow keeps the deny rules: a command one matches is not allowed through an "always" answer or the whole
-# tool, nor a line with a command no answer allows. A `read_file` rule covers the files bash names: `cat *` does not
-# allow `cat .env`.
+# tool, nor a line with a command no answer allows.
 def test_session_allows_keep_the_deny_rules() -> Result[Void]
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
-  rules = try Approval.parse_rules(["deny bash(rm -rf *)", "deny bash(git push*)", "deny read_file(.env)"])
-  always = ["rm *", "git push *", "ls *", "cat *"].map { |p|
+  rules = try Approval.parse_rules(["deny bash(rm -rf *)", "deny bash(git push*)"])
+  always = ["rm *", "git push *", "ls *", "du *"].map { |p|
     Approval.Rule(action: Tools.Verdict.Allow, tool: "bash", pattern: p)
   }
 
@@ -257,8 +260,7 @@ def test_session_allows_keep_the_deny_rules() -> Result[Void]
 
   refused = ["ls; git status", "ls $(id)", "ls && rm -rf x"]
   try Test.eq(refused.select { |c| Permissions.allows?(answers, rules, root, "bash", c) }, [])
-  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "ls -la | cat"), true)
-  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "cat .env"), false)
+  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "ls -la | du"), true)
   Test.eq(Permissions.allows?(whole, rules, root, "bash", "ls -la"), true)
 end
 
@@ -273,7 +275,7 @@ end
 
 # A deny rule of `read_file` does not touch bash: the request still offers a prefix.
 def test_a_read_deny_rule_keeps_the_prefix_of_the_request() -> Result[Void]
-  H.using(H.Setup(replies: ["wc_a.sse", "text.sse"], deny: ["read_file(secret*)"])) do |h|
+  H.using(H.Setup(replies: ["ls_a.sse", "text.sse"], deny: ["read_file(secret*)"])) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Add it.")
@@ -282,7 +284,7 @@ def test_a_read_deny_rule_keeps_the_prefix_of_the_request() -> Result[Void]
     _ = try H.approve(h, id, add.approval_id, Protocol.Decision.Deny)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
-    Test.eq([add.preview, add.prefix.unwrap_or("none")], ["wc -l a.txt", "wc *"])
+    Test.eq([add.preview, add.prefix.unwrap_or("none")], ["ls -l a.txt", "ls *"])
   end
 end
 

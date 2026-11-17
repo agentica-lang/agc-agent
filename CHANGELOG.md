@@ -11,12 +11,12 @@
 - **Breaking:** an old `agc-agent` `config.json`, `AGC_AGENT_CONFIG` or `AGC_AGENT_MCP_CONFIG` stops `finn serve` and says where to move it; an old `auth.json` warns.
 - **Breaking:** with approvals on, a `bash` command that only reads asks too; only an allow rule or an answer runs it.
 - **Breaking:** rules are OpenCode's: one `permission` list (`"allow bash(git *)"`, `"ask read_file(*.env)"`), the last match wins; `allow` and `deny` keys stop the start.
-- `bash` rules check each command of the line (tree-sitter-bash); a line it cannot read clearly asks. File rules cover the file tools only.
+- `bash` rules check each command of the line (tree-sitter-bash); a line it cannot read clearly asks.
 - "Always" (`allow_prefix`) allows `NAME *` for a short list of plain programs (`ls *`), and the exact command for any other program, a redirection or a substitution.
 - **Breaking:** the state and data folders cannot be links; give the folder the link points to.
 - `external_directory` rules check the paths outside the session folder that `cd`, `rm`, `cp` and the like name.
 - **Breaking:** with approvals on, reads of `.env` files ask by default.
-- `read_file` rules also check the files `cat`, `head`, `tail`, `grep`, `wc`, `diff` and `cp` name in `bash`: `cat .env` asks even after "always" on `cat`.
+- `read_file` rules also check, best effort, the files `cat`, `head`, `tail`, `grep`, `wc`, `diff` and `cp` name in `bash` (`cat .env` asks); "always" on these programs allows the same command only.
 - The first start builds the bash parser; clients wait up to a minute and say so.
 - `finn chat` and `finn tui` refuse a server of another version and say how to stop it.
 
