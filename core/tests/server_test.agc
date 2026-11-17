@@ -261,7 +261,8 @@ def test_a_files_command_lists_only_what_the_walk_allows() -> Result[Void]
   end
 end
 
-# What a files command starts is killed when the list is read, and when it is cut: nothing is left behind.
+# What a files command starts is killed when the list is read, when it is cut and when it runs out of time: nothing is
+# left behind, and the cut list and the timeout still say so.
 def test_a_files_command_leaves_no_process_behind() -> Result[Void]
   base = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-files-#{Random.int(0, 999_999_999)}"
   root = "#{base}/project"
@@ -270,12 +271,18 @@ def test_a_files_command_leaves_no_process_behind() -> Result[Void]
   try File.write_text("#{root}/a.txt", "x")
   left = ["sh", "-c", "trap '' TERM; sleep 60 >/dev/null & echo $! > ../left.pid; echo a.txt"]
   done = Folder.listed(root, none, left, &unset)
-  cut = Folder.listed(root, none, ["sh", "-c", "echo $$ > ../cut.pid; yes a.txt | cat"], &unset)
-  pids = [(try File.read_text("#{base}/left.pid")).strip, "-#{(try File.read_text("#{base}/cut.pid")).strip}"]
+  cut = Folder.listed(root, none, ["sh", "-c", "trap '' TERM; echo $$ > ../cut.pid; yes a.txt | cat"], &unset)
+  slow = Folder.listed(root, none, ["sh", "-c", "trap '' TERM; echo $$ > ../slow.pid; sleep 60"], &unset, 300)
+  pids: List[String] = []
+  for name in ["left", "cut", "slow"]
+    pids = pids.push((try File.read_text("#{base}/#{name}.pid")).strip)
+  end
+
   gone = pids.map { |pid| gone?(pid) }
   _ = Path.remove(base)
   try Test.eq([done, cut], [Protocol.FileList(files: ["a.txt"]), Protocol.FileList(files: ["a.txt"], truncated: true)])
-  Test.eq(gone, [true, true])
+  try Test.eq(slow.note, "files.command failed, so the built-in walk listed the files: it did not end in time")
+  Test.eq(gone, [true, true, true])
 end
 
 # A killed process goes once its new parent has reaped it.

@@ -20,6 +20,8 @@ COMMAND_MS = 2000
 ## The most lines and bytes of the command's output that are read; the rest is cut.
 MAX_LINES = 20_000
 MAX_BYTES = 1_048_576
+## How long the leader of the command's group waits to be killed, longer than any read of the output.
+LEADER_S = 30
 
 ## The paths of the files under `root`, relative to it.
 def files(root: String, hidden: Optional[Fn[String, Bool]], walk_ms: Int = WALK_MS) -> Protocol.FileList
@@ -100,43 +102,22 @@ struct Output
 end
 
 def proposed(root: String, command: List[String], env: Fn[String, Result[String]], command_ms: Int) -> Result[Output]
-  deadline = Time.monotonic_ms + command_ms
   # Not captured: a full pipe holds the command until the lines are read, so a long list is cut, not lost.
   options = Process.Options(chdir: root, pgroup: true, timeout_ms: command_ms + STEP_MS, err: "/dev/null")
-  # `sh` says its pid, which is the group's, then becomes the command: the group can be killed once the command ended.
-  words = ["-i", "--"] + Shell.environment(env) + ["sh", "-c", "echo $$; exec \"$@\"", "sh"] + command
+  # The leader `sh` runs the command, says how it ended after a token the command cannot know, and stays alive until
+  # its group is killed: the group's number is never another's when the kill comes.
+  token = "finn-#{Random.int(0, 999_999_999)}-#{Random.int(0, 999_999_999)}"
+  wrapper = "t=$1; shift; \"$@\" & wait $!; echo \"$t:$?\"; exec sleep #{LEADER_S} >/dev/null"
+  words = ["-i", "--"] + Shell.environment(env) + ["sh", "-c", wrapper, "sh", token] + command
   process = try Process.spawn("/usr/bin/env", words, options)
   _ = Process.close_stdin(process, STEP_MS)
-  group = Process.poll_line(process, command_ms).unwrap_or("")
-  result: Result[Output] = error("it did not start")
-  if group.to_i.ok?
-    result = read_output(process, deadline)
-  end
-
+  result = read_output(process, token, Time.monotonic_ms + command_ms)
   _ = Process.signal_group(process, System.Signal.Kill)
   Process.close(process)
-  if group.to_i.ok?
-    killed(group)
-  end
-
   result
 end
 
-# What the command started and left behind: the leader was waited for, so its group is signalled by number.
-def killed(group: String) -> Void
-  case Process.spawn(
-    "/bin/sh",
-    ["-c", "kill -9 \"-$1\" 2>/dev/null", "sh", group],
-    Process.Options(timeout_ms: STEP_MS),
-  )
-    ok(kill) ->
-      _ = Process.wait(kill, STEP_MS)
-      Process.close(kill)
-    error(_) -> nil
-  end
-end
-
-def read_output(process: Process, deadline: Int) -> Result[Output]
+def read_output(process: Process, token: String, deadline: Int) -> Result[Output]
   lines: List[String] = []
   bytes = 0
   while lines.size < MAX_LINES and bytes < MAX_BYTES
@@ -144,12 +125,13 @@ def read_output(process: Process, deadline: Int) -> Result[Output]
     return error("it did not end in time") if left <= 0
 
     case Process.poll_line(process, left)
+      ok(line) if line.start_with?("#{token}:") ->
+        return ended(lines, line.slice(token.length + 1, line.length - token.length - 1))
       ok(line) ->
         lines = lines.push(line)
         bytes += line.bytesize + 1
       # A line that is not UTF-8 names no file the list can show.
       error(e) if e.kind == "text.encoding" -> lines = lines.push("")
-      error(e) if e.kind == "process.eof" -> return ended(process, lines, deadline)
       error(e) if e.kind == "process.timeout" -> return error("it did not end in time")
       error(e) -> return error(e.message)
     end
@@ -158,9 +140,8 @@ def read_output(process: Process, deadline: Int) -> Result[Output]
   ok(Output(lines: lines, cut: true))
 end
 
-def ended(process: Process, lines: List[String], deadline: Int) -> Result[Output]
-  code = try Process.wait(process, [deadline - Time.monotonic_ms, 1].max.unwrap!)
-  return error("exit code #{code}") if code != 0
+def ended(lines: List[String], code: String) -> Result[Output]
+  return error("exit code #{code}") if code != "0"
 
   ok(Output(lines: lines, cut: false))
 end
