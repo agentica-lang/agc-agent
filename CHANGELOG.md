@@ -7,7 +7,9 @@
 - **Breaking:** `finn` opens the full screen, as `finn tui` does; `finn chat` is the line chat.
 - **Breaking:** tools run without asking by default; turn approvals on with `finn serve --approvals`.
 - **Breaking:** `finn --yolo` allows only the tool calls of the turns it starts.
-- **Breaking:** the command is `finn` and variables are `FINN_*`; the `AGC_AGENT_*` names still work.
+- **Breaking:** the command is `finn` and variables are `FINN_*`; most `AGC_AGENT_*` names still work.
+- **Breaking:** an old `agc-agent` `config.json`, `AGC_AGENT_CONFIG` or `AGC_AGENT_MCP_CONFIG` stops `finn serve` and says where to move it; an old `auth.json` warns.
+- Deny rules win over every allow rule and answer, in both modes; a `bash` command they cannot check asks, or is refused with approvals off.
 - `finn chat` and `finn tui` refuse a server of another version and say how to stop it.
 
 ### Added

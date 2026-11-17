@@ -106,6 +106,47 @@ def located(values: Map[String, String], name: String) -> Result[String]
   from_map(values, name)
 end
 
+# The config of before the rename is not read: an old config file without the new one (under `$XDG_CONFIG_HOME` or
+# `~/.config`), or an old variable without the new one, stops the start with an error that names where it goes, so its
+# deny rules are not lost; an old `auth.json` holds no rule and only warns.
+def test_the_config_of_before_finn_stops_the_start() -> Result[Void]
+  home = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-old-#{Random.int(0, 999999999)}"
+  for dir in [
+    home,
+    "#{home}/.config",
+    "#{home}/.config/agc-agent",
+    "#{home}/.config/finn",
+    "#{home}/x",
+    "#{home}/x/agc-agent",
+  ]
+    try Dir.mkdir(dir)
+  end
+
+  at = {"HOME": home}
+  try Test.eq((try Config.from_env(->(n) { located(at, n) })).warnings, [])
+  try File.write_text("#{home}/.config/agc-agent/auth.json", "{}")
+  warned = (try Config.from_env(->(n) { located(at, n) })).warnings
+  try Test.eq(warned.select { |w| w.include?("#{home}/.config/finn/auth.json") }.size, 1)
+  try File.write_text("#{home}/.config/agc-agent/config.json", "{}")
+  try File.write_text("#{home}/x/agc-agent/config.json", "{}")
+  results: List[String] = []
+  for env in [at, at.put("XDG_CONFIG_HOME", "#{home}/x")]
+    failed = Config.from_env(->(n) { located(env, n) })
+    results = results.push(failed.ok?.to_s)
+    moved = "#{env.get("XDG_CONFIG_HOME").unwrap_or("#{home}/.config")}/finn/config.json"
+    try Test.assert(failed.message.include?(moved), failed.message)
+  end
+
+  try File.write_text("#{home}/.config/finn/config.json", "{}")
+  try Config.from_env(->(n) { located(at, n) })
+  for name in ["CONFIG", "MCP_CONFIG"]
+    results = results.push(Config.from_env(->(n) { located(at.put("AGC_AGENT_#{name}", "/x.json"), n) }).ok?.to_s)
+  end
+
+  _ = Path.remove(home)
+  Test.eq(results, ["false", "false", "false", "false"])
+end
+
 # A preset is offered when its key is set; the config file adds providers (one with a key variable only when it is
 # set) and refuses a bad one; FINN_PROVIDER picks the default among those offered.
 def test_providers_come_from_presets_with_a_key_and_the_config_file() -> Result[Void]

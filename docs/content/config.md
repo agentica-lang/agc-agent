@@ -27,10 +27,10 @@ Finn reads environment variables when the server starts, and a few JSON files. A
 |---|---|
 | `approvals` | `true` makes a call of a [tool that asks](security.md#what-asks) wait for your answer, unless a rule allows it |
 | `allow` | rules of calls that run without asking, with the approvals on |
-| `deny` | rules of calls that are refused, with the approvals on or off (see the [known gap](security.md#known-gap-allow-rules-and-bash)) |
+| `deny` | rules of calls that are refused, with the approvals on or off ([how they check bash](security.md#how-deny-rules-check-bash)) |
 | `providers` | OpenAI-compatible APIs of your own ([Providers](providers.md#your-own-provider)) |
 
-Every key is optional, and so is the file. How the rules work is on [Approvals and security](security.md#rules), and where they fall short in [Known gap](security.md#known-gap-allow-rules-and-bash).
+Every key is optional, and so is the file. How the rules work is on [Approvals and security](security.md#rules), and where they fall short in [What rules cannot do](security.md#what-rules-cannot-do).
 
 ## The project file
 
@@ -85,6 +85,6 @@ The key variables of the providers are on [Providers](providers.md).
 
 Finn was called agc-agent before. Some old names still work:
 
-- Most `AGC_AGENT_` variables still work in place of their `FINN_` names, but not `AGC_AGENT_CONFIG` or `AGC_AGENT_MCP_CONFIG`: use `FINN_CONFIG` and `FINN_MCP_CONFIG`.
+- Most `AGC_AGENT_` variables still work in place of their `FINN_` names, but not `AGC_AGENT_CONFIG` or `AGC_AGENT_MCP_CONFIG`: while one is set without its `FINN_` name, `finn serve` does not start and says to set `FINN_CONFIG` or `FINN_MCP_CONFIG`.
 - The state and data folders fall back to an `agc-agent` folder while there is no `finn` one.
-- The config folder does not: Finn does not read `~/.config/agc-agent/config.json` or `auth.json`. Move them to `~/.config/finn/`, or their deny rules and stored keys are not used ([#198](https://github.com/agentica-lang/agc-agent/issues/198)).
+- The config folder does not. While `config.json` is in `$XDG_CONFIG_HOME/agc-agent/` or `~/.config/agc-agent/` and not in the `finn` folder, `finn serve` does not start, so its deny rules are not lost: move it to the `finn` folder it names. An old `auth.json` only gets a warning at start: move it there too to keep its stored keys.

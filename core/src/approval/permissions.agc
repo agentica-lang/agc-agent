@@ -9,12 +9,15 @@
 ##
 ## A session allows more by its answers: the same call (`allow_session`), the same command prefix for `bash`
 ## (`allow_prefix`: `git log`, `npm test`), or the whole tool (`allow_tool`); and in the accept-edits mode the edits of
-## files run without asking. None of them reaches into `.git/`, and the deny rules are checked before them, as far as
-## the parser sees a command: for `bash`, a rule is matched against each simple command and every tail of its words (so
-## `sudo`, `env`, `timeout 5` or `xargs` in front do not hide it), and a command whose words cannot be checked (a quote,
-## a `$`, a glob) is not allowed through them while a deny rule of `bash` exists. While a deny rule of `read_file`
-## exists, only the same call is allowed again for `bash`: any command may read the file. They last as long as the
-## server runs: a restart forgets them. Known limit: an option that writes is not seen, but for git's `--output`.
+## files run without asking. None of them reaches into `.git/`, and a `bash` command that the deny rules match or
+## cannot clear (`bash_denial`) is never allowed through them. While a deny rule of `read_file` exists, only the same
+## call is allowed again for `bash`: any command may read the file. They last as long as the server runs: a restart
+## forgets them. Known limit: an option that writes is not seen, but for git's `--output`.
+##
+## The deny rules are checked statically, as far as the parser sees a command, so they do not confine `bash`: a program
+## made as it runs (`ln -s /bin/rm r && ./r`), an interpreter running a file, a reader of a whole folder (`grep -r x .`),
+## `cd secrets && cat key`, a link to a hidden file, a tool whose config runs programs (`git -c`, make or npm scripts)
+## and options in another order than a narrow rule's are not seen. Use a sandbox.
 
 import Shell from "pkg/shell/shell"
 import Approval from "approval"
@@ -30,6 +33,27 @@ RUNNERS = [
   "doas", "nice", "nohup", "timeout", "command", "time", "stdbuf", "chrt", "ionice", "setsid", "flock", "watch",
   "script",
 ]
+## Programs that run the words after them as a command: a deny rule of `bash` that matches there matches a program.
+LAUNCHERS = [
+  "env", "xargs", "sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python3", "node", "ruby", "perl", "sudo",
+  "doas", "nice", "nohup", "timeout", "command", "time", "stdbuf", "chrt", "ionice", "setsid", "flock", "watch",
+  "script", "eval", "exec", "builtin", "!", "if", "then", "elif", "else", "while", "until", "do",
+]
+## Shells whose `-c` takes a script, checked as a command of its own.
+SHELLS = ["sh", "bash", "zsh", "dash", "ksh", "fish"]
+## Programs that run code the deny rules cannot read: a shell without `-c` (a script file or its input), an
+## interpreter, and the shell's own `source`.
+INTERPRETERS = [
+  "sh", "bash", "zsh", "dash", "ksh", "fish", "csh", "tcsh", "busybox", "python", "python2", "python3", "perl", "ruby",
+  "node", "nodejs", "deno", "bun", "php", "lua", "luajit", "tclsh", "wish", "awk", "gawk", "mawk", "nawk", "Rscript",
+  "pwsh", "osascript", "source", ".",
+]
+## How deep a shell's `-c` script or `eval` is checked inside another: deeper cannot be cleared.
+MAX_DEPTH = 8
+## The options of `find` whose next word is a program.
+FIND_RUNS = ["-exec", "-execdir", "-ok", "-okdir"]
+## The longest `bash` command checked against the deny rules: a longer one cannot be cleared.
+MAX_CHECKED = 16_384
 ## Programs whose second word picks what they do: their prefix is two words.
 TWO_WORDS = [
   "git", "npm", "pnpm", "yarn", "bun", "npx", "cargo", "go", "make", "docker", "kubectl", "pip", "poetry", "uv", "mix",
@@ -48,6 +72,21 @@ end
 struct User
   rules: Approval.Rules
   asking: Bool
+end
+
+## What the deny rules say of a `bash` command (`bash_denial`).
+enum Denial
+  ## No deny rule matches it.
+  Clear
+  ## It cannot be cleared: it does not parse, is over MAX_CHECKED bytes, has a word that is not plain (a quote, a `$`,
+  ## a glob) while a deny rule of `bash` or `read_file` exists, or a `bash` rule matches words that are not a program
+  ## it runs (`git commit -m rm`, `echo rm`). It asks when the asking is on and is refused when it is off.
+  Uncleared
+  ## A `bash` rule matches a program it runs (the first word, by its name too: `/bin/rm`, or one after a program of
+  ## LAUNCHERS, a shell's `-c` script, `eval` or `find -exec`), or a word names a file or the folder that a
+  ## `read_file` rule hides (as given, after a `=`, its last name, or resolved against the session folder `root`).
+  ## It is refused.
+  Matched
 end
 
 ## The user's config file: `FINN_CONFIG`, else the default file when it is there.
@@ -115,7 +154,7 @@ end
 ## `rules`.
 def allows?(allows: Allows, rules: Approval.Rules, tool: String, target: String, root: String) -> Bool
   return false if Approval.protected?(tool, target)
-  return false if tool == "bash" and bash_denied?(rules, target)
+  return false if tool == "bash" and bash_denial(rules, root, target) != Denial.Clear
   return true if allows.exact.include?(key(tool, target))
   return false if (tool == "bash" and rules.deny.any? { |rule| rule.tool == "read_file" })
   return true if allows.tools.include?(tool)
@@ -124,27 +163,15 @@ def allows?(allows: Allows, rules: Approval.Rules, tool: String, target: String,
   tool == "bash" and not allows.prefixes.empty? and prefixed?(allows.prefixes, target, root, Approval.guarded?(rules))
 end
 
-## Whether a deny rule of `bash` matches a simple command of `target`: a tail of its words joined by spaces, also with
-## one more argument (as `xargs` adds); or cannot be checked: the command does not parse, or a word is not plain.
-def bash_denied?(rules: Approval.Rules, target: String) -> Bool
-  return false if (not rules.deny.any? { |rule| rule.tool == "bash" })
+## What the deny rules say of the `bash` command `target` run in `root`.
+def bash_denial(rules: Approval.Rules, root: String, target: String) -> Denial
+  bash = Approval.bash_denies(rules)
+  started = bash.select { |c| not c.start.empty? }
+  checks = Checks(rules: rules, root: root, bash: bash, started: started, reads: Approval.read_rules?(rules))
+  return Denial.Clear if checks.bash.empty? and not checks.reads
+  return Denial.Uncleared if target.bytesize > MAX_CHECKED
 
-  case Shell.parse(target)
-    ok(script) -> script.pipelines.any? { |p| p.commands.any? { |c| command_denied?(rules, c) } }
-    error(_) -> true
-  end
-end
-
-## Whether a word of `target` names a file that a deny rule of `read_file` hides: the word, after a `=` (`--file=x`),
-## without `./`, or its last name; or the command does not parse. Best effort: a name that bash builds as it runs
-## (`cat $(printf .env)`) is not seen.
-def bash_reads_denied?(rules: Approval.Rules, target: String) -> Bool
-  return false if (not rules.deny.any? { |rule| rule.tool == "read_file" })
-
-  case Shell.parse(target)
-    ok(script) -> script.pipelines.any? { |p| p.commands.any? { |c| names_denied?(rules, c) } }
-    error(_) -> true
-  end
+  script_denial(checks, target, 0)
 end
 
 ## What an answer adds; `allow_prefix` without a prefix allows the same call.
@@ -163,6 +190,16 @@ def answered(allows: Allows, decision: String, tool: String, target: String) -> 
 end
 
 private
+
+# The deny rules a check needs, read once.
+struct Checks
+  rules: Approval.Rules
+  root: String
+  bash: List[Approval.Compiled]
+  ## Those of `bash` that do not start with `*`: one that does matches a tail only when it matches the whole command.
+  started: List[Approval.Compiled]
+  reads: Bool
+end
 
 # Optional, so a file without rules (only `providers`) reads.
 struct RulesFile
@@ -248,7 +285,65 @@ def command_allowed?(prefixes: List[List[String]], command: Shell.Command, root:
   not writes and not output and prefixes.any? { |p| words.take(p.size) == p }
 end
 
-def names_denied?(rules: Approval.Rules, command: Shell.Command) -> Bool
+def script_denial(checks: Checks, text: String, depth: Int) -> Denial
+  return Denial.Uncleared if depth > MAX_DEPTH
+
+  case Shell.parse(text)
+    ok(script) ->
+      commands = script.pipelines.flat_map { |p| p.commands }
+      worst(commands.map { |c| command_denial(checks, c, depth) })
+    error(_) -> Denial.Uncleared
+  end
+end
+
+def worst(found: List[Denial]) -> Denial
+  return Denial.Matched if found.include?(Denial.Matched)
+  return Denial.Uncleared if found.include?(Denial.Uncleared)
+
+  Denial.Clear
+end
+
+# A shell's `-c` script and the words of `eval` are a command of their own; the other words are checked here. Any
+# other program of INTERPRETERS that the command runs cannot be cleared.
+def command_denial(checks: Checks, command: Shell.Command, depth: Int) -> Denial
+  words = Shell.argv(command)
+  program = name_of(words.take(1).join(""))
+  inner: List[Denial] = []
+  checked = words
+  at = words.index("-c")
+  from = 0
+  if SHELLS.include?(program) and at.some? and at.unwrap! + 1 < words.size
+    inner = [script_denial(checks, words[at.unwrap! + 1], depth + 1)]
+    checked = words.take(at.unwrap! + 1) + words.drop(at.unwrap! + 2)
+    from = 1
+  elsif (program == "eval" and words.drop(1).any? { |word| not simple?(word) })
+    # Plain words after `eval` read again as the same words, which the tails check as a program.
+    inner = [script_denial(checks, words.drop(1).join(" "), depth + 1)]
+    checked = words.take(1)
+  end
+
+  interpreted = (from...checked.size).to_a.any? { |i|
+    runs?(checked, i) and INTERPRETERS.include?(name_of(checked[i]))
+  }
+
+  if interpreted
+    inner = inner.push(Denial.Uncleared)
+  end
+
+  paths = redirect_paths(command)
+  unplain = (checked + paths).any? { |word| not simple?(word) }
+  found = inner + [tails_denial(checks, checked), names_denial(checks, checked + paths)]
+  if unplain
+    found = found.push(Denial.Uncleared)
+  end
+
+  worst(found)
+end
+
+# A word bash reads as itself: plain, not empty, without a space.
+def simple?(word: String) -> Bool = not word.empty? and not word.include?(" ") and Approval.plain?(word)
+
+def redirect_paths(command: Shell.Command) -> List[String]
   paths = command.redirects.map do |r|
     case r
       Shell.Redirect.Out(_, path, _) -> path
@@ -257,19 +352,109 @@ def names_denied?(rules: Approval.Rules, command: Shell.Command) -> Bool
     end
   end
 
-  (Shell.argv(command) + paths).any? do |word|
-    value = word.split("=").last
-    names = [word, value, value.replace("./", ""), value.split("/").last]
-    names.any? { |name| not name.empty? and Approval.read_denied?(rules, name) }
+  paths.select { |path| not path.empty? }
+end
+
+# A tail of the words, its first word also by its name, and also with one more argument (as `xargs` adds), matches a
+# deny rule of `bash`: at a program it runs, or elsewhere.
+def tails_denial(checks: Checks, words: List[String]) -> Denial
+  return Denial.Clear if checks.bash.empty?
+
+  # A tail is joined whole only when its first words start like a rule, so a long command is checked in linear time.
+  reach = checks.bash.map { |c| c.start.length }.max.unwrap_or(0) + 1
+  found = Denial.Clear
+  for from in 0...words.size
+    denies = checks.started
+    if from == 0
+      denies = checks.bash
+    end
+
+    ahead = (from...[from + reach, words.size].min.unwrap!).to_a.map { |i| words[i] }
+    starts = [ahead, [name_of(ahead[0])] + ahead.drop(1)].map { |head| head.join(" ") }
+    next if (not starts.any? { |head| Approval.compiled_start?(denies, head) })
+    # Once a match elsewhere was found, only one at a program changes the answer.
+    next if found == Denial.Uncleared and not runs?(words, from)
+
+    tail = words.drop(from)
+    texts = [tail.join(" "), ([name_of(tail[0])] + tail.drop(1)).join(" ")]
+    hit = texts.any? { |t| Approval.compiled_denied?(denies, t) or Approval.compiled_denied?(denies, "#{t} x") }
+
+    next if not hit
+    return Denial.Matched if runs?(words, from)
+
+    found = Denial.Uncleared
+  end
+
+  found
+end
+
+# Whether the word at `from` is a program the command runs.
+def runs?(words: List[String], from: Int) -> Bool
+  program = name_of(words[0])
+  from == 0 or LAUNCHERS.include?(program) or (program == "find" and FIND_RUNS.include?(words[from - 1]))
+end
+
+def name_of(word: String) -> String = word.split("/").last
+
+def names_denial(checks: Checks, words: List[String]) -> Denial
+  return Denial.Clear if not checks.reads
+
+  hidden = words.any? do |word|
+    names = parts_of(word).flat_map { |part| names_of(checks.root, part) }
+
+    names.uniq.any? do |name|
+      not name.empty? and (Approval.read_denied?(checks.rules, name) or Approval.folder_denied?(checks.rules, name))
+    end
+  end
+
+  if hidden
+    Denial.Matched
+  else
+    Denial.Clear
   end
 end
 
-def command_denied?(rules: Approval.Rules, command: Shell.Command) -> Bool
-  words = Shell.argv(command)
-  return true if (words.any? { |word| word.empty? or word.include?(" ") or not Approval.plain?(word) })
+# A part with a `/` also by its last name and resolved against `root`; `./x` resolves to `x`.
+def names_of(root: String, part: String) -> List[String]
+  return [part] if not part.include?("/")
 
-  (0...words.size).to_a.any? do |from|
-    text = words.drop(from).join(" ")
-    Approval.denied?(rules, "bash", text) or Approval.denied?(rules, "bash", "#{text} x")
+  [part, name_of(part)] + located(root, part)
+end
+
+# The texts of a word that may name a file: the word, after its first `=` and its last `=` (`--file=x`), after its
+# last `@` (`curl -d @x`), and after a one-letter option joined to it (`-Cdir`).
+def parts_of(word: String) -> List[String]
+  parts = [word, word.split("=").last, word.split("@").last]
+  equals = word.index_of("=")
+  if equals.some?
+    parts = parts.push(word.slice(equals.unwrap! + 1, word.length - equals.unwrap! - 1))
   end
+
+  if word.length > 2 and word.start_with?("-") and not word.start_with?("--")
+    parts = parts.push(word.slice(2, word.length - 2))
+  end
+
+  parts.uniq
+end
+
+# The path relative to `root` that `path` names, with `.` and `..` taken away without reading the disk; none outside.
+def located(root: String, path: String) -> List[String]
+  full = path
+  if not path.start_with?("/")
+    full = "#{root}/#{path}"
+  end
+
+  parts: List[String] = []
+  for part in full.split("/")
+    if part == ".."
+      parts = parts.take([parts.size - 1, 0].max.unwrap!)
+    elsif part != "" and part != "."
+      parts = parts.push(part)
+    end
+  end
+
+  absolute = "/#{parts.join("/")}"
+  return [] if not Sandbox.inside?(root, absolute) or absolute == root
+
+  [Sandbox.relative(root, absolute)]
 end

@@ -26,23 +26,29 @@ end
 ## Whether tool calls pass the hook: when it asks, or when a deny rule may refuse one.
 def gated?(a: Approvals) -> Bool = a.asking or not a.rules.deny.empty?
 
-## The hook a tool call passes before it runs. With the asking off, a call that would ask runs, but for a `bash`
-## command that the deny rules cannot clear: one a `bash` rule may match (checked as `Permissions.allows?` does), or
-## one that names a file a `read_file` rule hides; either is refused when it cannot be parsed.
+## The hook a tool call passes before it runs. A deny rule wins over every allow rule, in both modes: a `bash` command
+## that a deny rule matches (`Permissions.Denial.Matched`) is refused, and one the deny rules cannot clear asks when
+## the asking is on and is refused when it is off. Else, with the asking off, a call that would ask runs.
 def verdict(a: Approvals, ctx: Spec.Context, name: String, input: JSON.Value) -> Spec.Verdict
   found = Approval.verdict(a.rules, ctx, name, input)
-  return found if a.asking or found != Spec.Verdict.Ask
-  return Spec.Verdict.Allow if name != BASH
+  return found if found == Spec.Verdict.Deny
 
-  command = case JSON.get(input, "command")
-    ok(value) -> JSON.string(value).unwrap_or("")
-    error(_) -> ""
+  if name == BASH
+    case Permissions.bash_denial(a.rules, a.root, command_of(input))
+      Permissions.Denial.Matched -> return Spec.Verdict.Deny
+      Permissions.Denial.Uncleared -> return unclear(a)
+      Permissions.Denial.Clear -> nil
+    end
   end
 
-  return Spec.Verdict.Deny if Permissions.bash_denied?(a.rules, command)
-  return Spec.Verdict.Deny if Permissions.bash_reads_denied?(a.rules, command)
+  return found if a.asking
 
   Spec.Verdict.Allow
+end
+
+## Whether a `!` command of the user is refused: a deny rule matches it or cannot clear it, in both modes.
+def refuses?(a: Approvals, command: String) -> Bool
+  Permissions.bash_denial(a.rules, a.root, command) != Permissions.Denial.Clear
 end
 
 ## Whether the session's answers or mode allow a call that asks.
@@ -68,3 +74,18 @@ def with_accept_edits(a: Approvals, on: Bool) -> Approvals = a.with(allows: a.al
 
 ## Whether a deny rule of `read_file` hides the path, relative to the session folder.
 def hidden?(a: Approvals, path: String) -> Bool = Approval.read_denied?(a.rules, path)
+
+private
+
+def unclear(a: Approvals) -> Spec.Verdict
+  return Spec.Verdict.Ask if a.asking
+
+  Spec.Verdict.Deny
+end
+
+def command_of(input: JSON.Value) -> String
+  case JSON.get(input, "command")
+    ok(value) -> JSON.string(value).unwrap_or("")
+    error(_) -> ""
+  end
+end
