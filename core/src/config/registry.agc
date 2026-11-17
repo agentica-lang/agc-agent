@@ -70,8 +70,8 @@ struct Registry
   prompts: List[String] = []
   events: List[Event] = []
   services: List[Service] = []
-  ## How long the handlers of one event may take together, a service to start or stop, and a call of a tool once an
-  ## extension is in it.
+  ## How long the handlers of one event may take together, a service to start or stop (and up to END_MS more while
+  ## its task ends), and a call of a tool once an extension is in it.
   handler_ms: Int = HANDLER_MS
   service_ms: Int = SERVICE_MS
   tool_ms: Int = TOOL_MS
@@ -354,7 +354,8 @@ end
 # A service's task is cancelled, and gone once its end is noted, so nothing of it runs after.
 def cancelled(task: Task[Void], news: Channel[Note]) -> Void
   Task.cancel(task)
-  for _i in 1..4
+  # At most two notes come: a `Started` or `Failed` sent as the cancel lands, then the `Down`.
+  for _i in 1..2
     case news.recv(END_MS)
       ok(Note.Down(_)) -> return
       ok(_) -> nil

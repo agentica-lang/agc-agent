@@ -91,10 +91,10 @@ def apis(
   end
 
   claude = LLM.anthropic(access.url, access.api_key, options, access.auth_token)
-  refresh: Optional[Fn[Result[LLM.Provider]]] = none
-  for ant in option_list(access.ant)
-    url = access.url
-    refresh = some(-> { ok(LLM.anthropic(url, "", options, try ant.call())) })
+  url = access.url
+  refresh = access.ant.map do |ant|
+    fetch: Fn[Result[LLM.Provider]] = -> { ok(LLM.anthropic(url, "", options, try ant.call())) }
+    fetch
   end
 
   {
@@ -113,7 +113,7 @@ def apis(
   }
 end
 
-## The built-in providers of a server whose own model APIs are `apis` (`apis`): `local` has the OpenAI ones,
+## The built-in providers of a server whose own model APIs are `apis`: `local` has the OpenAI ones,
 ## with `api` as its own when it is one, and `anthropic` the other.
 def builtin(apis: Map[String, Providers.ModelApi], api: String) -> Map[String, Providers.Provider]
   openai = {"openai": apis["openai"], "openai_responses": apis["openai_responses"]}
@@ -178,14 +178,5 @@ def anthropic_access(
   case ant.call()
     ok(found) -> ok(AnthropicAccess(url: url, auth_token: found, inherit: false, ant: some(ant)))
     error(e) -> error("FINN_API is anthropic and there is no credential: set ANTHROPIC_API_KEY, or #{e.message}")
-  end
-end
-
-private
-
-def option_list[T](value: Optional[T]) -> List[T]
-  case value
-    some(v) -> [v]
-    none -> []
   end
 end
