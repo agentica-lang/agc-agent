@@ -635,7 +635,7 @@ def chosen_of(options: Config.Options, header: Store.Header) -> Chosen
     builtin = Providers.ANTHROPIC
   end
 
-  Chosen(provider: builtin, api: options.providers[builtin].api)
+  Chosen(provider: builtin, api: options.providers.get(builtin).map { |p| p.api }.unwrap_or(""))
 end
 
 def builtin_of(api: String) -> String

@@ -98,7 +98,7 @@ end
 def test_a_branch_replays_its_own_records() -> Result[Void] = on_both(&branches)
 
 # The memory adapter answers as the disk one: the same error kinds, a line limit that counts the newline, CRLF read as
-# a line end, a folder with a trailing `/`, and no file in a folder that is not there.
+# a line end, a folder with a trailing `/`, no file in a folder that is not there, and an append that makes a file.
 def test_the_memory_store_answers_as_the_disk_one() -> Result[Void]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/agc-store-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)
@@ -107,7 +107,7 @@ def test_the_memory_store_answers_as_the_disk_one() -> Result[Void]
   in_memory = answers(Storage.memory(1024, [dir]), dir)
   expected = [
     "ok", "io.exists", "io.not_found", "io.not_found", "a b e long", "io.too_large", "ok", "x|y\r", "x", "io.eof",
-    "io.not_found", "io.not_found", "io.not_found",
+    "io.not_found", "io.not_found", "io.not_found", "ok", "z\n", "io.not_found",
   ]
 
   try Test.eq(on_disk, expected)
@@ -302,6 +302,9 @@ def answers(port: Storage.Port, dir: String) -> List[String]
       kind(port.read.call("#{dir}/none")),
       kind(port.remove.call("#{dir}/none")),
       kind(port.read_text.call("#{dir}/none")),
+      kind(port.append.call("#{dir}/added", "z\n")),
+      port.read_text.call("#{dir}/added").unwrap_or("?"),
+      kind(port.append.call("#{dir}/missing/d", "z\n")),
     ]
   )
 end
