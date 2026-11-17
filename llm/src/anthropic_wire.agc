@@ -60,7 +60,7 @@ def request_body(request: Types.Request) -> Result[String]
   body: Map[String, JSON.Value] = {
     "model": JSON.from(request.model),
     "messages": JSON.array(messages(request.messages)),
-    "max_tokens": JSON.from(request.max_tokens),
+    "max_tokens": JSON.from(request.max_tokens.unwrap_or(Types.ANTHROPIC_MAX_TOKENS)),
     "stream": JSON.from(true),
     "thinking": JSON.object({"type": JSON.from("adaptive"), "display": JSON.from("summarized")}),
   }

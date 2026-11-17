@@ -47,7 +47,6 @@ def request_body(request: Types.Request) -> Result[String]
   body: Map[String, JSON.Value] = {
     "model": JSON.from(request.model),
     "messages": JSON.array(messages(request)),
-    "max_tokens": JSON.from(request.max_tokens),
     "stream": JSON.from(true),
     "stream_options": JSON.object({"include_usage": JSON.from(true)}),
   }
@@ -55,6 +54,10 @@ def request_body(request: Types.Request) -> Result[String]
   if not request.tools.empty?
     body = body.put("tools", JSON.array(request.tools.map { |tool| tool_json(tool) }))
     body = body.put("tool_choice", JSON.from(tool_choice(request.tool_choice)))
+  end
+
+  for limit in option_list(request.max_tokens)
+    body = body.put("max_tokens", JSON.from(limit))
   end
 
   for effort in option_list(request.effort)

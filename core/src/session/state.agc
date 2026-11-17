@@ -47,6 +47,8 @@ struct Setup
   api_key: String = ""
   extra: Map[String, JSON.Value] = {}
   code_mode: Optional[CodeMode.Settings] = none
+  ## The output limit of every call (`FINN_MAX_TOKENS`); none takes the model's from the catalog.
+  max_tokens: Optional[Int] = none
   catalog: Optional[Catalog.Catalog] = none
   catalog_provider: String = ""
   catalog_wait_ms: Int = 1500
@@ -97,7 +99,8 @@ enum Msg
   Commit(String, List[LLM.Message], List[String], List[Agent.Queued])
   Compacted(String, Compaction.Compaction)
   Window(Int)
-  Finished(String, Protocol.StopReason)
+  ## The turn's id, how it stopped, and the output limit its last call sent.
+  Finished(String, Protocol.StopReason, Optional[Int])
   Take(String, Int, Channel[List[Agent.Queued]])
   Update(Protocol.UpdateSession, Channel[Result[Void]])
   Fold(Channel[Result[Fold]])

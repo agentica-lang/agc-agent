@@ -63,8 +63,8 @@ def body_of(request: Types.Request, max_output: Bool) -> Result[String]
     "stream": JSON.from(true),
   }
 
-  if max_output
-    body = body.put("max_output_tokens", JSON.from(request.max_tokens))
+  if max_output and request.max_tokens.some?
+    body = body.put("max_output_tokens", JSON.from(request.max_tokens.unwrap!))
   end
 
   if not request.system.empty?

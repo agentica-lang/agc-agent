@@ -20,7 +20,10 @@ private
 def check(provider: LLM.Provider) -> Result[Void]
   model = try System.env("FIREWORKS_MODEL")
   message = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: "Say hello in one word."))])
-  response = try LLM.response(try LLM.stream(provider, LLM.Request(model: model, messages: [message], max_tokens: 64)))
+  response = try LLM.response(
+    try LLM.stream(provider, LLM.Request(model: model, messages: [message], max_tokens: some(64))),
+  )
+
   try Test.assert(not response.message.content.empty?, "no content")
   Test.assert(response.usage.output > 0, "no output tokens")
 end

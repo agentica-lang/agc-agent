@@ -46,6 +46,8 @@ struct Model
   tiers: List[Tier] = []
   ## The longest prompt: `limit.input`, else `limit.context`.
   window: Optional[Int] = none
+  ## The most tokens of one reply (`limit.output`).
+  output: Optional[Int] = none
   reasoning: Bool = false
   tools: Bool = false
 end
@@ -339,6 +341,7 @@ def model(provider: String, id: String, json: JSON.Value) -> Model
     prices: prices,
     tiers: tiers(cost, prices.unwrap_or(Prices())),
     window: window,
+    output: int(limit, "output"),
     reasoning: flag(json, "reasoning"),
     tools: flag(json, "tool_call"),
   )
@@ -354,11 +357,16 @@ def bounded(model: Model) -> Model
     window = none
   end
 
+  output = model.output
+  if output.unwrap_or(0) <= 0 or output.unwrap_or(0) > MAX_WINDOW
+    output = none
+  end
+
   all = option_list(model.prices) + model.tiers.map { |t| t.prices }
   sane = all.all? { |p| [p.input, p.output, p.cache_read, p.cache_write].all? { |v| v >= 0.0 and v <= MAX_PRICE } }
-  return model.with(window: window) if sane
+  return model.with(window: window, output: output) if sane
 
-  model.with(window: window, prices: none, tiers: [])
+  model.with(window: window, output: output, prices: none, tiers: [])
 end
 
 def option_list(value: Optional[Prices]) -> List[Prices]

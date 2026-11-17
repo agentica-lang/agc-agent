@@ -35,7 +35,7 @@ def text_on(name: String) -> Result[Void]
     model: "qwen",
     system: "Answer in one short sentence.",
     messages: [user("Say hello.")],
-    max_tokens: 24,
+    max_tokens: some(24),
     temperature: some(0.0),
     seed: some(1),
     # Anthropic's cache breakpoints, which llama-server takes and does not use.
@@ -60,7 +60,7 @@ def tool_on(name: String) -> Result[Void]
     messages: [user("Read the first 10 lines of README.md.")],
     tools: [tool],
     tool_choice: LLM.ToolChoice.Required,
-    max_tokens: 128,
+    max_tokens: some(128),
     temperature: some(0.0),
     seed: some(1),
   )
@@ -100,7 +100,7 @@ def tool_round(provider: LLM.Provider, request: LLM.Request) -> Result[Void]
   messages = request.messages + [answer.response.message, LLM.Message(role: LLM.Role.User, content: results)]
   again = try call(
     provider,
-    request.with(messages: messages, tool_choice: LLM.ToolChoice.Auto, extra: {}, max_tokens: 24),
+    request.with(messages: messages, tool_choice: LLM.ToolChoice.Auto, extra: {}, max_tokens: some(24)),
   )
 
   Test.assert(not again.response.message.content.empty?, "no answer after the tool result")

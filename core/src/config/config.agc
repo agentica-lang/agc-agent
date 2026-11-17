@@ -1,7 +1,8 @@
 ## The options of `serve`, from the environment: `FINN_STATE_DIR` (else `$XDG_STATE_HOME/finn`, else
 ## `~/.local/state/finn`), `FINN_DATA_DIR` for the sessions (else `$XDG_DATA_HOME/finn`, else `~/.local/share/finn`),
 ## and the model API: `FINN_API` (`openai`, chat completions, by default, or `openai_responses`), `FINN_BASE_URL` (a
-## local llama-server by default), `FINN_API_KEY` and `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for
+## local llama-server by default), `FINN_API_KEY` and `FINN_MODEL`; `FINN_MAX_TOKENS` (the most tokens of a reply; by
+## default the model's own limit in the catalog, else the API's); `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for
 ## compaction; `FINN_DRAIN_MS` (how long a stop waits for the turns, 60000); `FINN_MODELS_URL` (the models.dev catalog
 ## of prices and windows, `off` for none) and `FINN_MODELS_PROVIDER` (the provider of the model there).
 ## `FINN_CODE_MODE=1` adds code mode, whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is not
@@ -81,6 +82,8 @@ struct Options
   drain_ms: Int = 60000
   ## The model's window in tokens; none asks the provider (`GET /models`).
   context_window: Optional[Int] = none
+  ## The output limit of every call (`FINN_MAX_TOKENS`); none takes the model's from the catalog, else the API's.
+  max_tokens: Optional[Int] = none
   ## The model that writes the summary of a compaction; empty is the session's model.
   compact_model: String = ""
   ## llama-server's `/props`, asked for the window before `GET /models`; empty for another API.
@@ -205,6 +208,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       approvals: some(user.rules),
       asking: user.asking,
       context_window: try context_window(read),
+      max_tokens: try tokens_of(read, "FINN_MAX_TOKENS"),
       drain_ms: try drain_ms(read),
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(server.base_url),
@@ -375,11 +379,13 @@ def drain_ms(read: Fn[String, Result[String]]) -> Result[Int]
   ok(60000)
 end
 
-def context_window(read: Fn[String, Result[String]]) -> Result[Optional[Int]]
-  for text in option_list(set(read, "FINN_CONTEXT_WINDOW"))
+def context_window(read: Fn[String, Result[String]]) -> Result[Optional[Int]] = tokens_of(read, "FINN_CONTEXT_WINDOW")
+
+def tokens_of(read: Fn[String, Result[String]], name: String) -> Result[Optional[Int]]
+  for text in option_list(set(read, name))
     case text.to_i
       ok(tokens) if tokens > 0 -> return ok(some(tokens))
-      _ -> return error("FINN_CONTEXT_WINDOW must be a number of tokens over 0, not #{text.inspect}")
+      _ -> return error("#{name} must be a number of tokens over 0, not #{text.inspect}")
     end
   end
 
