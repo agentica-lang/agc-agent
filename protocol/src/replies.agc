@@ -9,6 +9,11 @@ import Wire from "wire"
 ASKS_KEY = "key"
 ASKS_URL = "url"
 ASKS_DEVICE = "device"
+## Where a device login is (`DeviceState.state`).
+DEVICE_NONE = "none"
+DEVICE_WAITING = "waiting"
+DEVICE_DONE = "done"
+DEVICE_FAILED = "failed"
 
 ## Who wrote a message of the history. The history is display text: an entry of another kind (a tool call) will be a
 ## new type, not a new `Role`, so a `case` on `Role` stays exhaustive.
@@ -34,6 +39,10 @@ struct ServerStatus
   running_turns: Int
   stopping: Bool
   approvals: Optional[Bool] = none
+  ## Whether the server offers code mode (`run_script`); none from a server older than this field.
+  code_mode: Optional[Bool] = none
+  ## Code mode is off because the server's machine has no Monty worker; none from a server older than this field.
+  no_worker: Optional[Bool] = none
 end
 
 ## The answer of `POST /v1/sessions`.

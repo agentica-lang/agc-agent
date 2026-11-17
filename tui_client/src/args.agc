@@ -17,6 +17,10 @@ struct Options
   thinking: Bool
   ## Every approval asked during this run is allowed without asking.
   yolo: Bool = false
+  ## The code mode asked for: off with `--no-codemode`, else as `FINN_CODE_MODE` says; none when neither says.
+  code_mode: Optional[Bool] = none
+  ## What the session says first about its server (`Client.code_mode_note`).
+  server_note: String = ""
 end
 
 enum Command
@@ -47,6 +51,11 @@ def parse(args: List[String]) -> Result[Command]
         help: "with approvals on, allow the tool calls of the turns sent from here (other turns are still asked)",
       ),
       Opt(
+        name: "no-codemode",
+        kind: Kind.Flag,
+        help: "a server this client starts has no code mode (run_script); one that runs with it must be stopped first",
+      ),
+      Opt(
         name: "login",
         kind: Kind.Flag,
         help: (
@@ -68,7 +77,12 @@ end
 
 ## How this client finds or starts its server.
 def launch(options: Options) -> Client.Launch
-  Client.Launch(main: "tui_client/main.agc", state_dir: options.state_dir, server_command: options.server_command)
+  Client.Launch(
+    main: "tui_client/main.agc",
+    state_dir: options.state_dir,
+    server_command: options.server_command,
+    code_mode: options.code_mode != some(false),
+  )
 end
 
 private
@@ -94,6 +108,7 @@ def command(parsed: Parsed) -> Result[Command]
     profile: OP.optional_string(parsed, "profile"),
     thinking: OP.flag(parsed, "thinking"),
     yolo: OP.flag(parsed, "yolo"),
+    code_mode: Client.code_mode_asked(OP.flag(parsed, "no-codemode")),
   )
 
   return ok(Command.Login(options)) if OP.flag(parsed, "login")

@@ -22,8 +22,8 @@ USAGE = <<~TEXT
   /props for a local server, else the catalog, else /props, else GET /models), the history after the first task becomes
   a summary by FINN_COMPACT_MODEL (a model of FINN_API; else the session's model), whose tokens are not in `usage` and
   are not costed; the last round of the running turn is kept whole. On Anthropic the history folds only between turns:
-  past the limit inside a turn, the rest of the turn sends no thinking blocks. FINN_CODE_MODE=1 adds run_script: the
-  model calls the tools from a Python script in pydantic's Monty sandbox, each call approved as a direct one; the
+  past the limit inside a turn, the rest of the turn sends no thinking blocks. Code mode (run_script; off with
+  --no-codemode or FINN_CODE_MODE=0, and where no Monty worker exists for the machine): the model calls the tools from a Python script in pydantic's Monty sandbox, each call approved as a direct one; the
   worker is FINN_MONTY (a Monty 1.6.0 binary you trust: its hash is not checked), else the pinned Monty 1.6.0 fetched
   from PyPI (sha256 checked) on first use into $XDG_CACHE_HOME/finn, else ~/.cache/finn (a folder open to others is
   refused). FINN_MCP_CONFIG names a JSON file of MCP servers ({"mcpServers": {NAME: {"command", "args", "env"} or

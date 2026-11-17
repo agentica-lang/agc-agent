@@ -14,7 +14,13 @@ NOT_RUNNING = 1
 
 ## Does what `options` ask: the exit code.
 def run(options: Args.ServerOptions) -> Result[Int]
-  launch = Client.Launch(main: "cli/main.agc", state_dir: options.state_dir, server_command: options.server_command)
+  launch = Client.Launch(
+    main: "cli/main.agc",
+    state_dir: options.state_dir,
+    server_command: options.server_command,
+    code_mode: options.code_mode != some(false),
+  )
+
   dir = try Client.state_dir(launch)
   case options.action
     Args.Action.Status -> status(dir)
@@ -39,8 +45,16 @@ def render(status: Protocol.ServerStatus, url: String, dir: String, now_s: Int) 
       "  stopping #{stopping_word(status.stopping)}",
       "  state folder #{dir}",
     ] +
-    status.approvals.map { |on| ["  approvals #{approvals_word(on)}"] }.unwrap_or([])
+    status.approvals.map { |on| ["  approvals #{approvals_word(on)}"] }.unwrap_or([]) +
+    status.code_mode.map { |on| ["  code mode #{code_mode_word(on, status.no_worker == some(true))}"] }.unwrap_or([])
   )
+end
+
+def code_mode_word(on: Bool, no_worker: Bool) -> String
+  return "on" if on
+  return "off (no Monty worker for this system)" if no_worker
+
+  "off"
 end
 
 def approvals_word(on: Bool) -> String

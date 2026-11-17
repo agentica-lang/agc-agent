@@ -28,7 +28,8 @@ end
 def run(options: Args.Options) -> Result[App.Ended]
   launch = Args.launch(options)
   server = try Client.connect(launch, try Client.state_dir(launch))
-  TUI.Raw.open(->(screen) { App.run(screen, Client.http_backend(server), options) })
+  noted = options.with(server_note: Client.code_mode_note(server, options.code_mode))
+  TUI.Raw.open(->(screen) { App.run(screen, Client.http_backend(server), noted) })
 end
 
 def login(options: Args.Options) -> Result[App.Ended]

@@ -135,6 +135,16 @@ def login_url(server: Server, provider: String, url: String) -> Result[Protocol.
   Protocol.decode_login_status(try call_within(server, "POST", Protocol.auth_path(provider), body, LOGIN_TIMEOUT_MS))
 end
 
+## Starts the device login of `provider` (ChatGPT): the code the user types at the URL while the server waits.
+def device_start(server: Server, provider: String) -> Result[Protocol.DeviceLogin]
+  Protocol.decode_device_login(try call_within(server, "POST", Protocol.auth_path(provider), "{}", LOGIN_TIMEOUT_MS))
+end
+
+## Where the device login of `provider` is.
+def device_state(server: Server, provider: String) -> Result[Protocol.DeviceState]
+  Protocol.decode_device_state(try call(server, "GET", Protocol.auth_path(provider), ""))
+end
+
 ## Removes the stored key of `provider` (the base URL of `local`), or every stored key and URL when none.
 def logout(server: Server, provider: Optional[String]) -> Result[Void]
   path = provider.map { |p| Protocol.auth_path(p) }.unwrap_or(Protocol.AUTH_PATH)

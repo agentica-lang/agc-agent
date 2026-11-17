@@ -26,6 +26,8 @@ struct Options
   prompt: Optional[String] = none
   ## Every approval is allowed without asking.
   yolo: Bool = false
+  ## The code mode asked for: off with `--no-codemode`, else as `FINN_CODE_MODE` says; none when neither says.
+  code_mode: Optional[Bool] = none
 end
 
 ## What `finn server` does.
@@ -46,6 +48,7 @@ struct ServerOptions
   server_command: Optional[List[String]]
   now: Bool = false
   follow: Bool = false
+  code_mode: Optional[Bool] = none
 end
 
 enum Command
@@ -97,6 +100,11 @@ def parse(args: List[String]) -> Result[Command]
         kind: Kind.Flag,
         help: "with approvals on (FINN_APPROVALS=1), allow the tool calls of the turns this client starts (also -p)",
       ),
+      Opt(
+        name: "no-codemode",
+        kind: Kind.Flag,
+        help: "a server this client starts has no code mode (run_script); one that runs with it must be stopped first",
+      ),
       Opt(name: "delete", help: "id of a session to delete (with its file), then exit"),
       Opt(
         name: "logout",
@@ -128,6 +136,7 @@ def parse_server(args: List[String]) -> Result[Command]
         help: "program and arguments that start a server, split on spaces (or put them after --)",
       ),
       Opt(name: "now", kind: Kind.Flag, help: "stop and restart: cancel the running turns instead of waiting"),
+      Opt(name: "no-codemode", kind: Kind.Flag, help: "start and restart: a server without code mode (run_script)"),
       Opt(name: "follow", short: "f", kind: Kind.Flag, help: "logs: keep reading the log as it grows"),
     ],
     "ACTION",
@@ -168,7 +177,12 @@ end
 
 ## How this client finds or starts its server.
 def launch(options: Options) -> Client.Launch
-  Client.Launch(main: "cli/main.agc", state_dir: options.state_dir, server_command: options.server_command)
+  Client.Launch(
+    main: "cli/main.agc",
+    state_dir: options.state_dir,
+    server_command: options.server_command,
+    code_mode: options.code_mode != some(false),
+  )
 end
 
 private
@@ -209,6 +223,7 @@ def command(parsed: Parsed) -> Result[Command]
     thinking: OP.flag(parsed, "thinking"),
     prompt: OP.optional_string(parsed, "prompt"),
     yolo: OP.flag(parsed, "yolo"),
+    code_mode: Client.code_mode_asked(OP.flag(parsed, "no-codemode")),
   )
 
   for id in option_list(OP.optional_string(parsed, "delete"))
@@ -274,6 +289,7 @@ def server_command_of(parsed: Parsed) -> Result[Command]
         server_command: command,
         now: OP.flag(parsed, "now"),
         follow: OP.flag(parsed, "follow"),
+        code_mode: Client.code_mode_asked(OP.flag(parsed, "no-codemode")),
       ),
     ),
   )

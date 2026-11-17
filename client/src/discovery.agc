@@ -11,6 +11,7 @@ import Client from "http"
 
 STATE_DIR_ENV = "FINN_STATE_DIR"
 SERVER_COMMAND_ENV = "FINN_SERVER_COMMAND"
+CODE_MODE_ENV = "FINN_CODE_MODE"
 SERVER_FILE = "server.json"
 LOCK_FILE = "server.lock"
 LOG_FILE = "server.log"
@@ -35,6 +36,8 @@ struct Launch
   main: String
   state_dir: Optional[String] = none
   server_command: Optional[List[String]] = none
+  ## Off (`--no-codemode` or `FINN_CODE_MODE=0`): a server this client starts has no code mode.
+  code_mode: Bool = true
 end
 
 ## What runs in the folder: a server of this client's version, one of another version (its pid), or nothing (why).
@@ -71,6 +74,39 @@ def connect(options: Launch, dir: String) -> Result[Client.Server]
     Probe.Other(pid) -> other_version(dir, pid)
     Probe.Absent(reason) -> start(options, dir, reason)
   end
+end
+
+## The code mode a client asks for: off with `--no-codemode`, else what `FINN_CODE_MODE` (`env`) says; none when
+## neither says.
+def code_mode_wanted(no_codemode: Bool, env: Optional[String]) -> Optional[Bool]
+  return some(false) if no_codemode
+
+  case env
+    some("0") -> some(false)
+    some("1") -> some(true)
+    _ -> none
+  end
+end
+
+## `code_mode_wanted` of this process's `FINN_CODE_MODE`.
+def code_mode_asked(no_codemode: Bool) -> Optional[Bool]
+  case System.env(CODE_MODE_ENV)
+    ok(value) -> code_mode_wanted(no_codemode, some(value))
+    error(_) -> code_mode_wanted(no_codemode, none)
+  end
+end
+
+## Code mode is the server's, set when it starts: one line when the running server's is not the one `wanted`, saying
+## how to apply it; "" when it is, when nothing is wanted, or when the server does not say.
+def code_mode_note(server: Client.Server, wanted: Optional[Bool]) -> String
+  for want in option_list(wanted)
+    case Client.server_status(server)
+      ok(status) if status.code_mode == some(not want) -> return code_mode_line(want, status.no_worker == some(true))
+      _ -> nil
+    end
+  end
+
+  ""
 end
 
 ## The server of the folder, without starting one. A server that answers badly is an error.
@@ -287,6 +323,13 @@ def start(options: Launch, dir: String, why_not: String) -> Result[Client.Server
   end
 end
 
+def code_mode_line(wanted: Bool, no_worker: Bool) -> String
+  return "code mode isn't available on this system: there is no Monty worker for it" if wanted and no_worker
+  return "the running server has code mode off; `finn server restart` applies it" if wanted
+
+  "the running server has code mode on; `finn server restart --no-codemode` applies it"
+end
+
 def started(options: Launch, dir: String) -> Result[Client.Server]
   try rotate_log(dir)
   try spawn_server(options, dir)
@@ -398,7 +441,7 @@ def spawn_server(options: Launch, dir: String) -> Result[Void]
   launcher = try Process.spawn(
     "sh",
     ["-c", script, "sh", file_in(dir, LOG_FILE)] + command,
-    Process.Options(env: {STATE_DIR_ENV: dir}, pgroup: true),
+    Process.Options(env: server_env(options, dir), pgroup: true),
   )
 
   status = try Process.wait(launcher, START_WAIT_MS)
@@ -407,6 +450,12 @@ def spawn_server(options: Launch, dir: String) -> Result[Void]
   return error("the server command was not found: #{command.join(" ")}", kind: KIND_SERVER) if status == NOT_FOUND
 
   error("the server command could not be started (exit #{status}): #{command.join(" ")}", kind: KIND_SERVER)
+end
+
+def server_env(options: Launch, dir: String) -> Map[String, String]
+  return {STATE_DIR_ENV: dir} if options.code_mode
+
+  {STATE_DIR_ENV: dir, CODE_MODE_ENV: "0"}
 end
 
 def wait_alive(dir: String) -> Result[Client.Server]
@@ -426,4 +475,11 @@ def wait_alive(dir: String) -> Result[Client.Server]
   end
 
   error("no server answered in #{START_WAIT_MS / 1000} s; see #{file_in(dir, LOG_FILE)}", kind: KIND_SERVER)
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
 end

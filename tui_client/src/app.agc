@@ -110,6 +110,10 @@ def opened(model: State.Model) -> Result[State.Model]
     app = State.noted(app, app.backend.yolo_warning.call())
   end
 
+  if not model.options.server_note.empty?
+    app = State.noted(app, model.options.server_note)
+  end
+
   ok(State.effect(Logins.welcomed(app), State.listen(app.signals)))
 end
 
@@ -176,6 +180,8 @@ def handled(app: State.Model, msg: State.Msg) -> State.Model
     State.Msg.Leveled(result) -> Level.level_reply(app, result)
     State.Msg.Moved(result) -> Commands.moved(app, result)
     State.Msg.LoggedIn(name, result) -> Logins.logged_in(app, name, result)
+    State.Msg.DeviceStarted(name, serial, result) -> Logins.device_started(app, name, serial, result)
+    State.Msg.DevicePolled(name, serial, result) -> Logins.device_polled(app, name, serial, result)
     State.Msg.Rechecked(generation, result) if generation == app.generation -> Session.rechecked(app, result)
     State.Msg.Rechecked(_, _) -> app
     State.Msg.Files(opened, result) if opened == app.opened -> Files.files_read(app.with(reading_files: false), result)

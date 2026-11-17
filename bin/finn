@@ -23,7 +23,7 @@ usage: finn [tui] [options]       talk to the agent in this folder on the full s
        finn -p TASK [--yolo]      one task (- reads it from stdin): the answer on stdout, the rest on stderr
        finn serve [options]       run the server in the foreground
        finn login [PROVIDER]      set up a provider with its key, or local with its base URL: checked, then stored
-                                  (pick one when none is given)
+                                  (pick one when none is given); chatgpt signs in with a code in a browser
        finn logout [PROVIDER]     remove the stored key (or base URL) of a provider, or every stored key and URL
        finn server ACTION         status, start, stop, restart or logs of the server of the state folder
                                   (stop waits for the running turns, --now cancels them; finn server --help)
@@ -46,6 +46,8 @@ serve options (each overrides its environment variable):
   --approvals      ask before a tool call that no rule allows (default: FINN_APPROVALS, else "approvals" in the
                    config file; FINN_APPROVALS=0 wins over the file). Off, the model runs any command that no deny
                    rule refuses, without asking: use a sandbox or a container
+  --no-codemode    no code mode: the model calls the tools only one by one, not from a Python script (run_script;
+                   default: FINN_CODE_MODE, else on where a Monty worker exists)
   (finn serve --help tells the rest: folders, keys, compaction)
 TEXT
 }
@@ -67,6 +69,7 @@ serve() {
       --model=*) export FINN_MODEL="${1#*=}"; shift ;;
       --base-url=*) export FINN_BASE_URL="${1#*=}"; shift ;;
       --approvals) export FINN_APPROVALS=1; shift ;;
+      --no-codemode) export FINN_CODE_MODE=0; shift ;;
       -h|--help) exec "$agentica" "$root/core/main.agc" --help ;;
       *) echo "finn serve: unknown option $1" >&2; usage >&2; exit 2 ;;
     esac
