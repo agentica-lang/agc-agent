@@ -403,7 +403,7 @@ def with_thinking(shown: List[Protocol.Message], messages: List[LLM.Message]) ->
   return shown if thought.empty?
 
   at = shown.size
-  while at > 0 and calls.include?(shown[at - 1].tool.map { |t| t.call_id }.unwrap_or(""))
+  while at > 0 and of_round?(calls, shown[at - 1].tool.map { |t| t.call_id }.unwrap_or(""))
     at = at - 1
   end
 
@@ -1108,4 +1108,9 @@ def side_field(side: JSON.Value, name: String) -> Optional[String]
     ok(value) -> some(value)
     error(_) -> none
   end
+end
+
+# A tool line of the round of `calls`: one of them, or a call a script among them made (`ID.N`).
+def of_round?(calls: List[String], call_id: String) -> Bool
+  calls.include?(call_id) or calls.any? { |id| call_id.start_with?("#{id}.") }
 end
