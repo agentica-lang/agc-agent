@@ -49,7 +49,7 @@ def test_past_the_window_the_history_is_compacted_and_keeps_the_first_task() -> 
     try Test.eq(roles(after), ["system", "user", "assistant", "user", "assistant", "tool"])
     try Test.eq(prefix(after), prefix(first))
     try Test.eq(contents(after).take(4).drop(1), ["Say hello.", summary(), "Write hello.txt."])
-    shown = (try H.session(h, id)).history
+    shown = H.said((try H.session(h, id)).history)
     try Test.eq(shown.map { |m| Protocol.role_name(m.role) }, ["user", "assistant", "user", "assistant"])
     try Test.assert(not shown[3].text.include?("Summary"), "the summary is shown as an answer")
     last = (try H.session(h, id)).last_event_id
@@ -129,7 +129,7 @@ def test_a_turn_compacts_at_its_start() -> Result[Void]
     try Test.eq(JSON.get(after, "max_tokens").ok?, false)
     try Test.eq(roles(after), ["system", "user", "assistant", "user"])
     try Test.eq(contents(after).drop(1), ["Write hello.txt.", summary(), "Go on."])
-    shown = (try H.session(h, id)).history
+    shown = H.said((try H.session(h, id)).history)
     try Test.eq(shown.size, 6)
     Test.assert(shown[5].text.start_with?("Hello!"), "the answer of the compacted turn is not shown")
   end
@@ -160,12 +160,13 @@ def test_the_older_rounds_of_the_running_turn_are_compacted() -> Result[Void]
     try Test.eq(roles(after), ["system", "user", "assistant", "user", "assistant", "tool"])
     try Test.eq(contents(after).take(4).drop(1), ["Write hello.txt, then echo.", summary(), Compaction.GO_ON])
     try Test.assert(JSON.get(messages(after)[4], "tool_calls").ok?, "the last tool call is not kept")
-    shown = (try H.session(h, id)).history
+    full = (try H.session(h, id)).history
+    shown = H.said(full)
     try Test.eq(shown.map { |m| Protocol.role_name(m.role) }, ["user", "assistant"])
     # The text of the folded round stays in the answer, as without a compaction.
     try Test.assert(shown[1].text.start_with?("I will write it.\n\nHello!"), "the answer is cut: #{shown[1].text}")
     H.restarted(h, setup, "") do |r|
-      try Test.eq((try H.session(r, id)).history, shown)
+      try Test.eq((try H.session(r, id)).history, full)
       _ = try H.send(r, id, "Again.")
       _ = try H.idle(r, id)
       again = try body(r)
@@ -215,7 +216,7 @@ def test_a_cut_turn_keeps_the_text_of_its_folded_rounds() -> Result[Void]
     a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
     H.close(a)
     H.restarted(h, setup, "") do |r|
-      shown = (try H.session(r, id)).history
+      shown = H.said((try H.session(r, id)).history)
       long = (0..11).map { |n| "word#{n} " }.join("")
       written = ["I will write it.", long, "I will write it."].join("\n\n")
       Test.eq(shown.map { |m| m.text }, ["Write two files twice.", written])
@@ -355,7 +356,7 @@ def test_a_failed_or_empty_summary_is_an_error_and_not_asked_again_in_the_turn()
     try Test.eq(bodies.select { |b| contents(b).first == Compaction.SYSTEM }.size, 3)
     try Test.eq(contents(bodies[10])[1], "Say hello.")
     try Test.eq(roles(bodies[10]).select { |r| r == "user" }.size, 4)
-    Test.eq((try H.session(h, id)).history.size, 8)
+    Test.eq(H.said((try H.session(h, id)).history).size, 8)
   end
 end
 

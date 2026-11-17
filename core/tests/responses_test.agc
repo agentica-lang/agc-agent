@@ -35,7 +35,8 @@ def test_a_turn_runs_on_the_responses_format() -> Result[Void]
     usage = a.seen.select { |s| Protocol.event_name(s.event) == "usage" }
     try Test.eq(usage.map { |s| H.untimed(s.event) }.first, Protocol.Event.Usage(usage_of(100, 60)))
     shown = (try H.session(h, id)).history
-    Test.eq(shown.map { |m| m.text }, ["Write hello.txt.", "I will write it.\n\nHello! It's a good day!"])
+    try Test.eq(shown.select { |m| m.thinking }.map { |m| m.text }, ["Write the file."])
+    Test.eq(H.said(shown).map { |m| m.text }, ["Write hello.txt.", "I will write it.\n\nHello! It's a good day!"])
   end
 end
 

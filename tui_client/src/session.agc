@@ -81,9 +81,14 @@ def create(app: State.Model) -> Result[State.Model]
   )
 end
 
+## Whether the session shows anything but notices: a message, a thinking block or a tool call.
+def content?(app: State.Model) -> Bool = app.entries.any? { |e| e.kind != Transcript.Kind.Notice }
+
 def resume(app: State.Model, id: String) -> Result[State.Model]
   session = try app.backend.session.call(id)
-  ok(profile_notices(State.noted(attach(app.with(id: id), session, false), "session #{id}"), session))
+  attached = attach(app.with(id: id), session, false)
+  headed = attached.with(entries: Transcript.note([], "session #{id}") + attached.entries)
+  ok(profile_notices(headed, session))
 end
 
 ## The slash commands of session `id` in folder `cwd`, read when the list is of another folder; none when the server
@@ -347,13 +352,7 @@ def todos(list: List[Protocol.Todo]) -> String
 end
 
 def finished(app: State.Model, done: Protocol.TurnFinished) -> State.Model
-  note = Client.stop_note(done)
-  case done.stop_reason
-    Protocol.StopReason.EndTurn -> app
-    Protocol.StopReason.Cancelled -> State.noted(app, "stopped")
-    _ if not note.empty? -> State.noted(app, note)
-    _ -> State.noted(app, "the turn ended: #{Protocol.stop_reason_name(done.stop_reason)}")
-  end
+  Transcript.stop_note(done).map { |text| State.noted(app, text) }.unwrap_or(app)
 end
 
 def resync(app: State.Model) -> State.Model

@@ -33,13 +33,19 @@ export State.seed
 export Logins.welcomed
 export Session.read_feed
 
-## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
-def run(screen: TUI.Raw.Screen, backend: Client.Backend, options: Args.Options) -> Result[Int]
+## How the app ended: its exit code, and what to print once the screen is closed (how to come back to the session).
+struct Ended
+  code: Int
+  hint: Optional[String] = none
+end
+
+## Runs the session of `options` on `screen` until the user leaves or a signal ends it.
+def run(screen: TUI.Raw.Screen, backend: Client.Backend, options: Args.Options) -> Result[Ended]
   started(screen, backend, options, &opened)
 end
 
 ## `finn login` on `screen`: the login of the provider of `options` (the picker when none), then the end.
-def login(screen: TUI.Raw.Screen, backend: Client.Backend, options: Args.Options) -> Result[Int]
+def login(screen: TUI.Raw.Screen, backend: Client.Backend, options: Args.Options) -> Result[Ended]
   started(screen, backend, options, ->(model: State.Model) { Logins.login_only(model, options.provider) })
 end
 
@@ -48,7 +54,7 @@ def started(
   backend: Client.Backend,
   options: Args.Options,
   first: Fn[State.Model, Result[State.Model]],
-) -> Result[Int]
+) -> Result[Ended]
   signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
   palette = Theme.colors256?(System.env("TERM").unwrap_or(""), System.env("COLORTERM").unwrap_or(""))
   output = TUI.OutputMode.Colors256
@@ -64,12 +70,18 @@ def started(
     start = start.with(theme: Theme.basic())
   end
 
-  drive(TUI.Raw.backend(screen), start, output)
+  last = try driven(TUI.Raw.backend(screen), start, output)
+  ok(Ended(code: try ended(last), hint: Client.resume_hint("finn", last.id, not Session.content?(last))))
 end
 
 ## Runs the app from the model `start` and its effects on `backend` until it ends: the exit code. The tests give it a
 ## fake terminal.
 def drive(backend: TUI.Backend, start: State.Model, output: TUI.OutputMode = TUI.OutputMode.Colors256) -> Result[Int]
+  ended(try driven(backend, start, output))
+end
+
+# The model the app ends with.
+def driven(backend: TUI.Backend, start: State.Model, output: TUI.OutputMode) -> Result[State.Model]
   app = TUI.App(
     model: start.with(effects: []),
     update: &update,
@@ -81,7 +93,10 @@ def drive(backend: TUI.Backend, start: State.Model, output: TUI.OutputMode = TUI
     output: output,
   )
 
-  last = try TUI.Raw.program(backend, app)
+  TUI.Raw.program(backend, app)
+end
+
+def ended(last: State.Model) -> Result[Int]
   case last.failure
     some(reason) -> error(reason, kind: "tui.session")
     none -> ok(last.exit.unwrap_or(0))

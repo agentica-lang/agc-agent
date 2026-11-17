@@ -17,7 +17,7 @@ finn --session ID
 finn chat --session ID
 ```
 
-In a session, `/resume` lists the other sessions, the last changed first, without those that hold no message yet (their files stay), and `/resume N` or `/resume ID` switches to one. A session goes on when every client closes: the server keeps running its turn, and a client that attaches later sees what it missed.
+In a session, `/resume` lists the other sessions, the last changed first, without those that hold no message yet (their files stay), and `/resume N` or `/resume ID` switches to one; it shows the session's turns as they were drawn: the thinking, the tool calls and how a turn ended. A session goes on when every client closes: the server keeps running its turn, and a client that attaches later sees what it missed.
 
 `finn --delete ID` deletes a session and its file.
 

@@ -127,6 +127,14 @@ def env_for(base: Path, model: "FakeModel") -> dict[str, str]:
     )
 
 
+def transcript(rows: list[str]) -> str:
+    """The rows above the editor, from the session line to the note of a turn cut at the output limit."""
+    text = text_of(rows)
+    start = text.index(" session ")
+    end = text.index("\n", text.index("output limit", start))
+    return text[start:end]
+
+
 class Reply:
     """One answer of the fake model: a fixture streamed one event at a time. After `hold` events it waits until
     `release` is set (or the test ends, when it never is)."""
@@ -701,6 +709,51 @@ class PtyTest(unittest.TestCase):
         deadline = time.monotonic() + TIMEOUT
         while "greets" in text_of(term.settle(0.2)):
             self.assertLess(time.monotonic(), deadline, "the thinking stayed")
+
+    def test_a_resumed_session_shows_what_its_turns_did(self) -> None:
+        """A session resumed from another one shows its turn as it was drawn live: the session line first, then the
+        thinking, the tool call, the answer and how the turn ended. Quitting it says how to come back."""
+        term = self.start([Reply("think_read.sse"), Reply("text_length.sse")])
+        first = re.search(r" session (\S+)", text_of(term.screen())).group(1)
+        term.type("Read missing.txt.\r")
+        term.wait_for("output limit")
+        live = transcript(term.wait_for("ready"))
+        self.assertIn("read missing.txt", live)
+        term.type("/new\r")
+        term.wait_until(lambda rows: "Read missing" not in text_of(rows), "the new session")
+        term.type("/resume\r")
+        term.wait_for("resume a session (1 of 1)")
+        term.type("\r")
+        replayed = transcript(term.wait_for("output limit"))
+        self.assertEqual(replayed, live)
+        self.assertTrue(replayed.startswith(f" session {first}"), replayed)
+        term.type("\x14")
+        term.wait_for("The user wants the file.")
+        term.type("/quit\r")
+        term.wait_for(f"to come back: finn --session {first}")
+
+    def test_a_session_attached_mid_turn_shows_each_item_once(self) -> None:
+        """A second client that opens a session while its turn waits for an approval shows the history up to the turn,
+        then the turn from the replay: each thinking block and tool call once, as the first client does."""
+        term = self.start([Reply("think_read.sse"), Reply("write_file.sse"), Reply("text.sse")])
+        first = re.search(r" session (\S+)", text_of(term.screen())).group(1)
+        term.type("Read missing.txt.\r")
+        term.wait_for("Tab to answer")
+        args = ["--session", first, "--state-dir", str(term.base / "state"), "--", *program(CORE), "serve"]
+        other = Terminal(term.base, self.fake, args, ROWS, COLS, {})
+        self.addCleanup(other.close)
+        other.wait_for("Tab to answer")
+        rows = other.settle()
+        text = text_of(rows[: next(i for i, row in enumerate(rows) if row.startswith("──"))])
+        for once in ["Read missing.txt.", "▸ thinking", "read missing.txt", "write hello.txt"]:
+            self.assertEqual(text.count(once), 1, f"{once!r} in:\n{text}")
+
+    def test_quitting_an_empty_session_says_nothing_of_it(self) -> None:
+        term = self.start([])
+        term.wait_for("ready")
+        term.type("\x03")
+        self.assertEqual(term.finish(), 0)
+        self.assertNotIn("to come back", text_of(term.screen()))
 
     def test_session_commands(self) -> None:
         term = self.start([Reply("text.sse"), Reply("text.sse"), Reply("summary.sse")])

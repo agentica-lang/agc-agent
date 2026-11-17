@@ -14,6 +14,58 @@ def test_a_turn_streams_text_tools_and_usage() -> Result[Void]
   Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["turn.sse"])], &a_turn)
 end
 
+# A resumed session prints its turns as they were printed live: the tool calls with their ends and how a turn ended
+# (the thinking only when it is shown). Leaving it says how to come back.
+def test_a_resumed_session_prints_what_its_turns_did() -> Result[Void]
+  Driver.within([Routes.session([Fake.Reply(session: "session_worked.json")]), Routes.held_events()]) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN + ["--session", "s1"])
+    lines = try Driver.read_until(
+      cli,
+      "[turn finished] max_tokens: the reply hit the model's output limit (8192 tokens)",
+    )
+
+    done = try Driver.finish(cli)
+    expected = [
+      "[session s1]",
+      "user: Read missing.txt.",
+      "[tool] read_file missing.txt",
+      "[tool failed] path does not exist (2 ms)",
+      "assistant: Hello!",
+      "[turn finished] max_tokens: the reply hit the model's output limit (8192 tokens)",
+    ]
+
+    try Test.eq(lines, expected)
+    Test.eq(done.lines, ["[to come back: finn chat --session s1]"])
+  end
+end
+
+# A session whose snapshot is over 1 MiB (here 300 long thinking blocks, not printed) is still resumed.
+def test_a_big_session_is_resumed() -> Result[Void]
+  thought = (1..300).to_a.map { |_n|
+    Protocol.Message(role: Protocol.Role.Assistant, text: "x" * 5000, thinking: true)
+  }
+
+  said = thought.push(Protocol.Message(role: Protocol.Role.Assistant, text: "done"))
+  big = Protocol.Session(
+    id: "s1",
+    cwd: "/work",
+    model: "m",
+    last_event_id: 0,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: said,
+  )
+
+  body = Protocol.encode_session(big)
+  Driver.within([Routes.session([Fake.Reply(body: body)]), Routes.held_events()]) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN + ["--session", "s1"])
+    lines = try Driver.read_until(cli, "assistant: done")
+    _ = try Driver.finish(cli)
+    Test.eq([(body.bytes.size > 1_048_576).to_s, lines.size.to_s], ["true", "2"])
+  end
+end
+
 def test_a_new_session_names_its_model_api_and_profile() -> Result[Void]
   Driver.within([Routes.created(), Routes.held_events()]) do |rig|
     cli = try Driver.start(rig.dir, PLAIN + ["--model", "m", "--api", "openai_responses", "--profile", "plan"])
@@ -46,7 +98,7 @@ def a_turn(rig: Driver.Rig) -> Result[Void]
 
   try Test.eq(lines, expected)
   try Test.eq(done.code, 0)
-  try Test.eq(done.lines, [])
+  try Test.eq(done.lines, ["[to come back: finn chat --session s1]"])
   try Test.eq(Protocol.decode_new_session(create.body), ok(Protocol.NewSession(cwd: "/work", model: none)))
   try Test.eq(Protocol.decode_send_message(message.body), ok(Protocol.SendMessage(text: "hello")))
   try Test.eq(Driver.header(events, Protocol.LAST_EVENT_ID_HEADER), ["0"])
@@ -237,7 +289,8 @@ def test_a_bang_line_runs_a_shell_command() -> Result[Void]
 
     try Driver.say(cli, "!! ls")
     try Driver.read_until(cli, "[not run] a turn is running")
-    _ = try Driver.finish(cli)
+    # A session that only ran commands has something in it too.
+    try Test.eq((try Driver.finish(cli)).lines, ["[to come back: finn chat --session s1]"])
     sent: List[Fake.Seen] = []
     for _i in 1..3
       sent = sent.push(try Fake.request(rig.fake, "POST", Protocol.shell_path("s1")))
@@ -334,7 +387,7 @@ def left_after_ctrl_c(rig: Driver.Rig, marker: String) -> Result[Void]
   try Process.signal(cli, System.Signal.Int)
   done = try Driver.finish(cli)
   try Test.eq(done.code, 130)
-  Test.eq(done.lines, ["[interrupted]"])
+  Test.eq(done.lines, ["[interrupted]", "[to come back: finn chat --session s1]"])
 end
 
 def test_resuming_mid_turn_replays_the_whole_turn() -> Result[Void]
@@ -412,7 +465,11 @@ def denied_at_the_end(rig: Driver.Rig) -> Result[Void]
   try Test.eq(Protocol.decode_approve(a1.body), deny)
   try Test.eq(Protocol.decode_approve(a2.body), deny)
   try Test.assert(not done.lines.include?(PROMPT), "nobody was asked: #{done.lines}")
-  try Test.eq(done.lines.last, "[turn finished] end_turn")
+  try Test.eq(
+    done.lines.drop(done.lines.size - 2),
+    ["[turn finished] end_turn", "[to come back: finn chat --session s1]"],
+  )
+
   Test.eq(done.code, 0)
 end
 

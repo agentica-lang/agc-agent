@@ -360,6 +360,56 @@ def listing(file: Ref) -> Result[Listing]
   )
 end
 
+## What the turn shows after `event`: a tool call adds its line, which its end completes (without its output and diff,
+## which a history of many calls cannot carry), and a turn that did not end as asked adds how it ended.
+def shown_after(shown: List[Protocol.Message], event: Protocol.Event) -> List[Protocol.Message]
+  case event
+    Protocol.Event.ToolStarted(started) ->
+      shown.push(Protocol.Message(role: Protocol.Role.Assistant, text: "", tool: some(started)))
+    Protocol.Event.ToolFinished(done) ->
+      # The call is among the last lines, the tool calls of the round that runs.
+      i = shown.size - 1
+      while i >= 0 and shown[i].tool.some?
+        if shown[i].tool.unwrap!.call_id == done.call_id
+          return shown.set(i, shown[i].with(done: some(done.with(output: none, diff: none))))
+        end
+
+        i = i - 1
+      end
+
+      shown
+    Protocol.Event.TurnFinished(finished) if finished.stop_reason != Protocol.StopReason.EndTurn ->
+      stop = finished.with(history_size: none)
+      shown.push(Protocol.Message(role: Protocol.Role.Assistant, text: "", stop: some(stop)))
+    _ -> shown
+  end
+end
+
+## What the turn shows after a round of the model: its thinking goes before the tool calls it made, the last lines,
+## else at the end.
+def with_thinking(shown: List[Protocol.Message], messages: List[LLM.Message]) -> List[Protocol.Message]
+  said = messages.select { |m| m.role == LLM.Role.Assistant }.flat_map { |m| m.content }
+  thought: List[Protocol.Message] = []
+  calls: List[String] = []
+  for block in said
+    case block
+      LLM.Block.Thinking(part) if not part.text.strip.empty? ->
+        thought = thought.push(Protocol.Message(role: Protocol.Role.Assistant, text: part.text, thinking: true))
+      LLM.Block.ToolUse(call) -> calls = calls.push(call.id)
+      _ -> nil
+    end
+  end
+
+  return shown if thought.empty?
+
+  at = shown.size
+  while at > 0 and calls.include?(shown[at - 1].tool.map { |t| t.call_id }.unwrap_or(""))
+    at = at - 1
+  end
+
+  shown.take(at) + thought + shown.drop(at)
+end
+
 ## The first line of a file: the session, without reading the rest.
 def header(file: Ref) -> Result[Header] = decode_header(try JSON.parse(try file.port.first_line.call(file.path)))
 
@@ -811,7 +861,16 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
       end
 
       events = saved.events.push(logged)
-      ok(saved.with(events: events, open_user: saved.open_user and not started, reserved: 0, shells: shells))
+      shown = shown_after(saved.shown, event)
+      ok(
+        saved.with(
+          events: events,
+          shown: shown,
+          open_user: saved.open_user and not started,
+          reserved: 0,
+          shells: shells,
+        ),
+      )
     "user" ->
       text = try field(json, "text")
       shown = Protocol.Message(role: Protocol.Role.User, text: optional_string(json, "typed").unwrap_or(text))
@@ -841,7 +900,13 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
         messages = messages.push(try decode_message(item))
       end
 
-      ok(saved.with(history: saved.history + messages, marks: saved.marks + marks_of(json)))
+      ok(
+        saved.with(
+          history: saved.history + messages,
+          shown: with_thinking(saved.shown, messages),
+          marks: saved.marks + marks_of(json),
+        ),
+      )
     "compaction" ->
       compaction = Compaction.Compaction(
         from: try JSON.int(try JSON.get(json, "from")),

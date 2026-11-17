@@ -6,6 +6,9 @@ import Store from "../src/session/store"
 
 LINEAR = "tests/fixtures/sessions/linear.jsonl"
 MEMORY = "/memory"
+CALLS = 2000
+BUILD_MS = 500
+SESSION_BYTES = 1_048_576
 
 # Every kind of block reads back as it was written, so the history a restart gives the model is the same.
 def test_a_message_reads_back_with_every_kind_of_block() -> Result[Void]
@@ -314,6 +317,56 @@ def kind[T](result: Result[T]) -> String
     ok(_) -> "ok"
     error(e) -> e.kind
   end
+end
+
+# The history of a session of 2000 tool calls, each with a long output, is built in a short time by what both a load
+# and a running session use, and a session with it stays far under the limit of a client's read: a line of each call,
+# without its output.
+def test_the_history_of_many_tool_calls_is_built_fast_and_small() -> Result[Void]
+  output = "x" * 4000
+  rounds: List[List[Protocol.Event]] = []
+  said: List[LLM.Message] = []
+  for n in 1..CALLS
+    call_id = "c#{n}"
+    started = Protocol.ToolStarted(call_id: call_id, name: "bash", summary: "echo #{n}")
+    done = Protocol.ToolFinished(call_id: call_id, ok: true, summary: "ok", duration_ms: 1, output: some(output))
+    rounds = rounds.push([Protocol.Event.ToolStarted(started), Protocol.Event.ToolFinished(done)])
+    call = LLM.ToolCall(id: call_id, name: "bash", arguments: "{}", input: try JSON.parse("{}"))
+    blocks = [LLM.Block.Thinking(LLM.ThinkingPart(text: "Step #{n}.")), LLM.Block.ToolUse(call)]
+    said = said.push(LLM.Message(role: LLM.Role.Assistant, content: blocks))
+  end
+
+  began = Time.monotonic_ms
+  shown = [Protocol.Message(role: Protocol.Role.User, text: "Go.")]
+  for n in 0...CALLS
+    for event in rounds[n]
+      shown = Store.shown_after(shown, event)
+    end
+
+    shown = Store.with_thinking(shown, [said[n]])
+  end
+
+  took = Time.monotonic_ms - began
+  snapshot = Protocol.Session(
+    id: "s1",
+    cwd: "/",
+    model: "m",
+    last_event_id: 2 * CALLS,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: shown,
+  )
+
+  bytes = Protocol.encode_session(snapshot).bytes.size
+  try Test.eq(
+    [shown.size.to_s, shown[1].text, shown.last.tool.map { |t| t.call_id }.unwrap_or("")],
+    ["#{1 + 2 * CALLS}", "Step 1.", "c#{CALLS}"],
+  )
+
+  try Test.eq(shown.last.done.map { |d| [d.summary, d.output.unwrap_or("none")] }, some(["ok", "none"]))
+  try Test.assert(took < BUILD_MS, "the history took #{took} ms")
+  Test.assert(bytes < SESSION_BYTES, "the session is #{bytes} bytes")
 end
 
 def on_both(scenario: Fn[Store.Port, String, Result[Void]]) -> Result[Void]

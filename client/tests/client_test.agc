@@ -86,6 +86,12 @@ def test_a_bang_line_is_a_shell_command() -> Result[Void]
   ok()
 end
 
+# Leaving a session says how to come back to it, unless it has nothing in it yet.
+def test_the_hint_to_come_back() -> Result[Void]
+  try Test.eq(Client.resume_hint("finn", "s12", false), some("to come back: finn --session s12"))
+  Test.eq([Client.resume_hint("finn", "s12", true), Client.resume_hint("finn chat", "", false)], [none, none])
+end
+
 # The list to resume leaves out the empty sessions and the current one; their numbers go to the others, but an id still
 # picks one.
 def test_resume_picks_by_number_or_id() -> Result[Void]

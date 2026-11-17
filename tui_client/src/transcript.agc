@@ -1,5 +1,6 @@
 ## What the transcript holds and the lines it draws in a given width. Pure.
 
+import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import Calls from "calls"
 import Markdown from "markdown"
@@ -53,11 +54,22 @@ struct Wrapped
 end
 
 def from_history(messages: List[Protocol.Message]) -> List[Entry]
-  messages.map do |message|
-    case message.role
-      Protocol.Role.User -> Entry(kind: Kind.User, text: message.text)
-      Protocol.Role.Assistant -> Entry(kind: Kind.Assistant, text: message.text)
-    end
+  entries: List[Entry] = []
+  for message in messages
+    entries = from_message(entries, message)
+  end
+
+  entries
+end
+
+## How a turn that did not end as asked is noted, live or in the history; none for one that did.
+def stop_note(done: Protocol.TurnFinished) -> Optional[String]
+  note = Client.stop_note(done)
+  case done.stop_reason
+    Protocol.StopReason.EndTurn -> none
+    Protocol.StopReason.Cancelled -> some("stopped")
+    _ if not note.empty? -> some(note)
+    _ -> some("the turn ended: #{Protocol.stop_reason_name(done.stop_reason)}")
   end
 end
 
@@ -216,6 +228,28 @@ def wrap(text: String, width: Int) -> List[String]
 end
 
 private
+
+# A message of the history drawn as it was live: a thinking block, a tool call with its end, or how the turn ended.
+def from_message(entries: List[Entry], message: Protocol.Message) -> List[Entry]
+  return entries.push(Entry(kind: Kind.Thinking, text: message.text)) if message.thinking
+
+  case message.tool
+    some(started) ->
+      running = tool_started(entries, started)
+      return message.done.map { |done| tool_finished(running, done) }.unwrap_or(running)
+    none -> nil
+  end
+
+  case message.stop
+    some(done) -> return stop_note(done).map { |text| note(entries, text) }.unwrap_or(entries)
+    none -> nil
+  end
+
+  case message.role
+    Protocol.Role.User -> entries.push(Entry(kind: Kind.User, text: message.text))
+    Protocol.Role.Assistant -> entries.push(Entry(kind: Kind.Assistant, text: message.text))
+  end
+end
 
 def found(entries: List[Entry], call_id: String) -> Optional[Int]
   return none if call_id == ""

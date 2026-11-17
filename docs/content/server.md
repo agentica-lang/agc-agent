@@ -40,7 +40,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `GET /v1/auth/chatgpt` | where that login is: `{"state", "message"}`, `state` being `none`, `waiting`, `done` or `failed` (`message` says why) |
 | `POST /v1/sessions` | a new session: `{"cwd": "/path", "model": null}`, plus `provider`, `api` and `profile`; it answers its `id` and `profile` |
 | `GET /v1/sessions` | the sessions, the last changed first; `empty` marks one with no message, compaction or output of a tool or command yet |
-| `GET /v1/sessions/ID` | one session: its settings, history, the `usage` of its last model call, the model's `todos` and its `profile` (`name`, `source`: `built-in`, `user`, `project` or empty when it does not load, `description`, `warnings`) |
+| `GET /v1/sessions/ID` | one session: its settings, history (the messages, and items with an empty `text` for what the turns did: `thinking` with its text, a `tool` call with its end in `done` (without its output and diff), or the `stop` of a turn that did not end as asked; while a turn runs, the history stops at its start, and the events from `turn_from_event_id` give the rest), the `usage` of its last model call, the model's `todos` and its `profile` (`name`, `source`: `built-in`, `user`, `project` or empty when it does not load, `description`, `warnings`) |
 | `PATCH /v1/sessions/ID` | change `provider`, `model`, `effort` (the thinking level), `accept_edits` or `profile` (with the model and thinking level it sets, unless the same request gives them; `409` while a turn, a command or a compaction runs) |
 | `DELETE /v1/sessions/ID` | delete a session and its file |
 | `POST /v1/sessions/ID/messages` | send `{"text": "..."}`; it starts a turn, or joins the running one |

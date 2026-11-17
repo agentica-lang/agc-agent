@@ -12,6 +12,8 @@ COMPACT_TIMEOUT_MS = 600_000
 EXPORT_TIMEOUT_MS = 120_000
 ## The most a client takes of an export, the limit of `HTTP`.
 EXPORT_BODY_BYTES = 67_108_864
+## The most a client takes of a session: its history holds every message of the branch, and a line of each tool call.
+SESSION_BODY_BYTES = 16_777_216
 # A session can be quiet for as long as the model thinks, and the protocol has no heartbeat: the stream is read without
 # a timeout of practical size.
 EVENTS_TIMEOUT_MS = 86_400_000
@@ -70,8 +72,8 @@ def create_session(server: Server, request: Protocol.NewSession) -> Result[Proto
 end
 
 def session(server: Server, id: String) -> Result[Protocol.Session]
-  body = try call(server, "GET", Protocol.session_path(id), "")
-  Protocol.decode_session(body)
+  options = HTTP.ClientOptions(timeout_ms: CALL_TIMEOUT_MS, max_body_bytes: SESSION_BODY_BYTES)
+  Protocol.decode_session(try call_with(server, "GET", Protocol.session_path(id), "", options))
 end
 
 def send_message(server: Server, id: String, text: String) -> Result[Protocol.MessageAccepted]

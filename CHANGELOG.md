@@ -4,6 +4,9 @@
 
 ### Changed
 
+- A resumed session shows the thinking, tool calls and stop notes of its turns, not only the messages; the session line comes first.
+- Leaving `finn` or `finn chat` prints how to come back to the session (`finn --session ID`), unless it is empty.
+- The footer shows no exact tok/s for a reply that came in one burst.
 - The full screen's footer shows the model's output speed (`42 tok/s`; `~42 tok/s` while a reply streams); `usage` events carry `output_ms`.
 - `/resume` leaves out the session itself and the sessions with no message yet; `GET /v1/sessions` marks those `empty`.
 - **Breaking:** `finn` opens the full screen, as `finn tui` does; `finn chat` is the line chat.

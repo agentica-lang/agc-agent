@@ -121,7 +121,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
-  running = Session.Running(id: turn_id, task: task, from_event_id: state.counter)
+  running = Session.Running(id: turn_id, task: task, from_event_id: state.counter, shown: state.display.size + 1)
   started = state.with(
     turn: some(running),
     turns: state.turns + 1,
@@ -346,7 +346,8 @@ def commit(
   case Stream.save(shown, -> { Store.append_messages(state.setup.file, added, marks) })
     ok(_) ->
       turn = shown.turn.map { |t| t.with(texts: t.texts + answer_texts(added)) }
-      shown.with(history: history, turn: turn, broken: none, marks: shown.marks + marks)
+      display = Store.with_thinking(shown.display, added)
+      shown.with(history: history, turn: turn, broken: none, marks: shown.marks + marks, display: display)
     error(e) -> Stream.broke(shown, e)
   end
 end

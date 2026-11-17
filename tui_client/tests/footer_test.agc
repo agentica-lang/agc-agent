@@ -67,7 +67,8 @@ def test_a_narrow_row_drops_the_rate_first() -> Result[Void]
 end
 
 # While a call streams the rate is estimated at 4 characters a token, once it has streamed for half a second; its usage
-# gives the exact rate, its output tokens over the time of its output. No data shows no rate.
+# gives the exact rate, its output tokens over the time of its output. No data, or output that came in one burst, shows
+# no rate.
 def test_the_rate_is_estimated_then_exact() -> Result[Void]
   started = Rate.streamed(none, "Hello", 1000)
   later = Rate.streamed(some(started), "x" * 800, 2000)
@@ -76,6 +77,11 @@ def test_the_rate_is_estimated_then_exact() -> Result[Void]
   try Test.eq(Rate.text(Rate.live(later, 3000)), "~100 tok/s")
   call = Protocol.Usage(input: 1, output: 9000, cache_read: 0, cache_write: 0, context: 1, call_output: some(300))
   try Test.eq(Rate.text(Rate.exact(call.with(output_ms: some(1500)))), "200 tok/s")
-  try Test.eq([Rate.exact(call), Rate.exact(call.with(output_ms: some(0)))], [none, none])
+  try Test.eq(
+    [Rate.exact(call), Rate.exact(call.with(output_ms: some(0))), Rate.exact(call.with(output_ms: some(1)))],
+    [none, none, none],
+  )
+
+  try Test.eq(Rate.text(Rate.exact(call.with(output_ms: some(200)))), "1500 tok/s")
   Test.eq(Rate.text(none), "")
 end

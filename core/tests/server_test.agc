@@ -55,7 +55,7 @@ def test_a_turn_runs_tools_after_approvals_for_two_clients() -> Result[Void]
     try Test.eq(JSON.get(third.last, "content"), ok(JSON.from("hi\n")))
     snapshot = try H.session(h, id)
     try Test.eq(snapshot.turn_id, none)
-    Test.eq(snapshot.history.map { |m| Protocol.role_name(m.role) }, ["user", "assistant"])
+    Test.eq(H.said(snapshot.history).map { |m| Protocol.role_name(m.role) }, ["user", "assistant"])
   end
 end
 

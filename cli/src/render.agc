@@ -70,10 +70,37 @@ def answer(text: String) -> Optional[Protocol.Decision]
   end
 end
 
-def history(messages: List[Protocol.Message]) -> String
-  lines = messages.map do |message| "#{Protocol.role_name(message.role)}: #{message.text}" end
+def history(messages: List[Protocol.Message], style: Style) -> String
+  lines: List[String] = []
+  for message in messages
+    lines = lines + history_lines(message, style)
+  end
 
   lines.join("\n")
+end
+
+## A message of the history as it was printed live: a tool call with its end, how a turn ended, the thinking when it is
+## shown.
+def history_lines(message: Protocol.Message, style: Style) -> List[String]
+  if message.thinking
+    return [] if not style.thinking
+
+    return ["thinking: #{dimmed(message.text, style)}"]
+  end
+
+  case message.tool
+    some(tool) ->
+      ended = message.done.map { |d| [finished(d)] }.unwrap_or([])
+      return ["[tool] #{tool.name} #{tool.summary}"] + ended
+    none -> nil
+  end
+
+  case message.stop
+    some(done) -> return [turn_finished(done)]
+    none -> nil
+  end
+
+  ["#{Protocol.role_name(message.role)}: #{message.text}"]
 end
 
 ## The text to print for `out` when the output is in `flow`: a newline first when the line is open with another flow.
