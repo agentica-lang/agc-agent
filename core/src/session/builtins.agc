@@ -1,12 +1,26 @@
 ## The core's own extensions, on the registry: the skills (the catalog in a new session's system prompt,
 ## `activate_skill`, `/name` in a message and the skills a fold keeps), the tools of the MCP servers and the approval.
 
+import LLM from "pkg/llm/llm"
 import Approval from "../approval/approval"
+import Commands from "../ext/commands"
 import Extension from "../approval/extension"
 import Extensions from "../config/registry"
 import McpTools from "../ext/mcp"
 import Skills from "../ext/skills"
 import Spec from "../tools/spec"
+
+## The slash commands of the user's folder (from `read`) and of a trusted session folder: a message that starts with
+## `/NAME` becomes the command's prompt, read again at each such message. Before the skills, so a command wins over a
+## skill of its name.
+def commands(served: Extensions.Served, read: Fn[String, Result[String]]) -> Extensions.Served
+  user_dir = Commands.user_folder(read)
+  open = ->(place: Extensions.Place, _system: String) { commands_opened(place, user_dir) }
+  Extensions.add_builtin(
+    served,
+    Extensions.Builtin(system: ->(_place: Extensions.Place, system: String) { system }, open: open),
+  )
+end
 
 def skills(served: Extensions.Served) -> Extensions.Served
   Extensions.add_builtin(served, Extensions.Builtin(system: &catalogued, open: &opened))
@@ -82,6 +96,23 @@ def opened(place: Extensions.Place, system: String) -> Extensions.Opened
     fold: Skills.on_fold(skills),
     warnings: discovered.warnings.map { |warning| "skills: #{warning}" },
   )
+end
+
+def commands_opened(place: Extensions.Place, user_dir: String) -> Extensions.Opened
+  loaded = Commands.load(user_dir, place.root, place.trusted)
+  notes = loaded.warnings + Commands.clashes(loaded, found(place).skills.map { |s| s.name })
+  warnings = notes.map { |n| n.text } + loaded.broken.keys.sort.map { |name| loaded.broken[name] }
+  Extensions.Opened(
+    message: ->(text: String, _marks: List[String]) { command_message(place, user_dir, text) },
+    fold: ->(_marks: List[String], _staying: List[LLM.Message]) { "" },
+    warnings: warnings.map { |w| "commands: #{w}" },
+  )
+end
+
+def command_message(place: Extensions.Place, user_dir: String, text: String) -> Extensions.Noted
+  return Extensions.Noted(text: text, names: []) if not text.start_with?("/")
+
+  Extensions.Noted(text: Commands.expanded(Commands.load(user_dir, place.root, place.trusted), text), names: [])
 end
 
 def found(place: Extensions.Place) -> Skills.Found = Skills.discover(place.root, place.home, place.trusted)

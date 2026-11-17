@@ -49,6 +49,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `GET /v1/sessions/ID/tree` | the user messages of every branch |
 | `POST /v1/sessions/ID/branch` | go on from an earlier message |
 | `POST /v1/sessions/ID/fork` | a new session from an earlier message |
+| `GET /v1/sessions/ID/commands` | the session's slash commands: `{"commands": [{"name", "source", "description", "warnings"}]}`; one that does not load has an empty `source` |
 | `GET /v1/sessions/ID/profiles` | the profiles the session may take: `{"profiles": [{"name", "source", "description", "warnings"}]}`; one that does not load has an empty `source` |
 | `GET /v1/sessions/ID/files` | the files of the session folder that the deny rules do not hide, for the `@` completion: `{"files": [...], "truncated": false}`; `truncated` is true when the walk stopped at 5000 files, 2000 folders or about 2 s |
 | `POST /v1/sessions/ID/shell` | run `{"command": "...", "context": true}` in the session folder |

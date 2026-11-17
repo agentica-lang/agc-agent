@@ -107,7 +107,9 @@ def moved(rig: Rig) -> Result[Void]
   rows = try shows(rig, "went back before a message")
   try Test.assert(rows.any? { |row| row.strip == "Two." }, "the message is in the prompt: #{rows}")
   calls = ["GET #{Protocol.tree_path("s1")}", "POST #{Protocol.branch_path("s1")}"]
-  calls = calls + ["GET #{Protocol.session_path("s1")}", "GET #{Protocol.events_path("s1")}"]
+  # The first session drawn reads the slash commands of its folder.
+  calls = calls + ["GET #{Protocol.session_path("s1")}", "GET #{Protocol.commands_path("s1")}"]
+  calls = calls.push("GET #{Protocol.events_path("s1")}")
   for call in calls
     try Test.eq(rig.requests.recv(2000), ok(call))
   end

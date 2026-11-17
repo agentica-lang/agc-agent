@@ -24,7 +24,8 @@ def on_command(app: State.Model, command: Client.Command) -> State.Model
   case command
     Client.Command.Quit -> app.with(exit: some(0))
     Client.Command.Stop -> stop_command(app)
-    Client.Command.Help -> app.with(entries: app.entries + Client.help().map { |line| State.note_entry(line) })
+    Client.Command.Help ->
+      app.with(entries: app.entries + Client.help(app.custom).map { |line| State.note_entry(line) })
     Client.Command.Cost -> State.noted(app, "/cost comes with the model catalog")
     Client.Command.New -> switch_command(app, none)
     Client.Command.Resume(none) -> State.tried(app, picking(app))

@@ -211,3 +211,17 @@ def test_the_profile_command_and_listing() -> Result[Void]
     ["* build (built-in) every tool", "  bad: does not load: bad.md: unknown key colour"],
   )
 end
+
+# The session's slash commands come after the clients' own in `/help`; one that does not load says why.
+def test_the_help_lists_the_session_commands() -> Result[Void]
+  list = Protocol.CommandList(
+    commands: [
+      Protocol.CommandInfo(name: "review", source: "user", description: "Review a change"),
+      Protocol.CommandInfo(name: "bad", source: "", warnings: ["bad.md: unknown key colour"]),
+    ],
+  )
+
+  lines = Client.help(Client.custom(list))
+  try Test.assert(lines.include?("/review [TEXT]             Review a change"), lines.join("\n"))
+  Test.assert(lines.include?("/bad [TEXT]                does not load: bad.md: unknown key colour"), lines.join("\n"))
+end

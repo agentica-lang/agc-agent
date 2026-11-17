@@ -333,7 +333,7 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
   case command
     Client.Command.Quit -> ok(Step(chat: chat, exit: some(0)))
     Client.Command.Stop -> stop_command(chat)
-    Client.Command.Help -> said(chat, Client.help().join("\n"))
+    Client.Command.Help -> said(chat, Client.help(custom_of(chat)).join("\n"))
     Client.Command.Cost -> said(chat, "[/cost comes with the model catalog]")
     Client.Command.Login(_) ->
       said(chat, "[a key or a base URL is asked for on the full screen: finn login, or /login in finn]")
@@ -366,6 +366,14 @@ def profile_command(chat: Chat, name: Optional[String]) -> Result[Chat]
 
   current = (try Client.session(chat.server, chat.id)).profile.map { |p| p.name }.unwrap_or("")
   ok(note(chat, Client.profile_listing(try Client.list_profiles(chat.server, chat.id), current).join("\n")))
+end
+
+# The session's slash commands for `/help`; none when the server does not list them.
+def custom_of(chat: Chat) -> List[Client.Usage]
+  case Client.list_commands(chat.server, chat.id)
+    ok(list) -> Client.custom(list)
+    error(_) -> []
+  end
 end
 
 def logout_command(chat: Chat, name: Optional[String]) -> Result[Step]
