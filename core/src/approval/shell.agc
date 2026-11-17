@@ -22,8 +22,9 @@ struct Scan
   clear: Bool
   asked: List[Resource]
   ## What an "always" answer allows: for each command of a program of `PREFIXES` its name and ` *` (`ls *`), else its
-  ## whole text. The whole text too when the command does not start with its name (`FOO=1 rm x`), has a redirection
-  ## (`echo hi > f`), or a word that is not a plain word or holds `$` or a backtick (`ls $(pwd)`).
+  ## whole text. The whole text too when the command does not start with its name (`FOO=1 rm x`), when the line has
+  ## a redirection anywhere (`echo hi > f`, `{ echo hi; } > f`), or when a word is not a plain word or a string or
+  ## holds `$` or a backtick (`ls $(pwd)`).
   always: List[Resource]
 end
 
@@ -32,6 +33,7 @@ def scan(root: String, command: String) -> Scan
   return Scan(clear: false, asked: [], always: []) if not parsed.ok?
 
   found = Scan(clear: not parsed.unwrap!.error and not parsed.unwrap!.unclear, asked: [], always: [])
+  redirected = command.include?(">") or command.include?("<")
   for c in parsed.unwrap!.commands
     tokens = c.words.select { |w| TOKENS.include?(w.kind) }.map { |w| w.text }
     name = tokens.take(1).join("")
@@ -42,7 +44,7 @@ def scan(root: String, command: String) -> Scan
     end
 
     if not CWD.include?(name)
-      kept = always(c)
+      kept = always(c, redirected)
       asked = Resource(tool: "bash", pattern: c.text.strip, literal: kept.literal)
       found = found.with(asked: pushed(found.asked, asked), always: pushed(found.always, kept))
     end
@@ -55,10 +57,13 @@ private
 
 TOKENS = ["command_name", "word", "string", "raw_string", "concatenation"]
 CWD = ["cd", "chdir", "popd", "pushd"]
-FILES = ["cd", "chdir", "popd", "pushd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"]
+FILES = [
+  "cd", "chdir", "popd", "pushd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat", "head", "tail", "grep",
+  "wc", "diff", "du",
+]
 # The programs that no argument makes run another program or write a file.
-PREFIXES = ["cat", "echo", "grep", "ls", "ps", "pwd", "sleep", "tail", "head", "wc", "which", "diff", "du", "df"]
-PLAIN = ["command_name", "word"]
+PREFIXES = ["cat", "echo", "grep", "ls", "pwd", "sleep", "tail", "head", "wc", "which", "diff", "du", "df"]
+PLAIN = ["command_name", "word", "string", "raw_string"]
 
 def added(found: Scan, r: Resource) -> Scan
   found.with(asked: pushed(found.asked, r), always: pushed(found.always, r))
@@ -70,12 +75,12 @@ def pushed(list: List[Resource], r: Resource) -> List[Resource]
   list.push(r)
 end
 
-def always(c: Bash.Command) -> Resource
+def always(c: Bash.Command, redirected: Bool) -> Resource
   text = c.text.strip
   exact = Resource(tool: "bash", pattern: text, literal: true)
   name = c.words.take(1).map { |w| w.text }.join("")
   return exact if not PREFIXES.include?(name) or (text != name and not text.start_with?("#{name} "))
-  return exact if text.include?(">") or text.include?("<")
+  return exact if redirected
   return exact if (c.words.any? { |w| not PLAIN.include?(w.kind) or w.text.include?("$") or w.text.include?("`") })
 
   Resource(tool: "bash", pattern: "#{name} *")
