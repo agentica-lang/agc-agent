@@ -4,6 +4,8 @@ import TUI from "pkg/tui/tui"
 import App from "../src/app"
 import Approvals from "../src/approvals"
 import Args from "../src/args"
+import Editor from "../src/editor"
+import Input from "../src/input"
 import Picker from "../src/picker"
 import Prompt from "../src/prompt"
 import Session from "../src/session"
@@ -929,12 +931,14 @@ def test_arguments_complete_from_the_server() -> Result[Void]
   try Test.eq([replied.model.listed.none?, replied.model.arguments.none?, replied.cmds.size == 1], [true, true, true])
   try Test.eq(App.update(replied.model, run(replied.cmds[0])[0]).model.arguments.map { |a| a.command }, some("/model"))
   # A read that fails is noted once and not asked again while the command stays.
-  down = model.with(backend: backend.with(list_providers: -> { error("down", kind: Client.KIND_UNREACHABLE) }))
+  odd = "down#{String.from_code(0x1B)}[2J"
+  down = model.with(backend: backend.with(list_providers: -> { error(odd, kind: Client.KIND_UNREACHABLE) }))
   failing = App.update(down.with(prompt: "/model", cursor: 6), key_char(" "))
   failed = App.update(failing.model, run(failing.cmds[0])[0]).model
   again = App.update(failed, key_char("x"))
   notes = again.model.entries.select { |entry| entry.text.include?("not listed") }
   try Test.eq([notes.size, again.cmds.size], [1, 0])
+  try Test.assert(notes[0].text.end_with?("down [2J"), notes[0].text)
   # Nor when the cursor leaves the argument and comes back.
   back = App.update(App.update(again.model, ctrl("a")).model, ctrl("e"))
   Test.eq([back.cmds.size == 0, back.model.arguments_failed == some("/model")], [true, true])
@@ -1054,30 +1058,63 @@ def test_ctrl_g_edits_the_prompt_in_the_editor() -> Result[Void]
   ]
 
   try File.write_text("#{folder}/editor", lines.join("\n"))
-  draft = model_of(40, 8).with(prompt: "draft", cursor: 2, editor: "sh #{folder}/editor")
+  edits = Editor.folder_of(folder, Time.now_ms / 1000)
+  paste = "pasted words"
+  draft = model_of(40, 8).with(
+    prompt: "draft #{Input.token(1, paste)}",
+    pastes: [paste],
+    cursor: 2,
+    editor: "sh #{folder}/editor",
+    edits: edits,
+  )
+
   opening = App.update(draft, ctrl("g"))
   try Test.eq([opening.model.editing, opening.cmds.size == 1], [true, true])
   back = App.update(opening.model, run(opening.cmds[0])[0]).model
   recorded = File.read_text(seen).unwrap_or("").split("\n")
-  _ = Path.remove(folder)
-  try Test.eq([back.prompt == "from the editor", back.cursor == 15, back.editing], [true, true, false])
+  left = Dir.list(edits)
+  try Test.eq(
+    [back.prompt == "from the editor", back.cursor == 15, back.editing, back.pastes.empty?],
+    [true, true, false, true],
+  )
+
   modes = recorded[0].split(" ")
-  try Test.eq([modes[0], modes[1], recorded[1]], ["600", "700", "draft"])
-  try Test.eq([File.read_text(modes[2]).ok?, Dir.list(modes[2].slice(0, modes[2].length - 10)).ok?], [false, false])
+  try Test.eq(
+    [modes[0], modes[1], modes[2], recorded[1]],
+    ["600", "700", "#{edits}/#{System.pid()}/prompt.md", "draft pasted words"],
+  )
+
+  try Test.eq(left.unwrap_or(["unread"]), [])
   unset = App.update(draft.with(editor: ""), ctrl("g"))
   try Test.eq([unset.cmds.size == 0, unset.model.entries.last.text.include?("set $VISUAL or $EDITOR")], [true, true])
 
+  try Test.assert(App.update(draft.with(edits: ""), ctrl("g")).cmds.empty?, "no folder, no editor")
   failing = App.update(draft.with(editor: "false"), ctrl("g"))
   failed = App.update(failing.model, run(failing.cmds[0])[0]).model
+  _ = Path.remove(folder)
   try Test.eq(
-    [failed.prompt, failed.entries.last.text],
-    ["draft", "error: the prompt was not edited: the editor exited with 1"],
+    [failed.prompt, failed.entries.last.text, failed.pastes.size.to_s],
+    [draft.prompt, "error: the prompt was not edited: the editor exited with 1", "1"],
   )
 
   interrupted = App.update(opening.model, App.Msg.Signal(some(System.Signal.Int)))
   try Test.eq([interrupted.model.exit.none?, interrupted.cmds.size == 1], [true, true])
   try Test.eq(App.update(draft, App.Msg.Signal(some(System.Signal.Int))).model.exit, some(130))
   Test.eq([State.editor_of(" ", " vi "), State.editor_of("code -w", "vi")], ["vi", "code -w"])
+end
+
+# An edit folder stays at the start while it is younger than a day, whatever its pid: it may be another client's edit.
+# An older one is what a killed client left, and goes.
+def test_the_edit_folders_older_than_a_day_are_cleared() -> Result[Void]
+  folder = "#{System.env("TMPDIR").unwrap_or("/tmp")}/tui-edits-#{Random.int(0, 999_999_999)}"
+  try Dir.mkdir_private(folder)
+  try Dir.mkdir("#{folder}/edits/999999999")
+  try File.write_text("#{folder}/edits/999999999/prompt.md", "left")
+  now_s = Time.now_ms / 1000
+  fresh = Dir.list(Editor.folder_of(folder, now_s))
+  old = Dir.list(Editor.folder_of(folder, now_s + 2 * 86_400))
+  _ = Path.remove(folder)
+  Test.eq([fresh.unwrap_or(["unread"]), old.unwrap_or(["unread"]).map { |name| "kept #{name}" }], [["999999999"], []])
 end
 
 # Alt+y (or Escape and y read together) on a focused approval panel answers nothing and types nothing; y allows.

@@ -30,6 +30,20 @@ def test_a_title_shows_no_control_or_bidi_character() -> Result[Void]
   Test.eq(rows.any? { |row| row.include?("fix it [2J") }, true)
 end
 
+def test_a_login_row_shows_no_control_or_bidi_character() -> Result[Void]
+  login = Protocol.LoginStatus(
+    name: "p",
+    label: "Lo#{String.from_code(0x202E)}cal",
+    key_env: "K",
+    from: "",
+    coming: true,
+  )
+
+  picker = Picker.logins(Protocol.LoginList(providers: [login], first: false))
+  rows = Picker.rows(picker, 200, 3, 1000).map { |row| row.text }
+  Test.eq(rows.any? { |row| row.include?("Lo cal: coming") }, true)
+end
+
 def test_rows_keep_the_selected_session_in_sight() -> Result[Void]
   sessions = (1..20).map { |n| summary("s#{n}", "task #{n}") }
   picker = Picker.Picker(sessions: sessions, selected: 14)
