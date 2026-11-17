@@ -15,6 +15,7 @@
 
 ### Added
 
+- `finn login local` stores the base URL of a local server; `FINN_BASE_URL` wins.
 - Finn Agent, a coding agent: `finn` (full screen) and `finn chat` (lines) talk to a local server.
 - Tools: read, write and edit files, `glob`, `grep`, `bash`, and `apply_patch` for models that use it.
 - `finn -p TASK` runs one task and prints the answer.

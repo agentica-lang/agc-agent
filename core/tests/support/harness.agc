@@ -84,6 +84,8 @@ struct Setup
   ## Providers a login sets up, each at `/NAME` of the fake with the key variable `NAME_KEY` (`NAME=VAR` for another),
   ## and their keys in `config/finn/auth.json` of the test's folder.
   logins: List[String] = []
+  ## A login sets the base URL of `local` (the fake at the start).
+  local_login: Bool = false
   ## The approvals on (calls that no rule allows ask); the deny rules of the config, as `bash(rm *)`, count either way.
   approvals: Bool = true
   deny: List[String] = []
@@ -154,19 +156,23 @@ def with_fake(setup: Setup, base: String, body: Fn[Harness, Result[Void]]) -> Re
 end
 
 # With `fresh_token`, Anthropic gets that token after a 401.
-def apis(setup: Setup, fake: Fake.Fake) -> Map[String, Config.ModelApi]
+def apis(setup: Setup, fake: Fake.Fake, url: String) -> Map[String, Config.ModelApi]
   options = LLM.Options(timeout_ms: 5000, retry_base_ms: 1)
-  all = Offered.apis(fake.url, "test-key", options)
+  all = Offered.apis(url, "test-key", options)
   return all if setup.fresh_token.empty?
 
   token = setup.fresh_token
-  url = fake.url
   refresh = -> { ok(LLM.anthropic(url, "", options, token)) }
   all.put("anthropic", all["anthropic"].with(refresh: some(refresh)))
 end
 
-def providers(setup: Setup, fake: Fake.Fake, keys: Map[String, String] = {}) -> Map[String, Config.Provider]
-  all = Offered.builtin(apis(setup, fake), setup.api)
+def providers(
+  setup: Setup,
+  fake: Fake.Fake,
+  keys: Map[String, String] = {},
+  urls: Map[String, String] = {},
+) -> Map[String, Config.Provider]
+  all = Offered.builtin(apis(setup, fake, urls.get("local").unwrap_or(fake.url)), setup.api)
   root = fake_root(fake)
   customs = setup.providers.map do |given|
     parts = given.split(":").push("openai")
@@ -191,10 +197,16 @@ def login_customs(setup: Setup, fake: Fake.Fake) -> List[Providers.Custom]
   end
 end
 
+def local_url_of(setup: Setup, fake: Fake.Fake) -> String
+  return "" if not setup.local_login
+
+  fake.url
+end
+
 def auth_file(base: String) -> String = "#{base}/config/finn/#{Auth.FILE}"
 
 def login_setup(setup: Setup, fake: Fake.Fake, base: String) -> Optional[Logins.Setup]
-  return none if setup.logins.empty?
+  return none if setup.logins.empty? and not setup.local_login
 
   path = auth_file(base)
   some(
@@ -203,7 +215,9 @@ def login_setup(setup: Setup, fake: Fake.Fake, base: String) -> Optional[Logins.
       stored: Auth.load(path, none),
       entries: login_customs(setup, fake),
       read: &fake_env,
-      rebuild: ->(keys: Map[String, String]) { ok(providers(setup, fake, keys)) },
+      rebuild: ->(keys: Map[String, String], urls: Map[String, String]) { ok(providers(setup, fake, keys, urls)) },
+      local_url: local_url_of(setup, fake),
+      local_key: "test-key",
     ),
   )
 end
@@ -226,7 +240,12 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   options = Config.Options(
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
-    providers: providers(setup, fake, login_setup(setup, fake, base).map { |l| l.stored.keys }.unwrap_or({})),
+    providers: providers(
+      setup,
+      fake,
+      login_setup(setup, fake, base).map { |l| l.stored.keys }.unwrap_or({}),
+      login_setup(setup, fake, base).map { |l| l.stored.urls }.unwrap_or({}),
+    ),
     provider: server_provider(setup),
     login: login_setup(setup, fake, base),
     key_envs: setup.key_envs,

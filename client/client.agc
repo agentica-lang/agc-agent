@@ -29,6 +29,7 @@ export Http.list_providers
 export Http.update_session
 export Http.list_logins
 export Http.login
+export Http.login_url
 export Http.logout
 export Http.skip_login
 export Http.compact
@@ -70,6 +71,7 @@ export Commands.printable
 export Commands.listing
 export Commands.pick
 export Commands.model_warning
+export Commands.logged_out
 export Commands.model_change
 
 export Tree.TreeRow

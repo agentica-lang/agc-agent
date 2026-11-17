@@ -122,6 +122,8 @@ struct Model
   ## cleared once it is sent or the ask is closed.
   key_for: Optional[String] = none
   secret: String = ""
+  ## The login of `key_for` asks for a base URL, shown as typed, not a key.
+  asking_url: Bool = false
   ## A login offered at the first start: closing it stores an empty key file, so it is offered once. With
   ## `login_only` (`finn login`), the app ends after the login.
   first_login: Bool = false
@@ -971,6 +973,14 @@ def named_login(app: Model, logins: List[Protocol.LoginStatus], name: String) ->
   return login_closed(noted(app, "no login has that name: /login lists them")) if found.empty?
   return login_closed(noted(app, "#{found[0].label}: coming, there is no login for it yet")) if found[0].coming
 
+  if found[0].asks == Protocol.ASKS_URL
+    asked = app.with(key_for: some(name), secret: "", asking_url: true)
+    return noted(
+      asked,
+      "the base URL of #{name} (now #{found[0].base_url}), as http://127.0.0.1:8080/v1: Enter checks it, Esc cancels",
+    )
+  end
+
   asking(app, name)
 end
 
@@ -985,7 +995,14 @@ def on_secret_key(app: Model, name: String, event: TUI.Event) -> Model
     TUI.Event.Paste(text) -> app.with(secret: app.secret + Prompt.pasted(text).strip)
     TUI.Event.Key(TUI.Key.Backspace, _) ->
       app.with(secret: app.secret.slice(0, [app.secret.length - 1, 0].max.unwrap!))
+    TUI.Event.Key(TUI.Key.Escape, _) if app.asking_url ->
+      login_closed(noted(app.with(key_for: none, secret: "", asking_url: false), "no URL given"))
     TUI.Event.Key(TUI.Key.Escape, _) -> login_closed(noted(app.with(key_for: none, secret: ""), "no key given"))
+    TUI.Event.Key(TUI.Key.Enter, _) if app.asking_url and not app.secret.strip.empty? ->
+      server = app.server
+      url = app.secret.strip
+      checking = noted(app.with(key_for: none, secret: "", asking_url: false), "checking the base URL of #{name}")
+      effect(checking, TUI.Cmd.Run(-> { Msg.LoggedIn(name, Client.login_url(server, name, url)) }))
     TUI.Event.Key(TUI.Key.Enter, _) if not app.secret.strip.empty? ->
       server = app.server
       key = app.secret.strip
@@ -997,6 +1014,10 @@ end
 
 def logged_in(app: Model, name: String, result: Result[Protocol.LoginStatus]) -> Model
   done = case result
+    ok(status) if status.asks == Protocol.ASKS_URL and status.from == "env" ->
+      noted(app, "#{name}: the URL is stored, but #{status.key_env} is set and wins over it")
+    ok(status) if status.asks == Protocol.ASKS_URL ->
+      noted(app, "#{name} is set up at #{status.base_url}: /model lists its models")
     ok(status) if status.from == "env" ->
       noted(app, "#{name}: the key is stored, but #{status.key_env} is set and wins over it")
     ok(status) -> noted(app, "#{name} is set up (#{status.key_env} would also work): /model lists its models")
@@ -1020,8 +1041,7 @@ end
 
 def logout_command(app: Model, name: Optional[String]) -> Result[Model]
   try Client.logout(app.server, name)
-  removed = name.map { |n| "the key of #{n} is removed" }.unwrap_or("every stored key is removed")
-  ok(noted(app, removed))
+  ok(noted(app, Client.logged_out(name)))
 end
 
 def note_entry(text: String) -> Transcript.Entry = Transcript.Entry(kind: Transcript.Kind.Notice, text: text)
@@ -1385,6 +1405,10 @@ def framed(app: Model) -> Screen.Frame
   prompt = Prompt.view(app.prompt, cursor(app), app.width, app.height)
   for name in option_list(app.key_for)
     hidden = "key of #{name}: #{"•" * app.secret.length}"
+    if app.asking_url
+      hidden = "base URL of #{name}: #{app.secret}"
+    end
+
     prompt = Prompt.view(hidden, hidden.length, app.width, app.height)
   end
 

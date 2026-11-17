@@ -11,6 +11,7 @@ import Protocol from "pkg/protocol/protocol"
 import Config from "../config/config"
 import Cli from "../config/cli"
 import Logins from "../providers/logins"
+import Providers from "../providers/providers"
 import Extensions from "../config/registry"
 import Folders from "../config/folders"
 import Sessions from "../session/session"
@@ -358,14 +359,18 @@ def logins(sessions: Sessions.Sessions) -> Result[String]
   )
 end
 
-# The key stays in this task and the holder: what goes back is where it is now.
+# The key stays in this task and the holder: what goes back is where it is now. `local` takes a base URL instead.
 def login(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
-  request = try Protocol.decode_login(try String.from_bytes(conn.body))
-  ok(
-    Protocol.encode_login_status(
-      login_status(try Logins.login(try holder(sessions), try Bond.param(conn, "provider"), request.key)),
-    ),
-  )
+  name = try Bond.param(conn, "provider")
+  body = try String.from_bytes(conn.body)
+  holder = try holder(sessions)
+  if name == Providers.LOCAL
+    request = try Protocol.decode_login_url(body)
+    return ok(Protocol.encode_login_status(login_status(try Logins.login_url(holder, name, request.base_url))))
+  end
+
+  request = try Protocol.decode_login(body)
+  ok(Protocol.encode_login_status(login_status(try Logins.login(holder, name, request.key))))
 end
 
 def logout(sessions: Sessions.Sessions, name: Optional[String]) -> Result[String]
@@ -389,6 +394,8 @@ def login_status(found: Logins.Status) -> Protocol.LoginStatus
     key_env: found.key_env,
     from: found.from,
     coming: found.coming,
+    asks: found.asks,
+    base_url: found.base_url,
   )
 end
 

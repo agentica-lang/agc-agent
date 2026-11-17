@@ -62,6 +62,110 @@ def test_a_login_checks_the_key_stores_it_privately_and_offers_the_provider() ->
   end
 end
 
+# A local server's login gives its base URL, no key: a URL with a user, a query, a fragment, a space or no host is
+# refused and never said back; the URL is checked with `GET /models` there (with `FINN_API_KEY`), stored next to the
+# keys, and `local` (its turns and its `/props`) goes there from then on, also after a restart; a logout takes it back.
+def test_a_local_login_stores_the_base_url_and_moves_local_there() -> Result[Void]
+  replies = ["404:bad_request.json", "models_small.json", "models_small.json", "props_small.json", "text.sse"]
+  setup = H.Setup(replies: replies, logins: ["paid"], local_login: true, context_window: 0)
+  H.using(setup) do |h|
+    root = H.fake_root(h.fake)
+    listed = try Protocol.decode_login_list((try H.get(h, Protocol.AUTH_PATH)).text)
+    local = listed.providers[0]
+    try Test.eq([local.name, local.asks, local.base_url, local.from], ["local", Protocol.ASKS_URL, h.fake.url, ""])
+    bad = [
+      "ftp://box/v1", "http://user:pw-9@box/v1", "http://box/v1?pw-9", "http://box/v1#pw-9", "http://box/pw 9",
+      "http://box/v1\npw-9", "http:///v1", "http://:80/v1", "box/v1",
+    ]
+
+    for url in bad
+      answer = try login_url(h, "local", url)
+      try Test.eq([url, error_kind_of(answer)], [url, Protocol.KIND_INVALID])
+      try Test.eq([url, answer.text.include?("pw").to_s], [url, "false"])
+    end
+
+    try Test.eq(error_kind_of(try login(h, "local", "sk-1")), Protocol.KIND_INVALID)
+    try Test.eq(error_kind_of(try login_url(h, "local", "#{root}/none/v1")), Protocol.KIND_LOGIN_REJECTED)
+    try Test.eq(File.stat(H.auth_file(h.base)).ok?, false)
+    right = try login_url(h, "local", "#{root}/llama/v1/")
+    try Test.eq(right.status, 200)
+    status = try Protocol.decode_login_status(right.text)
+    try Test.eq([status.from, status.base_url], ["stored", "#{root}/llama/v1"])
+    try Test.eq((try login(h, "paid", "sk-paid")).status, 200)
+    stored = Auth.load(H.auth_file(h.base), none)
+    try Test.eq([stored.keys, stored.urls], [{"paid": "sk-paid"}, {"local": "#{root}/llama/v1"}])
+    id = try H.new_session_in(h, h.work, none, some("local"))
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hi.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    seen: List[String] = []
+    for _ in 1..5
+      request = try H.next_request(h)
+      seen = seen.push("#{request.method} #{request.path} #{bearer(request)}")
+    end
+
+    try Test.eq(
+      seen,
+      [
+        "GET /none/v1/models test-key", "GET /llama/v1/models test-key", "GET /paid/models sk-paid",
+        "GET /llama/props ", "POST /llama/v1/chat/completions test-key",
+      ],
+    )
+
+    H.restarted(h, setup, "") do |r|
+      again = try Protocol.decode_login_list((try H.get(r, Protocol.AUTH_PATH)).text)
+      try Test.eq([again.providers[0].from, again.providers[0].base_url], ["stored", "#{root}/llama/v1"])
+      try Test.eq((try H.call(r, "DELETE", Protocol.auth_path("local"), "", H.auth(r))).status, 200)
+      after = try Protocol.decode_login_list((try H.get(r, Protocol.AUTH_PATH)).text)
+      try Test.eq([after.providers[0].from, after.providers[0].base_url], ["", r.fake.url])
+      Test.eq(File.read_text(H.auth_file(r.base)), ok("{\"keys\":{\"paid\":\"sk-paid\"}}"))
+    end
+  end
+end
+
+# On the real setup a stored base URL serves `local` after a start, and FINN_BASE_URL (or its old name) wins over it.
+# The key file keeps the keys and the URLs as they were saved.
+def test_finn_base_url_wins_over_a_stored_base_url() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-local-#{Random.int(0, 999999999)}"
+  result = stored_url(dir)
+  _ = Path.remove(dir)
+  result
+end
+
+def stored_url(dir: String) -> Result[Void]
+  try Dir.mkdir(dir)
+  file = "#{dir}/finn/#{Auth.FILE}"
+  try Auth.create(file, {}, {"local": "http://127.0.0.1:9/v1"})
+  try Test.eq(Auth.load(file, none), Auth.Stored(urls: {"local": "http://127.0.0.1:9/v1"}, found: true))
+  both = Auth.Stored(keys: {"groq": "sk-1"}, urls: {"local": "http://127.0.0.1:9/v1"}, found: true)
+  try Auth.save(file, both.keys, none, both.urls)
+  try Test.eq(Auth.load(file, none), both)
+  no_ant = -> {
+    failed: Result[String] = error("no ant")
+    failed
+  }
+
+  env = {"XDG_CONFIG_HOME": dir}
+  options = try Config.from_env_with(->(n) { from(env, n) }, no_ant)
+  try Test.eq(options.props_url, "http://127.0.0.1:9/props")
+  try Test.eq(local_of(options), ["stored", "http://127.0.0.1:9/v1"])
+  set = env.put("FINN_BASE_URL", "http://127.0.0.1:7/v1")
+  chosen = try Config.from_env_with(->(n) { from(set, n) }, no_ant)
+  try Test.eq(chosen.props_url, "http://127.0.0.1:7/props")
+  try Test.eq(local_of(chosen), ["env", "http://127.0.0.1:7/v1"])
+  old = env.put("AGC_AGENT_BASE_URL", "http://127.0.0.1:6/v1")
+  Test.eq(local_of(try Config.from_env_with(->(n) { from(old, n) }, no_ant)), ["env", "http://127.0.0.1:6/v1"])
+end
+
+def local_of(options: Config.Options) -> List[String]
+  holder = Logins.start(options.providers, options.login)
+  listed = Logins.list(holder)
+  Logins.stop(holder)
+  found = listed.unwrap_or(Logins.Listing(providers: [], first: false)).providers.select { |p| p.name == "local" }
+  found.flat_map { |p| [p.from, p.base_url] }
+end
+
 # A key file that others may read is not used, and a login does not write to it; a key in the environment wins.
 def test_an_open_key_file_is_refused_and_the_environment_wins() -> Result[Void]
   setup = H.Setup(replies: [], logins: ["paid", "envy=OPENAI_API_KEY"])
@@ -152,7 +256,7 @@ def on_real_setup(fake: Fake.Fake, dir: String, env: Map[String, String]) -> Res
   try chmod("644", file)
   try Test.eq(error_kind(Logins.logout(holder, some("anthropic"))), Protocol.KIND_LOGIN_STORAGE)
   try Test.eq((try File.read_text(file)).include?("sk-claude"), true)
-  try Test.eq(error_kind(Auth.create(file, {})), "io.exists")
+  try Test.eq(error_kind(Auth.create(file, {}, {})), "io.exists")
   try Test.eq((try File.read_text(file)).include?("sk-claude"), true)
   seen = [try Fake.next_request(fake), try Fake.next_request(fake)]
   try Test.eq(seen.map { |s| s.path }, ["/v1/key", "/v1/models"])
@@ -182,6 +286,19 @@ end
 
 def login(h: H.Harness, name: String, key: String) -> Result[H.Answer]
   H.post(h, Protocol.auth_path(name), Protocol.encode_login(Protocol.Login(key: key)))
+end
+
+def login_url(h: H.Harness, name: String, url: String) -> Result[H.Answer]
+  H.post(h, Protocol.auth_path(name), Protocol.encode_login_url(Protocol.LoginUrl(base_url: url)))
+end
+
+def error_kind_of(answer: H.Answer) -> String
+  return "ok" if answer.status < 400
+
+  case Protocol.decode_failure(answer.text)
+    ok(failure) -> failure.kind
+    error(_) -> ""
+  end
 end
 
 def offered(h: H.Harness) -> Result[List[String]]

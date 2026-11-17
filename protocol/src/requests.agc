@@ -90,6 +90,12 @@ struct Login
   key: String
 end
 
+## `POST /v1/auth/local`: the base URL of a local server (llama.cpp or another of the OpenAI API), `http://` or
+## `https://`. The server checks its `GET /models` before it stores it.
+struct LoginUrl
+  base_url: String
+end
+
 ## Every decision, in a fixed order.
 def decisions() -> List[Decision] = Wire.chain(Decision.Allow, &following)
 
@@ -195,6 +201,14 @@ def decode_login(text: String) -> Result[Login]
   ok(body)
 end
 
+def encode_login_url(body: LoginUrl) -> String = JSON.encode(body)
+
+def decode_login_url(text: String) -> Result[LoginUrl]
+  body = try Wire.decode_strict(text, LoginUrl.codec)
+  try Wire.non_empty("base_url", body.base_url)
+  ok(body)
+end
+
 ## The fields of the requests and the names of their values on the wire, for `Protocol.WIRE`.
 def shape() -> List[String]
   records = [
@@ -209,6 +223,7 @@ def shape() -> List[String]
     Wire.record("StopTurn", StopTurn.members),
     Wire.record("RunShell", RunShell.members),
     Wire.record("Login", Login.members),
+    Wire.record("LoginUrl", LoginUrl.members),
     Wire.record("ApproveWire", ApproveWire.members),
   ]
 
