@@ -14,7 +14,8 @@
 - `bash` rules check each command of the line (tree-sitter-bash); a line it cannot read clearly asks. File rules cover the file tools only.
 - "Always" (`allow_prefix`) allows each command's first words from OpenCode's arity table (`npm run dev *`).
 - `external_directory` rules check the paths outside the session folder that `cd`, `rm`, `cp` and the like name.
-- With approvals on, reads of `.env` files ask by default.
+- **Breaking:** with approvals on, reads of `.env` files ask by default.
+- The first start builds the bash parser; clients wait up to a minute and say so.
 - `finn chat` and `finn tui` refuse a server of another version and say how to stop it.
 
 ### Added

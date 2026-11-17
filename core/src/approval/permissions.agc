@@ -3,9 +3,9 @@
 ## Where the approval rules come from, in their order (the last that matches wins): `Approval.DEFAULTS`; the user's
 ## config file (`FINN_CONFIG`, else `$XDG_CONFIG_HOME/finn/config.json`, else `~/.config/finn/config.json`),
 ## `{"approvals": true, "permission": [...]}` in the syntax of `Approval`, whose `approvals` turns the asking on
-## (`FINN_APPROVALS` wins over it); and the project file `.finn/config.json` of the session folder, whose `allow` rules
-## count only in a folder of `FINN_TRUSTED_DIRS` (`:` between folders), since anyone who writes the project can write
-## them. Its `approvals` is not read: a project cannot change the mode. The deny rules count with the asking off too.
+## (`FINN_APPROVALS` wins over it); and the project file `.finn/config.json` of the session folder, whose rules count
+## in a folder of `FINN_TRUSTED_DIRS` (`:` between folders) and elsewhere only its deny rules, since anyone who writes
+## the project can write them. Its `approvals` is not read: a project cannot change the mode. The deny rules count with the asking off too.
 ##
 ## A session allows more by its answers: the same call (`allow_session`), what an "always" answer allows for `bash`
 ## (`allow_prefix`, `Shell.Scan.always`: `git log *`, `npm run dev *`), or the whole tool (`allow_tool`); and in the
@@ -56,8 +56,9 @@ def user_rules(read: Fn[String, Result[String]], switch: Optional[Bool]) -> Resu
   ok(User(rules: rules, asking: switch.unwrap_or(file.file.approvals.unwrap_or(false))))
 end
 
-## `rules` with those of the project file of `root` after them: its allow rules only when `root` is `trusted`. A broken
-## file in a folder that is not trusted is ignored with a warning, so a repository cannot stop its sessions.
+## `rules` with those of the project file of `root` after them: all of them when `root` is `trusted`, else only its deny
+## rules, which cannot weaken the user's (an `ask` after a deny would win). A broken file in a folder that is not trusted
+## is ignored with a warning, so a repository cannot stop its sessions.
 def with_project(rules: Approval.Rules, root: String, trusted: Bool) -> Result[Approval.Rules]
   path = "#{root}/#{PROJECT_FILE}"
   return ok(rules) if not File.stat(path).ok?
@@ -70,7 +71,7 @@ def with_project(rules: Approval.Rules, root: String, trusted: Bool) -> Result[A
     _ -> nil
   end
 
-  project = (try read).all.select { |rule| trusted or rule.action != Spec.Verdict.Allow }
+  project = (try read).all.select { |rule| trusted or rule.action == Spec.Verdict.Deny }
   ok(Approval.Rules(all: rules.all + project))
 end
 
@@ -113,7 +114,10 @@ def answered(allows: Allows, decision: String, root: String, tool: String, targe
     "allow_prefix" ->
       case prefix(root, tool, target)
         some(found) ->
-          added = found.map { |r| Approval.Rule(action: Spec.Verdict.Allow, tool: r.tool, pattern: r.pattern) }
+          added = found.map { |r|
+            Approval.Rule(action: Spec.Verdict.Allow, tool: r.tool, pattern: r.pattern, literal: r.literal)
+          }
+
           allows.with(rules: allows.rules + added)
         none -> allows.with(exact: allows.exact.push(key(tool, target)))
       end
@@ -171,7 +175,8 @@ end
 
 def parsed_rules(path: String, parsed: RulesFile) -> Result[Approval.Rules]
   if parsed.allow.some? or parsed.deny.some?
-    return error("#{path}: \"allow\" and \"deny\" are now rules of \"permission\" (\"deny bash(rm *)\")")
+    moved = parsed.allow.unwrap_or([]).map { |r| "allow #{r}" } + parsed.deny.unwrap_or([]).map { |r| "deny #{r}" }
+    return error("#{path}: \"allow\" and \"deny\" are now \"permission\": #{JSON.encode(moved)}")
   end
 
   case Approval.parse_rules(parsed.permission.unwrap_or([]))

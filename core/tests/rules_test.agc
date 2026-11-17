@@ -1,5 +1,6 @@
 import Approval from "../src/approval/approval"
 import Arity from "../src/approval/arity"
+import Extension from "../src/approval/extension"
 import Permissions from "../src/approval/permissions"
 import Shell from "../src/approval/shell"
 import Tools from "../src/tools/tools"
@@ -131,5 +132,43 @@ def test_an_always_answer_allows_the_prefix_of_each_command() -> Result[Void]
     Permissions.allows?(allows, rules, root, "bash", c)
   end
 
-  Test.eq(allowed, ["git status", "git status -s && wc"])
+  try Test.eq(allowed, ["git status", "git status -s && wc"])
+  # An exact command is kept as it is, not as a glob: its `*` matches only itself.
+  exact = Permissions.answered(Permissions.Allows(), "allow_prefix", root, "bash", "sudo rm -rf ./build/*")
+  tried = ["sudo rm -rf ./build/*", "sudo rm -rf ./build/ /", "sudo rm -rf ./build/x"]
+  Test.eq(tried.select { |c| Permissions.allows?(exact, rules, root, "bash", c) }, ["sudo rm -rf ./build/*"])
+end
+
+# A rule is `ACTION TOOL(PATTERN)`: a space in the tool or a pattern over MAX_PATTERN characters is refused.
+def test_a_rule_that_would_never_match_is_refused() -> Result[Void]
+  long = "x" * Approval.MAX_PATTERN
+  for text in [
+    "allow bash (git *)",
+    "allow bash git",
+    "bash(x)",
+    "maybe bash(x)",
+    "allow bash()",
+    "allow bash(#{long}x)",
+  ]
+    try Test.eq([text, Approval.parse_rule(text).ok?.to_s], [text, "false"])
+  end
+
+  Test.eq(Approval.parse_rule("allow bash(#{long})").ok?, true)
+end
+
+# An untrusted project keeps only its deny rules: an `ask` of its own cannot win over a deny of the user's, which with
+# the approvals off would run the command.
+def test_an_untrusted_project_ask_cannot_weaken_a_user_deny() -> Result[Void]
+  root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
+  dir = "#{root}/core-rules-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  try Dir.mkdir("#{dir}/.finn")
+  try File.write_text("#{dir}/.finn/config.json", "{\"permission\": [\"ask bash\", \"ask *\"]}")
+  user = try Approval.parse_rules(["deny bash(rm *)", "deny read_file(*.pem)"])
+  ctx = try Tools.context(dir, ->(_name: String) { error("unset") })
+  a = try Extension.open(user, dir, false, false)
+  rm = Extension.verdict(a, ctx, "bash", JSON.object({"command": JSON.from("rm -rf x")}))
+  hidden = Extension.hidden?(a, "key.pem")
+  _ = Path.remove(dir)
+  Test.eq([rm.to_s, hidden.to_s], ["Verdict.Deny", "true"])
 end

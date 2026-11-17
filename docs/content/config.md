@@ -32,13 +32,13 @@ Every key is optional, and so is the file. How the rules work is on [Approvals a
 
 ## The project file
 
-`.finn/config.json` in the folder of a session holds `permission` rules for that project, which come after yours. Its `ask` and `deny` rules always count. Its `allow` rules count only when the folder is under a trusted folder. A project file cannot turn the approvals on or off.
+`.finn/config.json` in the folder of a session holds `permission` rules for that project, which come after yours. Its `deny` rules always count. Its `allow` and `ask` rules count only when the folder is under a trusted folder, since an `ask` after your `deny` would win over it. A file with the old `allow` and `deny` keys is ignored there with a warning that names the rules to write. A project file cannot turn the approvals on or off.
 
 ## Trusted folders
 
 `FINN_TRUSTED_DIRS` lists folders, separated by `:`. A session in one of them, or below, reads two things that anyone who can write its repository could plant:
 
-- the allow rules of its `.finn/config.json`;
+- the `allow` and `ask` rules of its `.finn/config.json`;
 - its skills ([Skills](skills.md)).
 
 The deny rules of a project count everywhere.

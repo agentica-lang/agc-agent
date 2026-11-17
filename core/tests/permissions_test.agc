@@ -57,11 +57,11 @@ def test_accept_edits_is_refused_without_the_extension() -> Result[Void]
   end
 end
 
-# A project file adds its rules after the user's; its allow rules count only in a trusted folder.
+# A project file adds its rules after the user's: all of them in a trusted folder, else only its deny rules.
 def test_a_project_file_denies_anywhere_and_allows_only_when_trusted() -> Result[Void]
   H.using(H.Setup(replies: ["bash_read.sse", "text.sse"])) do |h|
     try Dir.mkdir("#{h.work}/.finn")
-    rules = "{\"permission\": [\"allow write_file(*)\", \"deny bash(cat *)\"]}"
+    rules = "{\"permission\": [\"allow write_file(*)\", \"ask bash\", \"deny bash(cat *)\"]}"
     try File.write_text("#{h.work}/.finn/config.json", rules)
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
@@ -74,7 +74,7 @@ def test_a_project_file_denies_anywhere_and_allows_only_when_trusted() -> Result
     base = Approval.Rules(all: [])
     untrusted = try Permissions.with_project(base, h.work, false)
     trusted = try Permissions.with_project(base, h.work, true)
-    try Test.eq([untrusted.all.size, trusted.all.size], [1, 2])
+    try Test.eq([untrusted.all.size, trusted.all.size], [1, 3])
     try File.write_text("#{h.work}/.finn/config.json", "{\"permission\": [\"npm test\"]}")
     try Test.eq(Permissions.with_project(base, h.work, false), ok(base))
     Test.eq(Permissions.with_project(base, h.work, true).ok?, false)
@@ -294,7 +294,7 @@ def test_the_user_config_turns_approvals_on_with_its_rules() -> Result[Void]
   try File.write_text("#{dir}/on.json", "{\"approvals\": true, #{rules}}")
   try File.write_text("#{dir}/off.json", "{#{rules}}")
   try File.write_text("#{dir}/bad.json", "{\"permission\": [\"npm test\"]}")
-  try File.write_text("#{dir}/old.json", "{\"allow\": [\"bash(npm test*)\"]}")
+  try File.write_text("#{dir}/old.json", "{\"allow\": [\"bash(npm test*)\"], \"deny\": [\"bash(rm *)\"]}")
   sizes = ->(config: String, switch: String) { rule_sizes(dir, config, switch) }
   results = [
     sizes.call("#{dir}/on.json", ""),
@@ -306,7 +306,14 @@ def test_the_user_config_turns_approvals_on_with_its_rules() -> Result[Void]
   ]
 
   failed = ["bad", "old", "none"].map { |name| sizes.call("#{dir}/#{name}.json", "0").ok? } + [sizes.call("", "2").ok?]
+  moved = ""
+  case sizes.call("#{dir}/old.json", "")
+    error(e) -> moved = e.message
+    ok(_) -> nil
+  end
+
   _ = Path.remove(dir)
+  try Test.assert(moved.include?("[\"allow bash(npm test*)\",\"deny bash(rm *)\"]"), "it names the rules: #{moved}")
   try Test.eq(results, [ok([2, 1]), ok([2, 0]), ok([2, 1]), ok([2, 0]), ok([0, 0]), ok([0, 1])])
   Test.eq(failed, [false, false, false, false])
 end

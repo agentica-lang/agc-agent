@@ -75,17 +75,19 @@ Finn's rules are [OpenCode's](https://opencode.ai/docs/permissions/), with Finn'
 - Before your rules come the defaults: `ask read_file(*.env)`, `ask read_file(*.env.*)` and `allow read_file(*.env.example)`.
 - When no rule matches, the tool's default holds: with the approvals on, the tools of [What asks](#what-asks) ask and the others run.
 - **Deny rules count with the approvals on or off**, and no answer or mode allows what a rule denies. `ask` and `allow` rules count with the approvals on.
-- The rules come from your config file, then from the project's `.finn/config.json` ([Configuration](config.md)), whose rules come after yours. The project's `ask` and `deny` rules always count; its `allow` rules count only under a [trusted folder](config.md#trusted-folders).
+- With the approvals off, a call that would ask runs, an unclear `bash` line too: only the deny rules count.
+- The rules come from your config file, then from the project's `.finn/config.json` ([Configuration](config.md)), whose rules come after yours. The project's `deny` rules always count; its `allow` and `ask` rules count only under a [trusted folder](config.md#trusted-folders).
 - A deny rule of `read_file` also denies `edit_file`, and hides the file from `glob`, `grep` and the `@` completion of `finn`. The rules of `read_file`, `edit_file` and `write_file` apply to these file tools only: they do not stop a `bash` command from reading or writing the file (`cat .env` runs).
-- An old config with `"allow"` or `"deny"` stops the start: move its rules into `permission`, as `allow X` and `deny X`.
+- An old config with `"allow"` or `"deny"` stops the start, and the message lists its rules as `"allow X"` and `"deny X"` for `permission`.
+- A rule with a space in its tool (`allow bash (git *)`) or a pattern over 256 characters is refused.
 
 ### How rules check bash
 
-Finn reads a `bash` command with [tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash) and checks each command of the line by its text: the parts of `;`, `&&`, `||`, `|`, a line end, `( )` and `$( )`. `deny bash(rm *)` refuses `ls && rm x` and `echo $(rm x)`. If any command is denied the call is denied, else if any asks the call asks.
+Finn reads a `bash` command with [tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash) and checks each command of the line by its text: the parts of `;`, `&&`, `||`, `|`, a line end, `( )` and `$( )`. `deny bash(rm *)` refuses `ls && rm x` and `echo $(rm x)`. If any command is denied the call is denied, else if any asks the call asks. A rule matches the command's text as written, so `deny bash(rm *)` does not match `FOO=1 rm x` or `>log rm x`.
 
-A command of `cd`, `rm`, `cp`, `mv`, `mkdir`, `touch`, `chmod`, `chown` or `cat` with a path outside the session folder also checks `external_directory(FOLDER/*)`, which runs unless a rule says otherwise: `"ask external_directory(*)"` asks for each such folder. A `cd` is checked only by its folder. A path with `$` or a backtick is not followed, and a `cd` does not move the paths of the commands after it.
+A command of `cd`, `rm`, `cp`, `mv`, `mkdir`, `touch`, `chmod`, `chown` or `cat` with a path outside the session folder also checks `external_directory(FOLDER/*)`, which runs unless a rule says otherwise: `"ask external_directory(*)"` asks for each such folder. A `cd` is checked only by its folder. OpenCode asks for such folders by default; Finn runs them. A path with `$` or a backtick is not followed, and a `cd` does not move the paths of the commands after it.
 
-A line that tree-sitter-bash cannot read, or one it is known to misread (such as nested backticks), asks even when an allow rule matches; a deny rule that matches the line or one of its commands still denies it.
+A line that tree-sitter-bash cannot read, or one it is known to misread (such as nested backticks), asks even when an allow rule matches; a deny rule that matches the line or one of its commands still denies it. Without a C compiler the parser cannot be built, and every line is unclear.
 
 A `!` command in the clients follows the same rules as a call of `bash`; it never asks, since you typed it.
 

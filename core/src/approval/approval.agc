@@ -23,11 +23,15 @@ import Tools from "../tools/tools"
 
 ## OpenCode's defaults for reads, before the rules of the config: a `.env` file asks, `.env.example` does not.
 DEFAULTS = ["ask read_file(*.env)", "ask read_file(*.env.*)", "allow read_file(*.env.example)"]
+## The longest glob of a rule: a match costs up to the length of the pattern times that of the target.
+MAX_PATTERN = 256
 
 struct Rule
   action: Spec.Verdict
   tool: String
   pattern: String
+  ## The pattern is the whole target as it is, not a glob: the exact command an "always" answer allows.
+  literal: Bool = false
 end
 
 struct Rules
@@ -42,15 +46,18 @@ def parse_rule(text: String) -> Result[Rule]
   rest = text.slice(space.unwrap! + 1, text.length - space.unwrap! - 1).strip
 
   open = rest.index_of("(")
-  return error("rule has no tool: #{text}") if rest == "" or open == some(0)
-  return ok(Rule(action: action, tool: rest, pattern: "*")) if open.none?
+  tool = rest.slice(0, open.unwrap_or(rest.length))
+  return error("rule has no tool: #{text}") if tool == ""
+  return error("rule's tool has a space (write TOOL(PATTERN)): #{text}") if tool.include?(" ") or tool.include?("\t")
+  return ok(Rule(action: action, tool: tool, pattern: "*")) if open.none?
   return error("rule is not \"ACTION TOOL(PATTERN)\": #{text}") if not rest.end_with?(")")
 
   start = open.unwrap!
   pattern = rest.slice(start + 1, rest.length - start - 2)
   return error("rule has no pattern: #{text}") if pattern == ""
+  return error("rule's pattern is over #{MAX_PATTERN} characters: #{text}") if pattern.length > MAX_PATTERN
 
-  ok(Rule(action: action, tool: rest.slice(0, start), pattern: expanded(pattern)))
+  ok(Rule(action: action, tool: tool, pattern: expanded(pattern)))
 end
 
 def parse_rules(texts: List[String]) -> Result[Rules]
@@ -92,7 +99,8 @@ end
 def evaluate(rules: Rules, tool: String, target: String) -> Optional[Spec.Verdict]
   found: Optional[Spec.Verdict] = none
   for rule in rules.all
-    if match?(tool, rule.tool) and match?(target, rule.pattern)
+    matched = (rule.literal and target == rule.pattern) or (not rule.literal and match?(target, rule.pattern))
+    if match?(tool, rule.tool) and matched
       found = some(rule.action)
     end
   end

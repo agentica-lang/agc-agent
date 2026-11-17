@@ -76,11 +76,12 @@ jobs:
           version: ${{ env.AGENTICA_VERSION }}
           sha256: ${{ env.AGENTICA_SHA256 }}
 
+      # It holds the native module of bash too (native-build/), so its sources are in the key.
       - name: Cache the fetched packages
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/agentica/pkg
-          key: packages-${{ hashFiles('**/agentica.lock') }}
+          key: packages-${{ hashFiles('**/agentica.lock', 'bash/native/**', 'bash/agentica.toml') }}
 
       # The compile cache of each package (_build/, 75 MB for core) is named by the hash of the sources, so a stale file
       # is never used; the last cache of the job and the Agentica version is the start of the next one.

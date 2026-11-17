@@ -13,6 +13,8 @@ EXTERNAL = "external_directory"
 struct Resource
   tool: String
   pattern: String
+  ## The pattern is the exact text, not a glob (`Approval.Rule.literal`).
+  literal: Bool = false
 end
 
 struct Scan
@@ -41,7 +43,7 @@ def scan(root: String, command: String) -> Scan
     if not CWD.include?(name)
       text = c.text.strip
       found = found.with(asked: pushed(found.asked, Resource(tool: "bash", pattern: text)))
-      found = found.with(always: pushed(found.always, Resource(tool: "bash", pattern: always(text, tokens))))
+      found = found.with(always: pushed(found.always, always(text, tokens)))
     end
   end
 
@@ -69,14 +71,14 @@ def pushed(list: List[Resource], r: Resource) -> List[Resource]
   list.push(r)
 end
 
-def always(text: String, tokens: List[String]) -> String
-  return text if tokens.empty? or RUNNERS.include?(tokens[0])
+def always(text: String, tokens: List[String]) -> Resource
+  exact = Resource(tool: "bash", pattern: text, literal: true)
+  return exact if tokens.empty? or RUNNERS.include?(tokens[0])
 
   words = Arity.prefix(tokens)
-  output = tokens[0] == "git" and tokens.any? { |t| t.start_with?("--output") }
-  return text if (output or words.any? { |w| w.start_with?("-") })
+  return exact if (words.any? { |w| w.start_with?("-") })
 
-  "#{words.join(" ")} *"
+  Resource(tool: "bash", pattern: "#{words.join(" ")} *")
 end
 
 # The `FOLDER/*` globs of the paths outside `root` that the arguments of `name` give.
