@@ -51,13 +51,21 @@ def new_turn() -> Turn = Turn(usage: Types.Usage())
 def ended?(turn: Turn) -> Bool = not turn.status.empty?
 
 ## The JSON body of a streamed call.
-def request_body(request: Types.Request) -> Result[String]
+def request_body(request: Types.Request) -> Result[String] = body_of(request, true)
+
+## The body of a call to Codex, which refuses `max_output_tokens`.
+def codex_body(request: Types.Request) -> Result[String] = body_of(request, false)
+
+def body_of(request: Types.Request, max_output: Bool) -> Result[String]
   body: Map[String, JSON.Value] = {
     "model": JSON.from(request.model),
     "input": JSON.array(input_items(request)),
-    "max_output_tokens": JSON.from(request.max_tokens),
     "stream": JSON.from(true),
   }
+
+  if max_output
+    body = body.put("max_output_tokens", JSON.from(request.max_tokens))
+  end
 
   if not request.system.empty?
     body = body.put("instructions", JSON.from(request.system))

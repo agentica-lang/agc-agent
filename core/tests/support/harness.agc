@@ -9,6 +9,7 @@ import SSE from "pkg/sse/sse"
 import Approval from "../../src/approval/approval"
 import Permissions from "../../src/approval/permissions"
 import Catalog from "../../src/providers/catalog"
+import Chatgpt from "../../src/providers/chatgpt"
 import CodeMode from "../../src/tools/code_mode"
 import Auth from "../../src/providers/auth"
 import Config from "../../src/config/config"
@@ -86,6 +87,8 @@ struct Setup
   logins: List[String] = []
   ## A login sets the base URL of `local` (the fake at the start).
   local_login: Bool = false
+  ## The ChatGPT login: its OAuth server at `/auth` of the fake and Codex at `/codex`, its tokens in the state folder.
+  chatgpt: Bool = false
   ## The approvals on (calls that no rule allows ask); the deny rules of the config, as `bash(rm *)`, count either way.
   approvals: Bool = true
   deny: List[String] = []
@@ -173,6 +176,7 @@ def providers(
   fake: Fake.Fake,
   keys: Map[String, String] = {},
   urls: Map[String, String] = {},
+  chatgpt: Optional[Chatgpt.Login] = none,
 ) -> Map[String, Config.Provider]
   all = Offered.builtin(apis(setup, fake, urls.get("local").unwrap_or(fake.url)), setup.api)
   root = fake_root(fake)
@@ -182,12 +186,24 @@ def providers(
   end
 
   customs = customs + login_customs(setup, fake)
-  more = Providers.offered(customs, &fake_env, LLM.Options(timeout_ms: 5000, retry_base_ms: 1), keys)
+  options = LLM.Options(timeout_ms: 5000, retry_base_ms: 1)
+  more = Providers.offered(customs, &fake_env, options, keys)
   for name in more.keys
     all = all.put(name, more[name])
   end
 
+  for login in option_list(chatgpt)
+    all = Chatgpt.added(ok(all), login, options).unwrap_or(all)
+  end
+
   all
+end
+
+## The ChatGPT login of a test's folder, against the fake, polling at once.
+def chatgpt_login(fake: Fake.Fake, base: String) -> Chatgpt.Login
+  root = fake_root(fake)
+  endpoints = Chatgpt.Endpoints(issuer: "#{root}/auth", base_url: "#{root}/codex", min_poll_ms: 10, poll_margin_ms: 0)
+  Chatgpt.Login(path: "#{base}/state/#{Chatgpt.FILE}", endpoints: endpoints, lock: ATS.new())
 end
 
 def fake_root(fake: Fake.Fake) -> String = fake.url.slice(0, fake.url.length - "/v1".length)
@@ -208,18 +224,26 @@ end
 def auth_file(base: String) -> String = "#{base}/config/finn/#{Auth.FILE}"
 
 def login_setup(setup: Setup, fake: Fake.Fake, base: String) -> Optional[Logins.Setup]
-  return none if setup.logins.empty? and not setup.local_login
+  return none if setup.logins.empty? and not setup.local_login and not setup.chatgpt
 
   path = auth_file(base)
+  chatgpt: Optional[Chatgpt.Login] = none
+  if setup.chatgpt
+    chatgpt = some(chatgpt_login(fake, base))
+  end
+
   some(
     Logins.Setup(
       path: some(path),
       stored: Auth.load(path, none),
       entries: login_customs(setup, fake),
       read: &fake_env,
-      rebuild: ->(keys: Map[String, String], urls: Map[String, String]) { ok(providers(setup, fake, keys, urls)) },
+      rebuild: ->(keys: Map[String, String], urls: Map[String, String]) {
+        ok(providers(setup, fake, keys, urls, chatgpt))
+      },
       local_url: local_url_of(setup, fake),
       local_key: "test-key",
+      chatgpt: chatgpt,
     ),
   )
 end
@@ -243,17 +267,19 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     user = try Permissions.user_rules(read, try Config.approvals_switch(read))
   end
 
+  login = login_setup(setup, fake, base)
   options = Config.Options(
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
     providers: providers(
       setup,
       fake,
-      login_setup(setup, fake, base).map { |l| l.stored.keys }.unwrap_or({}),
-      login_setup(setup, fake, base).map { |l| l.stored.urls }.unwrap_or({}),
+      login.map { |l| l.stored.keys }.unwrap_or({}),
+      login.map { |l| l.stored.urls }.unwrap_or({}),
+      login.map { |l| l.chatgpt }.unwrap_or(none),
     ),
     provider: server_provider(setup),
-    login: login_setup(setup, fake, base),
+    login: login,
     key_envs: setup.key_envs,
     model: setup.model,
     env: env_of(setup, base),

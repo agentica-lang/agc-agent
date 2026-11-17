@@ -1,0 +1,1 @@
+{"models": [{"slug": "gpt-test-codex", "context_window": 200000}, {"slug": "gpt-test-mini", "context_window": 100000}]}

@@ -43,6 +43,8 @@ struct Wire[S]
   ended: Fn[S, Bool]
   finish: Fn[S, Result[Types.Response]]
   models_path: String = "/models"
+  ## The models of a `GET` of `models_path`, when the API lists them in another shape than `{"data": [...]}`.
+  models_of: Optional[Fn[String, Result[List[Types.Model]]]] = none
 end
 
 ## `Authorization: Bearer KEY`, or nothing for an empty key.
@@ -169,7 +171,12 @@ end
 
 def list_models[S](config: Config, wire: Wire[S]) -> Result[List[Types.Model]]
   response = try Errors.with_retry(retry(config), -> { get_models(config, wire) })
-  models(try protocol_text(response.body))
+  text = try protocol_text(response.body)
+  for parse in option_list(wire.models_of)
+    return parse.call(text)
+  end
+
+  models(text)
 end
 
 def get_models[S](config: Config, wire: Wire[S]) -> Result[HTTP.Response]
@@ -270,6 +277,13 @@ end
 def models(body: String) -> Result[List[Types.Model]]
   list = try decoded(JSON.decode(body, ModelList))
   ok(list.data.map { |m| Types.Model(id: m.id, context: context_of(m)) })
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
 end
 
 def decoded[T](result: Result[T]) -> Result[T]

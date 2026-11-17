@@ -9,6 +9,7 @@ import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Auth from "auth"
+import Chatgpt from "chatgpt"
 import Providers from "providers"
 
 CALL_MS = 5000
@@ -20,6 +21,11 @@ FROM_FILE = "stored"
 ANTHROPIC_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN"
 ## The variable of the base URL of `local`, which wins over a stored one.
 LOCAL_ENV = "FINN_BASE_URL"
+## Where a device login is (`device_state`).
+DEVICE_NONE = "none"
+DEVICE_WAITING = "waiting"
+DEVICE_DONE = "done"
+DEVICE_FAILED = "failed"
 
 ## What a login needs, from `Config.from_env`.
 struct Setup
@@ -40,6 +46,13 @@ struct Setup
   local_key: String = ""
   ## The server's provider was chosen (`FINN_BASE_URL`, `FINN_PROVIDER` or `FINN_API` is set): no login is offered.
   chosen: Bool = false
+  ## The ChatGPT login, whose tokens the rebuild reads from its own file; none offers no such login.
+  chatgpt: Optional[Chatgpt.Login] = none
+end
+
+struct DeviceState
+  state: String
+  message: String = ""
 end
 
 ## What a list of the logins shows of a provider. `from` is where its key comes from: `env`, `stored` or empty.
@@ -176,6 +189,41 @@ def skip(holder: Holder) -> Result[Void]
   inner
 end
 
+## Starts the device login of ChatGPT: the code the user types, while a task of the server waits for the user (at most
+## `Chatgpt.DEVICE_MS`), then stores the tokens. A new start ends the wait of the one before.
+def device_start(holder: Holder) -> Result[Chatgpt.Device]
+  login = try chatgpt_of(try usable(try now(holder)))
+  for why in option_list(Chatgpt.refusal(login))
+    return error(why, kind: Protocol.KIND_LOGIN_STORAGE)
+  end
+
+  device = try refused_as(Chatgpt.start(login.endpoints), Protocol.KIND_LOGIN_REJECTED)
+
+  address = holder.ref.address
+  serial: Channel[Int] = Channel.new(1)
+  task = Task.spawn(-> { device_waited(address, login, device, serial) })
+  started: Result[Int] = Actor.call(holder.ref.address, CALL_MS) do |reply| Msg.DeviceStarted(task, reply) end
+  case started
+    ok(number) -> _ = serial.send(number, 0)
+    error(e) ->
+      Task.cancel(task)
+      return error(e)
+  end
+
+  ok(device)
+end
+
+## Where the device login is: `none`, `waiting`, `done` or `failed` (with why).
+def device_state(holder: Holder) -> Result[DeviceState]
+  state = try now(holder)
+  case state.device
+    DeviceRun.Idle -> ok(DeviceState(state: DEVICE_NONE))
+    DeviceRun.Waiting(_) -> ok(DeviceState(state: DEVICE_WAITING))
+    DeviceRun.Done -> ok(DeviceState(state: DEVICE_DONE))
+    DeviceRun.Failed(why) -> ok(DeviceState(state: DEVICE_FAILED, message: why))
+  end
+end
+
 ## Checks `key` at the provider's own base URL, once, without following a redirect: `GET /models` of Anthropic, else
 ## `GET` of its `check_path` with the key as a Bearer token. What the provider said goes back only as its status or
 ## kind: a body might quote the request.
@@ -200,6 +248,16 @@ struct State
   providers: Map[String, Providers.Provider]
   setup: Optional[Setup]
   stored: Auth.Stored
+  device: DeviceRun = DeviceRun.Idle
+  ## The number of the last device login started: the end of an older one is dropped.
+  serial: Int = 0
+end
+
+enum DeviceRun
+  Idle
+  Waiting(Task[Void])
+  Done
+  Failed(String)
 end
 
 enum Msg
@@ -208,6 +266,8 @@ enum Msg
   StoreUrl(String, String, Channel[Result[Status]])
   Remove(Optional[String], Channel[Result[Void]])
   Skip(Channel[Result[Void]])
+  DeviceStarted(Task[Void], Channel[Int])
+  DeviceEnded(Int, Result[Chatgpt.Tokens])
 end
 
 # Checks that `GET /models` at `base` answers, once, without following a redirect; with `FINN_API_KEY` (`key`) as a
@@ -263,15 +323,91 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
       changed = saved(state, ->(now: Auth.Stored) { ok(now.with(urls: now.urls.put(name, url))) })
       Actor.reply(reply, status_after(changed, name))
       Actor.continue(changed.unwrap_or(state))
+    Msg.Remove(name, reply) if name == some(Chatgpt.NAME) ->
+      changed = chatgpt_removed(state, true)
+      Actor.reply(reply, done(changed))
+      Actor.continue(changed.unwrap_or(state))
     Msg.Remove(name, reply) ->
       changed = saved(state, ->(now: Auth.Stored) { removed(now, name) })
+      if name.none? and changed.ok?
+        changed = chatgpt_removed(changed.unwrap!, false)
+      end
+
       Actor.reply(reply, done(changed))
       Actor.continue(changed.unwrap_or(state))
     Msg.Skip(reply) ->
       changed = skipped(state)
       Actor.reply(reply, done(changed))
       Actor.continue(changed.unwrap_or(state))
+    Msg.DeviceStarted(task, reply) ->
+      stopped(state)
+      number = state.serial + 1
+      Actor.reply(reply, number)
+      Actor.continue(state.with(device: DeviceRun.Waiting(task), serial: number))
+    Msg.DeviceEnded(number, _) if number != state.serial -> Actor.continue(state)
+    Msg.DeviceEnded(_, result) -> Actor.continue(device_ended(state, result))
   end
+end
+
+# The wait of a device login, in its own task: its end goes to the holder with the number it was given.
+def device_waited(address: Address[Msg], login: Chatgpt.Login, device: Chatgpt.Device, serial: Channel[Int]) -> Void
+  number = serial.recv(CALL_MS)
+  return if not number.ok?
+
+  result = Chatgpt.finish(login.endpoints, device)
+  _ = Actor.cast(address, Msg.DeviceEnded(number.unwrap!, result), CALL_MS)
+end
+
+def stopped(state: State) -> Void
+  case state.device
+    DeviceRun.Waiting(task) -> Task.cancel(task)
+    _ -> nil
+  end
+end
+
+# The tokens of a confirmed login go to their file, then the providers are built again with them.
+def device_ended(state: State, result: Result[Chatgpt.Tokens]) -> State
+  return state.with(device: DeviceRun.Failed(result.message)) if not result.ok?
+
+  tokens = result.unwrap!
+  login = state.setup.unwrap!.chatgpt.unwrap!
+  case Chatgpt.save(login, tokens)
+    ok(_) -> nil
+    error(e) -> return state.with(device: DeviceRun.Failed("#{login.path} cannot be written: #{e.message}"))
+  end
+
+  case state.setup.unwrap!.rebuild.call(state.stored.keys, state.stored.urls)
+    ok(providers) -> state.with(providers: providers, device: DeviceRun.Done)
+    error(e) -> state.with(device: DeviceRun.Failed(e.message))
+  end
+end
+
+# Ends a device login that waits and removes the tokens; `alone`: it is the only thing removed, so nothing to remove
+# is an error.
+def chatgpt_removed(state: State, alone: Bool) -> Result[State]
+  setup = try usable(state)
+  return ok(state) if setup.chatgpt.none? and not alone
+
+  login = try chatgpt_of(setup)
+
+  waiting = case state.device
+    DeviceRun.Waiting(_) -> true
+    _ -> false
+  end
+
+  there = File.stat(login.path).ok?
+  if alone and not there and not waiting
+    return error("nothing of that provider is stored", kind: Protocol.KIND_INVALID)
+  end
+
+  stopped(state)
+  case Chatgpt.remove(login)
+    ok(_) -> nil
+    error(e) -> return error("#{login.path} cannot be removed: #{e.message}", kind: Protocol.KIND_LOGIN_STORAGE)
+  end
+
+  providers = try setup.rebuild.call(state.stored.keys, state.stored.urls)
+  ok(state.with(providers: providers, device: DeviceRun.Idle, serial: state.serial + 1))
 end
 
 def removed(now: Auth.Stored, name: Optional[String]) -> Result[Auth.Stored]
@@ -331,6 +467,17 @@ end
 def now(holder: Holder) -> Result[State] = Actor.call(holder.ref.address, CALL_MS) do |reply| Msg.Now(reply) end
 
 def usable(state: State) -> Result[Setup] = state.setup.to_result("this server has no login")
+
+def refused_as[T](result: Result[T], kind: String) -> Result[T]
+  case result
+    ok(value) -> ok(value)
+    error(e) -> error(e.message, kind: kind)
+  end
+end
+
+def chatgpt_of(setup: Setup) -> Result[Chatgpt.Login]
+  refused_as(setup.chatgpt.to_result("this server has no ChatGPT login"), Protocol.KIND_INVALID)
+end
 
 def status_of(setup: Setup, stored: Auth.Stored, entry: Providers.Custom) -> Status
   from = ""
