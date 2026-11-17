@@ -15,269 +15,87 @@
 import Actor from "std/actor"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
-import SSE from "pkg/sse/sse"
 import Agent from "../agent/agent"
-import Catalog from "../agent/catalog"
-import CodeMode from "../tools/code_mode"
 import Compaction from "../agent/compaction"
-import Extensions from "../config/registry"
-import Spec from "../tools/spec"
+import Branch from "branch"
+import Session from "state"
 import Store from "store"
+import Stream from "stream"
 import Tools from "../tools/tools"
+import Turn from "turn"
 
-CALL_MS = 5000
-MAX_QUEUED = 20
-## The queued messages together, as the next turn would get them, are at most one message's size.
-MAX_QUEUED_BYTES = 1_048_576
-## Room in a subscriber's channel past its replay; a client that falls this far behind is dropped.
-LIVE_ROOM = 1024
-RESERVE = 1000
+export Session.Endpoint
+export Session.Setup
+export Session.Msg
+export Session.State
+export Session.Load
+export Session.Copying
+export Session.Copied
+export Session.Fold
+
 ## The command outputs that wait for the next message, and their size together.
 MAX_SHELLS = 20
 MAX_SHELL_BYTES = 1_048_576
 
-## What a session takes from its provider and model API, by their names; `model` is the provider's default.
-struct Endpoint
-  name: String
-  api: String
-  model: String
-  provider: LLM.Provider
-  extra: Map[String, JSON.Value] = {}
-  cache: Bool = false
-  refresh: Optional[Fn[Result[LLM.Provider]]] = none
-  props_url: String = ""
-  api_key: String = ""
-  compact_model: String = ""
-  catalog_provider: String = ""
-end
-
-struct Setup
-  id: String
-  cwd: String
-  model: String
-  provider: LLM.Provider
-  system: String
-  ctx: Tools.Context
-  keep_events: Int
-  approval_timeout_ms: Int
-  file: String
-  ## The model's window in tokens, 0 to ask the provider.
-  window: Int = 0
-  ## The model that writes a compaction's summary; the session's model when empty.
-  compact_model: String = ""
-  props_url: String = ""
-  api_key: String = ""
-  extra: Map[String, JSON.Value] = {}
-  code_mode: Optional[CodeMode.Settings] = none
-  catalog: Optional[Catalog.Catalog] = none
-  catalog_provider: String = ""
-  catalog_wait_ms: Int = 1500
-  ## How long a turn waits for the queued messages before it goes on without them.
-  take_ms: Int = 5000
-  ## Ask the provider for its prompt cache.
-  cache: Bool = false
-  ## A provider with a fresh token, after a 401.
-  refresh: Optional[Fn[Result[LLM.Provider]]] = none
-  ## What the core's own extensions (the skills) give the session.
-  builtins: List[Extensions.Opened] = []
-  ## The thinking level of the calls; none leaves it to the model.
-  effort: Optional[String] = none
-  ## The provider and model API by name, and the endpoint of a provider (with the API now) for a `PATCH`.
-  provider_name: String = ""
-  api: String = ""
-  endpoint: Optional[Fn[String, String, Result[Endpoint]]] = none
-  ## The provider of the thinking saved before providers, which names none: the session's first, as `provider/api`.
-  origin: String = ""
-  ## Why a turn cannot start (the provider is not offered now); empty when it can.
-  refused: String = ""
-  ## The approval, with what the session's answers and mode allowed so far; none runs every call.
-  approver: Optional[Extensions.Approver] = none
-  ## What the extensions of the server add: the `message` and `fold` handlers.
-  registry: Optional[Extensions.Registry] = none
-end
-
-enum Msg
-  Snapshot(Channel[Protocol.Session])
-  Subscribe(Optional[Int], Channel[Channel[Bytes]])
-  Send(String, Channel[Result[Protocol.MessageAccepted]])
-  Answer(String, Protocol.Decision, Channel[Result[Void]])
-  Stop(Channel[Bool])
-  Close(Channel[Result[Void]])
-  Emit(String, Protocol.Event)
-  Ask(String, Agent.Ask, Channel[Protocol.Decision])
-  Expire(String)
-  Commit(String, List[LLM.Message], List[String], List[Agent.Queued])
-  Compacted(String, Compaction.Compaction)
-  Window(Int)
-  Finished(String, Protocol.StopReason)
-  Take(String, Int, Channel[List[Agent.Queued]])
-  Update(Protocol.UpdateSession, Channel[Result[Void]])
-  Fold(Channel[Result[Fold]])
-  Folded(Optional[Compaction.Compaction], Channel[Result[Void]])
-  Stripped(String)
-  Renewed(LLM.Provider)
-  Tree(Channel[Result[Protocol.SessionTree]])
-  Branch(Int, Channel[Result[Protocol.Branched]])
-  Copy(Optional[Int], Copying, Channel[Result[Copied]])
-  Shell(Protocol.RunShell, Channel[Result[Protocol.ShellAccepted]])
-  ShellDone(String, Tools.Output, Int)
-  ## The task of the command ended; after its `ShellDone`, if that came.
-  ShellDown(String, TaskDown)
-  Load(Channel[Load])
-end
-
-## Whether the session works now (a turn or a shell command), and whether all it waits for is an answer to an approval.
-struct Load
-  running: Bool
-  asking: Bool
-end
-
-## Where `copy` writes the new session: its header, in the folder `dir`.
-struct Copying
-  header: Store.Header
-  dir: String
-end
-
-## A copy of a session: its file, and the user message it went back before ("" when none).
-struct Copied
-  file: String
-  text: String
-end
-
-## What a compaction that a client asked for needs, taken from the session while no turn runs.
-struct Fold
-  provider: LLM.Provider
-  refresh: Optional[Fn[Result[LLM.Provider]]] = none
-  settings: Compaction.Settings
-  history: List[LLM.Message]
-  span: Optional[Compaction.Compaction]
-end
-
-struct Waiting
-  request: Protocol.ApprovalRequested
-  reply: Channel[Protocol.Decision]
-  asked_ms: Int
-end
-
-struct Running
-  id: String
-  task: Task[Void]
-  from_event_id: Int
-  ## The text of the turn's answers so far, kept as it is committed, so a compaction of the history leaves it whole.
-  texts: List[String] = []
-  ## The messages queued into the turn so far, which number their ids.
-  queued: Int = 0
-end
-
-## A command a client runs in the session folder.
-struct ShellRun
-  id: String
-  command: String
-  context: Bool
-  task: Task[Void]
-  started_ms: Int
-end
-
-struct State
-  setup: Setup
-  counter: Int = 0
-  log: List[Store.Logged] = []
-  subscribers: List[Channel[Bytes]] = []
-  history: List[LLM.Message] = []
-  display: List[Protocol.Message] = []
-  turn: Optional[Running] = none
-  turns: Int = 0
-  pending: List[Waiting] = []
-  approvals: Int = 0
-  ## The approvals answered, so a late answer is told it came late.
-  resolved: List[String] = []
-  ## Since when no client is attached.
-  alone_since: Optional[Int] = none
-  ## Why the last write to the file failed; none once one works. The next write starts on a new line, since the failed
-  ## one may have left part of its line.
-  broken: Optional[String] = none
-  ## The output tokens of every call of the session.
-  output: Int = 0
-  ## The context of the last call.
-  context: Int = 0
-  ## What the calls cost in USD, from the catalog's prices: the session's and the running turn's.
-  cost: Optional[Float] = none
-  turn_cost: Float = 0.0
-  ## Messages sent while the turn runs, which it has not read yet. They live only here: a crash of the server loses
-  ## them with no `queue_dropped`.
-  queued: List[String] = []
-  ## The names the extensions noted: the skills the session loaded.
-  marks: List[String] = []
-  ## The model's window: 0 until it is known, -1 when the provider does not say.
-  window: Int = 0
-  ## The ids up to this one are saved or reserved in the file.
-  reserved: Int = 0
-  ## Loaded from the file: a client that attaches from before this id would miss deltas that were not saved.
-  lost_below: Int = 0
-  ## The turn that a failed write stopped, for a client that attaches from inside it.
-  lost: Optional[Lost] = none
-  ## A compaction that a client asked for runs: no turn starts meanwhile.
-  compacting: Bool = false
-  ## Anthropic requests go without thinking blocks until the next fold: a turn passed the limit inside a tool round.
-  stripped: Bool = false
-  ## The tree of the file as far as the session read it.
-  entries: Optional[Store.Entries] = none
-  shell: Optional[ShellRun] = none
-  ## The output of the commands that go to the model before the next message.
-  shells: List[String] = []
-end
-
 ## Starts a session; from what its file saved when there is one.
-def start(setup: Setup, saved: Optional[Store.Saved] = none) -> Actor.Ref[State, Msg]
+def start(setup: Session.Setup, saved: Optional[Store.Saved] = none) -> Actor.Ref[Session.State, Session.Msg]
   init = -> {
     case saved
       some(s) -> restore(setup, s)
-      none -> State(setup: setup, window: setup.window)
+      none -> Session.State(setup: setup, window: setup.window)
     end
   }
 
   Actor.start(Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate)))
 end
 
-def snapshot(address: Address[Msg]) -> Result[Protocol.Session]
-  Actor.call(address, CALL_MS) do |reply| Msg.Snapshot(reply) end
+def snapshot(address: Address[Session.Msg]) -> Result[Protocol.Session]
+  Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Snapshot(reply) end
 end
 
-def load(address: Address[Msg]) -> Result[Load] = Actor.call(address, CALL_MS) do |reply| Msg.Load(reply) end
+def load(address: Address[Session.Msg]) -> Result[Session.Load]
+  Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Load(reply) end
+end
 
 ## The event stream from after `last_event_id` (from now when none), as SSE bytes.
-def subscribe(address: Address[Msg], last_event_id: Optional[Int]) -> Result[Channel[Bytes]]
-  Actor.call(address, CALL_MS) do |reply| Msg.Subscribe(last_event_id, reply) end
+def subscribe(address: Address[Session.Msg], last_event_id: Optional[Int]) -> Result[Channel[Bytes]]
+  Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Subscribe(last_event_id, reply) end
 end
 
 ## Starts a turn or queues the message into the running one; `session.busy` when it cannot.
-def send(address: Address[Msg], text: String) -> Result[Protocol.MessageAccepted]
-  sent: Result[Result[Protocol.MessageAccepted]] = Actor.call(address, CALL_MS) do |reply| Msg.Send(text, reply) end
+def send(address: Address[Session.Msg], text: String) -> Result[Protocol.MessageAccepted]
+  sent: Result[Result[Protocol.MessageAccepted]] = Actor.call(address, Session.CALL_MS) do |reply|
+    Session.Msg.Send(text, reply)
+  end
+
   ok(try try sent)
 end
 
-def answer(address: Address[Msg], approval_id: String, decision: Protocol.Decision) -> Result[Void]
-  answered: Result[Result[Void]] = Actor.call(address, CALL_MS) do |reply| Msg.Answer(approval_id, decision, reply) end
+def answer(address: Address[Session.Msg], approval_id: String, decision: Protocol.Decision) -> Result[Void]
+  answered: Result[Result[Void]] = Actor.call(address, Session.CALL_MS) do |reply|
+    Session.Msg.Answer(approval_id, decision, reply)
+  end
+
   try try answered
   ok()
 end
 
 ## Ends the session when no turn runs; `session.busy` while one does.
-def end_session(address: Address[Msg]) -> Result[Void]
-  closed: Result[Result[Void]] = Actor.call(address, CALL_MS) do |reply| Msg.Close(reply) end
+def end_session(address: Address[Session.Msg]) -> Result[Void]
+  closed: Result[Result[Void]] = Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Close(reply) end
   try try closed
   ok()
 end
 
 ## Changes the model or the thinking level from the next turn on, and keeps them in the session's file.
-def update(address: Address[Msg], change: Protocol.UpdateSession) -> Result[Void]
-  updated: Result[Result[Void]] = Actor.call(address, CALL_MS) do |reply| Msg.Update(change, reply) end
+def update(address: Address[Session.Msg], change: Protocol.UpdateSession) -> Result[Void]
+  updated: Result[Result[Void]] = Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Update(change, reply) end
   try try updated
   ok()
 end
 
 ## `setup` on `endpoint`, with its default model.
-def switched(setup: Setup, endpoint: Endpoint) -> Setup
+def switched(setup: Session.Setup, endpoint: Session.Endpoint) -> Session.Setup
   setup.with(
     provider_name: endpoint.name,
     refused: "",
@@ -297,8 +115,8 @@ end
 ## Folds the history into a summary now, as a turn past the limit would; false when there is nothing to fold.
 ## `session.busy` while a turn or another compaction runs. The summary is asked outside the session, which only
 ## refuses new turns meanwhile.
-def compact_now(address: Address[Msg]) -> Result[Bool]
-  taken: Result[Result[Fold]] = Actor.call(address, CALL_MS) do |reply| Msg.Fold(reply) end
+def compact_now(address: Address[Session.Msg]) -> Result[Bool]
+  taken: Result[Result[Session.Fold]] = Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Fold(reply) end
   fold = try try taken
   summary: Result[Optional[Compaction.Compaction]] = ok(none)
   for span in option_list(fold.span)
@@ -309,7 +127,7 @@ def compact_now(address: Address[Msg]) -> Result[Bool]
     )
 
     for provider in option_list(renewal.fresh)
-      _ = Actor.cast(address, Msg.Renewed(provider), CALL_MS)
+      _ = Actor.cast(address, Session.Msg.Renewed(provider), Session.CALL_MS)
     end
 
     summary = case renewal.result
@@ -320,7 +138,7 @@ def compact_now(address: Address[Msg]) -> Result[Bool]
 
   nothing: Optional[Compaction.Compaction] = none
   found = summary.unwrap_or(nothing)
-  done: Result[Result[Void]] = Actor.call(address, CALL_MS) do |reply| Msg.Folded(found, reply) end
+  done: Result[Result[Void]] = Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Folded(found, reply) end
   _ = try summary
   try try done
   ok(found.some?)
@@ -329,51 +147,48 @@ end
 ## Runs a command in the session folder as the `bash` tool would, after the approval rules: `shell.denied` when a deny
 ## rule refuses it (the user typed it, so a rule that asks does not ask), `session.busy` while a turn, a compaction or
 ## another command runs. Its output comes in `shell_finished`.
-def shell(address: Address[Msg], request: Protocol.RunShell) -> Result[Protocol.ShellAccepted]
-  run: Result[Result[Protocol.ShellAccepted]] = Actor.call(address, CALL_MS) do |reply| Msg.Shell(request, reply) end
+def shell(address: Address[Session.Msg], request: Protocol.RunShell) -> Result[Protocol.ShellAccepted]
+  run: Result[Result[Protocol.ShellAccepted]] = Actor.call(address, Session.CALL_MS) do |reply|
+    Session.Msg.Shell(request, reply)
+  end
+
   ok(try try run)
 end
 
 ## Stops the running turn or command; whether one ran.
-def stop(address: Address[Msg]) -> Result[Bool] = Actor.call(address, CALL_MS) do |reply| Msg.Stop(reply) end
+def stop(address: Address[Session.Msg]) -> Result[Bool]
+  Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Stop(reply) end
+end
 
 ## The user messages of every branch of the session.
-def tree(address: Address[Msg]) -> Result[Protocol.SessionTree]
-  read: Result[Result[Protocol.SessionTree]] = Actor.call(address, CALL_MS) do |reply| Msg.Tree(reply) end
+def tree(address: Address[Session.Msg]) -> Result[Protocol.SessionTree]
+  read: Result[Result[Protocol.SessionTree]] = Actor.call(address, Session.CALL_MS) do |reply|
+    Session.Msg.Tree(reply)
+  end
+
   ok(try try read)
 end
 
 ## Goes on from `entry` of the tree; `session.busy` while a turn or a compaction runs. The clients get `resync`.
-def branch(address: Address[Msg], entry: Int) -> Result[Protocol.Branched]
-  moved: Result[Result[Protocol.Branched]] = Actor.call(address, CALL_MS) do |reply| Msg.Branch(entry, reply) end
+def branch(address: Address[Session.Msg], entry: Int) -> Result[Protocol.Branched]
+  moved: Result[Result[Protocol.Branched]] = Actor.call(address, Session.CALL_MS) do |reply|
+    Session.Msg.Branch(entry, reply)
+  end
+
   ok(try try moved)
 end
 
 ## Writes a new session file with the history up to `entry` (as `branch`), all of it when none; `session.busy` while a
 ## turn or a compaction runs.
-def copy(address: Address[Msg], entry: Optional[Int], to: Copying) -> Result[Copied]
-  copied: Result[Result[Copied]] = Actor.call(address, CALL_MS) do |reply| Msg.Copy(entry, to, reply) end
+def copy(address: Address[Session.Msg], entry: Optional[Int], to: Session.Copying) -> Result[Session.Copied]
+  copied: Result[Result[Session.Copied]] = Actor.call(address, Session.CALL_MS) do |reply|
+    Session.Msg.Copy(entry, to, reply)
+  end
+
   ok(try try copied)
 end
 
 private
-
-struct Job
-  turn: Agent.Turn
-  address: Address[Msg]
-end
-
-# The end of a turn that a failed write stopped: the clients got `frames` without an id after event `to`, and a
-# client whose replay passes `to` gets them again.
-struct Lost
-  to: Int
-  frames: List[String]
-end
-
-struct Moved
-  state: State
-  text: String
-end
 
 # A turn that a restart cut, with its approvals still waiting.
 struct Cut
@@ -381,45 +196,50 @@ struct Cut
   approvals: List[String]
 end
 
-def handle(state: State, msg: Msg) -> Actor.Step[State]
+def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
   case msg
-    Msg.Snapshot(reply) ->
+    Session.Msg.Snapshot(reply) ->
       Actor.reply(reply, session(state))
       Actor.continue(state)
-    Msg.Load(reply) ->
+    Session.Msg.Load(reply) ->
       running = state.turn.some? or state.shell.some?
-      Actor.reply(reply, Load(running: running, asking: running and not state.pending.empty?))
+      Actor.reply(reply, Session.Load(running: running, asking: running and not state.pending.empty?))
       Actor.continue(state)
-    Msg.Subscribe(last, reply) -> Actor.continue(attach(state, last, reply))
-    Msg.Send(text, reply) -> Actor.continue(start_turn(state, text, reply))
-    Msg.Answer(approval_id, decision, reply) -> Actor.continue(answer_approval(state, approval_id, decision, reply))
-    Msg.Close(reply) ->
+    Session.Msg.Subscribe(last, reply) -> Actor.continue(Stream.attach(state, last, reply))
+    Session.Msg.Send(text, reply) -> Actor.continue(Turn.start_turn(state, text, reply))
+    Session.Msg.Answer(approval_id, decision, reply) ->
+      Actor.continue(Turn.answer_approval(state, approval_id, decision, reply))
+    Session.Msg.Close(reply) ->
       if state.turn.some? or state.shell.some?
-        Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
+        Actor.reply(reply, error(Session.busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
         return Actor.continue(state)
       end
 
       Actor.reply(reply, ok())
       Actor.done(state)
-    Msg.Stop(reply) ->
+    Session.Msg.Stop(reply) ->
       Actor.reply(reply, state.turn.some? or state.shell.some?)
-      Actor.continue(stop_shell(stop_turn(state)))
-    Msg.Emit(turn_id, event) -> Actor.continue(if_current(state, turn_id, ->(s) { emit_counted(s, event) }))
-    Msg.Ask(turn_id, call, reply) -> Actor.continue(if_current(state, turn_id, ->(s) { ask(s, call, reply) }))
-    Msg.Expire(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { expire(s) }))
-    Msg.Take(turn_id, after, reply) -> Actor.continue(take(state, turn_id, after, reply))
-    Msg.Commit(turn_id, history, marks, read) ->
-      Actor.continue(if_current(state, turn_id, ->(s) { commit(s, history, marks, read) }))
-    Msg.Compacted(turn_id, compaction) -> Actor.continue(if_current(state, turn_id, ->(s) { compact(s, compaction) }))
-    Msg.Window(window) -> Actor.continue(state.with(window: window))
-    Msg.Stripped(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { stripped(s) }))
-    Msg.Renewed(provider) -> Actor.continue(state.with(setup: state.setup.with(provider: provider)))
-    Msg.Finished(turn_id, reason) -> Actor.continue(if_current(state, turn_id, ->(s) { finish(s, reason) }))
-    Msg.Update(change, reply) -> Actor.continue(update_setup(state, change, reply))
-    Msg.Fold(reply) -> Actor.continue(start_fold(state, reply))
-    Msg.Folded(found, reply) -> Actor.continue(end_fold(state, found, reply))
-    Msg.Tree(reply) ->
-      case indexed(state)
+      Actor.continue(stop_shell(Turn.stop_turn(state)))
+    Session.Msg.Emit(turn_id, event) ->
+      Actor.continue(if_current(state, turn_id, ->(s) { Stream.emit_counted(s, event) }))
+    Session.Msg.Ask(turn_id, call, reply) ->
+      Actor.continue(if_current(state, turn_id, ->(s) { Turn.ask(s, call, reply) }))
+    Session.Msg.Expire(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { Turn.expire(s) }))
+    Session.Msg.Take(turn_id, after, reply) -> Actor.continue(Turn.take(state, turn_id, after, reply))
+    Session.Msg.Commit(turn_id, history, marks, read) ->
+      Actor.continue(if_current(state, turn_id, ->(s) { Turn.commit(s, history, marks, read) }))
+    Session.Msg.Compacted(turn_id, compaction) ->
+      Actor.continue(if_current(state, turn_id, ->(s) { Turn.compact(s, compaction) }))
+    Session.Msg.Window(window) -> Actor.continue(state.with(window: window))
+    Session.Msg.Stripped(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { Turn.stripped(s) }))
+    Session.Msg.Renewed(provider) -> Actor.continue(state.with(setup: state.setup.with(provider: provider)))
+    Session.Msg.Finished(turn_id, reason) ->
+      Actor.continue(if_current(state, turn_id, ->(s) { Turn.finish(s, reason) }))
+    Session.Msg.Update(change, reply) -> Actor.continue(update_setup(state, change, reply))
+    Session.Msg.Fold(reply) -> Actor.continue(Turn.start_fold(state, reply))
+    Session.Msg.Folded(found, reply) -> Actor.continue(Turn.end_fold(state, found, reply))
+    Session.Msg.Tree(reply) ->
+      case Branch.indexed(state)
         ok(known) ->
           Actor.reply(reply, ok(Store.tree(known.entries.unwrap!)))
           Actor.continue(known)
@@ -428,17 +248,17 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
           Actor.continue(state)
       end
 
-    Msg.Branch(entry, reply) -> Actor.continue(branch_to(state, entry, reply))
-    Msg.Copy(entry, to, reply) ->
-      Actor.reply(reply, copied(state, entry, to))
+    Session.Msg.Branch(entry, reply) -> Actor.continue(Branch.branch_to(state, entry, reply))
+    Session.Msg.Copy(entry, to, reply) ->
+      Actor.reply(reply, Branch.copied(state, entry, to))
       Actor.continue(state)
-    Msg.Shell(request, reply) -> Actor.continue(run_shell(state, request, reply))
-    Msg.ShellDone(id, output, duration_ms) -> Actor.continue(shell_done(state, id, output, duration_ms))
-    Msg.ShellDown(id, down) -> Actor.continue(shell_down(state, id, down))
+    Session.Msg.Shell(request, reply) -> Actor.continue(run_shell(state, request, reply))
+    Session.Msg.ShellDone(id, output, duration_ms) -> Actor.continue(shell_done(state, id, output, duration_ms))
+    Session.Msg.ShellDown(id, down) -> Actor.continue(shell_down(state, id, down))
   end
 end
 
-def terminate(state: State) -> Void
+def terminate(state: Session.State) -> Void
   for turn in option_list(state.turn)
     Task.cancel(turn.task)
   end
@@ -460,14 +280,14 @@ def option_list[T](value: Optional[T]) -> List[T]
 end
 
 # A message of a turn that was stopped is dropped.
-def if_current(state: State, turn_id: String, change: Fn[State, State]) -> State
+def if_current(state: Session.State, turn_id: String, change: Fn[Session.State, Session.State]) -> Session.State
   case state.turn
     some(turn) if turn.id == turn_id -> change.call(state)
     _ -> state
   end
 end
 
-def session(state: State) -> Protocol.Session
+def session(state: Session.State) -> Protocol.Session
   Protocol.Session(
     id: state.setup.id,
     cwd: state.setup.cwd,
@@ -486,542 +306,7 @@ def session(state: State) -> Protocol.Session
   )
 end
 
-def attach(state: State, last: Optional[Int], reply: Channel[Channel[Bytes]]) -> State
-  from = last.unwrap_or(state.counter)
-  first = state.counter + 1
-  if not state.log.empty?
-    first = state.log[0].id
-  end
-
-  replay: List[String] = []
-  if from > state.counter or from < first - 1 or from < state.lost_below
-    replay = [frame("", Protocol.Event.Resync)]
-  else
-    replay = lost_after(state, from)
-    for logged in (state.log.select { |l| l.id > from })
-      replay = replay.push(frame(Protocol.format_event_id(logged.id), logged.event)) + lost_after(state, logged.id)
-    end
-  end
-
-  out: Channel[Bytes] = Channel.new(replay.size + LIVE_ROOM)
-  for text in replay
-    _ = out.send(text.bytes, 0)
-  end
-
-  Actor.reply(reply, out)
-  prune(state.with(subscribers: state.subscribers.push(out)))
-end
-
-# Drops the clients that left, and notes when the last one did.
-def prune(state: State) -> State
-  live = state.subscribers.select { |out| not out.closed? }
-  return state.with(subscribers: live, alone_since: none) if not live.empty?
-  return state.with(subscribers: live) if state.alone_since.some?
-
-  state.with(subscribers: live, alone_since: some(Time.monotonic_ms))
-end
-
-def frame(id: String, event: Protocol.Event) -> String
-  sse = SSE.Event(name: Protocol.event_name(event), data: Protocol.encode_event(event), id: id)
-  SSE.encode(sse).unwrap_or("")
-end
-
-# The frames a failed write lost right after event `id`.
-def lost_after(state: State, id: Int) -> List[String]
-  case state.lost
-    some(lost) if lost.to == id -> lost.frames
-    _ -> []
-  end
-end
-
-# A `usage` of one call goes out with the session's output and cost so far, which count it once it is saved. A
-# call that
-# a stop cut is not counted: its `usage` comes after the turn ended, if at all.
-def emit_counted(state: State, event: Protocol.Event) -> State
-  case event
-    Protocol.Event.Usage(usage) ->
-      output = state.output + usage.output
-      cost = state.cost
-      turn_cost = state.turn_cost
-      for call in option_list(usage.cost)
-        cost = some(cost.unwrap_or(0.0) + call)
-        turn_cost = turn_cost + call
-      end
-
-      counted = usage.with(output: output, turn_cost: cost.map { |_| turn_cost }, session_cost: cost)
-      emitted = emit(state, Protocol.Event.Usage(counted))
-      return emitted if emitted.counter == state.counter
-
-      emitted.with(output: output, context: usage.context, cost: cost, turn_cost: turn_cost)
-    _ -> emit(state, event)
-  end
-end
-
-def emit(state: State, event: Protocol.Event) -> State
-  id = state.counter + 1
-  logged = Store.Logged(id: id, event: event)
-  case save(state, -> { saved_event(state, logged) })
-    ok(_) ->
-      live = broadcast(state, frame(Protocol.format_event_id(id), event))
-      reserved = id
-      if delta?(event)
-        reserved = [state.reserved, id + RESERVE - 1].max.unwrap!
-        if id <= state.reserved
-          reserved = state.reserved
-        end
-      end
-
-      log = trim(state.log.push(logged), state)
-      prune(state.with(counter: id, log: log, subscribers: live, broken: none, reserved: reserved))
-    error(e) -> broke(state, e)
-  end
-end
-
-# A delta is not saved; one past the saved or reserved ids reserves the next block.
-def saved_event(state: State, logged: Store.Logged) -> Result[Void]
-  return Store.append_event(state.setup.file, logged) if not delta?(logged.event)
-  return ok() if logged.id <= state.reserved
-
-  Store.append_reserved(state.setup.file, logged.id + RESERVE - 1)
-end
-
-def delta?(event: Protocol.Event) -> Bool
-  case event
-    Protocol.Event.TextDelta(_), Protocol.Event.ThinkingDelta(_) -> true
-    _ -> false
-  end
-end
-
-# After a failed write, the next one starts on a new line.
-def save(state: State, write: Fn[Result[Void]]) -> Result[Void]
-  if state.broken.some?
-    try Store.reopen(state.setup.file)
-  end
-
-  write.call()
-end
-
-def broadcast(state: State, text: String) -> List[Channel[Bytes]]
-  state.subscribers.select { |out| out.send(text.bytes, 0).ok? or close(out) }
-end
-
-# A write failed: the clients are told without an id, which only a saved event gets, and the running turn stops.
-def broke(state: State, e: Error) -> State
-  message = "the session file cannot be written: #{e.message}"
-  IO.warn("session #{state.setup.id}: #{message}")
-  failure = Protocol.Failure(kind: Protocol.KIND_SESSION_STORAGE, message: message)
-  error_frame = frame("", Protocol.Event.Error(failure))
-  out = state.with(broken: some(message), subscribers: broadcast(state, error_frame))
-  case out.turn
-    some(turn) ->
-      Task.cancel(turn.task)
-      # The denials are not events: a write to a file that just failed would fail too. The turn ends, so none of its
-      # approvals can be answered; after a restart the turn and its approvals end as when a restart cuts a turn.
-      for waiting in out.pending
-        _ = waiting.reply.send(Protocol.Decision.Deny, 0)
-      end
-
-      cancelled = Protocol.TurnFinished(
-        turn_id: turn.id,
-        stop_reason: Protocol.StopReason.Cancelled,
-        history_size: some(out.display.size),
-      )
-
-      end_frame = frame("", Protocol.Event.TurnFinished(cancelled))
-      frames = [error_frame] + drop_frames(out) + [end_frame]
-      lost = Lost(to: out.counter, frames: frames)
-      live = out.subscribers
-      for each in frames.drop(1)
-        live = broadcast(out.with(subscribers: live), each)
-      end
-
-      out.with(turn: none, pending: [], queued: [], subscribers: live, lost: some(lost))
-    none -> unsent(out)
-  end
-end
-
-def close(out: Channel[Bytes]) -> Bool
-  out.close
-  false
-end
-
-def trim(log: List[Store.Logged], state: State) -> List[Store.Logged]
-  keep_from = state.turn.map { |t| t.from_event_id }.unwrap_or(state.counter + 1)
-  drop = 0
-  while log.size - drop > state.setup.keep_events and log[drop].id <= keep_from
-    drop = drop + 1
-  end
-
-  log.drop(drop)
-end
-
-# A message sent while a turn runs waits in the queue, which the turn reads before its next model call. The user's
-# `/name` of a skill puts its content before the message, unless the session has it already.
-def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.MessageAccepted]]) -> State
-  if state.compacting or state.shell.some?
-    Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
-    return state
-  end
-
-  if not state.setup.refused.empty?
-    Actor.reply(reply, error(state.setup.refused, kind: Protocol.KIND_SESSION_UNAVAILABLE))
-    return state
-  end
-
-  for running in option_list(state.turn)
-    if state.queued.size >= MAX_QUEUED or (state.queued + [typed]).join("\n\n").bytesize > MAX_QUEUED_BYTES
-      message = "a turn is running and its queue is full (#{MAX_QUEUED} messages, #{MAX_QUEUED_BYTES} bytes)"
-      Actor.reply(reply, error(message, kind: Protocol.KIND_SESSION_BUSY))
-      return state
-    end
-
-    message_id = "#{running.id}.#{running.queued + 1}"
-    Actor.reply(reply, ok(Protocol.MessageAccepted(turn_id: running.id, message_id: some(message_id))))
-    queued = state.with(turn: some(running.with(queued: running.queued + 1)), queued: state.queued.push(typed))
-    event = Protocol.MessageQueued(turn_id: running.id, text: typed, message_id: some(message_id))
-    return emit(queued, Protocol.Event.MessageQueued(event))
-  end
-
-  handled = on_message(state.setup, typed, state.marks)
-  if not handled.ok?
-    IO.warn("session #{state.setup.id}: #{handled.message}")
-    Actor.reply(reply, error("an extension refused the message: #{handled.message}", kind: Protocol.KIND_INVALID))
-    return state
-  end
-
-  expanded = handled.unwrap!
-
-  shells = not state.shells.empty?
-  text = Store.with_shells(state.shells, expanded.text)
-  case save(state, -> { Store.append_user(state.setup.file, expanded.text, typed, expanded.names, shells) })
-    ok(_) -> state = state.with(marks: state.marks + expanded.names)
-    error(e) ->
-      Actor.reply(
-        reply,
-        error("the session file cannot be written: #{e.message}", kind: Protocol.KIND_SESSION_STORAGE),
-      )
-
-      return state.with(broken: some(e.message))
-  end
-
-  turn_id = new_turn_id(state.turns + 1)
-  inbox: Channel[Msg] = Actor.inbox
-  address = inbox.address
-  setup = state.setup
-  link = Agent.Link(
-    emit: ->(event) { tell(address, Msg.Emit(turn_id, event)) },
-    approve: ->(call) { wait_approval(address, turn_id, call, setup.approval_timeout_ms) },
-    commit: ->(history, marks, read) { tell(address, Msg.Commit(turn_id, history, marks, read)) },
-    take: ->(after) { taken(address, turn_id, after, setup.take_ms) },
-    compacted: ->(compaction) { tell(address, Msg.Compacted(turn_id, compaction)) },
-    window: ->(window) { tell(address, Msg.Window(window)) },
-    stripped: -> { tell(address, Msg.Stripped(turn_id)) },
-    renewed: ->(provider) { tell(address, Msg.Renewed(provider)) },
-  )
-
-  turn = Agent.Turn(
-    id: turn_id,
-    provider: setup.provider,
-    model: setup.model,
-    system: setup.system,
-    history: state.history,
-    text: text,
-    ctx: Spec.snapshot(setup.ctx),
-    link: link,
-    extra: setup.extra,
-    cache: setup.cache,
-    refresh: setup.refresh,
-    stripped: state.stripped,
-    source: "#{setup.provider_name}/#{setup.api}",
-    origin: setup.origin,
-    compaction: Compaction.Settings(
-      window: state.window,
-      model: compact_model(setup),
-      props_url: setup.props_url,
-      api_key: setup.api_key,
-      extra: setup.extra,
-    ),
-    last_context: state.context,
-    code_mode: setup.code_mode,
-    catalog: setup.catalog,
-    catalog_provider: setup.catalog_provider,
-    catalog_wait_ms: setup.catalog_wait_ms,
-    turn_tools: Extensions.turn_tools(setup.builtins),
-    marks: state.marks,
-    on_fold: some(on_fold(setup)),
-    effort: setup.effort,
-    gate: gate(setup.approver),
-  )
-
-  task = Task.spawn(&run_turn, Job(turn: turn, address: address))
-  running = Running(id: turn_id, task: task, from_event_id: state.counter)
-  started = state.with(
-    turn: some(running),
-    turns: state.turns + 1,
-    turn_cost: 0.0,
-    history: state.history.push(LLM.Message(role: LLM.Role.User, content: [Agent.text_block(text)])),
-    display: state.display.push(Protocol.Message(role: Protocol.Role.User, text: typed)),
-    broken: none,
-    shells: [],
-  )
-
-  Actor.reply(reply, ok(Protocol.MessageAccepted(turn_id: turn_id)))
-  emit(
-    started,
-    Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id, history_size: some(started.display.size))),
-  )
-end
-
-def run_turn(job: Job) -> Void
-  outcome = Agent.run(job.turn)
-  _ = Actor.cast(job.address, Msg.Finished(job.turn.id, outcome.reason), CALL_MS)
-end
-
-# A session that is gone cannot take the turn's events: the turn ends.
-def tell(address: Address[Msg], msg: Msg) -> Void
-  if not Actor.cast(address, msg, CALL_MS).ok?
-    Task.cancel(Task.current)
-  end
-end
-
-# The session denies an approval once no client has been attached for `timeout_ms`; the turn asks it to check now and
-# then.
-def taken(address: Address[Msg], turn_id: String, after: Int, wait_ms: Int) -> List[Agent.Queued]
-  none_taken: List[Agent.Queued] = []
-  taken: Result[List[Agent.Queued]] = Actor.call(address, wait_ms) do |reply| Msg.Take(turn_id, after, reply) end
-  taken.unwrap_or(none_taken)
-end
-
-# The queued messages after the first `after`, each with the content of the skills it names. Nothing changes here: the
-# turn's next commit takes them out of the queue.
-def take(state: State, turn_id: String, after: Int, reply: Channel[List[Agent.Queued]]) -> State
-  current = state.turn.map { |t| t.id == turn_id }.unwrap_or(false)
-  read: List[Agent.Queued] = []
-  if current
-    marks = state.marks
-    for typed in state.queued.drop(after)
-      # Accepted already: a handler that fails leaves it as the skills made it.
-      handled = on_message(state.setup, typed, marks)
-      if not handled.ok?
-        IO.warn("session #{state.setup.id}: #{handled.message}")
-      end
-
-      expanded = handled.unwrap_or(Extensions.noted(state.setup.builtins, typed, marks))
-
-      read = read.push(Agent.Queued(typed: typed, text: expanded.text, names: expanded.names))
-      marks = marks + expanded.names
-    end
-  end
-
-  Actor.reply(reply, read)
-  state
-end
-
-def wait_approval(address: Address[Msg], turn_id: String, call: Agent.Ask, timeout_ms: Int) -> Protocol.Decision
-  reply: Channel[Protocol.Decision] = Channel.new(1)
-  return Protocol.Decision.Deny if not Actor.cast(address, Msg.Ask(turn_id, call, reply), CALL_MS).ok?
-
-  poll_ms = [timeout_ms, 1000].min.unwrap!
-  while true
-    case reply.recv(poll_ms)
-      ok(decision) -> return decision
-      error(_) if reply.closed? -> return Protocol.Decision.Deny
-      error(_) -> return Protocol.Decision.Deny if not Actor.cast(address, Msg.Expire(turn_id), CALL_MS).ok?
-    end
-  end
-
-  Protocol.Decision.Deny
-end
-
-# A message after the skills it names and the `message` handlers of the extensions.
-def on_message(setup: Setup, typed: String, marks: List[String]) -> Result[Extensions.Noted]
-  expanded = Extensions.noted(setup.builtins, typed, marks)
-  case setup.registry
-    some(registry) -> ok(expanded.with(text: try Extensions.message(registry, expanded.text)))
-    none -> ok(expanded)
-  end
-end
-
-# What a fold adds after the summary: the skills in use, then the `fold` handlers of the extensions.
-def on_fold(setup: Setup) -> Fn[List[String], List[LLM.Message], String]
-  ->(marks: List[String], staying: List[LLM.Message]) {
-    (
-      "#{Extensions.folded(setup.builtins, marks, staying)}#{setup.registry.map { |r| Extensions.fold(r, staying) }.unwrap_or("")}"
-    )
-  }
-end
-
-def gate(approver: Optional[Extensions.Approver]) -> Optional[Fn[Tools.Context, String, JSON.Value, Tools.Verdict]]
-  case approver
-    some(a) -> a.verdict
-    none -> none
-  end
-end
-
-def ask(state: State, call: Agent.Ask, reply: Channel[Protocol.Decision]) -> State
-  allowed = state.setup.approver.map { |a| a.allows.call(call.tool, call.target) }.unwrap_or(false)
-  if allowed
-    _ = reply.send(Protocol.Decision.Allow, 0)
-    return state
-  end
-
-  request = Protocol.ApprovalRequested(
-    approval_id: "a#{state.approvals + 1}",
-    call_id: call.call_id,
-    tool: call.tool,
-    preview: call.target,
-    detail: call.detail,
-    prefix: state.setup.approver.map { |a| a.prefix.call(call.tool, call.target) }.unwrap_or(none),
-  )
-
-  waiting = Waiting(request: request, reply: reply, asked_ms: Time.monotonic_ms)
-  asked = state.with(pending: state.pending.push(waiting), approvals: state.approvals + 1)
-  emit(asked, Protocol.Event.ApprovalRequested(request))
-end
-
-def answer_approval(
-  state: State,
-  approval_id: String,
-  decision: Protocol.Decision,
-  reply: Channel[Result[Void]],
-) -> State
-  if (not state.pending.any? { |w| w.request.approval_id == approval_id })
-    kind = Protocol.KIND_APPROVAL_NOT_FOUND
-    if state.resolved.include?(approval_id)
-      kind = Protocol.KIND_APPROVAL_RESOLVED
-    end
-
-    Actor.reply(reply, error("approval #{approval_id} is not waiting", kind: kind))
-    return state
-  end
-
-  Actor.reply(reply, ok())
-  resolve(state, approval_id, decision, Protocol.ApprovalSource.Client)
-end
-
-def expire(state: State) -> State
-  pruned = prune(state)
-  now = Time.monotonic_ms
-  out = pruned
-  for alone in option_list(pruned.alone_since)
-    for waiting in pruned.pending
-      if now >= [waiting.asked_ms, alone].max.unwrap! + state.setup.approval_timeout_ms
-        out = resolve(out, waiting.request.approval_id, Protocol.Decision.Deny, Protocol.ApprovalSource.Timeout)
-      end
-    end
-  end
-
-  out
-end
-
-def resolve(state: State, approval_id: String, decision: Protocol.Decision, source: Protocol.ApprovalSource) -> State
-  found = state.pending.find { |w| w.request.approval_id == approval_id }
-  case found
-    ok(waiting) ->
-      _ = waiting.reply.send(decision, 0)
-      asked = waiting.request
-      name = Protocol.decision_name(decision)
-      approver = state.setup.approver.map { |a| a.answered.call(name, asked.tool, asked.preview) }
-      next_state = state.with(
-        setup: state.setup.with(approver: approver),
-        pending: state.pending.select { |w| w.request.approval_id != approval_id },
-        resolved: state.resolved.push(approval_id),
-      )
-
-      resolved = Protocol.ApprovalResolved(approval_id: approval_id, decision: decision, source: source)
-      emit(next_state, Protocol.Event.ApprovalResolved(resolved))
-    error(_) -> state
-  end
-end
-
-def stop_turn(state: State) -> State
-  case state.turn
-    some(turn) ->
-      Task.cancel(turn.task)
-      denied = state
-      for waiting in state.pending
-        denied = resolve(denied, waiting.request.approval_id, Protocol.Decision.Deny, Protocol.ApprovalSource.Stop)
-      end
-
-      finish(denied, Protocol.StopReason.Cancelled)
-    none -> state
-  end
-end
-
-def finish(state: State, reason: Protocol.StopReason) -> State
-  case state.turn
-    some(turn) if reason == Protocol.StopReason.Cancelled ->
-      ended(dropped(state), turn.id, turn.texts, reason).with(turn: none)
-    some(turn) -> next_turn(ended(state, turn.id, turn.texts, reason).with(turn: none))
-    none -> state
-  end
-end
-
-# Messages queued for a stopped turn are not sent; an `error` event says so.
-def dropped(state: State) -> State
-  return state if state.queued.empty?
-
-  message = "#{state.queued.size} queued message(s) were not sent: the turn stopped first"
-  failure = Protocol.Failure(kind: Protocol.KIND_QUEUE_DROPPED, message: message)
-  emit(state.with(queued: []), Protocol.Event.Error(failure))
-end
-
-# Messages that came after the turn's last read start the next turn, together.
-def next_turn(state: State) -> State
-  return state if state.queued.empty?
-  return unsent(state) if state.broken.some?
-
-  ignored: Channel[Result[Protocol.MessageAccepted]] = Channel.new(1)
-  started = start_turn(state.with(queued: []), state.queued.join("\n\n"), ignored)
-  return unsent(started.with(queued: state.queued)) if started.turn.none?
-
-  started
-end
-
-# The queue of a session whose file cannot be written goes: an `error` event without an id says so.
-def unsent(state: State) -> State
-  live = state.subscribers
-  for each in drop_frames(state)
-    live = broadcast(state.with(subscribers: live), each)
-  end
-
-  state.with(queued: [], subscribers: live)
-end
-
-def drop_frames(state: State) -> List[String]
-  return [] if state.queued.empty?
-
-  message = "#{state.queued.size} queued message(s) were not sent: the session file cannot be written"
-  [frame("", Protocol.Event.Error(Protocol.Failure(kind: Protocol.KIND_QUEUE_DROPPED, message: message)))]
-end
-
-# Shows the answer of the turn, its `texts` together, then ends the turn.
-def ended(state: State, turn_id: String, texts: List[String], reason: Protocol.StopReason) -> State
-  text = texts.join("\n\n")
-  shown = state
-  if not text.empty?
-    case save(state, -> { Store.append_answer(state.setup.file, text) })
-      ok(_) ->
-        answer = Protocol.Message(role: Protocol.Role.Assistant, text: text)
-        shown = state.with(display: state.display.push(answer), broken: none)
-      error(e) -> return broke(state, e)
-    end
-  end
-
-  finished = Protocol.TurnFinished(turn_id: turn_id, stop_reason: reason, history_size: some(shown.display.size))
-  emit(shown, Protocol.Event.TurnFinished(finished))
-end
-
-def busy?(state: State) -> Bool = state.turn.some? or state.compacting or state.shell.some?
-
-def busy_reason(state: State) -> String
-  return "a turn is running" if state.turn.some?
-  return "a shell command is running" if state.shell.some?
-
-  "the history is being compacted"
-end
-
-def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Result[Void]]) -> State
+def update_setup(state: Session.State, change: Protocol.UpdateSession, reply: Channel[Result[Void]]) -> Session.State
   asking = state.setup.approver.map { |a| a.asking }.unwrap_or(false)
   if change.accept_edits.some? and not asking
     Actor.reply(reply, error("accept_edits needs the approvals on (FINN_APPROVALS=1)", kind: Protocol.KIND_INVALID))
@@ -1050,7 +335,7 @@ def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Re
     none -> nil
   end
 
-  case save(state, -> { Store.append_settings(state.setup.file, choice(setup)) })
+  case Stream.save(state, -> { Store.append_settings(state.setup.file, Session.choice(setup)) })
     ok(_) ->
       Actor.reply(reply, ok())
       state.with(setup: setup, broken: none)
@@ -1064,242 +349,67 @@ def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Re
   end
 end
 
-def choice(setup: Setup) -> Store.Choice
-  Store.Choice(model: setup.model, effort: setup.effort, provider: setup.provider_name, api: setup.api)
-end
-
-def resolve_endpoint(setup: Setup, name: String) -> Result[Endpoint]
+def resolve_endpoint(setup: Session.Setup, name: String) -> Result[Session.Endpoint]
   case setup.endpoint
     some(endpoint) -> endpoint.call(name, setup.api)
     none -> error("this session cannot change its provider")
   end
 end
 
-def start_fold(state: State, reply: Channel[Result[Fold]]) -> State
-  if busy?(state)
-    Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
-    return state
-  end
-
-  setup = state.setup
-  settings = Compaction.Settings(
-    window: state.window,
-    model: compact_model(setup),
-    props_url: setup.props_url,
-    api_key: setup.api_key,
-    extra: setup.extra,
-  )
-
-  fold = Fold(
-    provider: setup.provider,
-    refresh: setup.refresh,
-    settings: settings,
-    history: state.history,
-    span: Compaction.span(state.history),
-  )
-
-  Actor.reply(reply, ok(fold))
-  state.with(compacting: true)
-end
-
-def end_fold(state: State, found: Optional[Compaction.Compaction], reply: Channel[Result[Void]]) -> State
-  done = state.with(compacting: false)
-  for summary in option_list(found)
-    extra = on_fold(done.setup).call(done.marks, Compaction.staying(done.history, summary))
-    folded = compact(done, summary.with(summary: "#{summary.summary}#{extra}"))
-    if folded.broken.some?
-      Actor.reply(reply, error("the session file cannot be written", kind: Protocol.KIND_SESSION_STORAGE))
-      return folded
-    end
-
-    Actor.reply(reply, ok())
-    return folded
-  end
-
-  Actor.reply(reply, ok())
-  done
-end
-
-def compact_model(setup: Setup) -> String
-  return setup.model if setup.compact_model.empty?
-
-  setup.compact_model
-end
-
-def compact(state: State, compaction: Compaction.Compaction) -> State
-  answer = state.turn.map { |t| t.texts }.unwrap_or([])
-  case save(state, -> { Store.append_compaction(state.setup.file, compaction, answer) })
-    ok(_) -> state.with(history: Compaction.apply(state.history, compaction), broken: none, stripped: false)
-    error(e) -> broke(state, e)
-  end
-end
-
-def stripped(state: State) -> State
-  case save(state, -> { Store.append_stripped(state.setup.file) })
-    ok(_) -> state.with(stripped: true, broken: none)
-    error(e) -> broke(state, e)
-  end
-end
-
-# The history of a turn only grows, so only its new messages go to the file.
-# The messages the turn read from the queue leave it here, shown after the answer of the turn so far. A crash between
-# their `queued` records and the messages record leaves a shown message that the history lacks.
-def commit(state: State, history: List[LLM.Message], marks: List[String], read: List[Agent.Queued]) -> State
-  added = history.drop(state.history.size)
-  return state if added.empty?
-
-  shown = state
-  if not read.empty?
-    shown = answer_so_far(state)
-    return shown if shown.broken.some?
-  end
-
-  for queued in read
-    case save(shown, -> { Store.append_queued(state.setup.file, queued.typed) })
-      ok(_) ->
-        message = Protocol.Message(role: Protocol.Role.User, text: queued.typed)
-        shown = shown.with(display: shown.display.push(message), queued: shown.queued.drop(1))
-      error(e) -> return broke(shown, e)
-    end
-  end
-
-  case save(shown, -> { Store.append_messages(state.setup.file, added, marks) })
-    ok(_) ->
-      turn = shown.turn.map { |t| t.with(texts: t.texts + answer_texts(added)) }
-      shown.with(history: history, turn: turn, broken: none, marks: shown.marks + marks)
-    error(e) -> broke(shown, e)
-  end
-end
-
-def answer_so_far(state: State) -> State
-  for turn in option_list(state.turn)
-    text = turn.texts.join("\n\n")
-    next if text.empty?
-
-    case save(state, -> { Store.append_answer(state.setup.file, text) })
-      ok(_) ->
-        answer = Protocol.Message(role: Protocol.Role.Assistant, text: text)
-        return state.with(display: state.display.push(answer), turn: some(turn.with(texts: [])))
-      error(e) -> return broke(state, e)
-    end
-  end
-
-  state
-end
-
-# The branch record goes first: when the load after it fails, the session goes on from there once it loads again.
-def branch_to(state: State, entry: Int, reply: Channel[Result[Protocol.Branched]]) -> State
-  if busy?(state)
-    Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
-    return state
-  end
-
-  case moved(state, entry)
-    ok(pair) ->
-      Actor.reply(reply, ok(Protocol.Branched(id: state.setup.id, text: pair.text)))
-      resynced(pair.state)
-    error(e) ->
-      Actor.reply(reply, error(e))
-      return state.with(broken: some(e.message)) if e.kind == Protocol.KIND_SESSION_STORAGE
-
-      state
-  end
-end
-
-def moved(state: State, entry: Int) -> Result[Moved]
-  file = state.setup.file
-  known = try indexed(state)
-  point = try Store.point(known.entries.unwrap!, some(entry))
-  # Read before the branch is written, so a session whose file follows the branch always has its state.
-  saved = try Store.load(file, some(point.leaf))
-  until = state.counter + 1
-  case save(state, -> { Store.append_branch(file, point.leaf, until) })
-    ok(_) -> nil
-    error(e) -> return error("the session file cannot be written: #{e.message}", kind: Protocol.KIND_SESSION_STORAGE)
-  end
-
-  on_branch = known.with(
-    history: saved.history,
-    display: saved.shown,
-    marks: saved.marks,
-    stripped: saved.stripped,
-    context: last_usage(saved.events).context,
-    shells: saved.shells,
-    counter: until,
-    reserved: until,
-    broken: none,
-  )
-
-  ok(Moved(state: on_branch, text: point.text))
-end
-
-# The events so far are of another branch: a client that attaches from one of them gets `resync`, and so do the
-# clients attached now, which read the session again.
-def resynced(state: State) -> State
-  for out in state.subscribers
-    _ = out.send(frame("", Protocol.Event.Resync).bytes, 0)
-    out.close
-  end
-
-  state.with(log: [], lost_below: state.counter, lost: none, subscribers: [])
-end
-
-# The tree of the session's file, read only past what the session read of it before.
-def indexed(state: State) -> Result[State]
-  ok(state.with(entries: some(try Store.entries(state.setup.file, state.entries))))
-end
-
-def copied(state: State, entry: Optional[Int], to: Copying) -> Result[Copied]
-  return error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY) if busy?(state)
-
-  point = try Store.point(try Store.entries(state.setup.file, state.entries), entry)
-  file = try Store.copy(state.setup.file, to.dir, to.header, point.leaf)
-  settings = Store.append_settings(file, choice(state.setup))
-  if not settings.ok?
-    _ = Path.remove(file)
-  end
-
-  try settings
-  ok(Copied(file: file, text: point.text))
-end
-
-def run_shell(state: State, request: Protocol.RunShell, reply: Channel[Result[Protocol.ShellAccepted]]) -> State
-  if busy?(state)
-    Actor.reply(reply, error(busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
+def run_shell(
+  state: Session.State,
+  request: Protocol.RunShell,
+  reply: Channel[Result[Protocol.ShellAccepted]],
+) -> Session.State
+  if Session.busy?(state)
+    Actor.reply(reply, error(Session.busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
     return state
   end
 
   # The user can stop the command, so it may run as long as a `bash` call can.
   input = JSON.object({"command": JSON.from(request.command), "timeout_ms": JSON.from(Tools.MAX_BASH_TIMEOUT_MS)})
-  verdict = gate(state.setup.approver).map { |g| g.call(state.setup.ctx, Tools.BASH, input) }
+  verdict = Turn.gate(state.setup.approver).map { |g| g.call(state.setup.ctx, Tools.BASH, input) }
   if verdict == some(Tools.Verdict.Deny)
     Actor.reply(reply, error("a rule of the config denies this command", kind: Protocol.KIND_SHELL_DENIED))
     return state
   end
 
   id = "shell-#{OpenSSL.Random.hex(4)}"
-  inbox: Channel[Msg] = Actor.inbox
+  inbox: Channel[Session.Msg] = Actor.inbox
   address = inbox.address
   ctx = state.setup.ctx
   started_ms = Time.monotonic_ms
   task = Task.spawn(
     -> {
       output = Tools.run(ctx, Tools.BASH, input)
-      _ = Actor.cast(address, Msg.ShellDone(id, output, Time.monotonic_ms - started_ms), CALL_MS)
+      _ = Actor.cast(address, Session.Msg.ShellDone(id, output, Time.monotonic_ms - started_ms), Session.CALL_MS)
     },
   )
 
-  Task.monitor(task, inbox) do |down| Msg.ShellDown(id, down) end
+  Task.monitor(task, inbox) do |down| Session.Msg.ShellDown(id, down) end
 
-  run = ShellRun(id: id, command: request.command, context: request.context, task: task, started_ms: started_ms)
+  run = Session.ShellRun(
+    id: id,
+    command: request.command,
+    context: request.context,
+    task: task,
+    started_ms: started_ms,
+  )
+
   Actor.reply(reply, ok(Protocol.ShellAccepted(shell_id: id)))
   started = Protocol.ShellStarted(shell_id: id, command: request.command, context: request.context)
-  emit(state.with(shell: some(run)), Protocol.Event.ShellStarted(started))
+  Stream.emit(state.with(shell: some(run)), Protocol.Event.ShellStarted(started))
 end
 
 # The output goes to the model unless the command was stopped or the outputs waiting would pass the limits; the event
 # says whether it does.
-def shell_done(state: State, id: String, output: Tools.Output, duration_ms: Int, stopped: Bool = false) -> State
+def shell_done(
+  state: Session.State,
+  id: String,
+  output: Tools.Output,
+  duration_ms: Int,
+  stopped: Bool = false,
+) -> Session.State
   case state.shell
     some(run) if run.id == id ->
       finished = Protocol.ShellFinished(
@@ -1322,7 +432,7 @@ def shell_done(state: State, id: String, output: Tools.Output, duration_ms: Int,
         finished = finished.with(output: "#{output.text}\n#{note}")
       end
 
-      done = emit(state.with(shell: none), Protocol.Event.ShellFinished(finished))
+      done = Stream.emit(state.with(shell: none), Protocol.Event.ShellFinished(finished))
       return done if not finished.context or done.counter == state.counter
 
       done.with(shells: done.shells.push(text))
@@ -1331,7 +441,7 @@ def shell_done(state: State, id: String, output: Tools.Output, duration_ms: Int,
 end
 
 # A command whose task ended without its output (a crash, or an inbox too full for it) ends as failed.
-def shell_down(state: State, id: String, down: TaskDown) -> State
+def shell_down(state: Session.State, id: String, down: TaskDown) -> Session.State
   for run in option_list(state.shell)
     if run.id == id
       lost = Tools.Output(text: "the command ended without its output", is_error: true)
@@ -1342,7 +452,7 @@ def shell_down(state: State, id: String, down: TaskDown) -> State
   state
 end
 
-def stop_shell(state: State) -> State
+def stop_shell(state: Session.State) -> Session.State
   for run in option_list(state.shell)
     Task.cancel(run.task)
     stopped = Tools.Output(text: "stopped by the user", is_error: true)
@@ -1352,14 +462,14 @@ def stop_shell(state: State) -> State
   state
 end
 
-def restore(setup: Setup, saved: Store.Saved) -> State
+def restore(setup: Session.Setup, saved: Store.Saved) -> Session.State
   events = saved.events
   changed = setup.with(model: saved.model.unwrap_or(setup.model))
   if saved.model.some?
     changed = changed.with(effort: saved.effort)
   end
 
-  state = State(
+  state = Session.State(
     setup: changed,
     counter: [saved.last_id, saved.reserved].max.unwrap!,
     reserved: [saved.last_id, saved.reserved].max.unwrap!,
@@ -1374,7 +484,7 @@ def restore(setup: Setup, saved: Store.Saved) -> State
     approvals: saved.approvals,
     resolved: resolved_ids(events),
     output: saved.usage.map { |u| u.output }.unwrap_or(0),
-    context: last_usage(events).context,
+    context: Session.last_usage(events).context,
     cost: saved.usage.map { |u| u.session_cost }.unwrap_or(none),
     window: setup.window,
   )
@@ -1401,14 +511,18 @@ def restore(setup: Setup, saved: Store.Saved) -> State
   return ended_cut if not saved.open_user
 
   # The server stopped between the user message of a turn and its `turn_started`.
-  turn_id = new_turn_id(ended_cut.turns)
+  turn_id = Turn.new_turn_id(ended_cut.turns)
   size = some(ended_cut.display.size)
-  started = emit(ended_cut, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id, history_size: size)))
+  started = Stream.emit(
+    ended_cut,
+    Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id, history_size: size)),
+  )
+
   end_cut_turn(started, Cut(turn_id: turn_id, approvals: []), started.history.size, none)
 end
 
 # A command that a restart cut ends as failed, its output not for the model, so the clients stop waiting for it.
-def ended_shell(state: State, events: List[Store.Logged]) -> State
+def ended_shell(state: Session.State, events: List[Store.Logged]) -> Session.State
   cut: Optional[Protocol.ShellStarted] = none
   for logged in events
     case logged.event
@@ -1429,15 +543,11 @@ def ended_shell(state: State, events: List[Store.Logged]) -> State
       duration_ms: 0,
     )
 
-    return emit(state, Protocol.Event.ShellFinished(finished))
+    return Stream.emit(state, Protocol.Event.ShellFinished(finished))
   end
 
   state
 end
-
-# The number of the turn and a random part: a server that lost the last records of a session never gives a turn the id
-# of another.
-def new_turn_id(number: Int) -> String = "turn-#{number}-#{OpenSSL.Random.hex(4)}"
 
 # The last id that no saved event has, below the last saved one: a delta that was not saved.
 def lost_below(events: List[Store.Logged]) -> Int
@@ -1452,18 +562,6 @@ def lost_below(events: List[Store.Logged]) -> Int
   end
 
   lost
-end
-
-def last_usage(events: List[Store.Logged]) -> Protocol.Usage
-  last = Protocol.Usage(input: 0, output: 0, cache_read: 0, cache_write: 0, context: 0)
-  for logged in events
-    case logged.event
-      Protocol.Event.Usage(usage) -> last = usage
-      _ -> nil
-    end
-  end
-
-  last
 end
 
 def resolved_ids(events: List[Store.Logged]) -> List[String]
@@ -1496,7 +594,7 @@ def cut_turn(events: List[Store.Logged]) -> Optional[Cut]
 end
 
 # The turn's messages are the first `messages` of the history; `folded` has its answer when it was compacted.
-def end_cut_turn(state: State, cut: Cut, messages: Int, folded: Optional[Store.Folded]) -> State
+def end_cut_turn(state: Session.State, cut: Cut, messages: Int, folded: Optional[Store.Folded]) -> Session.State
   out = state
   for approval_id in cut.approvals
     resolved = Protocol.ApprovalResolved(
@@ -1505,21 +603,16 @@ def end_cut_turn(state: State, cut: Cut, messages: Int, folded: Optional[Store.F
       source: Protocol.ApprovalSource.Stop,
     )
 
-    out = emit(out.with(resolved: out.resolved.push(approval_id)), Protocol.Event.ApprovalResolved(resolved))
+    out = Stream.emit(out.with(resolved: out.resolved.push(approval_id)), Protocol.Event.ApprovalResolved(resolved))
   end
 
   history = out.history.take(messages)
   texts = case folded
-    some(f) -> f.texts + answer_texts(history.drop(f.at))
-    none -> answer_texts(history.drop(turn_message(history) + 1))
+    some(f) -> f.texts + Turn.answer_texts(history.drop(f.at))
+    none -> Turn.answer_texts(history.drop(turn_message(history) + 1))
   end
 
-  ended(out, cut.turn_id, texts, Protocol.StopReason.Cancelled)
-end
-
-def answer_texts(messages: List[LLM.Message]) -> List[String]
-  said = messages.select { |m| m.role == LLM.Role.Assistant }.map { |m| Agent.assistant_text(m) }
-  said.select { |t| not t.empty? }
+  Turn.ended(out, cut.turn_id, texts, Protocol.StopReason.Cancelled)
 end
 
 # Where the last turn began: its user message is the last one with text (tool results have none).
