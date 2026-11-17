@@ -10,6 +10,9 @@ def private_folder(given: String) -> Result[Void]
     try Dir.mkdir_private(path)
   end
 
+  # A link is refused: whoever can write the folder that holds it could point it somewhere else later.
+  return error("#{path} is a link: give the folder it points to") if (try File.lstat(path)).kind == "link"
+
   info = try File.stat(path)
   return error("#{path} is not a folder") if info.kind != "directory"
   return error("#{path} must be private (mode 0700), it has mode #{info.mode}") if info.mode % 64 != 0

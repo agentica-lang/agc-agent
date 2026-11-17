@@ -495,7 +495,28 @@ def test_the_server_keeps_its_state_folder_private_and_runs_once() -> Result[Voi
     )
 
     try Test.error?(Server.start(options))
+    try linked_folder(h)
     foreign_owner(h)
+  end
+end
+
+# A link to a private folder of ours is refused: the folder that holds the link could let another user change it.
+def linked_folder(h: H.Harness) -> Result[Void]
+  target = "#{h.base}/real-state"
+  try Dir.mkdir_private(target)
+  try link(target, "#{h.base}/linked-state")
+  options = Config.Options(
+    state_dir: "#{h.base}/linked-state",
+    data_dir: "#{h.base}/data",
+    providers: h.providers,
+    provider: h.provider,
+    model: "m",
+    env: &H.fake_env,
+  )
+
+  case Server.start(options)
+    ok(_) -> Test.assert(false, "a link to a folder was taken")
+    error(e) -> Test.assert(e.message.include?("is a link"), e.message)
   end
 end
 

@@ -12,6 +12,9 @@ def prefix(tokens: List[String]) -> List[String]
   tokens.take(1)
 end
 
+## Whether the table names the program: its first word is one of the table's.
+def known?(program: String) -> Bool = ARITY.get(program).some?
+
 private
 
 ARITY: Map[String, Int] = {

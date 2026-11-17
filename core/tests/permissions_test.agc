@@ -20,7 +20,7 @@ def test_session_answers_allow_a_prefix_or_the_whole_tool() -> Result[Void]
     _ = try H.approve(h, id, add.approval_id, Protocol.Decision.AllowPrefix)
     a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
     cat = try H.approval(a)
-    try Test.eq([cat.preview, cat.prefix.unwrap_or("none")], ["cat hello.txt | tee copy.txt", "cat *, tee *"])
+    try Test.eq([cat.preview, cat.prefix.unwrap_or("none")], ["cat hello.txt | tee copy.txt", "cat *, tee copy.txt"])
     _ = try H.approve(h, id, cat.approval_id, Protocol.Decision.AllowTool)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)

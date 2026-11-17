@@ -84,9 +84,9 @@ def test_a_glob_matches_the_whole_text() -> Result[Void]
   ok()
 end
 
-# The arity table picks the words an "always" answer keeps. A command that runs another program, that does not start
-# with its name (an assignment or a redirection first), or whose words hold an option or a glob character keeps its
-# exact text.
+# The arity table picks the words an "always" answer keeps, for a program of the table or another plain one only. A
+# command of any other program, one that does not start with its name (an assignment or a redirection first), or one
+# whose words hold an option or a glob character keeps its exact text.
 def test_always_keeps_the_words_of_the_arity_table() -> Result[Void]
   rows = [
     [["git", "checkout", "main"], ["git", "checkout"]],
@@ -108,9 +108,12 @@ def test_always_keeps_the_words_of_the_arity_table() -> Result[Void]
   try Test.eq(always.call("git status --short"), ["git status *"])
   try Test.eq(always.call("LANG=C ls -la | wc -l"), ["exact LANG=C ls -la", "wc *"])
   try Test.eq(always.call("cd sub && make test"), ["make test *"])
+  try Test.eq(always.call("wc -l x && head x"), ["wc *", "head *"])
   for command in [
     "git -c a=b log", "sudo rm x", "env A=1 make", "xargs rm", "timeout 5 make", "export A=1", "FOO=1 rm x",
-    ">log rm x", "rm=1 rm x", "npm run t?st", "npm run t[a]st", "ls*",
+    ">log rm x", "rm=1 rm x", "npm run t?st", "npm run t[a]st", "ls*", "exec git status", "eval x", "source x.sh",
+    ". x.sh", "busybox rm x", "strace ls", "ssh host ls", "find . -exec rm {} +", "awk 1 x", "python x.py",
+    "unknown x",
   ]
     try Test.eq(always.call(command), ["exact #{command}"])
   end

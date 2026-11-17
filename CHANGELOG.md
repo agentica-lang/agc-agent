@@ -14,6 +14,8 @@
 - `bash` rules check each command of the line (tree-sitter-bash); a line it cannot read clearly asks. File rules cover the file tools only.
 - "Always" (`allow_prefix`) allows each command's first words from OpenCode's arity table (`npm run dev *`).
 - "Always" on a command with an assignment or a redirect first, or with glob characters in its first words, allows only that exact command.
+- "Always" keeps first words only for the programs of the arity table and a few plain ones; any other program gets its exact command.
+- The state and data folders cannot be links.
 - `external_directory` rules check the paths outside the session folder that `cd`, `rm`, `cp` and the like name.
 - **Breaking:** with approvals on, reads of `.env` files ask by default.
 - The first start builds the bash parser; clients wait up to a minute and say so.

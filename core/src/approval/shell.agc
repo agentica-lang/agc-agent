@@ -22,7 +22,7 @@ struct Scan
   clear: Bool
   asked: List[Resource]
   ## What an "always" answer allows: for each command its first words (`Arity`) and ` *`, or its whole text when it
-  ## runs another program (`RUNNERS`), when it does not start with its name (`FOO=1 rm x`, which a pattern of the
+  ## is not a plain program (`plain?`), when it does not start with its name (`FOO=1 rm x`, which a pattern of the
   ## words would not match) or when those words hold an option or a glob character (`git -c x=y log`, `npm run t?st`).
   always: List[Resource]
 end
@@ -56,11 +56,16 @@ private
 TOKENS = ["command_name", "word", "string", "raw_string", "concatenation"]
 CWD = ["cd", "chdir", "popd", "pushd"]
 FILES = ["cd", "chdir", "popd", "pushd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"]
-RUNNERS = [
-  "env", "xargs", "sh", "bash", "zsh", "dash", "ksh", "fish", "python", "python3", "node", "ruby", "perl", "sudo",
-  "doas", "nice", "nohup", "timeout", "command", "time", "stdbuf", "chrt", "ionice", "setsid", "flock", "watch",
-  "script", "exec", "eval", "builtin",
-]
+# The programs of the arity table that run the program or the script they are given: never a prefix.
+RUNNERS = ["env", "source", "python"]
+# Plain programs that the table leaves out.
+PLAIN = ["wc", "head", "diff", "du", "df", "tree"]
+
+# An allow-list: a program of the arity table or of `PLAIN`, not one of `RUNNERS`. Any other (`exec`, `sudo`, `ssh`,
+# `find`, `awk`) gets its exact command, since its arguments may run another program.
+def plain?(program: String) -> Bool
+  (Arity.known?(program) and not RUNNERS.include?(program)) or PLAIN.include?(program)
+end
 
 def added(found: Scan, r: Resource) -> Scan
   found.with(asked: pushed(found.asked, r), always: pushed(found.always, r))
@@ -74,7 +79,7 @@ end
 
 def always(text: String, tokens: List[String]) -> Resource
   exact = Resource(tool: "bash", pattern: text, literal: true)
-  return exact if tokens.empty? or RUNNERS.include?(tokens[0])
+  return exact if tokens.empty? or not plain?(tokens[0])
   return exact if text != tokens[0] and not text.start_with?("#{tokens[0]} ")
 
   words = Arity.prefix(tokens)
