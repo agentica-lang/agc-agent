@@ -6,17 +6,17 @@ import Permissions from "../src/approval/permissions"
 import Tools from "../src/tools/tools"
 import H from "support/harness"
 
-# `allow_prefix` allows the next `git add`, `allow_tool` every bash call after it; the request says what each
+# `allow_prefix` allows the next `wc`, `allow_tool` every bash call after it; the request says what each
 # command's "always" allows, and after the first answer only the `cat | tee` asks.
 def test_session_answers_allow_a_prefix_or_the_whole_tool() -> Result[Void]
-  replies = ["git_add_a.sse", "git_add_b.sse", "bash.sse", "bash_echo.sse", "text.sse"]
+  replies = ["wc_a.sse", "wc_b.sse", "bash.sse", "bash_echo.sse", "text.sse"]
   H.using(H.Setup(replies: replies)) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Add both, then show and echo.")
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
     add = try H.approval(a)
-    try Test.eq([add.preview, add.prefix.unwrap_or("")], ["git add a.txt", "git add *"])
+    try Test.eq([add.preview, add.prefix.unwrap_or("")], ["wc -l a.txt", "wc *"])
     _ = try H.approve(h, id, add.approval_id, Protocol.Decision.AllowPrefix)
     a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
     cat = try H.approval(a)
@@ -243,7 +243,7 @@ end
 def test_session_allows_keep_the_deny_rules() -> Result[Void]
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
   rules = try Approval.parse_rules(["deny bash(rm -rf *)", "deny bash(git push*)", "deny read_file(.env)"])
-  always = ["rm *", "git push *", "git status *", "cat *"].map { |p|
+  always = ["rm *", "git push *", "ls *", "cat *"].map { |p|
     Approval.Rule(action: Tools.Verdict.Allow, tool: "bash", pattern: p)
   }
 
@@ -254,9 +254,9 @@ def test_session_allows_keep_the_deny_rules() -> Result[Void]
     try Test.eq([command, Permissions.allows?(whole, rules, root, "bash", command).to_s], [command, "false"])
   end
 
-  refused = ["git status; ls", "git status $(id)", "git status && rm -rf x"]
+  refused = ["ls; git status", "ls $(id)", "ls && rm -rf x"]
   try Test.eq(refused.select { |c| Permissions.allows?(answers, rules, root, "bash", c) }, [])
-  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "git status --short | cat"), true)
+  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "ls -la | cat"), true)
   try Test.eq(Permissions.allows?(answers, rules, root, "bash", "cat .env"), true)
   Test.eq(Permissions.allows?(whole, rules, root, "bash", "ls -la"), true)
 end
@@ -272,7 +272,7 @@ end
 
 # A deny rule of `read_file` does not touch bash: the request still offers a prefix.
 def test_a_read_deny_rule_keeps_the_prefix_of_the_request() -> Result[Void]
-  H.using(H.Setup(replies: ["git_add_a.sse", "text.sse"], deny: ["read_file(secret*)"])) do |h|
+  H.using(H.Setup(replies: ["wc_a.sse", "text.sse"], deny: ["read_file(secret*)"])) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Add it.")
@@ -281,7 +281,7 @@ def test_a_read_deny_rule_keeps_the_prefix_of_the_request() -> Result[Void]
     _ = try H.approve(h, id, add.approval_id, Protocol.Decision.Deny)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
-    Test.eq([add.preview, add.prefix.unwrap_or("none")], ["git add a.txt", "git add *"])
+    Test.eq([add.preview, add.prefix.unwrap_or("none")], ["wc -l a.txt", "wc *"])
   end
 end
 

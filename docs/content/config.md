@@ -52,7 +52,7 @@ The deny rules of a project count everywhere.
 | config and stored keys | `~/.config/finn` | `$XDG_CONFIG_HOME/finn` |
 | the Monty worker of code mode | `~/.cache/finn` | `$XDG_CACHE_HOME/finn` |
 
-The server makes the state and data folders with mode 0700, and refuses one that others can open or that is a link.
+The server makes the state and data folders with mode 0700, and refuses one that others can open or that is a link. Only the folder itself is checked: a link higher up its path is fine.
 
 ## Environment variables
 

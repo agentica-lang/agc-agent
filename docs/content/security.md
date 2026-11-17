@@ -46,7 +46,7 @@ Both clients show the call: the tool, its path or command, and what it would wri
 
 The [HTTP API](server.md#routes) takes two more answers:
 
-- `allow_prefix` ("always") allows, for each command of the line, the commands that start with the same words: those of OpenCode's table (`git log *`, `npm run dev *`, `docker compose up *`), else the first word (`ls *`). The request shows them. Only the programs of that table (but `env`, `source` and `python`) and a few plain ones (`wc`, `head`, `diff`, `du`, `df`, `tree`) get these words. For any other program (`sudo`, `xargs`, `exec`, `ssh`, `find`, `awk`, a shell or an interpreter), an option or a glob character among those words (`git -c x=y log`), or an assignment or a redirection before the name (`FOO=1 rm x`), it allows the same command only, and for a line that tree-sitter-bash cannot read clearly, the same call only.
+- `allow_prefix` ("always") allows, for each command of the line, its name and ` *` (`ls *`) when the program is one of `cat`, `echo`, `grep`, `ls`, `ps`, `pwd`, `sleep`, `tail`, `head`, `wc`, `which`, `diff`, `du` and `df`. The request shows them. Any other program, a command with an assignment before its name (`FOO=1 rm x`), a redirection (`echo hi > f`), or a word with `$` or a substitution (`ls $(pwd)`), gets the same command only, and a later command of that kind is not allowed by a name and ` *`. For a line that tree-sitter-bash cannot read clearly, it allows the same call only.
 - `allow_tool` allows every call of the tool.
 
 The accept-edits mode (`PATCH /v1/sessions/ID` with `{"accept_edits": true}`) runs the calls of `write_file`, `edit_file` and `apply_patch` without asking.

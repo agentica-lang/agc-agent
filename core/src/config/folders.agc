@@ -2,15 +2,17 @@
 
 import Sandbox from "../tools/sandbox"
 
-## Makes `given` (and its parents) when it is missing; an error unless it is a folder of mode 0700 that this user owns.
+## Makes `given` (and its parents) when it is missing; an error unless it is a folder, not a link, of mode 0700 that
+## this user owns.
 def private_folder(given: String) -> Result[Void]
   path = try Path.resolve(given)
-  if not File.stat(path).ok?
+  if not File.lstat(path).ok?
     try Dir.mkdir(Sandbox.parent(path))
     try Dir.mkdir_private(path)
   end
 
-  # A link is refused: whoever can write the folder that holds it could point it somewhere else later.
+  # Only the last part of the path is checked: a link there is refused, since whoever can write the folder that holds
+  # it could point it somewhere else later. A link higher up the path is the user's own layout.
   return error("#{path} is a link: give the folder it points to") if (try File.lstat(path)).kind == "link"
 
   info = try File.stat(path)

@@ -500,13 +500,19 @@ def test_the_server_keeps_its_state_folder_private_and_runs_once() -> Result[Voi
   end
 end
 
-# A link to a private folder of ours is refused: the folder that holds the link could let another user change it.
+# A link to a private folder of ours is refused, and so is a link to nothing, which is not made into a folder.
 def linked_folder(h: H.Harness) -> Result[Void]
   target = "#{h.base}/real-state"
   try Dir.mkdir_private(target)
   try link(target, "#{h.base}/linked-state")
+  try link("#{h.base}/nothing", "#{h.base}/dangling-state")
+  try refused_link(h, "#{h.base}/linked-state")
+  refused_link(h, "#{h.base}/dangling-state")
+end
+
+def refused_link(h: H.Harness, state_dir: String) -> Result[Void]
   options = Config.Options(
-    state_dir: "#{h.base}/linked-state",
+    state_dir: state_dir,
     data_dir: "#{h.base}/data",
     providers: h.providers,
     provider: h.provider,
@@ -514,7 +520,12 @@ def linked_folder(h: H.Harness) -> Result[Void]
     env: &H.fake_env,
   )
 
-  case Server.start(options)
+  started = Server.start(options)
+  if started.ok?
+    Server.stop(started.unwrap!)
+  end
+
+  case started
     ok(_) -> Test.assert(false, "a link to a folder was taken")
     error(e) -> Test.assert(e.message.include?("is a link"), e.message)
   end

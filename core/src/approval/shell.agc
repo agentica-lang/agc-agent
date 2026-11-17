@@ -5,7 +5,6 @@
 ## commands after it: paths are read from the session folder.
 
 import Bash from "pkg/bash/bash"
-import Arity from "arity"
 import Sandbox from "../tools/sandbox"
 
 EXTERNAL = "external_directory"
@@ -13,7 +12,8 @@ EXTERNAL = "external_directory"
 struct Resource
   tool: String
   pattern: String
-  ## The pattern is the exact text, not a glob (`Approval.Rule.literal`).
+  ## The pattern is the exact text, not a glob (`Approval.Rule.literal`). An asked command that is literal is allowed
+  ## by an exact "always" answer only, not by a prefix (`echo evil >> f` by `echo *`).
   literal: Bool = false
 end
 
@@ -21,9 +21,9 @@ struct Scan
   ## False when tree-sitter-bash could not read the line or misread it (`Bash.Parsed`): commands may be missing.
   clear: Bool
   asked: List[Resource]
-  ## What an "always" answer allows: for each command its first words (`Arity`) and ` *`, or its whole text when it
-  ## is not a plain program (`plain?`), when it does not start with its name (`FOO=1 rm x`, which a pattern of the
-  ## words would not match) or when those words hold an option or a glob character (`git -c x=y log`, `npm run t?st`).
+  ## What an "always" answer allows: for each command of a program of `PREFIXES` its name and ` *` (`ls *`), else its
+  ## whole text. The whole text too when the command does not start with its name (`FOO=1 rm x`), has a redirection
+  ## (`echo hi > f`), or a word that is not a plain word or holds `$` or a backtick (`ls $(pwd)`).
   always: List[Resource]
 end
 
@@ -42,9 +42,9 @@ def scan(root: String, command: String) -> Scan
     end
 
     if not CWD.include?(name)
-      text = c.text.strip
-      found = found.with(asked: pushed(found.asked, Resource(tool: "bash", pattern: text)))
-      found = found.with(always: pushed(found.always, always(text, tokens)))
+      kept = always(c)
+      asked = Resource(tool: "bash", pattern: c.text.strip, literal: kept.literal)
+      found = found.with(asked: pushed(found.asked, asked), always: pushed(found.always, kept))
     end
   end
 
@@ -56,16 +56,9 @@ private
 TOKENS = ["command_name", "word", "string", "raw_string", "concatenation"]
 CWD = ["cd", "chdir", "popd", "pushd"]
 FILES = ["cd", "chdir", "popd", "pushd", "rm", "cp", "mv", "mkdir", "touch", "chmod", "chown", "cat"]
-# The programs of the arity table that run the program or the script they are given: never a prefix.
-RUNNERS = ["env", "source", "python"]
-# Plain programs that the table leaves out.
-PLAIN = ["wc", "head", "diff", "du", "df", "tree"]
-
-# An allow-list: a program of the arity table or of `PLAIN`, not one of `RUNNERS`. Any other (`exec`, `sudo`, `ssh`,
-# `find`, `awk`) gets its exact command, since its arguments may run another program.
-def plain?(program: String) -> Bool
-  (Arity.known?(program) and not RUNNERS.include?(program)) or PLAIN.include?(program)
-end
+# The programs that no argument makes run another program or write a file.
+PREFIXES = ["cat", "echo", "grep", "ls", "ps", "pwd", "sleep", "tail", "head", "wc", "which", "diff", "du", "df"]
+PLAIN = ["command_name", "word"]
 
 def added(found: Scan, r: Resource) -> Scan
   found.with(asked: pushed(found.asked, r), always: pushed(found.always, r))
@@ -77,15 +70,15 @@ def pushed(list: List[Resource], r: Resource) -> List[Resource]
   list.push(r)
 end
 
-def always(text: String, tokens: List[String]) -> Resource
+def always(c: Bash.Command) -> Resource
+  text = c.text.strip
   exact = Resource(tool: "bash", pattern: text, literal: true)
-  return exact if tokens.empty? or not plain?(tokens[0])
-  return exact if text != tokens[0] and not text.start_with?("#{tokens[0]} ")
+  name = c.words.take(1).map { |w| w.text }.join("")
+  return exact if not PREFIXES.include?(name) or (text != name and not text.start_with?("#{name} "))
+  return exact if text.include?(">") or text.include?("<")
+  return exact if (c.words.any? { |w| not PLAIN.include?(w.kind) or w.text.include?("$") or w.text.include?("`") })
 
-  words = Arity.prefix(tokens)
-  return exact if (words.any? { |w| w.start_with?("-") or w.include?("*") or w.include?("?") or w.include?("[") })
-
-  Resource(tool: "bash", pattern: "#{words.join(" ")} *")
+  Resource(tool: "bash", pattern: "#{name} *")
 end
 
 # The `FOLDER/*` globs of the paths outside `root` that the arguments of `name` give.
