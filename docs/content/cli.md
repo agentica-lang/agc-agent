@@ -35,6 +35,7 @@ These work for `finn` and `finn chat`:
 | `--provider NAME` | the provider of a new session |
 | `--model NAME` | the model of a new session |
 | `--api NAME` | the model API of a new session: `openai` or `openai_responses` |
+| `--profile NAME` | the [profile](tools.md#profiles) of a new session: the tools its model sees (default: `build`) |
 | `--thinking` | show the model's thinking |
 | `--yolo` | with the approvals on, allow the tool calls of the turns this client starts |
 | `--state-dir DIR` | the folder of `server.json` (default: `FINN_STATE_DIR`) |

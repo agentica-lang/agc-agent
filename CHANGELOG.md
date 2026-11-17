@@ -22,6 +22,7 @@
 
 ### Added
 
+- Profiles: `--profile NAME` picks the tools the model sees; `build` (every tool) and `plan` (reads only) are built in, and `NAME.md` files add more.
 - `finn`: Ctrl+G edits the prompt in `$VISUAL` or `$EDITOR`.
 - `/export [PATH]` and `finn export SESSION [PATH]` write the branch a session is on to a Markdown file (0600).
 - Finn Agent, a coding agent: `finn` (full screen) and `finn chat` (lines) talk to a local server.

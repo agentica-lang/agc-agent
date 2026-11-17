@@ -1,6 +1,6 @@
 {
-  "new_session": {"cwd": "/home/ana/project", "model": "qwen2.5-0.5b", "api": "openai_responses", "provider": "fireworks"},
-  "new_session_default_model": {"cwd": "/home/ana/project", "model": null, "api": null, "provider": null},
+  "new_session": {"cwd": "/home/ana/project", "model": "qwen2.5-0.5b", "api": "openai_responses", "provider": "fireworks", "profile": "plan"},
+  "new_session_default_model": {"cwd": "/home/ana/project", "model": null, "api": null, "provider": null, "profile": null},
   "send_message": {"text": "Write hello.txt, then run it."},
   "approve": {"decision": "allow"},
   "health": {"version": "0.0.1", "wire": "5d41402abc4b2a76b9719d911017c592"},

@@ -39,6 +39,8 @@ struct Header
   api: Optional[String] = none
   ## The provider of the session; none in a file made before providers.
   provider: Optional[String] = none
+  ## The profile of the session; none is `build`.
+  profile: Optional[String] = none
 end
 
 struct Logged
@@ -167,6 +169,7 @@ def create(port: Storage.Port, dir: String, header: Header) -> Result[Ref]
     "system": JSON.from(header.system),
     "api": JSON.from(header.api),
     "provider": JSON.from(header.provider),
+    "profile": JSON.from(header.profile),
   }
 
   try port.create.call(file.path, try line(fields))
@@ -758,6 +761,7 @@ def decode_header(json: JSON.Value) -> Result[Header]
       system: optional_string(json, "system"),
       api: optional_string(json, "api"),
       provider: optional_string(json, "provider"),
+      profile: optional_string(json, "profile"),
     ),
   )
 end

@@ -71,6 +71,8 @@ struct Setup
   approver: Optional[Extensions.Approver] = none
   ## What the extensions of the server add: the `message` and `fold` handlers.
   registry: Optional[Extensions.Registry] = none
+  ## Whether the session's profile shows a tool to the model; none shows every tool.
+  shows: Optional[Fn[String, Bool]] = none
 end
 
 enum Msg

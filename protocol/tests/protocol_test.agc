@@ -93,6 +93,7 @@ def test_requests_round_trip() -> Result[Void]
     model: some("qwen2.5-0.5b"),
     api: some("openai_responses"),
     provider: some("fireworks"),
+    profile: some("plan"),
   )
 
   try Test.eq(new_session, expected)
