@@ -1,0 +1,57 @@
+version = 1
+
+[[package]]
+name = "bond"
+git = "https://github.com/agentica-lang/bond"
+tag = "0.14.0"
+commit = "08974ae41006b637508a3eb4e8d9c18b07ddb1b6"
+hash = "sha256:dd0a9ca28ea25709788c97fce3b110089cc3f7a2c7461d93225344d0cdd04861"
+
+[[package]]
+name = "core"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "core"
+tag = "core-0.0.1"
+workspace = true
+
+[[package]]
+name = "llm"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "llm"
+tag = "llm-0.0.1"
+workspace = true
+
+[[package]]
+name = "mcp"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "mcp"
+tag = "mcp-0.0.1"
+workspace = true
+
+[[package]]
+name = "monty"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "monty"
+tag = "monty-0.0.1"
+workspace = true
+
+[[package]]
+name = "protocol"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "protocol"
+tag = "protocol-0.0.1"
+workspace = true
+
+[[package]]
+name = "shell"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "shell"
+tag = "shell-0.0.1"
+workspace = true
+
+[[package]]
+name = "sse"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "sse"
+tag = "sse-0.0.1"
+workspace = true

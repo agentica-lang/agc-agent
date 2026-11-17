@@ -1,0 +1,327 @@
+## What the extensions of a server add (`Core.serve`): tools, wrappers of the runs of every tool, text after the
+## system prompt of a new session, handlers of events, and services that run as long as the server. Code of an
+## extension runs in a task of its own: a crash or a hang there fails that call, never the session or the server.
+
+import LLM from "pkg/llm/llm"
+import Sandbox from "../tools/sandbox"
+import Spec from "../tools/spec"
+
+## How long all the `Message` handlers, or all the `Fold` handlers, of one event may take together: well under the
+## time a client waits for the session to answer.
+HANDLER_MS = 2000
+## How long a service may take to start, or to stop.
+SERVICE_MS = 30_000
+## How long the target of an extension tool may take: it runs before the approval asks.
+TARGET_MS = 5000
+## How long a call of a tool may take once an extension is in it: the longest `bash` call, and some.
+TOOL_MS = 660_000
+## Names an extension tool cannot take: those of the tools of the core that `Tools.all` does not list, and the prefix
+## of the MCP tools.
+RESERVED = ["apply_patch", "run_script", "activate_skill"]
+MCP_PREFIX = "mcp__"
+
+## A call of a tool, made by the core: the session folder, the input of the model, and how a path of the call is
+## resolved (`Core.resolve`). More fields may come.
+struct Call
+  root: String
+  input: JSON.Value
+  resolve: Fn[String, Result[String]]
+end
+
+## A tool of an extension. `target` is what the approval shows and its rules match (a path, a command); a tool that
+## `asks` waits for an answer when the approvals are on and no rule allows the call.
+struct Tool
+  name: String
+  description: String
+  input_schema: JSON.Value
+  asks: Bool = true
+  run: Fn[Call, Result[String]]
+  target: Fn[Call, Result[String]]
+end
+
+## A handler of an event of a session. `Message` gets the text of a user message after the skills it names are
+## expanded, and gives the text the model gets (the session file keeps what was typed too); a crash or a hang refuses
+## the message. `Fold` gets the texts of the messages that stay when the history folds, and gives text to add after the
+## summary; a crash or a hang adds nothing.
+enum Event
+  Message(Fn[String, String])
+  Fold(Fn[List[String], String])
+end
+
+## Something that runs with the server: `start` once the server holds its lock, before it listens, and `stop` after it
+## stops listening, before its files go. Both run in one task of the service's own, so what `start` opens stays open
+## until `stop`. A start that fails, crashes or takes over `service_ms` stops the server's start.
+struct Service
+  name: String
+  start: Fn[Result[Void]]
+  stop: Fn[Void]
+end
+
+## Gets the name of the tool, the call, and the run it wraps (the tool's, or the next wrapper's), and gives the output.
+## The run takes no input: it runs on the input the approval saw. A wrapper runs on every call of every tool but
+## `activate_skill` and `run_script` (whose calls inside are wrapped); keep it free of state of its own.
+type Wrapper = Fn[String, Call, Fn[Result[String]], Result[String]]
+
+struct Registry
+  tools: List[Tool] = []
+  wrappers: List[Wrapper] = []
+  prompts: List[String] = []
+  events: List[Event] = []
+  services: List[Service] = []
+  ## How long the handlers of one event may take together, a service to start or stop, and a call of a tool once an
+  ## extension is in it.
+  handler_ms: Int = HANDLER_MS
+  service_ms: Int = SERVICE_MS
+  tool_ms: Int = TOOL_MS
+end
+
+## A service that started, in the task that owns it.
+struct Running
+  name: String
+  task: Task[Void]
+  stopping: Channel[Bool]
+  news: Channel[Note]
+  ms: Int
+end
+
+enum Note
+  Started
+  Failed(String)
+  Down(TaskDown)
+end
+
+## `path` resolved inside the session folder of `ctx` (through its links), unless a deny rule of `read_file` hides
+## the file it names.
+def resolve(ctx: Spec.Context, path: String) -> Result[String]
+  real = try Sandbox.resolve(ctx.root, path)
+  for hidden in option_list(ctx.hidden)
+    return error("#{path} is hidden by a rule of the config") if hidden.call(Sandbox.relative(ctx.root, real))
+  end
+
+  ok(real)
+end
+
+## Why the tools of `registry` cannot be served with the tools named `taken`, one line each; empty when they can.
+def clashes(registry: Registry, taken: List[String]) -> List[String]
+  out: List[String] = []
+  seen = taken + RESERVED
+  for tool in registry.tools
+    if seen.include?(tool.name) or tool.name.start_with?(MCP_PREFIX)
+      out = out.push("an extension tool cannot be named #{tool.name}: that name is taken")
+    end
+
+    seen = seen.push(tool.name)
+  end
+
+  out
+end
+
+## The tools of `registry` as tools of the core; a crash or a hang of their code fails the call.
+def spec_tools(registry: Registry) -> List[Spec.Tool] = registry.tools.map { |tool| spec_tool(tool, registry.tool_ms) }
+
+## The wrappers of `registry` around the run of a tool, the first added outermost; none without wrappers.
+def wrap(registry: Registry) -> Optional[Fn[String, Spec.Run, Spec.Run]]
+  return none if registry.wrappers.empty?
+
+  wrappers = registry.wrappers
+  ms = registry.tool_ms
+  some(->(name: String, run: Spec.Run) { wrapped(wrappers, ms, name, run) })
+end
+
+## `text` after the `Message` handlers, in the order they were added; an error when one crashes, or when they take
+## over `handler_ms` together.
+def message(registry: Registry, text: String) -> Result[String]
+  deadline = Time.monotonic_ms() + registry.handler_ms
+  out = text
+  for handle in message_handlers(registry)
+    before = out
+    out = try bounded("a message handler", deadline - Time.monotonic_ms(), -> { ok(handle.call(before)) })
+  end
+
+  ok(out)
+end
+
+## The text the `Fold` handlers add after a summary, each on its own lines; a handler that crashes, or runs past
+## `handler_ms` for them all, adds none and is warned about.
+def fold(registry: Registry, staying: List[LLM.Message]) -> String
+  deadline = Time.monotonic_ms() + registry.handler_ms
+  texts = staying.map { |message| text_of(message) }
+  out = ""
+  for handle in fold_handlers(registry)
+    case bounded("a fold handler", deadline - Time.monotonic_ms(), -> { ok(handle.call(texts)) })
+      ok(extra) if not extra.empty? -> out = "#{out}\n\n#{extra}"
+      ok(_) -> nil
+      error(e) -> IO.warn(e.message)
+    end
+  end
+
+  out
+end
+
+## `system` with the prompts of the extensions after it.
+def prompt(registry: Registry, system: String) -> String = ([system] + registry.prompts).join("\n\n")
+
+## Starts the services in order, each in a task of its own. One that fails, crashes or takes over `ms` stops those
+## started before it, in the reverse order, and the start fails.
+def start_services(services: List[Service], ms: Int = SERVICE_MS) -> Result[List[Running]]
+  done: List[Running] = []
+  for service in services
+    case started(service, ms)
+      ok(running) -> done = done.push(running)
+      error(e) ->
+        stop_services(done)
+        return error("service #{service.name}: #{e.message}")
+    end
+  end
+
+  ok(done)
+end
+
+## Stops the services in the reverse order: each runs its `stop` in its task. One that crashes, or takes over its time,
+## is warned about (and cancelled).
+def stop_services(services: List[Running]) -> Void
+  for running in services.reverse
+    _ = running.stopping.send(true, 0)
+    case running.news.recv(running.ms)
+      ok(Note.Down(down)) if down.reason != TaskExit.Ok -> IO.warn("service #{running.name}: #{down.message}")
+      ok(_) -> nil
+      error(_) ->
+        Task.cancel(running.task)
+        IO.warn("service #{running.name} took over #{running.ms} ms to stop")
+    end
+  end
+end
+
+private
+
+# The task of a service: it starts it, waits for the stop, and stops it.
+def owned(service: Service, news: Channel[Note], stopping: Channel[Bool]) -> Void
+  case service.start.call()
+    ok(_) -> _ = news.send(Note.Started, 0)
+    error(e) ->
+      _ = news.send(Note.Failed(e.message), 0)
+      return
+  end
+
+  while not stopping.recv(SERVICE_MS).ok?
+    nil
+  end
+
+  service.stop.call()
+end
+
+def started(service: Service, ms: Int) -> Result[Running]
+  news: Channel[Note] = Channel.new(4)
+  stopping: Channel[Bool] = Channel.new(1)
+  task = Task.spawn do owned(service, news, stopping) end
+  Task.monitor(task, news) do |down| Note.Down(down) end
+  case news.recv(ms)
+    ok(Note.Started) -> ok(Running(name: service.name, task: task, stopping: stopping, news: news, ms: ms))
+    ok(Note.Failed(message)) -> error(message)
+    ok(Note.Down(down)) -> error("crashed: #{down.message}")
+    _ ->
+      Task.cancel(task)
+      error("took over #{ms} ms to start")
+  end
+end
+
+def message_handlers(registry: Registry) -> List[Fn[String, String]]
+  out: List[Fn[String, String]] = []
+  for event in registry.events
+    case event
+      Event.Message(handle) -> out = out.push(handle)
+      _ -> nil
+    end
+  end
+
+  out
+end
+
+def fold_handlers(registry: Registry) -> List[Fn[List[String], String]]
+  out: List[Fn[List[String], String]] = []
+  for event in registry.events
+    case event
+      Event.Fold(handle) -> out = out.push(handle)
+      _ -> nil
+    end
+  end
+
+  out
+end
+
+def spec_tool(tool: Tool, ms: Int) -> Spec.Tool
+  Spec.Tool(
+    name: tool.name,
+    description: tool.description,
+    input_schema: tool.input_schema,
+    asks: tool.asks,
+    run: ->(ctx: Spec.Context, input: JSON.Value) {
+      guarded(tool.name, ms, -> { tool.run.call(call_of(ctx, input)) })
+    },
+    target: ->(ctx: Spec.Context, input: JSON.Value) {
+      guarded(tool.name, TARGET_MS, -> { tool.target.call(call_of(ctx, input)) })
+    },
+  )
+end
+
+def call_of(ctx: Spec.Context, input: JSON.Value) -> Call
+  Call(root: ctx.root, input: input, resolve: ->(path: String) { resolve(ctx, path) })
+end
+
+def wrapped(wrappers: List[Wrapper], ms: Int, name: String, run: Spec.Run) -> Spec.Run
+  inner = run
+  for wrapper in wrappers.reverse
+    next = inner
+    inner = ->(ctx: Spec.Context, input: JSON.Value) { layer(wrapper, ms, name, next, ctx, input) }
+  end
+
+  inner
+end
+
+def layer(
+  wrapper: Wrapper,
+  ms: Int,
+  name: String,
+  next: Spec.Run,
+  ctx: Spec.Context,
+  input: JSON.Value,
+) -> Result[String]
+  guarded(name, ms, -> { wrapper.call(name, call_of(ctx, input), -> { next.call(ctx, input) }) })
+end
+
+# The code of an extension in a task: a crash or a hang there is an error of the call.
+def guarded(name: String, ms: Int, body: Fn[Result[String]]) -> Result[String]
+  ran = try bounded("the tool #{name}", ms, -> { ok(body.call()) })
+  ran
+end
+
+def bounded[T](what: String, ms: Int, body: Fn[Result[T]]) -> Result[T]
+  return error("#{what} had no time left") if ms <= 0
+
+  task = Task.spawn do body.call() end
+  case Task.await(task, ms)
+    Await.Done(ok(value)) -> ok(value)
+    Await.Done(error(e)) -> error("#{what} failed: #{e.message}")
+    _ ->
+      Task.cancel(task)
+      error("#{what} took over #{ms} ms")
+  end
+end
+
+def text_of(message: LLM.Message) -> String
+  parts = message.content.map do |block|
+    case block
+      LLM.Block.Text(part) -> part.text
+      _ -> ""
+    end
+  end
+
+  parts.select { |part| not part.empty? }.join("\n")
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
+end

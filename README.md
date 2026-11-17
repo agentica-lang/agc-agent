@@ -28,6 +28,7 @@ The repo is an Agentica workspace (`agentica.toml`): one folder per package.
 | `client` | what every client shares: finding or starting the server, the HTTP calls, the event reader |
 | `cli` | the line-mode client: sends messages, prints the events, answers approvals, stops with Ctrl+C |
 | `tui_client` | the full-screen client on [agentica-tui](https://github.com/agentica-lang/agentica-tui): markdown transcript, tool notices, approvals |
+| `examples/extension` | how to extend Finn: a program that serves `core` with its own tool, a wrapper of every tool and a service (`Core.serve`) |
 
 ## Try it
 

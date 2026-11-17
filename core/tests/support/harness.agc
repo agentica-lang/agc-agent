@@ -12,6 +12,7 @@ import Catalog from "../../src/agent/catalog"
 import CodeMode from "../../src/tools/code_mode"
 import Auth from "../../src/config/auth"
 import Config from "../../src/config/config"
+import Extensions from "../../src/config/registry"
 import Logins from "../../src/config/logins"
 import Providers from "../../src/config/providers"
 import Server from "../../src/http/server"
@@ -87,6 +88,10 @@ struct Setup
   ## When given, the rules and the mode come from this environment as the server reads them (`Config.from_env`), in
   ## place of `approvals` and `deny`.
   approvals_env: Optional[Fn[String, Result[String]]] = none
+  ## What extensions add (`Core.serve`): its tools join those of the server.
+  registry: Optional[Extensions.Registry] = none
+  ## The server ends as `Core.serve` ends it (`Server.shutdown`), not at once.
+  shutdown: Bool = false
   model: String = "qwen2.5-0.5b-instruct"
   catalog: Optional[Catalog.Catalog] = none
   ## The token that Anthropic fetches again after a 401; none when empty.
@@ -136,6 +141,7 @@ def with_fake(setup: Setup, base: String, body: Fn[Harness, Result[Void]]) -> Re
   end
 
   case started
+    ok(h) if setup.shutdown -> Server.shutdown(h.server, true)
     ok(h) -> Server.stop(h.server)
     error(_) -> nil
   end
@@ -225,6 +231,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     env: &fake_env,
     approvals: some(user.rules),
     asking: user.asking,
+    registry: setup.registry,
     keep_events: setup.keep_events,
     approval_timeout_ms: setup.approval_timeout_ms,
     drain_ms: setup.drain_ms,
@@ -233,7 +240,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     props_url: props_url(setup, fake),
     before_load: setup.before_load,
     after_load: setup.after_load,
-    tools: setup.tools,
+    tools: setup.tools + setup.registry.map { |r| Extensions.spec_tools(r) }.unwrap_or([]),
     late_tools: setup.late_tools,
     diff: setup.diff,
     code_mode: code_mode(setup.monty),

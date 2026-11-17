@@ -42,9 +42,10 @@ def context(
   more: List[Spec.Tool] = [],
   late: Optional[Fn[List[Spec.Tool]]] = none,
   diff: Optional[Fn[String, JSON.Value, String]] = none,
+  wrap: Optional[Fn[String, Spec.Run, Spec.Run]] = none,
 ) -> Result[Spec.Context]
   root = try Sandbox.open(cwd)
-  ok(Spec.Context(root: root, env: env, tools: more, late: late, diff: diff))
+  ok(Spec.Context(root: root, env: env, tools: more, late: late, diff: diff, wrap: wrap))
 end
 
 ## The tools a session offers the model: the base ones, then those of its context.
@@ -126,7 +127,7 @@ end
 ## Runs the call. A failure, a refused path and a failed command are an output with `is_error`.
 def run(ctx: Spec.Context, name: String, input: JSON.Value) -> Spec.Output
   case offered_tool(ctx, name)
-    ok(tool) -> Spec.output(tool.run(ctx, input))
+    ok(tool) -> Spec.output(wrapped(ctx, tool).call(ctx, input))
     error(e) -> Spec.Output(text: e.message, is_error: true)
   end
 end
@@ -136,6 +137,14 @@ def offered_tool(ctx: Spec.Context, name: String) -> Result[Spec.Tool]
   case (Spec.more_tools(ctx).find { |tool| tool.name == name })
     ok(tool) -> ok(tool)
     error(_) -> find(name)
+  end
+end
+
+# The run of `tool` in the wrappers of the context.
+def wrapped(ctx: Spec.Context, tool: Spec.Tool) -> Spec.Run
+  case ctx.wrap
+    some(wrap) -> wrap.call(tool.name, tool.run)
+    none -> tool.run
   end
 end
 
