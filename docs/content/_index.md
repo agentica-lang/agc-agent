@@ -15,7 +15,8 @@ bin/finn login        # set up a provider with its key
 bin/finn tui          # chat on the full screen in this folder
 ```
 
-[Quickstart](quickstart.md) · [Providers](providers.md)
+[Quickstart](quickstart.md) · [Providers](providers.md) ·
+[CLI and TUI](cli.md) · [Approvals and security](security.md)
 
 ## What Finn does
 
@@ -35,6 +36,7 @@ bin/finn tui          # chat on the full screen in this folder
 - **Extensions.** An Agentica program can serve Finn with its own tools,
   wrappers and services.
 - **Approvals when you want them.** Off by default; deny rules always count.
+  See [Approvals and security](security.md).
 
 ## Before you start
 
