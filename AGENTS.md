@@ -9,7 +9,8 @@ and its phases are issue #1 and its sub-issues.
 agentica.toml        the workspace: its members are the packages below
 sse/                 Server-Sent Events: parser and writer, pure; sse.agc is its public module
 llm/                 client for LLM APIs; llm.agc is its public module, src/ the rest
-mcp/                 client for MCP servers on stdio; mcp.agc is its public module
+mcp/                 client for MCP servers on stdio or streamable HTTP; mcp.agc is its public module;
+                     tests/fixtures/http_peer.py the HTTP server it is tested against (Python standard library)
 protocol/            commands, replies and events between server and clients, with JSON codecs, pure;
                      protocol.agc is its public module
 monty/               Python scripts in pydantic's Monty sandbox: the pinned `monty subprocess` worker (fetched
@@ -21,10 +22,11 @@ core/                the server: agent loop, tools, approval, sessions, extensio
                      main.agc is the entry point, core.agc the public module (`Core.serve` with a registry
                      of extensions)
 core/src/            one folder per domain: config/ (settings, CLI, the extension registry), http/ (the routes),
-                     session/ (the registry of sessions, one session's actor, its store and prompt, builtins.agc:
-                     the skills, MCP and the approval on the extension registry), agent/ (the loop, compaction,
-                     the model catalog), tools/ (the tools and their sandbox), ext/ (MCP, skills), approval/ (the
-                     approval extension: rules, session allows); core/tests stay flat
+                     session/ (the registry of sessions; one session's actor, which calls turn.agc, stream.agc
+                     (the event fan-out) and branch.agc, with its state in state.agc; its store and prompt;
+                     builtins.agc: the skills, MCP and the approval on the extension registry), agent/ (the
+                     loop, compaction, the model catalog), tools/ (the tools and their sandbox), ext/ (MCP,
+                     skills), approval/ (the approval extension: rules, session allows); core/tests stay flat
 client/              what every client shares: finding or starting the server, the HTTP calls, the event reader;
                      client.agc is its public module
 cli/                 the line-mode client: depends only on client and protocol; main.agc is the entry point

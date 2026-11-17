@@ -1,5 +1,7 @@
 ## The tools of the MCP servers that `FINN_MCP_CONFIG` names: a JSON file of the common shape
-## `{"mcpServers": {"NAME": {"command": "...", "args": [...], "env": {...}}}}`.
+## `{"mcpServers": {"NAME": {"command": "...", "args": [...], "env": {...}}}}`, where a server on streamable HTTP is
+## `{"url": "https://...", "headers": {"Authorization": "Bearer ${TOKEN}"}}`: `${NAME}` in a header value is the
+## variable of the agent's environment, so a key stays out of the file; it is never shown.
 ##
 ## A tool is `mcp__SERVER__TOOL` and asks before each call, unless a rule allows it (`mcp__fs__read(*)`); its target is
 ## the JSON input. A server starts with the short environment of the bash tool plus its `env`, which is passed on as it
@@ -16,6 +18,13 @@ import Spec from "../tools/spec"
 CONFIG_ENV = "FINN_MCP_CONFIG"
 NAME = /\A[A-Za-z0-9_-]{1,64}\z/
 ENV_NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/
+HEADER_NAME = /\A[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}\z/
+LOOPBACK_V4 = /\A127(\.[0-9]{1,3}){3}\z/
+## The headers that the transport sets.
+OWN_HEADERS = [
+  "accept", "connection", "content-length", "content-type", "host", "last-event-id", "mcp-protocol-version",
+  "mcp-session-id", "transfer-encoding",
+]
 
 ## The running clients, their tools, and what was left out.
 struct Started
@@ -193,8 +202,11 @@ end
 
 # `env -i` with the variables bash keeps and the server's `env`: the keys of the agent's own environment stay out.
 def server(name: String, json: JSON.Value, log: String, read: Fn[String, Result[String]]) -> Result[Mcp.Server]
-  command = JSON.string(try JSON.get(json, "command")).unwrap_or("")
-  return error("#{CONFIG_ENV}: server #{name} has no command") if command.empty?
+  command = JSON.string(JSON.get(json, "command").unwrap_or(JSON.from(""))).unwrap_or("")
+  url = JSON.string(JSON.get(json, "url").unwrap_or(JSON.from(""))).unwrap_or("")
+  return error("#{CONFIG_ENV}: server #{name} has both a command and a url") if not command.empty? and not url.empty?
+  return remote(name, url, json, read) if not url.empty?
+  return error("#{CONFIG_ENV}: server #{name} has no command or url") if command.empty?
 
   args: List[String] = []
   given: List[JSON.Value] = JSON.list(JSON.get(json, "args").unwrap_or(JSON.array([]))).unwrap_or([])
@@ -218,6 +230,77 @@ def server(name: String, json: JSON.Value, log: String, read: Fn[String, Result[
 
   words = ["-i"] + Shell.environment(read) + env + [command] + args
   ok(Mcp.Server(name: name, command: "/usr/bin/env", args: words, log: log))
+end
+
+def remote(name: String, url: String, json: JSON.Value, read: Fn[String, Result[String]]) -> Result[Mcp.Server]
+  if not url.start_with?("http://") and not url.start_with?("https://")
+    return error("#{CONFIG_ENV}: the url of #{name} is not http:// or https://")
+  end
+
+  authority = url.split("://")[1].split("/")[0].split("?")[0].split("#")[0]
+  return error("#{CONFIG_ENV}: the url of #{name} has a user (put a key in headers)") if authority.include?("@")
+
+  headers: Map[String, String] = {}
+  case JSON.node(JSON.get(json, "headers").unwrap_or(JSON.object({})))
+    JSON.Node.Object(given) ->
+      for key in given.keys.sort
+        if not Regex.match?(key, HEADER_NAME) or OWN_HEADERS.include?(key.downcase)
+          return error("#{CONFIG_ENV}: headers of #{name} has a bad or reserved name: #{key.inspect}")
+        end
+
+        value = try expand(try JSON.string(given[key]), "#{CONFIG_ENV}: header #{key} of #{name}", read)
+        headers = headers.put(key, value)
+      end
+
+    _ -> return error("#{CONFIG_ENV}: headers of #{name} is not an object")
+  end
+
+  if not headers.empty? and url.start_with?("http://") and not loopback?(authority)
+    return error(
+      "#{CONFIG_ENV}: #{name} sends headers in clear text: its url is http:// to another host than this one",
+    )
+  end
+
+  ok(Mcp.Server(name: name, url: url, headers: headers))
+end
+
+def loopback?(authority: String) -> Bool
+  host = authority.downcase
+  if host.start_with?("[")
+    host = host.split("]")[0] + "]"
+  else
+    host = host.split(":")[0]
+  end
+
+  host == "localhost" or host == "[::1]" or Regex.match?(host, LOOPBACK_V4)
+end
+
+# `${NAME}` becomes the variable of that name, which must be set. The value never goes into an error.
+def expand(text: String, place: String, read: Fn[String, Result[String]]) -> Result[String]
+  out = ""
+  rest = text
+  while true
+    start = rest.index_of("${")
+    break if start.none?
+
+    tail = rest.slice(start.unwrap! + 2, rest.length - start.unwrap! - 2)
+    close = tail.index_of("}")
+    return error("#{place}: a \"${\" without its \"}\"") if close.none?
+
+    var = tail.slice(0, close.unwrap!)
+    return error("#{place}: a bad variable name: #{var.inspect}") if not Regex.match?(var, ENV_NAME)
+
+    value = read.call(var).unwrap_or("")
+    return error("#{place} needs the variable #{var}, which is not set") if value.empty?
+
+    out = "#{out}#{rest.slice(0, start.unwrap!)}#{value}"
+    rest = tail.slice(close.unwrap! + 1, tail.length - close.unwrap! - 1)
+  end
+
+  out = "#{out}#{rest}"
+  return error("#{place} has a control character") if (out.bytes.to_a.any? { |b| (b < 32 and b != 9) or b == 127 })
+
+  ok(out)
 end
 
 def full_name(server: Mcp.Server, tool: Mcp.Tool) -> String = "mcp__#{server.name}__#{tool.name}"
