@@ -15,8 +15,7 @@ Finn reads environment variables when the server starts, and a few JSON files. A
 ```json
 {
   "approvals": false,
-  "allow": ["bash(npm test*)", "read_file(*)"],
-  "deny": ["read_file(.env*)", "bash(rm *)"],
+  "permission": ["ask bash(*)", "allow bash(npm test *)", "deny read_file(.env*)", "deny bash(rm *)"],
   "providers": [
     {"name": "together", "base_url": "https://api.together.xyz/v1", "key_env": "TOGETHER_API_KEY"}
   ]
@@ -26,21 +25,20 @@ Finn reads environment variables when the server starts, and a few JSON files. A
 | Key | What it does |
 |---|---|
 | `approvals` | `true` makes a call of a [tool that asks](security.md#what-asks) wait for your answer, unless a rule allows it |
-| `allow` | rules of calls that run without asking, with the approvals on |
-| `deny` | rules of calls that are refused, with the approvals on or off; a file rule covers the file tools only, not `bash` ([how they check bash](security.md#how-rules-check-bash)) |
+| `permission` | the rules, in order: the last one that matches a call allows it, asks or denies it; a file rule covers the file tools only, not `bash` ([how they check bash](security.md#how-rules-check-bash)) |
 | `providers` | OpenAI-compatible APIs of your own ([Providers](providers.md#your-own-provider)) |
 
 Every key is optional, and so is the file. How the rules work is on [Approvals and security](security.md#rules), and where they fall short in [What rules cannot do](security.md#what-rules-cannot-do).
 
 ## The project file
 
-`.finn/config.json` in the folder of a session holds `allow` and `deny` rules for that project. Its deny rules always count. Its allow rules count only when the folder is under a trusted folder. A project file cannot turn the approvals on or off.
+`.finn/config.json` in the folder of a session holds `permission` rules for that project, which come after yours. Its `deny` rules always count. Its `allow` and `ask` rules count only when the folder is under a trusted folder, since an `ask` after your `deny` would win over it. A file with the old `allow` and `deny` keys is ignored there with a warning that names the rules to write. A project file cannot turn the approvals on or off.
 
 ## Trusted folders
 
 `FINN_TRUSTED_DIRS` lists folders, separated by `:`. A session in one of them, or below, reads two things that anyone who can write its repository could plant:
 
-- the allow rules of its `.finn/config.json`;
+- the `allow` and `ask` rules of its `.finn/config.json`;
 - its skills ([Skills](skills.md)).
 
 The deny rules of a project count everywhere.

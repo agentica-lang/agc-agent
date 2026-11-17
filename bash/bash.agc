@@ -8,9 +8,12 @@
 ## trust the commands of such a line, nor of one with `Parsed.error` (an error may drop commands, `case ... esac | x`):
 ## - two backtick substitutions (`a `b` `c``) read as one command `b` `c`, and backticks in a here-document body;
 ## - a `-` before a redirection is dropped (`a - 2>x`);
-## - a line end inside a command merges two (`a | b | c x`, a line end, then `d <<EOF`);
+## - a line end inside a command merges two (`a | b | c x`, a line end, then `d <<EOF`), and so after `export`;
+## - the words after a here-document of an assignment alone (`V=1 <<EOF rm x`) are lost;
+## - backticks nested without escapes (`a `V=`b` c``) read as one substitution in another;
 ## - a line continuation inside a word (`a\` and a line end then `b`) splits what bash joins.
-## The redirections that it puts on a pipeline, a list or a `!` (`a | b 2>x y`) are given to their last command.
+## The redirections that it puts on a pipeline, a list or a `!` (`a | b 2>x y`) are given to their last command, and
+## those it puts inside a here-document's (`git <<EOF 2>x push`) to the command.
 
 import Tree from "src/tree"
 

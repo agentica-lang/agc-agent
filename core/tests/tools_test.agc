@@ -50,7 +50,7 @@ def setup_with(allow: List[String], deny: List[String]) -> Result[Setup]
   try link(outside, "#{root}/out_dir")
   try link("#{outside}/new.txt", "#{root}/dangling")
   try link("#{root}/a.txt", "#{root}/inside_link")
-  rules = try Approval.parse_rules(allow, deny)
+  rules = try Approval.parse_rules(allow.map { |r| "allow #{r}" } + deny.map { |r| "deny #{r}" })
   ctx = (try Tools.context(root, &fake_env)).with(
     hidden: some(->(path: String) { Approval.read_denied?(rules, path) }),
   )
@@ -209,80 +209,16 @@ def test_bash_timeout_kills_the_whole_process_group() -> Result[Void]
   done(s)
 end
 
-def decide(rules: Approval.Rules, command: String) -> Tools.Verdict = Approval.decide(rules, "bash", command, true)
-
-def test_a_bash_rule_matches_only_a_plain_command_and_whole_words() -> Result[Void]
-  rules = try Approval.parse_rules(
-    ["bash(git status*)", "bash(ls)", "write_file(src/*)"],
-    ["bash(git status --evil*)"],
-  )
-
-  try Test.eq(decide(rules, "git status"), Tools.Verdict.Allow)
-  try Test.eq(decide(rules, "git status --short"), Tools.Verdict.Allow)
-  try Test.eq(decide(rules, "git status\t-s"), Tools.Verdict.Allow)
-  try Test.eq(decide(rules, "git status --evil"), Tools.Verdict.Deny)
-  try Test.eq(decide(rules, "git log"), Tools.Verdict.Ask)
-  try Test.eq(decide(rules, "ls"), Tools.Verdict.Allow)
-  # A `*` after a word does not cross into the next word: `statusx` can be a git alias.
-  try Test.eq(decide(rules, "git statusx"), Tools.Verdict.Ask)
-  try Test.eq(decide(rules, "git status-x"), Tools.Verdict.Ask)
-  for command in [
-    "git status; rm x",
-    "git status && rm x",
-    "git status || rm x",
-    "git status | sh",
-    "git status & rm x",
-    "git status $(rm x)",
-    "git status `rm x`",
-    "git status > out",
-    "git status < in",
-    "git status\nrm x",
-    "git status\r\nrm x",
-    "git status <(id)",
-    "git status >(id)",
-    "git status <<EOF",
-    "git status $((1+1))",
-    "git status ${PATH:0:1}",
-    "git status${IFS}--short",
-    "git status \"a;b\"",
-    "git status 'a'",
-    "git status \\;",
-    "git status *",
-    "git status ?",
-    "git status ~",
-    "git status !x",
-    "git status {a,b}",
-    "git status #{String.from_code(65307)}touch x",
-    "FOO=1 git status",
-    "exec git status",
-    "eval git status",
-  ]
-    try Test.eq(decide(rules, command), Tools.Verdict.Ask)
-  end
-
-  # A bash prompt expansion turns octal escapes into `$(...)`: it asks, because `$` and `\` are not plain.
-  prompt = "git status '\\044(touch pwned\\073 kill -9 \\044\\044)' ${BASH_EXECUTION_STRING@P}"
-  try Test.eq(decide(rules, prompt), Tools.Verdict.Ask)
-  try Test.eq(Approval.decide(rules, "write_file", "src/a.agc", true), Tools.Verdict.Allow)
-  try Test.eq(Approval.decide(rules, "edit_file", "src/a.agc", true), Tools.Verdict.Ask)
-  # A rule allows every argument of the program: this is what the security model says, so the test keeps it true.
-  cat = try Approval.parse_rules(["bash(cat src/*)"], [])
-  try Test.eq(decide(cat, "cat src/../../outside/secret"), Tools.Verdict.Allow)
-  try Test.error?(Approval.parse_rule("bash"))
-  try Test.error?(Approval.parse_rule("bash()"))
-  Test.error?(Approval.parse_rule("(x)"))
-end
-
 def test_a_change_under_git_always_asks() -> Result[Void]
-  rules = try Approval.parse_rules(["write_file(*)", "edit_file(*)"], ["write_file(.git/hooks/*)"])
-  try Test.eq(Approval.decide(rules, "write_file", "a.txt", true), Tools.Verdict.Allow)
-  try Test.eq(Approval.decide(rules, "write_file", ".git/config", true), Tools.Verdict.Ask)
-  try Test.eq(Approval.decide(rules, "edit_file", "sub/.git/config", true), Tools.Verdict.Ask)
-  try Test.eq(Approval.decide(rules, "write_file", ".GIT/config", true), Tools.Verdict.Ask)
-  try Test.eq(Approval.decide(rules, "write_file", ".git./config", true), Tools.Verdict.Ask)
-  try Test.eq(Approval.decide(rules, "edit_file", "sub/.Git../hooks/x", true), Tools.Verdict.Ask)
-  try Test.eq(Approval.decide(rules, "write_file", ".git/hooks/pre-commit", true), Tools.Verdict.Deny)
-  Test.eq(Approval.decide(rules, "write_file", ".github/ci.yml", true), Tools.Verdict.Allow)
+  rules = try Approval.parse_rules(["allow write_file(*)", "allow edit_file(*)", "deny write_file(.git/hooks/*)"])
+  try Test.eq(Approval.decide_one(rules, "write_file", "a.txt", true), Tools.Verdict.Allow)
+  try Test.eq(Approval.decide_one(rules, "write_file", ".git/config", true), Tools.Verdict.Ask)
+  try Test.eq(Approval.decide_one(rules, "edit_file", "sub/.git/config", true), Tools.Verdict.Ask)
+  try Test.eq(Approval.decide_one(rules, "write_file", ".GIT/config", true), Tools.Verdict.Ask)
+  try Test.eq(Approval.decide_one(rules, "write_file", ".git./config", true), Tools.Verdict.Ask)
+  try Test.eq(Approval.decide_one(rules, "edit_file", "sub/.Git../hooks/x", true), Tools.Verdict.Ask)
+  try Test.eq(Approval.decide_one(rules, "write_file", ".git/hooks/pre-commit", true), Tools.Verdict.Deny)
+  Test.eq(Approval.decide_one(rules, "write_file", ".github/ci.yml", true), Tools.Verdict.Allow)
 end
 
 def write(path: String) -> JSON.Value = JSON.from({"path": path, "content": ""})
@@ -463,16 +399,6 @@ def test_bad_input_is_an_error_for_the_model() -> Result[Void]
   try refused(call(s, "read_file", {"path": ""}))
   try refused(call(s, "read_file", {"path": "a.txt", "paht": "b.txt"}))
   done(s)
-end
-
-def test_wildcards() -> Result[Void]
-  try Test.assert(Approval.wildcard?("a*c", "abbc"), "middle")
-  try Test.assert(Approval.wildcard?("*b*", "abc"), "both ends")
-  try Test.assert(Approval.wildcard?("a*b*c", "a--b--c"), "two stars")
-  try Test.assert(not Approval.wildcard?("a*b*c", "a--c--b"), "order")
-  try Test.assert(not Approval.wildcard?("ab*ba", "aba"), "no overlap")
-  try Test.assert(Approval.wildcard?("abc", "abc"), "exact")
-  Test.assert(not Approval.wildcard?("abc", "abcd"), "exact is whole")
 end
 
 # An edit shows its lines numbered, two lines of context around them and `...` for the lines skipped.

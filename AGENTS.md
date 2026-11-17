@@ -62,10 +62,12 @@ A package is added by the phase that needs it, never as an empty folder.
   below, with `rg`), `unit` (`agentica test tests` in each package; a package
   that passes no test fails), `smoke` (runs `core/main.agc`), `pty`
   (`tui_client/tests/run_pty.py`: one process per test of `test_pty.py`, the
-  client and the core compiled once) and `peer` (`bash/tests/test_bash_peer.py`), both Python standard library
-  only. `native-check` fails when `bash/native/bash_native.h` is stale (native-gen, cloned into `.tools/`). `install`
-  fetches bond into `core/deps/` and agentica-tui into `tui_client/deps/` (gitignored); `check`,
-  `smoke` and `pty` run it first.
+  client and the core compiled once) and `peer`
+  (`bash/tests/test_bash_peer.py`), both Python standard library only.
+  `native-check` fails when `bash/native/bash_native.h` is stale (native-gen,
+  cloned into `.tools/`). `install` fetches bond into `core/deps/` and
+  agentica-tui into `tui_client/deps/` (gitignored); `check`, `smoke` and `pty`
+  run it first.
 - `cli` tests run the client as a child process on pipes (the Makefile
   exports `AGENTICA` for it) against a fake protocol server in
   `cli/tests/support/`. The client finds the server in the state folder

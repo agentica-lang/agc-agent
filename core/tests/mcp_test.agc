@@ -75,7 +75,7 @@ end
 # A rule allows a call; a crash is an error result and the next call starts the server again; a big result is cut.
 def test_mcp_tools_follow_the_rules_and_survive_a_crash() -> Result[Void]
   within_mcp do |started|
-    rules = try Approval.parse_rules(["mcp__fake__echo(*)"], [])
+    rules = try Approval.parse_rules(["allow mcp__fake__echo(*)"])
     ctx = try Tools.context(".", &H.fake_env, started.tools)
     input = JSON.object({"text": JSON.from("hi")})
     try Test.eq(Approval.verdict(rules, ctx, "mcp__fake__echo", input), Tools.Verdict.Allow)
@@ -222,7 +222,7 @@ def with_peer(dir: String, process: Process) -> Result[Void]
   vars = {"PEER_TEST_TOKEN": TOKEN, "WRONG_TEST_TOKEN": "not-#{TOKEN}"}
   read = ->(name: String) { vars.get(name).map { |v| ok(v) }.unwrap_or(config_env(dir, name)) }
   started = McpTools.start(try McpTools.servers(read, dir))
-  rules = try Approval.parse_rules(["mcp__web__echo(*)"], [])
+  rules = try Approval.parse_rules(["allow mcp__web__echo(*)"])
   ctx = try Tools.context(".", &H.fake_env, started.tools)
   input = JSON.object({"text": JSON.from("hi")})
   verdicts = [

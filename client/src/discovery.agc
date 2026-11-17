@@ -17,8 +17,12 @@ LOG_FILE = "server.log"
 KIND_STATE = "client.state"
 KIND_SERVER = "client.server"
 KIND_VERSION = "client.version"
-LOCK_WAIT_MS = 20_000
-START_WAIT_MS = 10_000
+## A first start compiles the core and builds the native module of `bash`, which can take most of a minute.
+START_WAIT_MS = 60_000
+## Longer than a start, which another client may be waiting for.
+LOCK_WAIT_MS = 70_000
+## When a start that has not answered yet says that it builds.
+SLOW_START_MS = 5_000
 POLL_MS = 100
 NOT_FOUND = 127
 GROUP_AND_OTHERS = 63
@@ -416,6 +420,9 @@ def wait_alive(dir: String) -> Result[Client.Server]
     end
 
     waited = waited + POLL_MS
+    if waited == SLOW_START_MS
+      IO.warn("the server is still starting: a first start builds it, which can take a minute")
+    end
   end
 
   error("no server answered in #{START_WAIT_MS / 1000} s; see #{file_in(dir, LOG_FILE)}", kind: KIND_SERVER)
