@@ -206,7 +206,7 @@ end
 ## The files of the session's folder that its rules do not hide, read in the caller's task.
 def files(sessions: Sessions, id: String) -> Result[Protocol.FileList]
   place = try SessionActor.place(try find(sessions, id))
-  ok(Folder.files(place.root, place.hidden))
+  ok(Folder.listed(place.root, place.hidden, sessions.options.files_command, sessions.options.env))
 end
 
 def answer(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
@@ -454,16 +454,8 @@ def summary_now(found: Cached) -> Protocol.SessionSummary
     provider: found.listing.provider.map { |p| some(p) }.unwrap_or(found.summary.provider),
     api: found.listing.api.unwrap_or(found.summary.api),
     updated_s: found.modified_s,
-    title: cut.split("").map { |c| printable(c) }.join(""),
+    title: cut.split("").map { |c| Folder.printable(c) }.join(""),
   )
-end
-
-# A control character (C0, C1) or a bidi control becomes a space, as `Client.printable` does.
-def printable(c: String) -> String
-  code = c.code
-  return " " if code < 0x20 or (code >= 0x7f and code < 0xa0) or Protocol.BIDI.include?(code)
-
-  c
 end
 
 def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]

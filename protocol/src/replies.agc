@@ -242,10 +242,13 @@ end
 
 ## `GET /v1/sessions/ID/files`: the files of the session folder, for a client's `@` list. Hidden files, the folders of
 ## build output and dependencies, links and the paths a `read_file` deny rule hides are left out, and the walk is cut
-## at a few thousand files or about two seconds: `truncated` says the list was cut.
+## at a few thousand files or about two seconds: `truncated` says the list was cut. When the user's config names a
+## command that lists the files, they are those of its output that the same rules let through; `note` says why the walk
+## listed them instead, when the command failed.
 struct FileList
   files: List[String]
   truncated: Bool = false
+  note: String = ""
 end
 
 ## `server.json` in the state folder, which only its user can read: where the server listens and its Bearer token.

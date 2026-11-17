@@ -10,7 +10,8 @@
 ## `FINN_TRUSTED_DIRS` (separated by `:`). Approval rules: the user's config file (`FINN_CONFIG`, else
 ## `$XDG_CONFIG_HOME/finn/config.json`, else `~/.config/finn/config.json`) and the project file `.finn/config.json`
 ## (`Permissions`); the deny rules always count, and a call no rule allows asks only when `FINN_APPROVALS=1`, or the
-## user's file has `"approvals": true` and `FINN_APPROVALS` is not `0`. The names of before Finn still work:
+## user's file has `"approvals": true` and `FINN_APPROVALS` is not `0`. The user's file alone (never a project's) may
+## name the command that lists the files for `@`: `"files": {"command": ["rg", "--files"]}`. The names of before Finn still work:
 ## `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` state or data folder while no `finn` folder is there; but an
 ## old config file, `AGC_AGENT_CONFIG` or `AGC_AGENT_MCP_CONFIG` stops the start, and an old `auth.json` is a warning
 ## (`left_behind`).
@@ -105,6 +106,8 @@ struct Options
   home: String = ""
   ## The folders whose sessions load the skills of their own folder: a project's skills are its instructions.
   trusted: List[String] = []
+  ## The program and arguments that list the files for `@`, from the user's config only; empty for the built-in walk.
+  files_command: List[String] = []
 end
 
 def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_with(read, &Offered.ant_token)
@@ -211,6 +214,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       models_provider: set(read, "FINN_MODELS_PROVIDER").unwrap_or(""),
       home: set(read, "HOME").unwrap_or(""),
       trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
+      files_command: try files_command(read),
     ),
   )
 end
@@ -237,6 +241,24 @@ def approvals_switch(read: Fn[String, Result[String]]) -> Result[Optional[Bool]]
     some(other) -> error("FINN_APPROVALS must be 0 or 1, not #{other.inspect}")
     none -> ok(none)
   end
+end
+
+## `files.command` of the user's config file: a program and its arguments, which the file must name with a program.
+def files_command(read: Fn[String, Result[String]]) -> Result[List[String]]
+  for path in option_list(Permissions.config_path(read))
+    case JSON.decode(try File.read_text(path), FilesFile)
+      ok(file) ->
+        command = file.files.map { |files| files.command }.unwrap_or([])
+        if file.files.some? and (command.empty? or command[0] == "")
+          return error("#{path}: files.command must name a program")
+        end
+
+        return ok(command)
+      error(e) -> return error("#{path}: files: #{e.message}")
+    end
+  end
+
+  ok([])
 end
 
 ## Code mode when `FINN_CODE_MODE` is `1`: the worker is found when the first script runs.
@@ -267,6 +289,14 @@ end
 def data_dir(read: Fn[String, Result[String]]) -> Result[String] = folder(read, DATA_DIR_ENV, "XDG_DATA_HOME", "share")
 
 private
+
+struct FilesFile
+  files: Optional[FilesKey] = none
+end
+
+struct FilesKey
+  command: List[String]
+end
 
 def local_url(fallback: String, env_url: Optional[String], urls: Map[String, String]) -> String
   env_url.unwrap_or(urls.get(Providers.LOCAL).unwrap_or(fallback))
