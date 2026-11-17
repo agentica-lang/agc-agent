@@ -21,6 +21,7 @@ import Catalog from "../agent/catalog"
 import CodeMode from "../tools/code_mode"
 import Compaction from "../agent/compaction"
 import Extension from "../approval/extension"
+import Extensions from "../config/registry"
 import Spec from "../tools/spec"
 import Skills from "../ext/skills"
 import Store from "store"
@@ -92,6 +93,8 @@ struct Setup
   refused: String = ""
   ## The approval extension, with what the session's answers and mode allowed so far; none runs every call.
   approvals: Optional[Extension.Approvals] = none
+  ## What the extensions of the server add: the `message` and `fold` handlers.
+  registry: Optional[Extensions.Registry] = none
 end
 
 enum Msg
@@ -680,7 +683,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     return emit(queued, Protocol.Event.MessageQueued(event))
   end
 
-  expanded = Skills.on_message(typed, state.setup.skills, state.marks)
+  expanded = on_message(state.setup, typed, state.marks)
   shells = not state.shells.empty?
   text = Store.with_shells(state.shells, expanded.text)
   case save(state, -> { Store.append_user(state.setup.file, expanded.text, typed, expanded.names, shells) })
@@ -738,7 +741,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     catalog_wait_ms: setup.catalog_wait_ms,
     turn_tools: Skills.tools(setup.skills),
     marks: state.marks,
-    on_fold: some(Skills.on_fold(setup.skills)),
+    on_fold: some(on_fold(setup)),
     effort: setup.effort,
     gate: gate(setup.approvals),
   )
@@ -790,7 +793,7 @@ def take(state: State, turn_id: String, after: Int, reply: Channel[List[Agent.Qu
   if current
     marks = state.marks
     for typed in state.queued.drop(after)
-      expanded = Skills.on_message(typed, state.setup.skills, marks)
+      expanded = on_message(state.setup, typed, marks)
       read = read.push(Agent.Queued(typed: typed, text: expanded.text, names: expanded.names))
       marks = marks + expanded.names
     end
@@ -814,6 +817,23 @@ def wait_approval(address: Address[Msg], turn_id: String, call: Agent.Ask, timeo
   end
 
   Protocol.Decision.Deny
+end
+
+# A message after the skills it names and the `message` handlers of the extensions.
+def on_message(setup: Setup, typed: String, marks: List[String]) -> Skills.Expanded
+  expanded = Skills.on_message(typed, setup.skills, marks)
+  case setup.registry
+    some(registry) -> expanded.with(text: Extensions.message(registry, expanded.text))
+    none -> expanded
+  end
+end
+
+# What a fold adds after the summary: the skills in use, then the `fold` handlers of the extensions.
+def on_fold(setup: Setup) -> Fn[List[String], List[LLM.Message], String]
+  skills = Skills.on_fold(setup.skills)
+  ->(marks: List[String], staying: List[LLM.Message]) {
+    "#{skills.call(marks, staying)}#{setup.registry.map { |r| Extensions.fold(r, staying) }.unwrap_or("")}"
+  }
 end
 
 def gate(approvals: Optional[Extension.Approvals]) -> Optional[Fn[Tools.Context, String, JSON.Value, Tools.Verdict]]
@@ -1071,7 +1091,7 @@ end
 def end_fold(state: State, found: Optional[Compaction.Compaction], reply: Channel[Result[Void]]) -> State
   done = state.with(compacting: false)
   for summary in option_list(found)
-    extra = Skills.on_fold(done.setup.skills).call(done.marks, Compaction.staying(done.history, summary))
+    extra = on_fold(done.setup).call(done.marks, Compaction.staying(done.history, summary))
     folded = compact(done, summary.with(summary: "#{summary.summary}#{extra}"))
     if folded.broken.some?
       Actor.reply(reply, error("the session file cannot be written", kind: Protocol.KIND_SESSION_STORAGE))

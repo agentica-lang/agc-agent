@@ -1,0 +1,9 @@
+name = "extension"
+# The oldest Agentica this package needs.
+agentica = "0.32.0"
+
+[style]
+blank_line_after_end = true
+
+[dependencies]
+core = { git = "https://github.com/agentica-lang/agc-agent", subdir = "core", tag = "core-0.0.1" }

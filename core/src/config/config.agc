@@ -27,6 +27,7 @@ import CodeMode from "../tools/code_mode"
 import Logins from "logins"
 import Permissions from "../approval/permissions"
 import Providers from "providers"
+import Extensions from "registry"
 import Tools from "../tools/tools"
 
 export Providers.ModelApi
@@ -65,6 +66,8 @@ struct Options
   ## The tools of the MCP servers, and those of the servers that list them after the start.
   tools: List[Tools.Tool] = []
   late_tools: Optional[Fn[List[Tools.Tool]]] = none
+  ## What the extensions add (`Core.serve`).
+  registry: Optional[Extensions.Registry] = none
   ## A test seam: makes the diff of each tool call (see `Tools.Context.diff`).
   diff: Optional[Fn[String, JSON.Value, String]] = none
   port: Int = 0

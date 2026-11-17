@@ -42,13 +42,15 @@ def context(
   more: List[Spec.Tool] = [],
   late: Optional[Fn[List[Spec.Tool]]] = none,
   diff: Optional[Fn[String, JSON.Value, String]] = none,
+  wrap: Optional[Fn[Spec.Tool, Spec.Tool]] = none,
 ) -> Result[Spec.Context]
   root = try Sandbox.open(cwd)
-  ok(Spec.Context(root: root, env: env, tools: more, late: late, diff: diff))
+  ok(Spec.Context(root: root, env: env, tools: more, late: late, diff: diff, wrap: wrap))
 end
 
-## The tools a session offers the model: the base ones, then those of its context.
-def offered(ctx: Spec.Context) -> List[Spec.Tool] = all() + Spec.more_tools(ctx)
+## The tools a session offers the model: the base ones, then those of its context, each in the wrappers of the
+## context.
+def offered(ctx: Spec.Context) -> List[Spec.Tool] = (all() + Spec.more_tools(ctx)).map { |tool| wrapped(ctx, tool) }
 
 def all() -> List[Spec.Tool]
   [
@@ -134,8 +136,15 @@ end
 ## The tool of that name the session offers: one of its context, else a base tool or `apply_patch`.
 def offered_tool(ctx: Spec.Context, name: String) -> Result[Spec.Tool]
   case (Spec.more_tools(ctx).find { |tool| tool.name == name })
-    ok(tool) -> ok(tool)
-    error(_) -> find(name)
+    ok(tool) -> ok(wrapped(ctx, tool))
+    error(_) -> ok(wrapped(ctx, try find(name)))
+  end
+end
+
+def wrapped(ctx: Spec.Context, tool: Spec.Tool) -> Spec.Tool
+  case ctx.wrap
+    some(wrap) -> wrap.call(tool)
+    none -> tool
   end
 end
 

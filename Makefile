@@ -5,7 +5,7 @@ override AGENTICA := $(if $(findstring /,$(AGENTICA)),$(abspath $(AGENTICA)),$(A
 export AGENTICA
 
 # The members of the workspace (agentica.toml): one folder per package, each with its own agentica.toml.
-PACKAGES = sse llm mcp protocol monty shell client core cli tui_client
+PACKAGES = sse llm mcp protocol monty shell client core cli tui_client examples/extension
 # How many files, packages or checks run at once.
 JOBS ?= 4
 # Packages that never depend on the server or a client, so they can move to a repo of their own.
@@ -44,6 +44,7 @@ tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); stat
 install:
 	cd core && $(AGENTICA) install
 	cd tui_client && $(AGENTICA) install
+	cd examples/extension && $(AGENTICA) install
 
 # Each file of a package is checked by itself (that is what `check .` does, one after the other), JOBS at a time.
 check: coupling install
@@ -74,9 +75,11 @@ fmt-check:
 unit:
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} $(MAKE) --no-print-directory unit-package PACKAGE={}
 
-# The cli tests run the client and the fake server from bytecode compiled once, not from source in every process.
+# The cli tests run the client and the fake server from bytecode compiled once, not from source in every process. A
+# package without tests (the example extension, which core's tests run) has none to run.
 unit-package:
-	@if [ "$(PACKAGE)" = cli ]; then mkdir -p cli/_build/bin && \
+	@[ -d $(PACKAGE)/tests ] || exit 0; \
+	if [ "$(PACKAGE)" = cli ]; then mkdir -p cli/_build/bin && \
 	  $(AGENTICA) compile cli/main.agc -o cli/_build/bin/cli.agcb >/dev/null && \
 	  $(AGENTICA) compile cli/tests/support/fake_main.agc -o cli/_build/bin/fake.agcb >/dev/null && \
 	  $(AGENTICA) compile core/main.agc -o cli/_build/bin/core.agcb >/dev/null; fi; \

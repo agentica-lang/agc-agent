@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Extensions: a program of your own can serve Finn's core with its tools, wrappers of every tool, prompts, `message` and `fold` handlers and services (`Core.serve`; see `examples/extension`).
 - A read-only `bash` command that runs without asking finds its programs in `/usr/local/bin`, `/usr/bin` and `/bin` when only root can change them; a program found only elsewhere (`~/.cargo/bin`) makes the command ask, and `which` checks its operands as paths.
 - **Breaking:** tools run without asking by default; `finn serve --approvals`, `FINN_APPROVALS=1` or `"approvals": true` in the config file turns the approvals on. Deny rules still apply; allow rules and `accept_edits` need the approvals on. With the approvals off, a `read_file` deny rule hides the file from the tools and refuses `bash` commands that name it, but cannot confine `bash` (`cat $(printf .env)`): use a sandbox.
 - `!` commands: a command whose task ends without its output ends as failed instead of running forever, and `finn tui` shows no duration for one a restart cut.

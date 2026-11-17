@@ -13,6 +13,7 @@ import Extension from "../approval/extension"
 import Config from "../config/config"
 import Logins from "../config/logins"
 import Providers from "../config/providers"
+import Extensions from "../config/registry"
 import Skills from "../ext/skills"
 import Sandbox from "../tools/sandbox"
 import Tools from "../tools/tools"
@@ -411,7 +412,7 @@ end
 
 def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]
   options = Config.now(registry.options)
-  ctx = case Tools.context(request.cwd, options.env, options.tools, options.late_tools, options.diff)
+  ctx = case Tools.context(request.cwd, options.env, options.tools, options.late_tools, options.diff, wrap_of(options))
     ok(ctx) -> ok(ctx)
     error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
   end
@@ -435,7 +436,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     cwd: context.root,
     model: request.model.unwrap_or(default_model(options, provider, api)),
     created_ms: Time.now_ms,
-    system: some(Prompt.with_catalog(Prompt.system_prompt(context.root), skills_of(options, context.root).skills)),
+    system: some(Prompt.with_catalog(system_of(options, context.root), skills_of(options, context.root).skills)),
     api: some(api),
     provider: some(provider),
   )
@@ -498,7 +499,15 @@ def read(options: Config.Options, listed: Entry) -> Result[Loaded]
     IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
   end
 
-  context = try Tools.context(saved.header.cwd, options.env, options.tools, options.late_tools, options.diff)
+  context = try Tools.context(
+    saved.header.cwd,
+    options.env,
+    options.tools,
+    options.late_tools,
+    options.diff,
+    wrap_of(options),
+  )
+
   ok(Loaded(saved: saved, opened: opened(context, try approvals_of(options, context.root))))
 end
 
@@ -562,7 +571,7 @@ def entry(
     IO.warn("skills: #{warning}")
   end
 
-  system = header.system.unwrap_or(Prompt.system_prompt(context.root))
+  system = header.system.unwrap_or(system_of(options, context.root))
   skills = Skills.restrict(found.skills, system)
   base = SessionActor.Setup(
     id: header.id,
@@ -581,6 +590,7 @@ def entry(
     take_ms: options.take_ms,
     catalog_wait_ms: options.catalog_wait_ms,
     approvals: opened.approvals,
+    registry: options.registry,
     origin: "#{chosen.provider}/#{chosen.api}",
     endpoint: some(->(name: String, now: String) { switched_endpoint(Config.now(options), name, now) }),
   )
@@ -794,6 +804,19 @@ def listed_session(file: String) -> Result[Store.Header]
 end
 
 # `AGENTS.md` goes to the model only when it is a regular file inside the folder: a link out of it could be any file.
+def system_of(options: Config.Options, root: String) -> String
+  system = Prompt.system_prompt(root)
+  options.registry.map { |r| Extensions.prompt(r, system) }.unwrap_or(system)
+end
+
+def wrap_of(options: Config.Options) -> Optional[Fn[Tools.Tool, Tools.Tool]]
+  for registry in option_list(options.registry)
+    return some(->(tool: Tools.Tool) { Extensions.wrapped(registry, tool) }) if not registry.wrappers.empty?
+  end
+
+  none
+end
+
 def skills_of(options: Config.Options, root: String) -> Skills.Found
   Skills.discover(root, options.home, trusted?(options, root))
 end

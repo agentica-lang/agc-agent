@@ -21,6 +21,8 @@ struct Context
   read_roots: List[String] = []
   ## A test seam: makes the diff a client shows for a call (the tool and its input) in place of the real one.
   diff: Optional[Fn[String, JSON.Value, String]] = none
+  ## What the extensions put around every tool (`Core.wrap_tools`).
+  wrap: Optional[Fn[Tool, Tool]] = none
 end
 
 struct Output

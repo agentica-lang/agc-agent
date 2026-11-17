@@ -18,7 +18,8 @@ monty/               Python scripts in pydantic's Monty sandbox: the pinned `mon
 shell/               a conservative parser of bash commands and the read-only check of the approval, pure;
                      shell.agc is its public module; tests/test_bash_peer.py checks it against real bash
 core/                the server: agent loop, tools, approval, sessions, extensions;
-                     main.agc is the entry point
+                     main.agc is the entry point, core.agc the public module (`Core.serve` with a registry
+                     of extensions)
 core/src/            one folder per domain: config/ (settings, CLI), http/ (the routes), session/
                      (the registry, one session's actor, its store and prompt), agent/ (the loop, compaction, the model catalog),
                      tools/ (the tools and their sandbox), ext/ (MCP, skills), approval/ (the approval
@@ -28,6 +29,8 @@ client/              what every client shares: finding or starting the server, t
 cli/                 the line-mode client: depends only on client and protocol; main.agc is the entry point
 tui_client/          the TUI client on agentica-tui (pinned commit): client, protocol and tui; main.agc is the
                      entry point; tests/test_pty.py runs it under a pty against core and a fake model
+examples/extension/  how to extend Finn: a program that serves core with a tool and a wrapper; core's
+                     tests/extension_test.agc runs it
 <pkg>/tests/         *_test.agc tests of that package; fixtures/ the recorded data they read
 llm/smoke/           tests against a real llama-server (make smoke-llama): local only, never in CI
 llm/live/, core/live/ tests against a paid API (live-fireworks, smoke-anthropic, live-anthropic-core): never in CI
