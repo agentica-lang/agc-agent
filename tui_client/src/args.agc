@@ -28,7 +28,7 @@ end
 
 def parse(args: List[String]) -> Result[Command]
   parser = OP.new(
-    "finn [tui]",
+    "finn",
     "The terminal UI client of Finn Agent: it starts the server when none runs.",
     [],
     [
@@ -56,7 +56,8 @@ def parse(args: List[String]) -> Result[Command]
 
   case OP.parse(parser, args)
     ok(parsed) -> command(parsed)
-    error(e) if OP.help?(e.message) -> ok(Command.Help(OP.usage(parser)))
+    # `finn tui` is the same program: the usage line says so, the hint of an error names the shorter form.
+    error(e) if OP.help?(e.message) -> ok(Command.Help(OP.usage(parser).replace("Usage: finn ", "Usage: finn [tui] ")))
     error(e) -> error(OP.message(e.message), kind: "tui.usage")
   end
 end

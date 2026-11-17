@@ -45,7 +45,7 @@ def finish(result: Result[Int]) -> Void
     error(e) ->
       # The screen closes once the key reader's wait ends (at most 50 ms): an error written before is wiped.
       Task.sleep(RESTORE_MS)
-      IO.warn("finn tui: #{e.message}")
+      IO.warn("finn: #{e.message}")
       System.exit(1)
   end
 end
