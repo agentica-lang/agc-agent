@@ -4,6 +4,7 @@
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Config from "../src/config/config"
+import Offered from "../src/providers/offered"
 import Server from "../src/http/server"
 import Fake from "../tests/support/fake_llm"
 import H from "../tests/support/harness"
@@ -20,18 +21,18 @@ def test_a_session_on_anthropic_reads_its_cache() -> Result[Void]
   base = try Path.real(base)
   result = session(
     base,
-    Config.AnthropicAccess(url: LLM.ANTHROPIC_URL, api_key: key, auth_token: token, inherit: false),
+    Offered.AnthropicAccess(url: LLM.ANTHROPIC_URL, api_key: key, auth_token: token, inherit: false),
   )
 
   _ = Path.remove(base)
   result
 end
 
-def session(base: String, access: Config.AnthropicAccess) -> Result[Void]
+def session(base: String, access: Offered.AnthropicAccess) -> Result[Void]
   work = "#{base}/work"
   try Dir.mkdir(work)
   try File.write_text("#{work}/README.md", "# Demo\n\nThe secret word is pelican.\n")
-  apis = Config.apis("", "", LLM.Options(), access)
+  apis = Offered.apis("", "", LLM.Options(), access)
   small = {"max_tokens": JSON.from(256), "output_config": JSON.object({"effort": JSON.from("low")})}
   claude = apis["anthropic"].with(extra: small)
   options = Config.Options(

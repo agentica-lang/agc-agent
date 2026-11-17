@@ -21,12 +21,13 @@
 import LLM from "pkg/llm/llm"
 import Monty from "pkg/monty/monty"
 import Approval from "../approval/approval"
-import Auth from "auth"
-import Catalog from "../agent/catalog"
+import Auth from "../providers/auth"
+import Catalog from "../providers/catalog"
 import CodeMode from "../tools/code_mode"
-import Logins from "logins"
+import Logins from "../providers/logins"
+import Offered from "../providers/offered"
 import Permissions from "../approval/permissions"
-import Providers from "providers"
+import Providers from "../providers/providers"
 import Extensions from "registry"
 import Tools from "../tools/tools"
 
@@ -42,7 +43,6 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
 DEFAULT_MODEL = "default"
 ## The names `FINN_API` takes: OpenAI chat completions, the OpenAI Responses format, and Anthropic Messages.
 APIS = ["openai", "openai_responses", "anthropic"]
-ANT_MS = 15000
 
 struct Options
   state_dir: String
@@ -104,27 +104,7 @@ struct Options
   trusted: List[String] = []
 end
 
-## What the providers of a server are built from: its environment and its own model API.
-struct Server
-  read: Fn[String, Result[String]]
-  base_url: String
-  api_key: String
-  api: String
-  ant: Fn[Result[String]]
-end
-
-## Where the `anthropic` API is and how a request proves who sends it: an API key, else an OAuth token.
-struct AnthropicAccess
-  url: String = ""
-  api_key: String = ""
-  auth_token: String = ""
-  ## With no key and no token, use the OpenAI ones (`base_url`, `api_key`): for a local server that serves both.
-  inherit: Bool = true
-  ## Fetches the token of `ant` again after a 401 (an expired token), or first when no variable has a credential.
-  ant: Optional[Fn[Result[String]]] = none
-end
-
-def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_with(read, &ant_token)
+def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_with(read, &Offered.ant_token)
 
 ## `ant` gives the OAuth token of `ant auth login` when no variable has a credential and `FINN_API` is `anthropic`.
 def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> Result[Options]
@@ -146,12 +126,12 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   auth_path = Auth.path(read)
   owner = Auth.owner(read)
   stored = auth_path.map { |path| Auth.load(path, owner) }.unwrap_or(Auth.Stored())
-  server = Server(read: read, base_url: base_url, api_key: api_key, api: api, ant: ant)
+  server = Offered.Server(read: read, base_url: base_url, api_key: api_key, api: api, ant: ant)
   claude_key = stored.keys.get(Providers.ANTHROPIC).unwrap_or("")
   # `ant` runs here only: a login or a logout later builds the providers without it.
-  at_start = try anthropic_access(read, api == "anthropic", ant, claude_key)
+  at_start = try Offered.anthropic_access(read, api == "anthropic", ant, claude_key)
   rebuild = ->(keys: Map[String, String]) {
-    all_providers(server, customs, keys, access_for(server, keys, claude_key, at_start))
+    Offered.all_providers(server, customs, keys, Offered.access_for(server, keys, claude_key, at_start))
   }
 
   providers = try rebuild.call(stored.keys)
@@ -160,20 +140,20 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     path: auth_path,
     owner: owner,
     stored: stored,
-    entries: login_entries(customs, anthropic_url),
+    entries: Offered.login_entries(customs, anthropic_url),
     read: read,
     rebuild: rebuild,
     chosen: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
   )
 
-  provider = set(read, "FINN_PROVIDER").unwrap_or(default_provider(api))
+  provider = set(read, "FINN_PROVIDER").unwrap_or(Offered.default_provider(api))
   if not providers.has_key?(provider)
     return error(
       "FINN_PROVIDER #{provider.inspect} is not offered (is its key set?): one of #{providers.keys.join(", ")}",
     )
   end
 
-  if provider != default_provider(api)
+  if provider != Offered.default_provider(api)
     model = DEFAULT_MODEL
   end
 
@@ -217,55 +197,6 @@ def now(options: Options) -> Options
   options
 end
 
-## Every provider of a server whose env is `server`, with the keys a login stored: the built-in ones, then those of
-## `customs` that have a key; a variable wins over a stored key.
-def all_providers(
-  server: Server,
-  customs: List[Providers.Custom],
-  keys: Map[String, String],
-  access: AnthropicAccess,
-) -> Result[Map[String, Providers.Provider]]
-  providers = builtin(apis(server.base_url, server.api_key, LLM.Options(), access), server.api)
-  offered = Providers.offered(customs, server.read, LLM.Options(), keys)
-  for name in offered.keys
-    providers = providers.put(name, offered[name])
-  end
-
-  ok(providers)
-end
-
-## The access of `anthropic` with the stored `keys`: the one of the start while its stored key is the same, else one
-## that fetches the token of `ant` only after a 401, so building the providers calls nothing.
-def access_for(
-  server: Server,
-  keys: Map[String, String],
-  at_start_key: String,
-  at_start: AnthropicAccess,
-) -> AnthropicAccess
-  key = keys.get(Providers.ANTHROPIC).unwrap_or("")
-  return at_start if key == at_start_key
-
-  anthropic_access(server.read, false, server.ant, key).unwrap_or(at_start)
-end
-
-## The providers a key logs in to: `anthropic`, then those of `customs` with a key variable (a later one of a name
-## replaces an earlier one).
-def login_entries(customs: List[Providers.Custom], anthropic_url: String) -> List[Providers.Custom]
-  claude = Providers.Custom(
-    name: Providers.ANTHROPIC,
-    api: "anthropic",
-    base_url: anthropic_url,
-    key_env: "ANTHROPIC_API_KEY",
-  )
-
-  out = [claude]
-  for custom in (customs.select { |c| not c.key_env.empty? })
-    out = out.select { |e| e.name != custom.name }.push(custom)
-  end
-
-  out
-end
-
 ## `FINN_APPROVALS`: `1` turns the approval extension on, `0` off; unset leaves it to the config file.
 def approvals_switch(read: Fn[String, Result[String]]) -> Result[Optional[Bool]]
   case set(read, "FINN_APPROVALS")
@@ -295,112 +226,6 @@ def worker_command(binary: Optional[String], cache: String) -> Result[List[Strin
 
   wheel = try Monty.wheel(try Monty.platform())
   ok(Monty.command(try Monty.binary(cache, wheel)))
-end
-
-## Every model API by its `FINN_API` name: the OpenAI ones at `base_url`, Anthropic as `anthropic` says (at
-## `base_url` with `api_key` when it inherits them, as in tests). On the Responses format the API keeps nothing (`store: false`): the
-## session file has the history, and the reasoning comes back in its encrypted content. On Anthropic the prompt cache
-## is asked for: the system prompt and the tools, and the conversation so far.
-def apis(
-  base_url: String,
-  api_key: String,
-  options: LLM.Options = LLM.Options(),
-  anthropic: AnthropicAccess = AnthropicAccess(),
-) -> Map[String, Providers.ModelApi]
-  access = anthropic
-  if access.inherit
-    access = access.with(url: base_url, api_key: api_key)
-  end
-
-  claude = LLM.anthropic(access.url, access.api_key, options, access.auth_token)
-  refresh: Optional[Fn[Result[LLM.Provider]]] = none
-  for ant in option_list(access.ant)
-    url = access.url
-    refresh = some(-> { ok(LLM.anthropic(url, "", options, try ant.call())) })
-  end
-
-  {
-    "openai": Providers.ModelApi(provider: LLM.openai_chat(base_url, api_key, options)),
-    "openai_responses": Providers.ModelApi(
-      provider: LLM.openai_responses(base_url, api_key, options),
-      extra: Providers.stateless(),
-    ),
-    "anthropic": Providers.ModelApi(
-      provider: claude,
-      model: LLM.ANTHROPIC_MODEL,
-      cache: true,
-      local: false,
-      refresh: refresh,
-    ),
-  }
-end
-
-## The built-in providers of a server whose own model APIs are `apis` (`Config.apis`): `local` has the OpenAI ones,
-## with `api` as its own when it is one, and `anthropic` the other.
-def builtin(apis: Map[String, Providers.ModelApi], api: String) -> Map[String, Providers.Provider]
-  openai = {"openai": apis["openai"], "openai_responses": apis["openai_responses"]}
-  local_api = "openai"
-  if openai.has_key?(api)
-    local_api = api
-  end
-
-  {
-    Providers.LOCAL: Providers.Provider(apis: openai, api: local_api),
-    Providers.ANTHROPIC: Providers.Provider(apis: {"anthropic": apis["anthropic"]}, api: "anthropic"),
-  }
-end
-
-## The provider of a server that names none: the one of its `FINN_API`.
-def default_provider(api: String) -> String
-  return Providers.ANTHROPIC if api == "anthropic"
-
-  Providers.LOCAL
-end
-
-## The token of `ant auth login`, from `ant auth print-credentials --access-token`. Its output is never shown: a
-## failure says only how `ant` ended.
-def ant_token() -> Result[String] = ant_token_with("ant")
-
-## `ant_token` with `program` in place of `ant`.
-def ant_token_with(program: String) -> Result[String]
-  failed = "ant auth print-credentials failed: run ant auth login"
-  process = try Process.spawn_captured(program, ["auth", "print-credentials", "--access-token"])
-  out = Process.output(process, ANT_MS)
-  code = Process.wait(process, 5000)
-  Process.close(process)
-  return error(failed) if not out.ok? or code != ok(0)
-
-  text = out.unwrap!.stdout.strip
-  return error(failed) if text.empty?
-
-  ok(text)
-end
-
-## `stored` is the key a login stored; the variables win over it, and it over `ant`.
-def anthropic_access(
-  read: Fn[String, Result[String]],
-  default: Bool,
-  ant: Fn[Result[String]],
-  stored: String = "",
-) -> Result[AnthropicAccess]
-  url = read.call("ANTHROPIC_BASE_URL").unwrap_or("")
-  if url == ""
-    url = LLM.ANTHROPIC_URL
-  end
-
-  key = read.call("ANTHROPIC_API_KEY").unwrap_or("")
-  return ok(AnthropicAccess(url: url, api_key: key, inherit: false)) if key != ""
-
-  token = read.call("ANTHROPIC_AUTH_TOKEN").unwrap_or("")
-  return ok(AnthropicAccess(url: url, auth_token: token, inherit: false)) if token != ""
-  return ok(AnthropicAccess(url: url, api_key: stored, inherit: false)) if stored != ""
-  # A session that picks Anthropic on a server of another API fetches the token at its first call (a 401).
-  return ok(AnthropicAccess(url: url, inherit: false, ant: some(ant))) if not default
-
-  case ant.call()
-    ok(found) -> ok(AnthropicAccess(url: url, auth_token: found, inherit: false, ant: some(ant)))
-    error(e) -> error("FINN_API is anthropic and there is no credential: set ANTHROPIC_API_KEY, or #{e.message}")
-  end
 end
 
 def state_dir(read: Fn[String, Result[String]]) -> Result[String]

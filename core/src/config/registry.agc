@@ -13,6 +13,8 @@ HANDLER_MS = 2000
 SERVICE_MS = 30_000
 ## How long the target of an extension tool may take: it runs before the approval asks.
 TARGET_MS = 5000
+## How long the end of a task of an extension may take to be seen, once it returned or was cancelled.
+END_MS = 1000
 ## How long a call of a tool may take once an extension is in it: the longest `bash` call, and some.
 TOOL_MS = 660_000
 ## Names an extension tool cannot take: those of the tools of the core that `Tools.all` does not list, and the prefix
@@ -308,7 +310,7 @@ def stop_services(services: List[Running]) -> Void
       ok(Note.Down(down)) if down.reason != TaskExit.Ok -> IO.warn("service #{running.name}: #{down.message}")
       ok(_) -> nil
       error(_) ->
-        Task.cancel(running.task)
+        cancelled(running.task, running.news)
         IO.warn("service #{running.name} took over #{running.ms} ms to stop")
     end
   end
@@ -339,11 +341,25 @@ def started(service: Service, ms: Int) -> Result[Running]
   Task.monitor(task, news) do |down| Note.Down(down) end
   case news.recv(ms)
     ok(Note.Started) -> ok(Running(name: service.name, task: task, stopping: stopping, news: news, ms: ms))
-    ok(Note.Failed(message)) -> error(message)
+    ok(Note.Failed(message)) ->
+      _ = news.recv(END_MS)
+      error(message)
     ok(Note.Down(down)) -> error("crashed: #{down.message}")
     _ ->
-      Task.cancel(task)
+      cancelled(task, news)
       error("took over #{ms} ms to start")
+  end
+end
+
+# A service's task is cancelled, and gone once its end is noted, so nothing of it runs after.
+def cancelled(task: Task[Void], news: Channel[Note]) -> Void
+  Task.cancel(task)
+  for _i in 1..4
+    case news.recv(END_MS)
+      ok(Note.Down(_)) -> return
+      ok(_) -> nil
+      error(_) -> return
+    end
   end
 end
 
@@ -426,6 +442,7 @@ def bounded[T](what: String, ms: Int, body: Fn[Result[T]]) -> Result[T]
     Await.Done(error(e)) -> error("#{what} failed: #{e.message}")
     _ ->
       Task.cancel(task)
+      _ = Task.await(task, END_MS)
       error("#{what} took over #{ms} ms")
   end
 end
