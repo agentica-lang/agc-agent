@@ -160,6 +160,17 @@ def logged_out(name: Optional[String]) -> String
   "the key of #{name.unwrap_or("")} is removed"
 end
 
+## What a client says of a turn that `done` ended, past its stop reason: why a `max_tokens` stop happened; "" for
+## another stop.
+def stop_note(done: Protocol.TurnFinished) -> String
+  return "" if done.stop_reason != Protocol.StopReason.MaxTokens
+
+  case done.max_tokens
+    some(limit) -> "the reply hit the model's output limit (#{limit} tokens)"
+    none -> "the reply hit the model's output limit"
+  end
+end
+
 ## What a client says when the first turn after `/model NAME` fails: the server takes any name.
 def model_warning(model: String) -> String
   "the call failed after /model #{model}: check the name (/model NAME changes it)"

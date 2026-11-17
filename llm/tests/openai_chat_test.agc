@@ -1,5 +1,8 @@
 import HTTP from "std/http"
 import LLM from "../llm"
+import AnthropicWire from "../src/anthropic_wire"
+import ChatWire from "../src/openai_chat_wire"
+import ResponsesWire from "../src/openai_responses_wire"
 import Ev from "support/events"
 import Fake from "support/fake_api"
 
@@ -17,7 +20,7 @@ def test_streams_text_and_sends_the_request() -> Result[Void]
     model: MODEL,
     system: "Answer in one short sentence.",
     messages: [Ev.user("Say hello.")],
-    max_tokens: 32,
+    max_tokens: some(32),
     temperature: some(0.0),
     seed: some(1),
     extra: {"top_k": JSON.from(1), "seed": JSON.from(2)},
@@ -46,6 +49,24 @@ def test_streams_text_and_sends_the_request() -> Result[Void]
                   {"role": "user", "content": "Say hello."}]}
   JSON
   Test.eq(JSON.parse(seen.body), JSON.parse(expected))
+end
+
+# A request without max_tokens leaves it to the server on the OpenAI APIs; anthropic, which needs one, sends its
+# default. A given one is sent as it is.
+def test_max_tokens_is_left_out_unless_given_except_on_anthropic() -> Result[Void]
+  open = LLM.Request(model: MODEL, messages: [Ev.user("Hi.")])
+  given = open.with(max_tokens: some(384_000))
+  bodies = [
+    try ChatWire.request_body(open),
+    try ResponsesWire.request_body(open),
+    try AnthropicWire.request_body(open),
+    try ChatWire.request_body(given),
+    try ResponsesWire.request_body(given),
+    try AnthropicWire.request_body(given),
+  ]
+
+  limits = bodies.map { |body| limit_of(JSON.parse(body).unwrap!) }
+  Test.eq(limits, ["", "", "64000", "384000", "384000", "384000"])
 end
 
 # The tool call of the answer, sent back with its result, is the next request: what the read gives is written back.
@@ -276,6 +297,17 @@ def test_lists_the_models_with_their_context() -> Result[Void]
 end
 
 private
+
+def limit_of(body: JSON.Value) -> String
+  for name in ["max_tokens", "max_output_tokens"]
+    case JSON.get(body, name)
+      ok(value) -> return JSON.encode(value)
+      error(_) -> nil
+    end
+  end
+
+  ""
+end
 
 def provider(fake: Fake.Fake) -> LLM.Provider
   LLM.openai_chat(fake.url, KEY, LLM.Options(timeout_ms: 5000, retry_base_ms: 1))

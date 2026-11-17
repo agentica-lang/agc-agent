@@ -79,6 +79,7 @@ The server makes the state and data folders with mode 0700, and refuses one that
 | `FINN_CODE_MODE` | `1` adds the `run_script` tool ([Tools](tools.md#code-mode)) |
 | `FINN_MONTY` | a Monty 1.6.0 binary you trust, for code mode |
 | `FINN_CONTEXT_WINDOW` | the model's context window in tokens, for compaction |
+| `FINN_MAX_TOKENS` | the most tokens of one reply, thinking included; by default the model's own limit from the models.dev catalog, else none on the OpenAI APIs (the provider's maximum) and 64000 on Anthropic |
 | `FINN_COMPACT_MODEL` | the model that writes the summary of a compaction ([Sessions](sessions.md#compaction)) |
 | `FINN_MODELS_URL` | the models.dev catalog of prices and windows; `off` for none |
 | `FINN_MODELS_PROVIDER` | the provider of the model in that catalog |

@@ -106,6 +106,8 @@ struct Setup
   shutdown: Bool = false
   model: String = "qwen2.5-0.5b-instruct"
   catalog: Optional[Catalog.Catalog] = none
+  ## `FINN_MAX_TOKENS`.
+  max_tokens: Optional[Int] = none
   ## The token that Anthropic fetches again after a 401; none when empty.
   fresh_token: String = ""
   ## How long a turn waits for its queued messages.
@@ -319,6 +321,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     diff: setup.diff,
     code_mode: code_mode(setup.monty),
     catalog: setup.catalog,
+    max_tokens: setup.max_tokens,
     take_ms: setup.take_ms,
     catalog_wait_ms: setup.catalog_wait_ms,
     home: skills_home(setup, base),
@@ -595,6 +598,18 @@ def resolved_by(sub: Sub) -> List[String]
   end
 
   sources
+end
+
+## The output limit that the last `turn_finished` says its turn sent.
+def turn_max_tokens(sub: Sub) -> Optional[Int]
+  for seen in sub.seen.reverse
+    case seen.event
+      Protocol.Event.TurnFinished(finished) -> return finished.max_tokens
+      _ -> nil
+    end
+  end
+
+  none
 end
 
 def stop_reason(sub: Sub) -> String

@@ -33,6 +33,7 @@ export Api.cancel
 export Api.response
 export Api.models
 export Stop.StopReason
+export Types.ANTHROPIC_MAX_TOKENS
 export Types.Block
 export Types.Event
 export Types.Message

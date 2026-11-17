@@ -288,8 +288,8 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
     Session.Msg.Window(window) -> Actor.continue(state.with(window: window))
     Session.Msg.Stripped(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { Turn.stripped(s) }))
     Session.Msg.Renewed(provider) -> Actor.continue(state.with(setup: state.setup.with(provider: provider)))
-    Session.Msg.Finished(turn_id, reason) ->
-      Actor.continue(if_current(state, turn_id, ->(s) { Turn.finish(s, reason) }))
+    Session.Msg.Finished(turn_id, reason, limit) ->
+      Actor.continue(if_current(state, turn_id, ->(s) { Turn.finish(s, reason, limit) }))
     Session.Msg.Update(change, reply) -> Actor.continue(update_setup(state, change, reply))
     Session.Msg.Fold(reply) -> Actor.continue(Turn.start_fold(state, reply))
     Session.Msg.Folded(found, reply) -> Actor.continue(Turn.end_fold(state, found, reply))
