@@ -169,16 +169,21 @@ def test_an_allow_rule_does_not_run_a_command_a_read_rule_denies() -> Result[Voi
   ok()
 end
 
-# The verdict of a `bash` call under an allow rule: a deny rule that surely matches refuses it in both modes (a tail
-# of its words, as `sudo rm`, or a hidden file); one the deny rules cannot clear asks with the asking on.
+# The verdict of a `bash` call, with and without allow rules: a deny rule that surely matches refuses it in both modes
+# (a tail of its words, as `sudo rm`, or a hidden file), before any ask; one the deny rules cannot clear asks with the
+# asking on.
 def test_a_deny_rule_wins_over_an_allow_rule_for_bash() -> Result[Void]
-  rules = try Approval.parse_rules(["bash(cat *)", "bash(sudo *)"], ["read_file(.env*)", "bash(rm *)"])
+  deny = ["read_file(.env*)", "bash(rm *)"]
+  allowed = try Approval.parse_rules(["bash(cat *)", "bash(sudo *)"], deny)
+  bare = try Approval.parse_rules([], deny)
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
   ctx = try Tools.context(root, ->(_name: String) { error("unset") })
   commands = ["cat .env", "sudo rm -rf x", "cat a.txt", "cat $F"]
-  shown = [false, true].map do |asking|
-    a = Extension.open(rules, root, false, asking).unwrap!
-    commands.map { |c| Extension.verdict(a, ctx, "bash", JSON.object({"command": JSON.from(c)})).to_s }
+  shown = [allowed, bare].flat_map do |rules|
+    [false, true].map do |asking|
+      a = Extension.open(rules, root, false, asking).unwrap!
+      commands.map { |c| Extension.verdict(a, ctx, "bash", JSON.object({"command": JSON.from(c)})).to_s }
+    end
   end
 
   Test.eq(
@@ -186,8 +191,31 @@ def test_a_deny_rule_wins_over_an_allow_rule_for_bash() -> Result[Void]
     [
       ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Deny"],
       ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Ask"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Deny"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Ask", "Verdict.Ask"],
     ],
   )
+end
+
+# A `!` command that a deny rule matches is refused in both modes: a denied command behind a runner (`env rm`) and a
+# command that names a hidden file.
+def test_a_deny_rule_refuses_a_shell_command_in_both_modes() -> Result[Void]
+  for asking in [false, true]
+    try H.using(H.Setup(replies: ["text.sse"], approvals: asking, deny: ["read_file(secret*)", "bash(rm *)"])) do |h|
+      try File.write_text("#{h.work}/open.txt", "x")
+      id = try H.new_session(h)
+      statuses: List[Int] = []
+      for command in ["env rm open.txt", "cat secret.txt"]
+        run = Protocol.RunShell(command: command, context: false)
+        statuses = statuses.push((try H.post(h, Protocol.shell_path(id), Protocol.encode_run_shell(run))).status)
+      end
+
+      try Test.eq(File.read_text("#{h.work}/open.txt"), ok("x"))
+      Test.eq([asking.to_s] + statuses.map { |s| s.to_s }, [asking.to_s, "403", "403"])
+    end
+  end
+
+  ok()
 end
 
 # With the approvals off a `read_file` rule refuses only the bash commands that name a file it hides: `ls` and
