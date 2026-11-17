@@ -47,8 +47,8 @@ llm/live/, core/live/ tests against a paid API (live-fireworks, smoke-anthropic,
 scripts/             fetch the pinned llama.cpp release and model into .tools/ (sha256)
 Makefile             check, fmt-check, unit, smoke, test over every package; smoke-llama, live-fireworks,
                      smoke-anthropic, live-anthropic-core
-.github/workflows/   ci.yml: the pinned Agentica release, the cached packages and compile caches (`_build/`), then
-                     fmt-check and test (no real-model job)
+.github/workflows/   ci.yml, on GitHub-hosted ubuntu-24.04: the pinned Agentica release, the cached packages and compile
+                     caches (`_build/`), then fmt-check and test (no real-model job)
 ```
 
 A package is added by the phase that needs it, never as an empty folder.
