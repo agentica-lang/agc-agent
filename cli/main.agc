@@ -20,6 +20,7 @@ def dispatch(command: Args.Command) -> Void
     Args.Command.Run(options) -> finish(App.run(options))
     Args.Command.Server(options) -> finish(ServerCmd.run(options))
     Args.Command.Delete(options, id) -> finish(App.delete(options, id))
+    Args.Command.Export(options, id, path, force) -> finish(App.export_session(options, id, path, force))
     Args.Command.Logout(options, name) -> finish(App.logout(options, name))
   end
 end

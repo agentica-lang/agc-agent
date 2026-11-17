@@ -18,6 +18,7 @@ import Protocol from "pkg/protocol/protocol"
 import Agent from "../agent/agent"
 import Compaction from "../agent/compaction"
 import Branch from "branch"
+import Export from "export"
 import Profiles from "../config/profiles"
 import Session from "state"
 import Store from "store"
@@ -203,6 +204,15 @@ def tree(address: Address[Session.Msg]) -> Result[Protocol.SessionTree]
   ok(try try read)
 end
 
+## The branch the session is on, for a file.
+def exported(address: Address[Session.Msg]) -> Result[Protocol.SessionExport]
+  read: Result[Result[Protocol.SessionExport]] = Actor.call(address, Session.CALL_MS) do |reply|
+    Session.Msg.Exported(reply)
+  end
+
+  ok(try try read)
+end
+
 ## Goes on from `entry` of the tree; `session.busy` while a turn or a compaction runs. The clients get `resync`.
 def branch(address: Address[Session.Msg], entry: Int) -> Result[Protocol.Branched]
   moved: Result[Result[Protocol.Branched]] = Actor.call(address, Session.CALL_MS) do |reply|
@@ -283,6 +293,9 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
     Session.Msg.Update(change, reply) -> Actor.continue(update_setup(state, change, reply))
     Session.Msg.Fold(reply) -> Actor.continue(Turn.start_fold(state, reply))
     Session.Msg.Folded(found, reply) -> Actor.continue(Turn.end_fold(state, found, reply))
+    Session.Msg.Exported(reply) ->
+      Actor.reply(reply, Export.of(state.setup.file))
+      Actor.continue(state)
     Session.Msg.Tree(reply) ->
       case Branch.indexed(state)
         ok(known) ->

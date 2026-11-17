@@ -18,6 +18,12 @@ COMMANDS = [
   Usage(name: "/fork", args: "[N|N+]", about: "a new session from before message N (or after its answer)"),
   Usage(name: "/clone", about: "a new session with this one's history"),
   Usage(
+    name: "/export",
+    args: "[--force] [PATH]",
+    about: "write the session's branch to a Markdown file (default: ID.md here)",
+    more: "PATH is the rest of the line; the file (0600) holds what the session holds; --force replaces a file",
+  ),
+  Usage(
     name: "/model",
     args: "[PROVIDER/]NAME",
     about: "change the model (and provider) from the next turn on; alone: pick or show it",
@@ -63,6 +69,8 @@ enum Command
   ## Shows the tree without an argument; a new session from the message it names.
   Fork(Optional[String])
   Clone
+  ## Writes the session's branch to the file, `ID.md` here when none; the flag replaces a file that exists.
+  Export(Optional[String], Bool)
   ## Shows the model without an argument.
   Model(Optional[String])
   ## Shows the thinking level without an argument.
@@ -91,8 +99,7 @@ def parse_command(line: String) -> Optional[Result[Command]]
   name = words[0]
   return none if (not COMMANDS.any? { |usage| usage.name == name })
 
-  argument = words.drop(1).join(" ")
-  some(command(name, argument))
+  some(command(name, text.slice(name.length, text.length - name.length).strip))
 end
 
 ## The command of a line `!CMD` (its output goes to the model) or `!!CMD` (it does not); none for another line or
@@ -202,6 +209,9 @@ end
 ## The text on one line, each control character (bidi ones too) a space: what a client echoes of what another typed.
 def printable(text: String) -> String = text.split("").map { |c| shown(c) }.join("")
 
+## A control character (C0, C1) or a bidi control, which could reorder what a screen shows.
+def control?(code: Int) -> Bool = code < 0x20 or (code >= 0x7f and code < 0xa0) or Protocol.BIDI.include?(code)
+
 ## What a client says of a session's profile: its name and where it comes from, unless it is the built-in `build`,
 ## then each warning of the server about it, printable.
 def profile_lines(profile: Optional[Protocol.Profile]) -> List[String]
@@ -258,10 +268,8 @@ end
 
 private
 
-# A control character (C0, C1) or a bidi control, which could reorder what the screen shows, becomes a space.
 def shown(c: String) -> String
-  code = c.code
-  return " " if code < 0x20 or (code >= 0x7f and code < 0xa0) or Protocol.BIDI.include?(code)
+  return " " if control?(c.code)
 
   c
 end
@@ -273,6 +281,7 @@ def command(name: String, argument: String) -> Result[Command]
     "/tree" -> ok(Command.Tree(given(argument)))
     "/fork" -> ok(Command.Fork(given(argument)))
     "/clone" -> bare(Command.Clone, name, argument)
+    "/export" -> exporting(argument)
     "/model" -> model(argument)
     "/thinking" -> thinking(argument)
     "/profile" -> ok(Command.Profile(given(argument)))
@@ -285,6 +294,13 @@ def command(name: String, argument: String) -> Result[Command]
     # Only `/quit` is left of COMMANDS.
     _ -> bare(Command.Quit, name, argument)
   end
+end
+
+# The path is the rest of the line, spaces kept; `--force` is a flag only as the first word.
+def exporting(argument: String) -> Result[Command]
+  return ok(Command.Export(given(argument), false)) if argument != "--force" and not argument.start_with?("--force ")
+
+  ok(Command.Export(given(argument.slice(7, argument.length - 7).strip), true))
 end
 
 def bare(command: Command, name: String, argument: String) -> Result[Command]
