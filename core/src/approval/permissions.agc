@@ -134,6 +134,18 @@ def bash_denied?(rules: Approval.Rules, target: String) -> Bool
   end
 end
 
+## Whether a word of `target` names a file that a deny rule of `read_file` hides: the word, after a `=` (`--file=x`),
+## without `./`, or its last name; or the command does not parse. Best effort: a name that bash builds as it runs
+## (`cat $(printf .env)`) is not seen.
+def bash_reads_denied?(rules: Approval.Rules, target: String) -> Bool
+  return false if (not rules.deny.any? { |rule| rule.tool == "read_file" })
+
+  case Shell.parse(target)
+    ok(script) -> script.pipelines.any? { |p| p.commands.any? { |c| names_denied?(rules, c) } }
+    error(_) -> true
+  end
+end
+
 ## What an answer adds; `allow_prefix` without a prefix allows the same call.
 def answered(allows: Allows, decision: String, tool: String, target: String) -> Allows
   case decision
@@ -233,6 +245,22 @@ def command_allowed?(prefixes: List[List[String]], command: Shell.Command, root:
   words = Shell.argv(command)
   output = words.take(1) == ["git"] and words.any? { |w| w.start_with?("--output") }
   not writes and not output and prefixes.any? { |p| words.take(p.size) == p }
+end
+
+def names_denied?(rules: Approval.Rules, command: Shell.Command) -> Bool
+  paths = command.redirects.map do |r|
+    case r
+      Shell.Redirect.Out(_, path, _) -> path
+      Shell.Redirect.In(path) -> path
+      _ -> ""
+    end
+  end
+
+  (Shell.argv(command) + paths).any? do |word|
+    value = word.split("=").last
+    names = [word, value, value.replace("./", ""), value.split("/").last]
+    names.any? { |name| not name.empty? and Approval.read_denied?(rules, name) }
+  end
 end
 
 def command_denied?(rules: Approval.Rules, command: Shell.Command) -> Bool

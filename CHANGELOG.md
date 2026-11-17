@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- **Breaking:** tools run without asking by default; `finn serve --approvals`, `FINN_APPROVALS=1` or `"approvals": true` in the config file turns the approvals on. Deny rules still apply; allow rules and `accept_edits` need the approvals on.
+- **Breaking:** tools run without asking by default; `finn serve --approvals`, `FINN_APPROVALS=1` or `"approvals": true` in the config file turns the approvals on. Deny rules still apply; allow rules and `accept_edits` need the approvals on. With the approvals off, a `read_file` deny rule hides the file from the tools and refuses `bash` commands that name it, but cannot confine `bash` (`cat $(printf .env)`): use a sandbox.
 - `!` commands: a command whose task ends without its output ends as failed instead of running forever, and `finn tui` shows no duration for one a restart cut.
 - `finn tui` lists the commands while `/` and part of a name are typed, each with what it does: Tab or Enter completes the selected one, Enter on a whole name runs it, Up/Down select, and Esc closes the list so that Enter sends the text as typed. `/help` reads the same table and shows `/resume [N|ID]`.
 - `finn login` and `/login` in `finn tui` check a provider key and store it in `~/.config/finn/auth.json` (0600); `finn logout` and `/logout` remove it.

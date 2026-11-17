@@ -27,8 +27,8 @@ end
 def gated?(a: Approvals) -> Bool = a.asking or not a.rules.deny.empty?
 
 ## The hook a tool call passes before it runs. With the asking off, a call that would ask runs, but for a `bash`
-## command that the deny rules cannot clear: one a `bash` rule may match (checked as `Permissions.allows?` does, and
-## refused when it cannot be parsed), or any command while a `read_file` rule exists, since it could read the file.
+## command that the deny rules cannot clear: one a `bash` rule may match (checked as `Permissions.allows?` does), or
+## one that names a file a `read_file` rule hides; either is refused when it cannot be parsed.
 def verdict(a: Approvals, ctx: Spec.Context, name: String, input: JSON.Value) -> Spec.Verdict
   found = Approval.verdict(a.rules, ctx, name, input)
   return found if a.asking or found != Spec.Verdict.Ask
@@ -40,7 +40,7 @@ def verdict(a: Approvals, ctx: Spec.Context, name: String, input: JSON.Value) ->
   end
 
   return Spec.Verdict.Deny if Permissions.bash_denied?(a.rules, command)
-  return Spec.Verdict.Deny if (a.rules.deny.any? { |rule| rule.tool == "read_file" })
+  return Spec.Verdict.Deny if Permissions.bash_reads_denied?(a.rules, command)
 
   Spec.Verdict.Allow
 end

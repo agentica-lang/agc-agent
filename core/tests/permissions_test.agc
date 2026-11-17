@@ -141,6 +141,23 @@ def test_with_the_approvals_off_a_command_the_deny_rules_cannot_clear_is_refused
   end
 end
 
+# With the approvals off a `read_file` rule refuses only the bash commands that name a file it hides: `ls` and
+# `git status` run.
+def test_with_the_approvals_off_a_read_rule_leaves_other_commands_running() -> Result[Void]
+  replies = ["bash_ls.sse", "bash_git_status.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, approvals: false, deny: ["read_file(secret*)"])) do |h|
+    try File.write_text("#{h.work}/secret.txt", "s3cr3t")
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "List the files, then show the git status.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    text = try File.read_text(H.session_file(h, id))
+    try Test.eq(H.kinds(a.seen).select { |k| k == "tool_finished" }.size, 2)
+    Test.eq([text.include?("denied by a rule"), text.include?("secret.txt")], [false, true])
+  end
+end
+
 # The default, from an environment with no switch and no config file: a call runs without asking, and a project file
 # cannot turn the approvals on.
 def test_by_default_tools_run_without_asking_and_a_project_cannot_ask() -> Result[Void]
