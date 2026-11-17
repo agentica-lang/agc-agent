@@ -346,6 +346,36 @@ def lifecycle(header: Store.Header, name: String, data: Map[String, JSON.Value])
   )
 end
 
+# The sessions without a deleted one and its children, whose turns stop first. What a load still running reads finds
+# no entry, and is dropped.
+def dropped(registry: Registry, entry: Entry, reason: String) -> List[Entry]
+  id = entry.summary.id
+  for waiting in entry.waiting
+    Actor.reply(waiting, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
+  end
+
+  Extensions.publish(registry.options.observers, ended_seen(entry, reason))
+  sessions = registry.sessions.select { |e| e.summary.id != id }
+  for child in children(sessions, id)
+    case closed_child(child)
+      ok(gone) -> sessions = dropped(registry.with(sessions: sessions), gone, "parent_ended")
+      error(e) -> IO.warn("session #{child.summary.id} is not deleted with its parent: #{e.message}")
+    end
+  end
+
+  sessions
+end
+
+def closed_child(child: Entry) -> Result[Entry]
+  for session in option_list(child.session)
+    _ = SessionActor.stop(session.address, none)
+  end
+
+  gone = try ended(child)
+  try Store.remove(gone.file)
+  ok(gone)
+end
+
 def ended_seen(entry: Entry, reason: String) -> Extensions.Seen
   lifecycle(entry.header, "session_ended", {"reason": JSON.from(reason)})
 end
@@ -406,13 +436,7 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
           Actor.reply(reply, removed)
           sessions = registry.sessions.map { |e| replaced(e, entry) }
           if removed.ok?
-            # What a load still running reads finds no entry, and is dropped.
-            for waiting in entry.waiting
-              Actor.reply(waiting, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
-            end
-
-            sessions = sessions.select { |e| e.summary.id != id }
-            Extensions.publish(registry.options.observers, ended_seen(entry, "deleted"))
+            sessions = dropped(registry.with(sessions: sessions), entry, "deleted")
           end
 
           Actor.continue(registry.with(sessions: sessions))
