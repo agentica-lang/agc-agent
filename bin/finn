@@ -38,8 +38,9 @@ serve options (each overrides its environment variable):
                    (default: FINN_PROVIDER)
   --model NAME     default model of new sessions (default: FINN_MODEL)
   --base-url URL   where the model API is (default: FINN_BASE_URL, else http://127.0.0.1:8080/v1)
-  --approvals      ask before a tool call that no rule allows (default: FINN_APPROVALS, else the config file; off:
-                   the model runs any command without asking, so use a sandbox or a container)
+  --approvals      ask before a tool call that no rule allows (default: FINN_APPROVALS, else "approvals" in the
+                   config file; FINN_APPROVALS=0 wins over the file). Off, the model runs any command that no deny
+                   rule refuses, without asking: use a sandbox or a container
   (finn serve --help tells the rest: folders, keys, compaction)
 TEXT
 }

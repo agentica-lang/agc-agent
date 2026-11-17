@@ -2,9 +2,10 @@
 ##
 ## Rules: the user's config file (`FINN_CONFIG`, else `$XDG_CONFIG_HOME/finn/config.json`, else
 ## `~/.config/finn/config.json`), `{"approvals": true, "allow": [...], "deny": [...]}` in the syntax of `Approval`,
-## whose `approvals` turns the extension on; and the project file
-## `.finn/config.json` of the session folder, whose deny rules always count and whose allow rules count only in a
-## folder of `FINN_TRUSTED_DIRS` (`:` between folders), since anyone who writes the project can write them.
+## whose `approvals` turns the asking on (`FINN_APPROVALS` wins over it); and the project file `.finn/config.json` of
+## the session folder, whose deny rules always count and whose allow rules count only in a folder of
+## `FINN_TRUSTED_DIRS` (`:` between folders), since anyone who writes the project can write them. Its `approvals` is
+## not read: a project cannot change the mode. The deny rules count with the asking off too.
 ##
 ## A session allows more by its answers: the same call (`allow_session`), the same command prefix for `bash`
 ## (`allow_prefix`: `git log`, `npm test`), or the whole tool (`allow_tool`); and in the accept-edits mode the edits of
@@ -43,6 +44,11 @@ struct Allows
   accept_edits: Bool = false
 end
 
+struct User
+  rules: Approval.Rules
+  asking: Bool
+end
+
 ## The user's config file: `FINN_CONFIG`, else the default file when it is there.
 def config_path(read: Fn[String, Result[String]]) -> Optional[String]
   case read.call(CONFIG_ENV)
@@ -56,14 +62,12 @@ def config_path(read: Fn[String, Result[String]]) -> Optional[String]
   end
 end
 
-## The rules of the user's config file when the extension is on: `switch` when given (`FINN_APPROVALS`), else the
-## file's `approvals`. No rules when the default file is not there.
-def user_rules(read: Fn[String, Result[String]], switch: Optional[Bool]) -> Result[Optional[Approval.Rules]]
+## The rules of the user's config file, none when the default file is not there; and whether calls that no rule
+## allows ask: `switch` when given (`FINN_APPROVALS`), else the file's `approvals`, else not.
+def user_rules(read: Fn[String, Result[String]], switch: Optional[Bool]) -> Result[User]
   file = try user_file(read)
   rules = try parsed_rules(file.path, file.file)
-  return ok(none) if not switch.unwrap_or(file.file.approvals.unwrap_or(false))
-
-  ok(some(rules))
+  ok(User(rules: rules, asking: switch.unwrap_or(file.file.approvals.unwrap_or(false))))
 end
 
 ## `rules` with those of the project file of `root`: its deny rules, and its allow rules when `root` is `trusted`. A

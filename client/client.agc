@@ -15,6 +15,7 @@ export Http.KIND_UNREACHABLE
 export Http.KIND_TIMEOUT
 export Http.health
 export Http.server_status
+export Http.yolo_warning
 export Http.stop_server
 export Http.create_session
 export Http.session

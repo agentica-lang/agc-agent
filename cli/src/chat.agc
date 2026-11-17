@@ -23,7 +23,7 @@ EXIT_FAILED = 1
 ## the turn.
 def run(server: Client.Server, options: Args.Options, style: Render.Style) -> Result[Int]
   if options.yolo
-    IO.warn("--yolo: the tool calls of the turns this client starts are approved")
+    IO.warn(Client.yolo_warning(server))
   end
 
   inbox: Channel[Inbox.Input] = Channel.new(INBOX_CAPACITY)

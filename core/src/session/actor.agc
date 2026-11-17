@@ -818,8 +818,9 @@ end
 
 def gate(approvals: Optional[Extension.Approvals]) -> Optional[Fn[Tools.Context, String, JSON.Value, Tools.Verdict]]
   case approvals
-    some(a) -> some(->(ctx: Tools.Context, name: String, input: JSON.Value) { Extension.verdict(a, ctx, name, input) })
-    none -> none
+    some(a) if Extension.gated?(a) ->
+      some(->(ctx: Tools.Context, name: String, input: JSON.Value) { Extension.verdict(a, ctx, name, input) })
+    _ -> none
   end
 end
 
@@ -987,11 +988,9 @@ def busy_reason(state: State) -> String
 end
 
 def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Result[Void]]) -> State
-  if change.accept_edits.some? and state.setup.approvals.none?
-    Actor.reply(
-      reply,
-      error("accept_edits needs the approval extension (FINN_APPROVALS=1)", kind: Protocol.KIND_INVALID),
-    )
+  asking = state.setup.approvals.map { |a| a.asking }.unwrap_or(false)
+  if change.accept_edits.some? and not asking
+    Actor.reply(reply, error("accept_edits needs the approvals on (FINN_APPROVALS=1)", kind: Protocol.KIND_INVALID))
 
     return state
   end

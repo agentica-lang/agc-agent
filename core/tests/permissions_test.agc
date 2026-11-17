@@ -80,24 +80,57 @@ def test_a_project_file_denies_anywhere_and_allows_only_when_trusted() -> Result
   end
 end
 
-# A `read_file` deny rule of the extension hides its files from `glob` in a session; without the extension, nothing
-# is hidden.
-def test_a_read_deny_rule_hides_files_from_glob_only_with_the_extension() -> Result[Void]
+# The deny rules count with the approvals on and off: a `read_file` rule hides its files from `glob` and `grep`, and a
+# `bash` rule refuses a command of the model and a `!` command, without asking.
+def test_the_deny_rules_count_with_the_approvals_on_or_off() -> Result[Void]
   for on in [true, false]
-    try H.using(H.Setup(replies: ["glob.sse", "text.sse"], approvals: on, deny: ["read_file(secret*)"])) do |h|
-      try File.write_text("#{h.work}/secret.txt", "s")
-      try File.write_text("#{h.work}/open.txt", "o")
+    replies = ["glob.sse", "grep.sse", "bash_rm.sse", "text.sse"]
+    try H.using(H.Setup(replies: replies, approvals: on, deny: ["read_file(secret*)", "bash(rm *)"])) do |h|
+      try File.write_text("#{h.work}/secret.txt", "x")
+      try File.write_text("#{h.work}/open.txt", "x")
       id = try H.new_session(h)
       a = try H.subscribe(h, id)
-      _ = try H.send(h, id, "List the files.")
+      _ = try H.send(h, id, "List the files, find x, then remove one.")
       a = try H.until(a, Protocol.EventKind.TurnFinished)
       H.close(a)
       text = try File.read_text(H.session_file(h, id))
-      Test.eq([on, text.include?("open.txt"), text.include?("secret.txt")], [on, true, not on])
+      shell = try H.post(
+        h,
+        Protocol.shell_path(id),
+        Protocol.encode_run_shell(Protocol.RunShell(command: "rm open.txt", context: true)),
+      )
+
+      seen = [
+        text.include?("open.txt:1:x"),
+        text.include?("secret.txt"),
+        File.stat("#{h.work}/open.txt").ok?,
+        H.kinds(a.seen).include?("approval_requested"),
+        shell.status == 403,
+      ]
+
+      Test.eq([on] + seen, [on, true, false, true, false, true])
     end
   end
 
   ok()
+end
+
+# The default, from an environment with no switch and no config file: a call runs without asking, and a project file
+# cannot turn the approvals on.
+def test_by_default_tools_run_without_asking_and_a_project_cannot_ask() -> Result[Void]
+  read = ->(name: String) { env("/nonexistent-finn-home", name, "", "") }
+  H.using(H.Setup(replies: ["write_file.sse", "text.sse"], approvals_env: some(read))) do |h|
+    try Dir.mkdir("#{h.work}/.finn")
+    try File.write_text("#{h.work}/.finn/config.json", "{\"approvals\": true}")
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.kinds(a.seen).include?("approval_requested"), false)
+    try Test.eq(File.read_text("#{h.work}/hello.txt"), ok("hi\n"))
+    Test.eq((try H.session(h, id)).accept_edits, false)
+  end
 end
 
 # A session allow keeps the bash deny rules: each simple command and every tail of its words is checked (a wrapper in
@@ -150,8 +183,8 @@ def test_the_prefix_of_a_command() -> Result[Void]
   Test.eq(Permissions.prefix("bash", "ls | wc"), none)
 end
 
-# The extension is off unless the user's config file (FINN_CONFIG, else the default file when it is there) or
-# FINN_APPROVALS turns it on; a broken file stops the start either way.
+# The rules of the user's config file (FINN_CONFIG, else the default file when it is there) always load; the asking is
+# off unless the file or FINN_APPROVALS turns it on, and FINN_APPROVALS wins. A broken file stops the start either way.
 def test_the_user_config_turns_approvals_on_with_its_rules() -> Result[Void]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-perm-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)
@@ -171,15 +204,22 @@ def test_the_user_config_turns_approvals_on_with_its_rules() -> Result[Void]
 
   failed = [sizes.call("#{dir}/bad.json", "0").ok?, sizes.call("#{dir}/none.json", "").ok?, sizes.call("", "2").ok?]
   _ = Path.remove(dir)
-  try Test.eq(results, [ok(some([1, 1])), ok(none), ok(some([1, 1])), ok(none), ok(none), ok(some([0, 0]))])
+  try Test.eq(results, [ok([1, 1, 1]), ok([1, 1, 0]), ok([1, 1, 1]), ok([1, 1, 0]), ok([0, 0, 0]), ok([0, 0, 1])])
   Test.eq(failed, [false, false, false])
 end
 
 private
 
-def rule_sizes(dir: String, config: String, switch: String) -> Result[Optional[List[Int]]]
+# The sizes of the allow and deny rules, and 1 when calls ask.
+def rule_sizes(dir: String, config: String, switch: String) -> Result[List[Int]]
   options = try Config.from_env(->(n) { env(dir, n, config, switch) })
-  ok(options.approvals.map { |r| [r.allow.size, r.deny.size] })
+  rules = try options.approvals.to_result("no rules")
+  asking = 0
+  if options.asking
+    asking = 1
+  end
+
+  ok([rules.allow.size, rules.deny.size, asking])
 end
 
 def env(dir: String, name: String, config: String, switch: String) -> Result[String]

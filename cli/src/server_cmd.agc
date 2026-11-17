@@ -27,17 +27,26 @@ end
 
 ## `status`: the lines of `render`, from the server's answer.
 def render(status: Protocol.ServerStatus, url: String, dir: String, now_s: Int) -> List[String]
-  [
-    "server running",
-    "  address #{url}",
-    "  pid #{status.pid}",
-    "  version #{status.version}",
-    "  uptime #{uptime(now_s - status.started_s)}",
-    "  sessions #{status.sessions}",
-    "  running turns #{status.running_turns}",
-    "  stopping #{stopping_word(status.stopping)}",
-    "  state folder #{dir}",
-  ]
+  (
+    [
+      "server running",
+      "  address #{url}",
+      "  pid #{status.pid}",
+      "  version #{status.version}",
+      "  uptime #{uptime(now_s - status.started_s)}",
+      "  sessions #{status.sessions}",
+      "  running turns #{status.running_turns}",
+      "  stopping #{stopping_word(status.stopping)}",
+      "  state folder #{dir}",
+    ] +
+    status.approvals.map { |on| ["  approvals #{approvals_word(on)}"] }.unwrap_or([])
+  )
+end
+
+def approvals_word(on: Bool) -> String
+  return "on" if on
+
+  "off (tools run without asking)"
 end
 
 def stopping_word(stopping: Bool) -> String

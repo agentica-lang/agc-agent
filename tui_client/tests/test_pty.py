@@ -690,7 +690,7 @@ class PtyTest(unittest.TestCase):
         self.addCleanup(again.close)
         rows = again.wait_for("Tab to answer")
         self.assertIn("YOLO · ", rows[-1])
-        self.assertIn(" --yolo: the tool calls of turns sent from here run without asking", text_of(rows))
+        self.assertIn(" --yolo: the tool calls of the turns this client starts run without asking", text_of(rows))
         self.assertFalse((term.base / "work" / "hello.txt").exists())
         again.settle(0.4)
         again.type("\x0e")

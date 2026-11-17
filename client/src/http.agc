@@ -35,6 +35,15 @@ def server_status(server: Server) -> Result[Protocol.ServerStatus]
   Protocol.decode_server_status(body)
 end
 
+## What `--yolo` does on this server, for the warning at the start: nothing when its approvals are off.
+def yolo_warning(server: Server) -> String
+  case server_status(server)
+    ok(status) if status.approvals == some(false) ->
+      "--yolo changes nothing: the approvals of this server are off, so every tool call runs without asking"
+    _ -> "--yolo: the tool calls of the turns this client starts run without asking"
+  end
+end
+
 ## Asks the server to stop: it answers at once and goes once its turns end (`now` cancels them).
 def stop_server(server: Server, now: Bool) -> Result[Void]
   _ = try call(

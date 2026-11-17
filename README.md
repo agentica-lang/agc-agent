@@ -51,9 +51,10 @@ bin/finn login                         # set up a provider with its key, checked
 bin/finn --version
 ```
 
-Tools run without asking by default: the model can run any command and change any file the user can. Run Finn in a
-sandbox or a container, or turn the approvals on with `finn serve --approvals`, `FINN_APPROVALS=1` or
-`"approvals": true` in `~/.config/finn/config.json` (its `allow` and `deny` rules: `finn serve --help`).
+Tools run without asking by default: the model can run any command and change any file the user can, except what a
+`deny` rule of `~/.config/finn/config.json` refuses. Run Finn in a sandbox or a container, or turn the approvals on
+with `finn serve --approvals`, `FINN_APPROVALS=1` or `"approvals": true` in that file. Coming from an earlier Finn: the
+`deny` rules still apply, while the `allow` rules and `accept_edits` need the approvals on (`finn serve --help`).
 
 `finn server status`, `stop` (waits for the running turns and ends when the server has gone; `--now` cancels them),
 `restart`, `start` and `logs [-f]` manage the server a

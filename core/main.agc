@@ -19,6 +19,10 @@ def serve() -> Void
   case start()
     ok(server) ->
       puts("Finn Agent core listening on 127.0.0.1:#{server.port}")
+      if not server.control.approvals
+        puts("approvals are off: tools run without asking (finn serve --approvals turns them on)")
+      end
+
       IO.flush()
       stop_on_signals(server)
       Server.shutdown(server, Server.stop_requested(server))

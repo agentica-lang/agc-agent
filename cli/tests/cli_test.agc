@@ -481,7 +481,11 @@ def test_one_shot_denies_approvals_and_yolo_allows_them() -> Result[Void]
       answer = try Fake.request(rig.fake, "POST", Protocol.approval_path("s1", "a1"))
       try Test.eq(Protocol.decode_approve(answer.body), ok(Protocol.Approve(decision: decision)))
       try Test.assert(not done.errors.include?(PROMPT), "nothing is asked: #{done.errors}")
-      try Test.eq(done.errors.include?("--yolo: the tool calls of the turns this client starts are approved"), yolo)
+      try Test.eq(
+        done.errors.include?("--yolo: the tool calls of the turns this client starts run without asking"),
+        yolo,
+      )
+
       Test.eq(done.code, 0)
     end
   end

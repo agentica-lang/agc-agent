@@ -8,10 +8,10 @@
 ## `FINN_CODE_MODE=1` adds code mode, whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is
 ## not checked), else the pinned one fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be private to the user). Skills:
 ## those of the home folder always, those of a session folder only under a folder of `FINN_TRUSTED_DIRS` (separated by
-## `:`). Approvals are off unless `FINN_APPROVALS=1` or `"approvals": true` in the user's config file (`FINN_CONFIG`,
-## else `$XDG_CONFIG_HOME/finn/config.json`, else `~/.config/finn/config.json`), which has their rules with the
-## project file `.finn/config.json` (`Permissions`). The names of before Finn
-## still work: `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder is there.
+## `:`). Approval rules: the user's config file (`FINN_CONFIG`, else `$XDG_CONFIG_HOME/finn/config.json`, else
+## `~/.config/finn/config.json`) and the project file `.finn/config.json` (`Permissions`); the deny rules always count,
+## and a call no rule allows asks only when `FINN_APPROVALS=1`, or the user's file has `"approvals": true` and
+## `FINN_APPROVALS` is not `0`. The names of before Finn still work: `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` folder while no `finn` folder is there.
 ##
 ## The `anthropic` API is at `ANTHROPIC_BASE_URL` (else Anthropic's), with `ANTHROPIC_API_KEY`, else
 ## `ANTHROPIC_AUTH_TOKEN`, else the token that `ant auth print-credentials --access-token` prints: at start when
@@ -58,8 +58,10 @@ struct Options
   login: Optional[Logins.Setup] = none
   logins: Optional[Logins.Holder] = none
   env: Fn[String, Result[String]]
-  ## The rules of the approval extension; none turns it off, and every tool call runs without asking.
+  ## The rules of the approval extension; none turns it off, and every tool call runs. `asking`: a call that no rule
+  ## allows waits for an answer; off, only the deny rules count.
   approvals: Optional[Approval.Rules] = none
+  asking: Bool = false
   ## The tools of the MCP servers, and those of the servers that list them after the start.
   tools: List[Tools.Tool] = []
   late_tools: Optional[Fn[List[Tools.Tool]]] = none
@@ -172,6 +174,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     model = DEFAULT_MODEL
   end
 
+  user = try Permissions.user_rules(read, try approvals_switch(read))
   ok(
     Options(
       state_dir: try state_dir(read),
@@ -183,7 +186,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       login: some(login),
       model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,
-      approvals: try Permissions.user_rules(read, try approvals_switch(read)),
+      approvals: some(user.rules),
+      asking: user.asking,
       context_window: try context_window(read),
       drain_ms: try drain_ms(read),
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
