@@ -627,6 +627,17 @@ def test_up_and_down_move_between_rows_and_recall_from_the_edges() -> Result[Voi
   Test.eq(App.update(emoji, up()).model.cursor, 2)
 end
 
+# A prompt put back from outside the keys (a message that was not sent) forgets the column Up and Down kept.
+def test_a_prompt_put_back_forgets_the_kept_column() -> Result[Void]
+  model = model_of(40, 8).with(id: "s1", prompt: "abcdef\nab", cursor: 5)
+  lower = App.update(model, down()).model
+  try Test.eq([lower.cursor, lower.goal_column.unwrap_or(-1)], [9, 5])
+  sending = lower.with(prompt: "", cursor: 0, outbox: ["abc\nabcdef"])
+  put_back = App.update(sending, App.Msg.Sent(0, "abc\nabcdef", error("down", kind: Client.KIND_UNREACHABLE))).model
+  try Test.eq([put_back.prompt, "#{put_back.goal_column}"], ["abc\nabcdef", "none"])
+  Test.eq(App.update(put_back.with(cursor: 3), down()).model.cursor, 7)
+end
+
 # Up on an empty prompt goes back through the prompts sent, Down comes forward to an empty prompt; a large paste is
 # one token that the send puts back.
 def test_up_recalls_prompts_and_a_large_paste_is_one_token() -> Result[Void]
@@ -873,7 +884,20 @@ def test_arguments_complete_from_the_server() -> Result[Void]
   try Test.eq(left.arguments.none?, true)
   # Enter runs the line as typed, with no completion.
   typed = App.update(listed.with(prompt: "/thinking hi", cursor: 12), enter()).model
-  Test.eq(typed.entries.last.text, "the thinking level is one of low, medium, high, default")
+  try Test.eq(typed.entries.last.text, "the thinking level is one of low, medium, high, default")
+  # A late `/tree` list, once the prompt holds `/model `, leaves the listed tree alone and asks for the models.
+  late = App.update(model.with(prompt: "/tree", cursor: 5), key_char(" "))
+  moved_on = late.model.with(prompt: "/model ", cursor: 7)
+  replied = App.update(moved_on, run(late.cmds[0])[0])
+  try Test.eq([replied.model.listed.none?, replied.model.arguments.none?, replied.cmds.size == 1], [true, true, true])
+  try Test.eq(App.update(replied.model, run(replied.cmds[0])[0]).model.arguments.map { |a| a.command }, some("/model"))
+  # A read that fails is noted once and not asked again while the command stays.
+  down = model.with(backend: backend.with(list_providers: -> { error("down", kind: Client.KIND_UNREACHABLE) }))
+  failing = App.update(down.with(prompt: "/model", cursor: 6), key_char(" "))
+  failed = App.update(failing.model, run(failing.cmds[0])[0]).model
+  again = App.update(failed, key_char("x"))
+  notes = again.model.entries.select { |entry| entry.text.include?("not listed") }
+  Test.eq([notes.size, again.cmds.size], [1, 0])
 end
 
 # An Alt key types nothing: not in the prompt, not over a selected prompt, not in a picker's filter, not in a key.

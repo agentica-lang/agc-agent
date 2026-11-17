@@ -44,16 +44,26 @@ def next_char(text: String, at: Int) -> Int
   grapheme_end(text.split(""), cut)
 end
 
-## The place before the character that ends at `at`, with what joins it.
+## The place before the character that ends at `at`, with what joins it. It looks back only over that character:
+## its joiners and modifiers, and the flag letters before it.
 def previous_char(text: String, at: Int) -> Int
   cut = clamp(text, at)
-  chars = text.split("")
-  start = 0
-  last = 0
-  while last < cut
-    start = last
-    last = grapheme_end(chars, last)
+  return 0 if cut == 0
+
+  start = cut - 1
+  while start > 0 and joins?(text.slice(start - 1, 1), text.slice(start, 1))
+    start = start - 1
   end
+
+  return start if not FLAG_LETTERS.include?(text.slice(start, 1).code)
+
+  # Flag letters pair from the start of their run: the second of a pair goes back to the first.
+  run = start
+  while run > 0 and FLAG_LETTERS.include?(text.slice(run - 1, 1).code)
+    run = run - 1
+  end
+
+  return start - 1 if (start - run) % 2 == 1
 
   start
 end
