@@ -1,8 +1,7 @@
-## The system prompt of a new session: the agent's instructions, the project's `AGENTS.md` and the catalog of its
-## skills.
+## The system prompt of a new session: the agent's instructions and the project's `AGENTS.md`; the extensions add to
+## it (the catalog of the skills).
 
 import Sandbox from "../tools/sandbox"
-import Skills from "../ext/skills"
 
 MAX_INSTRUCTIONS_BYTES = 65_536
 MAX_READ_BYTES = 1_048_576
@@ -10,13 +9,6 @@ SYSTEM_PROMPT = <<~TEXT
   You are a coding agent. You work in the session folder with the tools you have: read before you change a file, keep
   changes small, and say briefly what you did. To read, use read_file, glob and grep rather than bash.
 TEXT
-
-def with_catalog(system: String, skills: List[Skills.Skill]) -> String
-  catalog = Skills.catalog(skills)
-  return system if catalog == ""
-
-  "#{system}\n#{catalog}"
-end
 
 def system_prompt(root: String) -> String
   case project_instructions(root)

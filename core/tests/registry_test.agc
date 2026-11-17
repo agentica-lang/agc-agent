@@ -322,6 +322,16 @@ def crashed_start() -> Result[Void]
   ok()
 end
 
+# The tests of an extension build a call with `Core.call`: its paths resolve in the folder.
+def test_core_call_builds_a_call_for_the_tests_of_an_extension() -> Result[Void]
+  base = try fresh()
+  call = Core.call(base, JSON.object({"text": JSON.from("one")}))
+  results = [Core.resolve(call, "a.txt"), Core.resolve(call, "../outside")]
+  _ = Path.remove(base)
+  try Test.eq(results[0], ok("#{base}/a.txt"))
+  Test.error?(results[1])
+end
+
 def crashing_tool() -> Core.Tool
   Core.Tool(
     name: "word_count",

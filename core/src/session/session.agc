@@ -14,7 +14,6 @@ import Config from "../config/config"
 import Logins from "../config/logins"
 import Providers from "../config/providers"
 import Extensions from "../config/registry"
-import Skills from "../ext/skills"
 import Sandbox from "../tools/sandbox"
 import Spec from "../tools/spec"
 import Tools from "../tools/tools"
@@ -413,7 +412,7 @@ end
 
 def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]
   options = Config.now(registry.options)
-  ctx = case Tools.context(request.cwd, options.env, options.tools, options.late_tools, options.diff, wrap_of(options))
+  ctx = case Tools.context(request.cwd, options.env, options.tools, late_of(options), options.diff, wrap_of(options))
     ok(ctx) -> ok(ctx)
     error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
   end
@@ -437,7 +436,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     cwd: context.root,
     model: request.model.unwrap_or(default_model(options, provider, api)),
     created_ms: Time.now_ms,
-    system: some(Prompt.with_catalog(system_of(options, context.root), skills_of(options, context.root).skills)),
+    system: some(new_system(options, context.root)),
     api: some(api),
     provider: some(provider),
   )
@@ -504,7 +503,7 @@ def read(options: Config.Options, listed: Entry) -> Result[Loaded]
     saved.header.cwd,
     options.env,
     options.tools,
-    options.late_tools,
+    late_of(options),
     options.diff,
     wrap_of(options),
   )
@@ -567,21 +566,20 @@ def entry(
 
   endpoint = try loaded_endpoint(options, provider, api)
   context = opened.context
-  found = skills_of(options, context.root)
-  for warning in found.warnings
-    IO.warn("skills: #{warning}")
+  system = header.system.unwrap_or(system_of(options, context.root))
+  builtins = builtins_of(options, context.root, system)
+  for warning in (builtins.flat_map { |b| b.warnings })
+    IO.warn(warning)
   end
 
-  system = header.system.unwrap_or(system_of(options, context.root))
-  skills = Skills.restrict(found.skills, system)
   base = SessionActor.Setup(
     id: header.id,
     cwd: context.root,
     model: header.model,
     provider: endpoint.provider,
     system: system,
-    ctx: context.with(read_roots: skills.map { |skill| skill.dir }),
-    skills: skills,
+    ctx: context.with(read_roots: Extensions.read_roots(builtins)),
+    builtins: builtins,
     keep_events: options.keep_events,
     approval_timeout_ms: options.approval_timeout_ms,
     file: file,
@@ -818,8 +816,26 @@ def wrap_of(options: Config.Options) -> Optional[Fn[String, Spec.Run, Spec.Run]]
   none
 end
 
-def skills_of(options: Config.Options, root: String) -> Skills.Found
-  Skills.discover(root, options.home, trusted?(options, root))
+# The system prompt of a new session in `root`, with what the extensions add.
+def new_system(options: Config.Options, root: String) -> String
+  system = system_of(options, root)
+  options.registry.map { |r| Extensions.new_system(r, place_of(options, root), system) }.unwrap_or(system)
+end
+
+def builtins_of(options: Config.Options, root: String, system: String) -> List[Extensions.Opened]
+  options.registry.map { |r| Extensions.open(r, place_of(options, root), system) }.unwrap_or([])
+end
+
+def late_of(options: Config.Options) -> Optional[Fn[List[Tools.Tool]]]
+  for registry in option_list(options.registry)
+    return Extensions.late_tools(registry)
+  end
+
+  none
+end
+
+def place_of(options: Config.Options, root: String) -> Extensions.Place
+  Extensions.Place(root: root, home: options.home, trusted: trusted?(options, root))
 end
 
 # A session folder under a folder of `FINN_TRUSTED_DIRS`, whose own skills and allow rules count.
