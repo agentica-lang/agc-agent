@@ -54,7 +54,8 @@ def folder(options: Config.Options) -> String = "#{options.data_dir}/#{SESSIONS_
 ## Starts the registry, which lists the session files of `options` in `store` (on disk when none), and the holder of
 ## the providers.
 def start(given: Config.Options, store: Optional[Store.Port] = none) -> Sessions
-  options = given.with(logins: some(Logins.start(given.providers, given.login)))
+  observers = given.registry.map { |served| Extensions.observe(served.registry) }.unwrap_or([])
+  options = given.with(logins: some(Logins.start(given.providers, given.login)), observers: observers)
   warn_profiles(options)
   port = store.unwrap_or(Store.disk())
   init = -> {
@@ -69,6 +70,7 @@ end
 ## Stops the registry and the sessions it runs.
 def stop(sessions: Sessions) -> Void
   _ = Actor.stop(sessions.registry, CALL_MS)
+  Extensions.stop_observers(sessions.options.observers)
   for holder in option_list(sessions.options.logins)
     Logins.stop(holder)
   end
@@ -329,8 +331,24 @@ def terminate(registry: Registry) -> Void
   for entry in registry.sessions
     for session in option_list(entry.session)
       _ = Actor.stop(session, CALL_MS)
+      lifecycle(registry.options, entry, "session_ended", {"reason": JSON.from("stopping")})
     end
   end
+end
+
+# `session_started` and `session_ended` reach the observers that want them; nothing else sees them.
+def lifecycle(options: Config.Options, entry: Entry, name: String, data: Map[String, JSON.Value]) -> Void
+  return if not Extensions.wanted?(options.observers, name)
+
+  id = entry.summary.id
+  seen = Extensions.Seen(
+    session: id,
+    root: entry.summary.cwd,
+    name: name,
+    data: JSON.object(data.put("id", JSON.from(id))),
+  )
+
+  Extensions.publish(options.observers, seen)
 end
 
 def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
@@ -339,6 +357,7 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
       case open_session(registry, request)
         ok(entry) ->
           Actor.reply(reply, ok(entry.summary.id))
+          lifecycle(registry.options, entry, "session_started", {"new": JSON.from(true)})
           Actor.continue(registry.with(sessions: registry.sessions.push(entry)))
         error(e) ->
           Actor.reply(reply, error(e))
@@ -395,6 +414,7 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
             end
 
             sessions = sessions.select { |e| e.summary.id != id }
+            lifecycle(registry.options, entry, "session_ended", {"reason": JSON.from("deleted")})
           end
 
           Actor.continue(registry.with(sessions: sessions))
@@ -570,6 +590,8 @@ def registered(registry: Registry, id: String, read: Result[Loaded]) -> Registry
         Actor.reply(waiting, entry.session.map { |session| session.address }.to_result("not started"))
       end
 
+      lifecycle(registry.options, entry, "session_started", {"new": JSON.from(false)})
+
       registry.with(sessions: registry.sessions.map { |e| replaced(e, entry) })
     error(e) ->
       IO.warn("session #{id} cannot be loaded now: #{e.message}")
@@ -640,6 +662,7 @@ def entry(
     catalog_wait_ms: options.catalog_wait_ms,
     approver: opened.approver,
     registry: options.registry.map { |served| served.registry },
+    observers: options.observers,
     origin: "#{chosen.provider}/#{chosen.api}",
     endpoint: some(->(name: String, now: String) { switched_endpoint(Config.now(options), name, now) }),
     profiles: some(-> { profiles_of(options, context.root) }),

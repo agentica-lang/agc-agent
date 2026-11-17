@@ -34,6 +34,39 @@ def test_message_handlers_change_the_message_or_refuse_it() -> Result[Void]
   end
 end
 
+# An observer gets the events it names, of every session, in order, and the session's start and end. Nothing waits for
+# a slow observer: the turn ends at once, and the events past its inbox are dropped.
+def test_observers_see_the_events_in_order_and_never_slow_a_turn() -> Result[Void]
+  names = ["session_started", "turn_started", "tool_finished", "turn_finished", "session_ended"]
+  got: Channel[String] = Channel.new(32)
+  slow_got: Channel[String] = Channel.new(32)
+  registry = (
+    Core.registry().with(observer_inbox: 1)
+    |> Core.on(Core.Event.Seen(names, ->(seen: Core.Seen) { observed_as(got, seen) }))
+    |> Core.on(Core.Event.Seen(names, ->(seen: Core.Seen) { slowly(slow_got, seen) }))
+  )
+
+  H.using(H.Setup(replies: ["read_file.sse", "text.sse"], registry: some(registry))) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    started = Time.monotonic_ms
+    _ = try H.send(h, id, "Read a.txt.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    took = Time.monotonic_ms - started
+    H.close(a)
+    try Test.eq((try H.call(h, "DELETE", Protocol.session_path(id), "", H.auth(h))).status, 200)
+    seen = (1..5).to_a.map { |_| got.recv(5000).unwrap_or("none") }
+    try Test.eq(
+      seen,
+      ["session_started #{id} true", "turn_started", "tool_finished", "turn_finished", "session_ended deleted"],
+    )
+
+    try Test.assert(took < 400, "the turn waited for the slow observer: #{took} ms")
+    slow_seen = (1..5).to_a.map { |_| slow_got.recv(1500).unwrap_or("") }.select { |name| not name.empty? }
+    Test.assert(slow_seen.size < 5, "the slow observer lost none: #{slow_seen}")
+  end
+end
+
 # A message handler that hangs refuses its message too.
 def test_a_message_handler_that_hangs_refuses_the_message() -> Result[Void]
   registry = Core.registry().with(handler_ms: 50) |> Core.on(Core.Event.Message(&hang))
@@ -385,6 +418,21 @@ def crashing_tool() -> Core.Tool
     run: ->(_call: Core.Call) { ok(crash_on_boom("boom")) },
     target: ->(_call: Core.Call) { ok("") },
   )
+end
+
+def observed_as(got: Channel[String], seen: Core.Seen) -> Void
+  detail = case seen.name
+    "session_started" -> "#{seen.session} #{JSON.encode(JSON.get(seen.data, "new").unwrap_or(JSON.from(false)))}"
+    "session_ended" -> JSON.string(JSON.get(seen.data, "reason").unwrap_or(JSON.from(""))).unwrap_or("")
+    _ -> ""
+  end
+
+  _ = got.send("#{seen.name} #{detail}".strip, 0)
+end
+
+def slowly(got: Channel[String], seen: Core.Seen) -> Void
+  _ = got.send(seen.name, 0)
+  Task.sleep(300)
 end
 
 def crash_on_boom(text: String) -> String

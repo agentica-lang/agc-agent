@@ -4,6 +4,7 @@
 import Actor from "std/actor"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
+import Extensions from "../config/registry"
 import Session from "state"
 import Store from "store"
 
@@ -114,6 +115,7 @@ def emit(state: Session.State, given: Protocol.Event) -> Session.State
         end
       end
 
+      seen(state, event)
       log = trim(state.log.push(logged), state)
       prune(state.with(counter: id, log: log, subscribers: live, broken: none, reserved: reserved, display: display))
     error(e) -> broke(state, e)
@@ -179,6 +181,19 @@ def unsent(state: Session.State) -> Session.State
 end
 
 private
+
+# The observers that want the event get it as the clients do, without waiting.
+def seen(state: Session.State, event: Protocol.Event) -> Void
+  name = Protocol.event_name(event)
+  return if not Extensions.wanted?(state.setup.observers, name)
+
+  data = JSON.parse(Protocol.encode_event(event)).unwrap_or(JSON.object({}))
+  root = state.setup.ctx.root
+  Extensions.publish(
+    state.setup.observers,
+    Extensions.Seen(session: state.setup.id, root: root, name: name, data: data),
+  )
+end
 
 # The frames a failed write lost right after event `id`.
 def lost_after(state: Session.State, id: Int) -> List[String]
