@@ -37,7 +37,7 @@ struct Setup
   ctx: Tools.Context
   keep_events: Int
   approval_timeout_ms: Int
-  file: String
+  file: Store.Ref
   ## The model's window in tokens, 0 to ask the provider.
   window: Int = 0
   ## The model that writes a compaction's summary; the session's model when empty.
@@ -124,7 +124,7 @@ end
 
 ## A copy of a session: its file, and the user message it went back before ("" when none).
 struct Copied
-  file: String
+  file: Store.Ref
   text: String
 end
 
