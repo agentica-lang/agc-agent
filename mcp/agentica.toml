@@ -4,3 +4,6 @@ agentica = "0.32.0"
 
 [style]
 blank_line_after_end = true
+
+[dependencies]
+sse = { git = "https://github.com/agentica-lang/agc-agent", subdir = "sse", tag = "sse-0.0.1" }

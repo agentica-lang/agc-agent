@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- MCP servers on streamable HTTP: an entry of `FINN_MCP_CONFIG` with `url` and `headers` (`"Authorization": "Bearer ${TOKEN}"` takes the token from the environment, and no error or log shows it). Answers come as JSON or SSE; the client keeps the session id, resumes a cut stream with `Last-Event-ID`, starts a session the server ended again for the same call, and ends the session with a DELETE. Its tools follow the approvals and deny rules as the stdio ones do.
 - Extensions: a program of your own can serve Finn's core with its tools, wrappers of the runs of every tool but `activate_skill` and `run_script` (the approval decides first), prompts, `message` and `fold` handlers and services (`Core.serve`; see `examples/extension`); a crash or a hang of their code fails only that call, and `Core.call` builds a call for their tests.
 - A read-only `bash` command that runs without asking finds its programs in `/usr/local/bin`, `/usr/bin` and `/bin` when only root can change them; a program found only elsewhere (`~/.cargo/bin`) makes the command ask, and `which` checks its operands as paths.
 - **Breaking:** tools run without asking by default; `finn serve --approvals`, `FINN_APPROVALS=1` or `"approvals": true` in the config file turns the approvals on. Deny rules still apply; allow rules and `accept_edits` need the approvals on. With the approvals off, a `read_file` deny rule hides the file from the tools and refuses `bash` commands that name it, but cannot confine `bash` (`cat $(printf .env)`): use a sandbox.

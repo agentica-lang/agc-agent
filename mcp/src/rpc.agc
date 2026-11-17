@@ -1,4 +1,4 @@
-## JSON-RPC 2.0 messages of MCP on stdio, one JSON object per line, and the MCP records read from them. Pure.
+## JSON-RPC 2.0 messages of MCP, one JSON object per line on stdio, and the MCP records read from them. Pure.
 
 PROTOCOL_VERSION = "2025-06-18"
 METHOD_NOT_FOUND = -32601
@@ -101,6 +101,9 @@ def outcome(incoming: Incoming) -> Result[JSON.Value]
     none -> ok(incoming.result.unwrap_or(JSON.object({})))
   end
 end
+
+## The protocol version of an `initialize` result, `""` without one.
+def version(result: JSON.Value) -> String = string_at(result, "protocolVersion")
 
 ## A page of `tools/list`. A tool with no name is left out.
 def page(result: JSON.Value) -> Page

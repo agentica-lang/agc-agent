@@ -9,7 +9,8 @@ and its phases are issue #1 and its sub-issues.
 agentica.toml        the workspace: its members are the packages below
 sse/                 Server-Sent Events: parser and writer, pure; sse.agc is its public module
 llm/                 client for LLM APIs; llm.agc is its public module, src/ the rest
-mcp/                 client for MCP servers on stdio; mcp.agc is its public module
+mcp/                 client for MCP servers on stdio or streamable HTTP; mcp.agc is its public module;
+                     tests/fixtures/http_peer.py the HTTP server it is tested against (Python standard library)
 protocol/            commands, replies and events between server and clients, with JSON codecs, pure;
                      protocol.agc is its public module
 monty/               Python scripts in pydantic's Monty sandbox: the pinned `monty subprocess` worker (fetched

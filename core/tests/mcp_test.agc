@@ -7,6 +7,8 @@ import Fake from "support/fake_llm"
 import H from "support/harness"
 
 FAKES = ["../mcp/tests/support/fake_server.agc", "mcp/tests/support/fake_server.agc"]
+PEERS = ["../mcp/tests/fixtures/http_peer.py", "mcp/tests/fixtures/http_peer.py"]
+TOKEN = "peer-secret-token"
 
 # The model sees `mcp__fake__echo`, the call asks with its JSON input, and the result goes back to the model.
 def test_a_session_calls_an_mcp_tool_after_an_approval() -> Result[Void]
@@ -147,7 +149,88 @@ def test_slow_servers_list_their_tools_in_the_background() -> Result[Void]
   end
 end
 
+# A server on streamable HTTP takes its token from the environment; its tools follow the rules as those on stdio, and
+# a server that refuses the token is left out with a warning that does not show it.
+def test_an_http_server_takes_its_token_from_the_environment() -> Result[Void]
+  within_dir do |dir|
+    process = try Process.spawn(
+      "python3",
+      [try Path.resolve(try existing(PEERS)), "#{dir}/requests.jsonl"],
+      Process.Options(env: {"PEER_TOKEN": TOKEN}),
+    )
+
+    result = with_peer(dir, process)
+    Process.close(process)
+    result
+  end
+end
+
+# A url that is not HTTP, a reserved header, a variable that is not set and a server with both a command and a url
+# are refused, and no error shows a header value.
+def test_the_config_refuses_odd_http_servers() -> Result[Void]
+  within_dir do |dir|
+    url = JSON.from("http://127.0.0.1:1/mcp")
+    odd = [
+      JSON.object({"url": JSON.from("file:///etc/passwd")}),
+      JSON.object({"url": url, "headers": JSON.object({"Mcp-Session-Id": JSON.from("x")})}),
+      JSON.object({"url": url, "headers": JSON.object({"Authorization": JSON.from("Bearer ${UNSET_TOKEN}")})}),
+      JSON.object({"url": url, "headers": JSON.object({"X-Key": JSON.from("#{TOKEN}\r\nX-Other: 1")})}),
+      JSON.object({"url": url, "command": JSON.from("true")}),
+    ]
+
+    for entry in odd
+      try write_config(dir, {"web": entry})
+      listed = McpTools.servers(->(n) { config_env(dir, n) }, dir)
+      try Test.assert(not listed.ok?, "taken: #{JSON.encode(entry)}")
+      try Test.assert(not listed.message.include?(TOKEN), "the error shows the value")
+    end
+
+    ok()
+  end
+end
+
 private
+
+def with_peer(dir: String, process: Process) -> Result[Void]
+  url = "http://127.0.0.1:#{(try Process.read_line(process, 10_000)).strip}/mcp"
+  bearer = JSON.object({"Authorization": JSON.from("Bearer ${PEER_TEST_TOKEN}")})
+  wrong = JSON.object({"Authorization": JSON.from("Bearer ${WRONG_TEST_TOKEN}")})
+  try write_config(
+    dir,
+    {
+      "web": JSON.object({"url": JSON.from(url), "headers": bearer}),
+      "denied": JSON.object({"url": JSON.from(url), "headers": wrong}),
+    },
+  )
+
+  vars = {"PEER_TEST_TOKEN": TOKEN, "WRONG_TEST_TOKEN": "not-#{TOKEN}"}
+  read = ->(name: String) { vars.get(name).map { |v| ok(v) }.unwrap_or(config_env(dir, name)) }
+  started = McpTools.start(try McpTools.servers(read, dir))
+  rules = try Approval.parse_rules(["mcp__web__echo(*)"], [])
+  ctx = try Tools.context(".", &H.fake_env, started.tools)
+  input = JSON.object({"text": JSON.from("hi")})
+  verdicts = [
+    Approval.verdict(rules, ctx, "mcp__web__echo", input),
+    Approval.verdict(rules, ctx, "mcp__web__cut", input),
+  ]
+
+  echo = Tools.run(ctx, "mcp__web__echo", input)
+  McpTools.stop(started)
+  try Test.eq(
+    started.tools.map { |t| t.name },
+    ["mcp__web__echo", "mcp__web__cut", "mcp__web__big", "mcp__web__hang", "mcp__web__expire"],
+  )
+
+  try Test.eq(verdicts, [Tools.Verdict.Allow, Tools.Verdict.Ask])
+  try Test.eq(echo, Tools.Output(text: "hi", is_error: false))
+  try Test.eq(started.warnings.size, 1)
+  try Test.assert(
+    started.warnings[0].start_with?("mcp denied left out") and started.warnings[0].include?("401"),
+    started.warnings[0],
+  )
+
+  Test.assert(not started.warnings[0].include?(TOKEN), "the warning shows the token")
+end
 
 def within_dir(body: Fn[String, Result[Void]]) -> Result[Void]
   tmp = System.env("TMPDIR").unwrap_or("/tmp")

@@ -1,8 +1,10 @@
-## A client for MCP servers on stdio: JSON-RPC 2.0 with one message per line, `initialize`, `tools/list` and
-## `tools/call`. Each server is an actor that owns its process, started on the first use and again after it failed.
+## A client for MCP servers on stdio (JSON-RPC 2.0 with one message per line) or streamable HTTP (a POST per message,
+## answered with JSON or SSE, with the session id, resume and DELETE of revision 2025-06-18): `initialize`,
+## `tools/list` and `tools/call`. Each server is an actor that owns its process or HTTP session, started on the first
+## use and again after it failed.
 ##
-## Errors: `mcp.unavailable` (the server did not start, exited, answered nothing in time or broke the protocol: it is
-## stopped, and the next use starts it again) and `mcp.rpc` (the server answered with a JSON-RPC error, its code as
+## Errors: `mcp.unavailable` (the server did not start, exited, could not be reached, answered nothing in time or
+## broke the protocol: it is stopped, and the next use starts it again) and `mcp.rpc` (the server answered with a JSON-RPC error, its code as
 ## `code`). A tool that fails says so in `Output.is_error`, not as an error.
 
 import Conn from "src/client"
