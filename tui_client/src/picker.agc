@@ -67,7 +67,7 @@ end
 
 ## The picker of `/model`: every model of every provider, as `provider/model`, on the one in use.
 def models(list: Protocol.ProviderList, current: String) -> Picker
-  pairs = list.providers.flat_map { |p| p.models.map { |m| "#{p.name}/#{m}" } }
+  pairs = list.providers.flat_map { |p| p.models.map { |m| Client.printable("#{p.name}/#{m}") } }
   Picker(models: pairs, kind: Kind.Models, selected: pairs.index(current).unwrap_or(0))
 end
 
@@ -170,7 +170,10 @@ def session_choice(session: Protocol.SessionSummary, now_s: Int) -> Choice
   Choice(
     key: session.id,
     search: [session.id, session.cwd, session.model, session.title].join(" "),
-    text: "#{session.id}  #{session.cwd}  #{session.model}  #{ago(now_s, session.updated_s)}  #{title}",
+    text: (
+      Client.printable("#{session.id}  #{session.cwd}  #{session.model}  #{ago(now_s, session.updated_s)}  ") +
+      title
+    ),
   )
 end
 

@@ -33,27 +33,42 @@ def files_read(app: State.Model, result: Result[Protocol.FileList]) -> State.Mod
 end
 
 ## When the argument of a command starts, its choices are asked of the server once; they go when the command does.
+## A read that failed is not asked again until the command changes.
 def asked(app: State.Model) -> State.Model
-  case Input.argument_word(app.prompt, State.cursor(app))
-    some(word) if word.command != "/thinking" and app.id != "" and not app.reading_arguments ->
-      return app if (app.arguments.map { |a| a.command } == some(word.command))
-
-      read_arguments(app, word.command)
-    some(_) -> app
-    none ->
-      for listed in State.option_list(app.arguments)
-        return app.with(arguments: none) if not app.prompt.start_with?("#{listed.command} ")
-      end
-
-      app
+  word = Input.argument_word(app.prompt, State.cursor(app))
+  command = word.map { |w| w.command }
+  kept = app
+  if app.arguments.some? and not app.prompt.start_with?("#{app.arguments.unwrap!.command} ")
+    kept = kept.with(arguments: none)
   end
+
+  if app.arguments_failed.some? and command != app.arguments_failed
+    kept = kept.with(arguments_failed: none)
+  end
+
+  for wanted in State.option_list(command)
+    loaded = kept.arguments.map { |a| a.command } == command
+    return kept if wanted == "/thinking" or kept.id == "" or kept.reading_arguments or loaded
+    return kept if kept.arguments_failed == command
+
+    return read_arguments(kept, wanted)
+  end
+
+  kept
 end
 
-def arguments_read(app: State.Model, result: Result[Input.Arguments]) -> State.Model
+## The reply of a read: kept while its command is still in the prompt (a late `/tree` list leaves the listed tree
+## alone), then the command in the prompt now is asked for.
+def arguments_read(app: State.Model, command: String, result: Result[Input.Arguments]) -> State.Model
+  current = Input.argument_word(app.prompt, State.cursor(app)).map { |w| w.command }
+  return asked(app) if current != some(command)
+
   case result
-    ok(listed) if listed.tree.some? -> app.with(arguments: some(listed), listed: listed.tree)
-    ok(listed) -> app.with(arguments: some(listed))
-    error(e) -> State.noted(app, "error: the choices were not listed: #{e.message}")
+    ok(listed) if listed.tree.some? -> asked(app.with(arguments: some(listed), listed: listed.tree))
+    ok(listed) -> asked(app.with(arguments: some(listed)))
+    error(e) ->
+      failed = app.with(arguments_failed: some(command))
+      State.noted(failed, "error: the choices of #{command} were not listed: #{e.message}")
   end
 end
 
@@ -145,12 +160,12 @@ def read_arguments(app: State.Model, command: String) -> State.Model
   opened = app.opened
   now_s = app.clock_s
   serving = app.serving
-  read = TUI.Cmd.Run(-> { State.Msg.Arguments(opened, listing(backend, id, command, now_s, serving)) })
+  read = TUI.Cmd.Run(-> { State.Msg.Arguments(opened, command, listing(backend, id, command, now_s, serving)) })
   State.effect(app.with(reading_arguments: true), read)
 end
 
 # The choices of a command's argument from the server: `provider/model` pairs, sessions by id, or the messages of
-# the tree by number.
+# the tree by number. Each value and row has its control characters as spaces, as the prompt and the list show them.
 def listing(
   backend: Client.Backend,
   id: String,
@@ -161,15 +176,20 @@ def listing(
   case command
     "/model" ->
       pairs = Picker.models(try backend.list_providers.call(), serving).models
-      ok(Input.Arguments(command: command, choices: pairs.map { |pair| Input.Choice(value: pair, label: pair) }))
+      shown = pairs.map { |pair| Client.printable(pair) }
+      ok(Input.Arguments(command: command, choices: shown.map { |pair| Input.Choice(value: pair, label: pair) }))
     "/resume" ->
       sessions = (try backend.list_sessions.call()).sessions
       shown = Picker.shown(Picker.Picker(sessions: sessions), now_s)
-      ok(Input.Arguments(command: command, choices: shown.map { |c| Input.Choice(value: c.key, label: c.text) }))
+      choices = shown.map { |c| Input.Choice(value: Client.printable(c.key), label: Client.printable(c.text)) }
+      ok(Input.Arguments(command: command, choices: choices))
     _ ->
       tree = try backend.tree.call(id)
       shown = Picker.shown(Picker.Picker(tree: Client.tree_rows(tree), kind: Picker.Kind.Fork))
-      numbered = (0...shown.size).to_a.map { |i| Input.Choice(value: "#{i + 1}", label: shown[i].text) }
+      numbered = (0...shown.size).to_a.map { |i|
+        Input.Choice(value: "#{i + 1}", label: Client.printable(shown[i].text))
+      }
+
       ok(Input.Arguments(command: command, choices: numbered, tree: some(tree)))
   end
 end
