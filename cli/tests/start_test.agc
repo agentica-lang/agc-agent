@@ -258,7 +258,8 @@ def default_server_checks(dir: String, state: String) -> Result[Void]
   evil = "#{dir}/evil"
   try Dir.mkdir("#{evil}/core")
   try File.write_text("#{evil}/core/main.agc", "def main() -> Void\n  puts(\"pwned\")\nend\n")
-  cli = try Driver.start(state, ["--cwd", dir], "1", evil, false)
+  extra = try Driver.own_cache(state, "#{dir}/build")
+  cli = try Driver.start(state, ["--cwd", dir], "1", evil, false, extra)
   done = try Driver.finish(cli)
   info = try Protocol.decode_server_info(try File.read_text("#{state}/server.json"))
   alive = Client.health(Client.Server(url: "http://127.0.0.1:#{info.port}", token: info.token))
