@@ -3,7 +3,8 @@
 ## and the model API: `FINN_API` (`openai`, chat completions, by default, or `openai_responses`), `FINN_BASE_URL` (a
 ## local llama-server by default), `FINN_API_KEY` and `FINN_MODEL`; `FINN_MAX_TOKENS` (the most tokens of a reply; by
 ## default the model's own limit in the catalog, else the API's); `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for
-## compaction; `FINN_DRAIN_MS` (how long a stop waits for the turns, 60000); `FINN_MODELS_URL` (the models.dev catalog
+## compaction; `FINN_WAKES_MAX` (how often an extension may wake a session per user message, 100; 0 for no cap);
+## `FINN_DRAIN_MS` (how long a stop waits for the turns, 60000); `FINN_MODELS_URL` (the models.dev catalog
 ## of prices and windows, `off` for none) and `FINN_MODELS_PROVIDER` (the provider of the model there).
 ## Code mode is on unless `FINN_CODE_MODE=0` (`--no-codemode`); its Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0
 ## binary: its hash is not checked), else the pinned one fetched at the first script into `$XDG_CACHE_HOME/finn` (else
@@ -44,6 +45,8 @@ DATA_DIR_ENV = "FINN_DATA_DIR"
 PREFIX = "FINN_"
 OLD_PREFIX = "AGC_AGENT_"
 DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
+## How many times a session may wake itself per user message by default.
+WAKES_MAX = 100
 ## The model of a session on an OpenAI API of a server whose own API has its own model (Anthropic).
 DEFAULT_MODEL = "default"
 ## The names `FINN_API` takes: OpenAI chat completions, the OpenAI Responses format, and Anthropic Messages.
@@ -79,6 +82,8 @@ struct Options
   registry: Optional[Extensions.Served] = none
   ## The observers of the extensions' `Seen` handlers, which the sessions start (`Sessions.start`).
   observers: List[Extensions.Observer] = []
+  ## How many times a session may wake itself (`Core.Host`) per user message (`FINN_WAKES_MAX`); 0 has no cap.
+  wakes_max: Int = WAKES_MAX
   ## A test seam: makes the diff of each tool call (see `Tools.Context.diff`).
   diff: Optional[Fn[String, JSON.Value, String]] = none
   port: Int = 0
@@ -217,6 +222,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       asking: user.asking,
       context_window: try context_window(read),
       max_tokens: try tokens_of(read, "FINN_MAX_TOKENS"),
+      wakes_max: try wakes_max(read),
       drain_ms: try drain_ms(read),
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(server.base_url),
@@ -448,6 +454,17 @@ def drain_ms(read: Fn[String, Result[String]]) -> Result[Int]
 end
 
 def context_window(read: Fn[String, Result[String]]) -> Result[Optional[Int]] = tokens_of(read, "FINN_CONTEXT_WINDOW")
+
+def wakes_max(read: Fn[String, Result[String]]) -> Result[Int]
+  for text in option_list(set(read, "FINN_WAKES_MAX"))
+    case text.to_i
+      ok(count) if count >= 0 -> return ok(count)
+      _ -> return error("FINN_WAKES_MAX must be a number of wakes, 0 for no cap, not #{text.inspect}")
+    end
+  end
+
+  ok(WAKES_MAX)
+end
 
 def tokens_of(read: Fn[String, Result[String]], name: String) -> Result[Optional[Int]]
   for text in option_list(set(read, name))

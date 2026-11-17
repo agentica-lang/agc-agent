@@ -19,6 +19,7 @@ import Agent from "../agent/agent"
 import Compaction from "../agent/compaction"
 import Branch from "branch"
 import Export from "export"
+import Extensions from "../config/registry"
 import Profiles from "../config/profiles"
 import Session from "state"
 import Store from "store"
@@ -71,6 +72,23 @@ def send(address: Address[Session.Msg], text: String) -> Result[Protocol.Message
   end
 
   ok(try try sent)
+end
+
+## Starts a turn on a message of the session's own extension (or queues it), unless the session woke `wakes_max`
+## times since the last user message: `session.busy` then.
+def wake(address: Address[Session.Msg], text: String) -> Result[Protocol.MessageAccepted]
+  sent: Result[Result[Protocol.MessageAccepted]] = Actor.call(address, Session.CALL_MS) do |reply|
+    Session.Msg.Wake(text, reply)
+  end
+
+  ok(try try sent)
+end
+
+## Gives the session's events of `names` to `handler`, as an observer, until the session stops.
+def watch(address: Address[Session.Msg], names: List[String], handler: Fn[Extensions.Seen, Void]) -> Result[Void]
+  watched: Result[Bool] = Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Watch(names, handler, reply) end
+  _ = try watched
+  ok()
 end
 
 def answer(address: Address[Session.Msg], approval_id: String, decision: Protocol.Decision) -> Result[Void]
@@ -240,6 +258,17 @@ struct Cut
   approvals: List[String]
 end
 
+def woken(state: Session.State, text: String, reply: Channel[Result[Protocol.MessageAccepted]]) -> Session.State
+  cap = state.setup.wakes_max
+  if cap > 0 and state.wakes >= cap
+    message = "the session woke #{cap} times since the last user message (FINN_WAKES_MAX)"
+    Actor.reply(reply, error(message, kind: Protocol.KIND_SESSION_BUSY))
+    return state
+  end
+
+  Turn.start_turn(state.with(wakes: state.wakes + 1), text, reply)
+end
+
 # A stop for a turn that is no longer the running one stops nothing.
 def stops?(state: Session.State, turn_id: Optional[String]) -> Bool
   turn_id.none? or state.turn.map { |turn| turn.id } == turn_id
@@ -255,7 +284,11 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
       Actor.reply(reply, Session.Load(running: running, asking: running and not state.pending.empty?))
       Actor.continue(state)
     Session.Msg.Subscribe(last, reply) -> Actor.continue(Stream.attach(state, last, reply))
-    Session.Msg.Send(text, reply) -> Actor.continue(Turn.start_turn(state, text, reply))
+    Session.Msg.Send(text, reply) -> Actor.continue(Turn.start_turn(state.with(wakes: 0), text, reply))
+    Session.Msg.Wake(text, reply) -> Actor.continue(woken(state, text, reply))
+    Session.Msg.Watch(names, handler, reply) ->
+      Actor.reply(reply, true)
+      Actor.continue(state.with(watchers: state.watchers.push(Extensions.watcher(names, handler))))
     Session.Msg.Answer(approval_id, decision, reply) ->
       Actor.continue(Turn.answer_approval(state, approval_id, decision, reply))
     Session.Msg.Close(reply) ->
@@ -317,6 +350,7 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
 end
 
 def terminate(state: Session.State) -> Void
+  Extensions.stop_observers(state.watchers)
   for turn in option_list(state.turn)
     Task.cancel(turn.task)
   end

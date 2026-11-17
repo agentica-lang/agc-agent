@@ -184,14 +184,15 @@ private
 
 # The observers that want the event get it as the clients do, without waiting.
 def seen(state: Session.State, event: Protocol.Event) -> Void
+  observers = state.setup.observers + state.watchers
   name = Protocol.event_name(event)
-  return if not Extensions.wanted?(state.setup.observers, name)
+  return if not Extensions.wanted?(observers, name)
 
   data = JSON.parse(Protocol.encode_event(event)).unwrap_or(JSON.object({}))
-  root = state.setup.ctx.root
+  setup = state.setup
   Extensions.publish(
-    state.setup.observers,
-    Extensions.Seen(session: state.setup.id, root: root, name: name, data: data),
+    observers,
+    Extensions.Seen(session: setup.id, root: setup.ctx.root, name: name, data: data, parent: setup.parent),
   )
 end
 
