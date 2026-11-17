@@ -24,8 +24,7 @@ def on_command(app: State.Model, command: Client.Command) -> State.Model
   case command
     Client.Command.Quit -> app.with(exit: some(0))
     Client.Command.Stop -> stop_command(app)
-    Client.Command.Help ->
-      app.with(entries: app.entries + Client.help(app.custom).map { |line| State.note_entry(line) })
+    Client.Command.Help -> help_command(Session.with_custom(app.with(custom_dir: none), app.id, app.cwd))
     Client.Command.Cost -> State.noted(app, "/cost comes with the model catalog")
     Client.Command.New -> switch_command(app, none)
     Client.Command.Resume(none) -> State.tried(app, picking(app))
@@ -156,6 +155,11 @@ def profile_command(app: State.Model, name: Optional[String]) -> Result[State.Mo
   current = (try app.backend.session.call(app.id)).profile.map { |p| p.name }.unwrap_or("")
   lines = Client.profile_listing(try app.backend.list_profiles.call(app.id), current)
   ok(app.with(entries: app.entries + lines.map { |line| State.note_entry(line) }))
+end
+
+# `/help`, after the session's slash commands were read again.
+def help_command(app: State.Model) -> State.Model
+  app.with(entries: app.entries + Client.help(app.custom).map { |line| State.note_entry(line) })
 end
 
 def thinking_command(app: State.Model, level: Optional[String]) -> State.Model

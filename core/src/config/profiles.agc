@@ -18,6 +18,7 @@
 import Protocol from "pkg/protocol/protocol"
 import Approval from "../approval/approval"
 import Extensions from "registry"
+import Sandbox from "../tools/sandbox"
 import Tools from "../tools/tools"
 
 DEFAULT = "build"
@@ -218,13 +219,11 @@ def in_folder(before: Loaded, dir: String, source: String) -> Loaded
   for file in md_files(dir)
     name = file.slice(0, file.length - 3)
     path = "#{dir}/#{file}"
-    kind = case File.stat(path)
-      ok(info) -> info.kind
-      error(_) -> ""
-    end
+    if not named?(name) or Sandbox.file_inside(dir, path).none?
+      skipped = Warning(
+        text: "#{path}: skipped, not a profile (a file NAME.md in this folder, NAME of a-z, 0-9, - and _)",
+      )
 
-    if not named?(name) or kind != "file"
-      skipped = Warning(text: "#{path}: skipped, not a profile (a file NAME.md, NAME of a-z, 0-9, - and _)")
       loaded = loaded.with(warnings: loaded.warnings.push(skipped))
       next
     end

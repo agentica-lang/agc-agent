@@ -32,7 +32,7 @@ A profile decides which tools the model of a session sees. Pick one for a new se
 - `build`, the default: every tool;
 - `plan`: `read_file`, `glob`, `grep`, `todo_write` and `activate_skill`, with a note in the system prompt to change nothing. No `bash`, no writes, no MCP tools.
 
-A profile is a file `NAME.md` in `~/.config/finn/profiles/` (`$XDG_CONFIG_HOME/finn/profiles/`), or in `.finn/profiles/` of a [trusted](config.md#trusted-folders) project, which wins over yours. A file named `build.md` or `plan.md` replaces the built-in one, so a trusted project may replace `plan`; a project file that replaces a profile is a warning the clients show. NAME is lowercase letters, digits, `-` and `_`: another `.md` file there (a `README.md`) is skipped with a warning.
+A profile is a file `NAME.md` in `~/.config/finn/profiles/` (`$XDG_CONFIG_HOME/finn/profiles/`), or in `.finn/profiles/` of a [trusted](config.md#trusted-folders) project, which wins over yours. A file named `build.md` or `plan.md` replaces the built-in one, so a trusted project may replace `plan`; a project file that replaces a profile is a warning the clients show. NAME is lowercase letters, digits, `-` and `_`: another `.md` file there (a `README.md`, a link out of the folder) is skipped with a warning.
 
 ```markdown
 ---

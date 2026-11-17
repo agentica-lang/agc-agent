@@ -51,7 +51,7 @@ The [HTTP API](server.md#routes) takes two more answers:
 
 The accept-edits mode (`PATCH /v1/sessions/ID` with `{"accept_edits": true}`) runs the calls of `write_file`, `edit_file` and `apply_patch` without asking.
 
-Answers and the accept-edits mode last until the server restarts. With the approvals on, a change under `.git/` always asks, even when an allow rule, an answer or accept-edits covers it, since git's config and hooks run programs; only a deny rule refuses it instead. With the approvals off it runs.
+Answers and the accept-edits mode last until the server restarts. With the approvals on, a change under `.git/` or `.finn/` always asks, even when an allow rule, an answer or accept-edits covers it, since git's config and hooks run programs and `.finn/` holds the project's rules, skills, profiles and slash commands; only a deny rule refuses it instead. With the approvals off it runs.
 
 ## Rules
 
