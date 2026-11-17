@@ -105,6 +105,10 @@ end
 
 The handlers of one event have 2 seconds together.
 
+`Core.on(registry, Core.Event.Seen(["turn_started", "tool_finished", "turn_finished"], fn))` observes the sessions. `fn` gets a `Core.Seen` with the session id, its folder, the event's name and its `data`, the JSON that [`/events`](server.md#events) sends. Two names have no SSE event: `session_started` (`{"id", "new"}`) comes before any event of the session, with `new` true when the session was just created and false when it was loaded from its file (a fork is loaded from the file it was written to). `session_ended` (`{"id", "reason"}`, `deleted` or `stopping`) comes last; a session deleted before it was loaded again gets it alone. Ask only for the names you need: the text deltas are events too.
+
+Nothing waits for an observer. It gets its events in order, one at a time, with 2 seconds each. One that falls 256 events behind loses the next ones, and the server log counts them. A crash or a hang is logged, and the next event comes.
+
 `Core.on(registry, Core.Event.ToolBefore(fn))` gets each tool call before anything else sees it, as a `Core.ToolCall` with the session id, its folder, the tool's name and the input. `fn` gives a `Core.Check`:
 
 - `Core.Check.Go` runs the call as it is.

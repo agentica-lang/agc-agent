@@ -28,6 +28,7 @@ export Extensions.Registry
 export Extensions.Call
 export Extensions.Tool
 export Extensions.Event
+export Extensions.Seen
 export Extensions.ToolCall
 export Extensions.Check
 export Extensions.Service

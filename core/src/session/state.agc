@@ -74,6 +74,8 @@ struct Setup
   approver: Optional[Extensions.Approver] = none
   ## What the extensions of the server add: the `message` and `fold` handlers.
   registry: Optional[Extensions.Registry] = none
+  ## The observers of the extensions, which get the events of the session.
+  observers: List[Extensions.Observer] = []
   ## Whether the session's profile shows a tool to the model; none shows every tool.
   shows: Optional[Fn[String, Bool]] = none
   ## The session's profile as clients see it, and why it does not load (empty when it does): a turn is refused then,

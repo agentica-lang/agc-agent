@@ -68,6 +68,61 @@ def test_a_tool_before_handler_that_stops_or_crashes_fails_the_call() -> Result[
   stopped_call(crash, "a tool_before handler failed: task crashed")
 end
 
+# An observer gets the events it names, of every session, in order, and the session's start and end. Nothing waits for
+# an observer: one that is stuck until the end still lets the turn end, and loses the events past its inbox.
+def test_observers_see_the_events_in_order_and_never_slow_a_turn() -> Result[Void]
+  names = ["session_started", "turn_started", "tool_finished", "turn_finished", "session_ended"]
+  got: Channel[String] = Channel.new(32)
+  stuck_got: Channel[String] = Channel.new(32)
+  gate: Channel[Bool] = Channel.new(1)
+  registry = (
+    Core.registry().with(observer_inbox: 1, handler_ms: 10_000)
+    |> Core.on(Core.Event.Seen(names, ->(seen: Core.Seen) { observed_as(got, seen) }))
+    |> Core.on(Core.Event.Seen(names, ->(seen: Core.Seen) { stuck(stuck_got, gate, seen) }))
+  )
+
+  H.using(H.Setup(replies: ["read_file.sse", "text.sse"], registry: some(registry))) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Read a.txt.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq((try H.call(h, "DELETE", Protocol.session_path(id), "", H.auth(h))).status, 200)
+    seen = (1..5).to_a.map { |_| got.recv(5000).unwrap_or("none") }
+    try Test.eq(
+      seen,
+      ["session_started #{id} true", "turn_started", "tool_finished", "turn_finished", "session_ended deleted"],
+    )
+
+    gate.close
+    stuck_seen = [stuck_got.recv(5000).unwrap_or(""), stuck_got.recv(5000).unwrap_or("")]
+    try Test.assert(stuck_seen[0] == "session_started" and not stuck_seen[1].empty?, "stuck: #{stuck_seen}")
+    Test.assert(not stuck_got.recv(200).ok?, "the stuck observer lost no event")
+  end
+end
+
+# The events a broken session file could not save reach the observers as they reach the clients, and a server that
+# stops ends its sessions.
+def test_observers_see_the_unsaved_end_of_a_turn_and_the_stop() -> Result[Void]
+  got: Channel[String] = Channel.new(32)
+  names = ["turn_started", "error", "turn_finished", "session_ended"]
+  registry = Core.registry() |> Core.on(Core.Event.Seen(names, ->(seen: Core.Seen) { observed_as(got, seen) }))
+  try H.using(H.Setup(replies: ["write_file.sse", "text.sse"], registry: some(registry))) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    try Test.eq(try H.run("chmod", ["400", H.session_file(h, id)]), 0)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    Test.eq(try H.run("chmod", ["600", H.session_file(h, id)]), 0)
+  end
+
+  seen = (1..4).to_a.map { |_| got.recv(5000).unwrap_or("none") }
+  Test.eq(seen, ["turn_started", "error", "turn_finished", "session_ended stopping"])
+end
+
 # A message handler that hangs refuses its message too.
 def test_a_message_handler_that_hangs_refuses_the_message() -> Result[Void]
   registry = Core.registry().with(handler_ms: 50) |> Core.on(Core.Event.Message(&hang))
@@ -443,6 +498,21 @@ def stopped_call(registry: Core.Registry, reason: String) -> Result[Void]
     try Test.assert(body.include?(reason), "the model gets #{reason.inspect}: #{body}")
     Test.assert(not File.read_text("#{h.work}/other.txt").ok?, "the call ran")
   end
+end
+
+def observed_as(got: Channel[String], seen: Core.Seen) -> Void
+  detail = case seen.name
+    "session_started" -> "#{seen.session} #{JSON.encode(JSON.get(seen.data, "new").unwrap_or(JSON.from(false)))}"
+    "session_ended" -> JSON.string(JSON.get(seen.data, "reason").unwrap_or(JSON.from(""))).unwrap_or("")
+    _ -> ""
+  end
+
+  _ = got.send("#{seen.name} #{detail}".strip, 0)
+end
+
+def stuck(got: Channel[String], gate: Channel[Bool], seen: Core.Seen) -> Void
+  _ = got.send(seen.name, 0)
+  _ = gate.recv(60_000)
 end
 
 def crash_on_boom(text: String) -> String
