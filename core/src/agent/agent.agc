@@ -14,6 +14,7 @@ MAX_ROUNDS = 50
 ## The provider whose models are offered `apply_patch`, as a custom tool.
 RESPONSES = "openai_responses"
 SAME_ROUNDS = 3
+LATEST = "todos"
 DENIED_BY_RULE = "denied by a rule of the config"
 DENIED_BY_USER = "the user denied this call"
 
@@ -106,6 +107,8 @@ struct Turn
   on_fold: Optional[Fn[List[String], List[LLM.Message], String]] = none
   ## The model's todo list when the turn starts; a fold gives the model its list again.
   todos: List[Todos.Todo] = []
+  ## The last list the turn sent, under `LATEST`: a call from a script too. Made when the turn starts.
+  latest: Optional[ATS[String, List[Todos.Todo]]] = none
 end
 
 # A `todo_write` call and its list.
@@ -125,7 +128,10 @@ struct Outcome
   reason: Protocol.StopReason
 end
 
-def run(given: Turn) -> Outcome
+def run(started: Turn) -> Outcome
+  latest: ATS[String, List[Todos.Todo]] = ATS.new()
+  latest.put(LATEST, started.todos)
+  given = started.with(latest: some(latest))
   turn = windowed(given.with(listed: listed_model(given)))
   messages = turn.history.push(LLM.Message(role: LLM.Role.User, content: [text_block(turn.text)]))
   turn.link.commit.call(messages, [], [])
@@ -199,7 +205,6 @@ def run(given: Turn) -> Outcome
         turn.link.stripped.call()
       end
     else
-      turn = turn.with(todos: current_todos(messages, turn.todos))
       folded = compacted(turn, context, folded.with(messages: messages), marks)
       turn = renewed(turn, folded.fresh)
       folded = folded.with(fresh: none)
@@ -242,22 +247,11 @@ def assistant_text(message: LLM.Message) -> String = message.content.map { |b| t
 ## Whether `url` is on this machine, where a llama-server knows the window it runs with.
 def local?(url: String) -> Bool = LOCAL_HOSTS.any? { |host| url.start_with?(host) }
 
-## What a fold adds for the todo list: the list of the last `todo_write` call in `messages` that worked, else `known`;
-## nothing for an empty list or when a message that stays has that call.
-def folded_todos(messages: List[LLM.Message], staying: List[LLM.Message], known: List[Todos.Todo]) -> String
-  list = current_todos(messages, known)
-  return "" if list.empty?
-
-  for call in option_list(last_todo_call(messages))
-    return "" if (staying.any? { |m| m.content.any? { |b| use_id(b) == call.id } })
-  end
+## What a fold adds for the todo list `list`: nothing when it is empty or a `todo_write` call that stays gave it.
+def folded_todos(staying: List[LLM.Message], list: List[Todos.Todo]) -> String
+  return "" if (list.empty? or last_todo_call(staying).map { |call| call.todos } == some(list))
 
   "\n\nYour todo list (`todo_write`) when the history was summarized:\n#{Todos.shown(list)}"
-end
-
-## The list of the last `todo_write` call in `messages` that worked, else `known`.
-def current_todos(messages: List[LLM.Message], known: List[Todos.Todo]) -> List[Todos.Todo]
-  last_todo_call(messages).map { |call| call.todos }.unwrap_or(known)
 end
 
 private
@@ -352,9 +346,7 @@ def compacted(turn: Turn, context: Int, folded: Folded, marks: List[String]) -> 
           compaction = summary.with(summary: "#{summary.summary}#{extra}")
         end
 
-        compaction = compaction.with(
-          summary: "#{compaction.summary}#{folded_todos(folded.messages, staying, turn.todos)}",
-        )
+        compaction = compaction.with(summary: "#{compaction.summary}#{folded_todos(staying, latest_todos(turn))}")
 
         turn.link.compacted.call(compaction)
         return fresh.with(messages: Compaction.apply(folded.messages, compaction), just: true)
@@ -523,6 +515,10 @@ def noticed_run(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Tools.Tu
       ok(list) ->
         todos = list.map { |t| Protocol.Todo(content: t.content, status: t.status) }
         turn.link.emit.call(Protocol.Event.Todos(Protocol.Todos(todos: todos)))
+        for latest in option_list(turn.latest)
+          latest.put(LATEST, list)
+        end
+
       error(_) -> nil
     end
   end
@@ -662,6 +658,15 @@ def option_list[T](value: Optional[T]) -> List[T]
   end
 end
 
+# The last list the turn sent, else the one it started with.
+def latest_todos(turn: Turn) -> List[Todos.Todo]
+  for latest in option_list(turn.latest)
+    return latest.get(LATEST).unwrap_or(turn.todos)
+  end
+
+  turn.todos
+end
+
 # The last `todo_write` call of `messages` whose list is valid and whose result is not an error.
 def last_todo_call(messages: List[LLM.Message]) -> Optional[TodoCall]
   blocks = messages.flat_map { |m| m.content }
@@ -686,12 +691,5 @@ def failed_id(block: LLM.Block) -> List[String]
   case block
     LLM.Block.ToolResult(result) if result.is_error -> [result.tool_use_id]
     _ -> []
-  end
-end
-
-def use_id(block: LLM.Block) -> String
-  case block
-    LLM.Block.ToolUse(call) -> call.id
-    _ -> ""
   end
 end

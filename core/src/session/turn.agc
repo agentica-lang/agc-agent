@@ -279,7 +279,7 @@ def end_fold(
   for summary in option_list(found)
     staying = Compaction.staying(done.history, summary)
     extra = on_fold(done.setup).call(done.marks, staying)
-    extra = "#{extra}#{Agent.folded_todos(done.history, staying, todos_of(done))}"
+    extra = "#{extra}#{Agent.folded_todos(staying, todos_of(done))}"
     folded = compact(done, summary.with(summary: "#{summary.summary}#{extra}"))
     if folded.broken.some?
       Actor.reply(reply, error("the session file cannot be written", kind: Protocol.KIND_SESSION_STORAGE))
