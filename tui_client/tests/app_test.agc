@@ -198,6 +198,9 @@ def test_an_early_stop_reaches_a_turn_of_another_client() -> Result[Void]
 
   try Test.eq([queued.model.stopping, queued.model.stop_wanted], [true, false])
   try Test.eq(queued.cmds.size, 1)
+  # A stop that found its turn ended says so.
+  late = App.update(queued.model, App.Msg.Stopped(ok(false))).model
+  try Test.eq([late.stopping.to_s, late.entries.last.text], ["false", "the turn had already ended"])
   stray = App.update(model_of(30, 8), App.Msg.Leveled(ok()))
   Test.eq([stray.model.entries.size, stray.cmds.size], [0, 0])
 end
@@ -435,7 +438,10 @@ def test_up_recalls_prompts_and_a_large_paste_is_one_token() -> Result[Void]
   ).model
 
   try Test.eq(both.prompt, "[paste #1 1022 chars][paste #2 +12 lines]")
-  Test.eq(App.update(both, enter()).model.outbox, ["#{inner}#{text}"])
+  try Test.eq(App.update(both, enter()).model.outbox, ["#{inner}#{text}"])
+  # A token's text typed before the real token is the copy that is put back; the real token after it stays as text.
+  typed = model_of(40, 8).with(id: "s1", prompt: "[paste #1 +12 lines] [paste #1 +12 lines]", pastes: [text])
+  Test.eq(App.update(typed, enter()).model.outbox, ["#{text} [paste #1 +12 lines]"])
 end
 
 # `@` asks the server for the files of the session's folder each time it is typed; the list under the editor narrows
@@ -451,6 +457,13 @@ def test_at_lists_the_files_and_tab_completes_one() -> Result[Void]
   failed = App.update(again.model, App.Msg.Files(again.model.opened, error("refused")))
   try Test.eq([failed.model.reading_files.to_s, failed.model.files.unwrap_or([]).size.to_s], ["false", "2"])
   try Test.assert(failed.model.entries.last.text.include?("the files were not listed"), failed.model.entries.last.text)
+  # After a timeout the server may still walk the folder: `@` asks again only later.
+  slow = App.update(again.model, App.Msg.Files(again.model.opened, error("slow", kind: Client.KIND_TIMEOUT))).model
+  try Test.eq(App.update(slow.with(prompt: "", cursor: 0), App.Msg.Key(TUI.Event.Char("@", TUI.Mods()))).cmds.size, 0)
+  # A name with control bytes is drawn without them.
+  odd = "a#{String.from_code(27)}[2Jb.txt"
+  shown = App.update(model.with(prompt: "@", cursor: 1), App.Msg.Files(model.opened, ok([odd]))).model
+  try Test.assert(rows(shown).any? { |row| row.include?("a [2Jb.txt") }, "#{rows(shown)}")
   for char in ["t", "h", "k"]
     model = App.update(model, App.Msg.Key(TUI.Event.Char(char, TUI.Mods()))).model
   end

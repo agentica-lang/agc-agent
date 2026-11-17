@@ -79,6 +79,7 @@ enum Msg
   Send(String, Channel[Result[Protocol.MessageAccepted]])
   Answer(String, Protocol.Decision, Channel[Result[Void]])
   Stop(Optional[String], Channel[Bool])
+  Context(Channel[Tools.Context])
   Close(Channel[Result[Void]])
   Emit(String, Protocol.Event)
   Ask(String, Agent.Ask, Channel[Protocol.Decision])

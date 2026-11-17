@@ -1,4 +1,5 @@
 import Protocol from "pkg/protocol/protocol"
+import Folder from "../src/session/folder"
 import Config from "../src/config/config"
 import Server from "../src/http/server"
 import H from "support/harness"
@@ -161,34 +162,51 @@ def test_a_stop_for_another_turn_stops_nothing() -> Result[Void]
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
     turn_id = (try H.session(h, id)).turn_id
     other = Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: some("t-gone")))
-    try Test.eq((try H.post(h, Protocol.stop_path(id), other)).status, 200)
+    missed = try H.post(h, Protocol.stop_path(id), other)
+    try Test.eq([missed.status.to_s, missed.text], ["200", Protocol.encode_stopped(Protocol.Stopped(stopped: false))])
     try Test.eq((try H.session(h, id)).turn_id, turn_id)
     try Test.eq((try H.post(h, Protocol.stop_path(id), "{\"turn\": 1}")).status, 400)
-    _ = try H.post(h, Protocol.stop_path(id), Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: turn_id)))
+    hit = try H.post(h, Protocol.stop_path(id), Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: turn_id)))
+    try Test.eq(hit.text, Protocol.encode_stopped(Protocol.Stopped(stopped: true)))
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
     Test.eq(H.stop_reason(a), "cancelled")
   end
 end
 
-# The files of the session folder, for a client's `@` list: breadth first, without hidden files and the folders of
-# dependencies.
+# The files of the session folder, for a client's `@` list: breadth first, without hidden files, the folders of
+# dependencies, links (to a file, to a folder outside, or up out of the folder) and what a `read_file` deny rule hides;
+# cut at MAX_FILES.
 def test_the_files_route_lists_the_session_folder() -> Result[Void]
-  H.using(H.Setup(replies: [])) do |h|
+  H.using(H.Setup(replies: [], deny: ["read_file(secrets/**)"])) do |h|
     root = "#{h.work}/project"
-    for dir in [root, "#{root}/src", "#{root}/node_modules", "#{root}/.git"]
+    outside = "#{h.work}/outside"
+    for dir in [root, outside, "#{root}/src", "#{root}/node_modules", "#{root}/.git", "#{root}/secrets", "#{root}/sub"]
       try Dir.mkdir(dir)
     end
 
-    for file in ["b.txt", "a.txt", ".env", "src/main.agc", "node_modules/x.js", ".git/HEAD"]
+    for file in ["b.txt", "a.txt", ".env", "src/main.agc", "node_modules/x.js", ".git/HEAD", "secrets/key.txt"]
       try File.write_text("#{root}/#{file}", "x")
     end
 
+    try File.write_text("#{outside}/secret.txt", "x")
+    try link(outside, "#{root}/out_dir")
+    try link("#{root}/a.txt", "#{root}/linked.txt")
+    try link("../../outside", "#{root}/sub/up")
     id = try H.new_session_in(h, root)
     answer = try H.get(h, Protocol.files_path(id))
     try Test.eq(answer.status, 200)
     try Test.eq((try Protocol.decode_file_list(answer.text)).files, ["a.txt", "b.txt", "src/main.agc"])
-    Test.eq((try H.get(h, Protocol.files_path("s-none"))).status, 404)
+    try Test.eq((try H.get(h, Protocol.files_path("s-none"))).status, 404)
+    many = "#{h.work}/many"
+    try Dir.mkdir(many)
+    for i in 0..Folder.MAX_FILES
+      try File.write_text("#{many}/f#{i}", "")
+    end
+
+    cut = try Protocol.decode_file_list((try H.get(h, Protocol.files_path(try H.new_session_in(h, many)))).text)
+    try Test.eq(cut.files.size, Folder.MAX_FILES)
+    Test.eq(Folder.files(many, none, 0), [])
   end
 end
 

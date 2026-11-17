@@ -159,10 +159,10 @@ def shell(server: Server, id: String, request: Protocol.RunShell) -> Result[Prot
   Protocol.decode_shell_accepted(try call(server, "POST", Protocol.shell_path(id), Protocol.encode_run_shell(request)))
 end
 
-## Stops the running turn or shell command; with `turn_id`, only that turn while it runs.
-def stop(server: Server, id: String, turn_id: Optional[String] = none) -> Result[Void]
-  _ = try call(server, "POST", Protocol.stop_path(id), Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: turn_id)))
-  ok()
+## Stops the running turn or shell command; with `turn_id`, only that turn while it runs. Whether one was stopped.
+def stop(server: Server, id: String, turn_id: Optional[String] = none) -> Result[Bool]
+  body = Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: turn_id))
+  ok((try Protocol.decode_stopped(try call(server, "POST", Protocol.stop_path(id), body))).stopped)
 end
 
 ## The files of the session's folder, for the `@` list.

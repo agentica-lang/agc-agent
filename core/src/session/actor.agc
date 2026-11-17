@@ -160,6 +160,11 @@ def stop(address: Address[Session.Msg], turn_id: Optional[String]) -> Result[Boo
   Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Stop(turn_id, reply) end
 end
 
+## The folder of the session and what its rules hide, for reads outside the actor.
+def context(address: Address[Session.Msg]) -> Result[Tools.Context]
+  Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Context(reply) end
+end
+
 ## The user messages of every branch of the session.
 def tree(address: Address[Session.Msg]) -> Result[Protocol.SessionTree]
   read: Result[Result[Protocol.SessionTree]] = Actor.call(address, Session.CALL_MS) do |reply|
@@ -224,6 +229,9 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
       Actor.done(state)
     Session.Msg.Stop(turn_id, reply) if not stops?(state, turn_id) ->
       Actor.reply(reply, false)
+      Actor.continue(state)
+    Session.Msg.Context(reply) ->
+      Actor.reply(reply, state.setup.ctx)
       Actor.continue(state)
     Session.Msg.Stop(_, reply) ->
       Actor.reply(reply, state.turn.some? or state.shell.some?)

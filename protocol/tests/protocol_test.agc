@@ -338,6 +338,8 @@ def test_a_stop_and_a_file_list_round_trip() -> Result[Void]
   )
 
   try Test.eq(error_kind(Protocol.decode_stop_turn("{\"turn_id\": \"\"}")), "protocol.invalid")
+  stopped = Protocol.Stopped(stopped: true)
+  try Test.eq(Protocol.decode_stopped(Protocol.encode_stopped(stopped)), ok(stopped))
   files = Protocol.FileList(files: ["a.txt", "src/b.agc"])
   try Test.eq(Protocol.decode_file_list(Protocol.encode_file_list(files)), ok(files))
   Test.eq(Protocol.files_path("s1"), "/v1/sessions/s1/files")

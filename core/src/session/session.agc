@@ -157,9 +157,10 @@ def stop_turn(sessions: Sessions, id: String, turn_id: Optional[String]) -> Resu
   SessionActor.stop(try find(sessions, id), turn_id)
 end
 
-## The files of the session's folder, read in the caller's task.
+## The files of the session's folder that its rules do not hide, read in the caller's task.
 def files(sessions: Sessions, id: String) -> Result[Protocol.FileList]
-  ok(Protocol.FileList(files: Folder.files((try snapshot(sessions, id)).cwd)))
+  ctx = try SessionActor.context(try find(sessions, id))
+  ok(Protocol.FileList(files: Folder.files(ctx.root, ctx.hidden)))
 end
 
 def answer(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]

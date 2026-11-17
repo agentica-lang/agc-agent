@@ -45,6 +45,8 @@ HINTS = [
   "↑ history",
   "PgUp/PgDn",
 ]
+## How long `@` waits to ask the server again after a read of the files timed out.
+FILES_AGAIN_MS = 10_000
 SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 SPIN_MS = 80
 ## The thinking levels Shift+Tab goes through, none for the model's default.
@@ -95,6 +97,8 @@ struct Model
   ## the word that Esc closed.
   files: Optional[List[String]] = none
   reading_files: Bool = false
+  ## After a read that timed out, while the server may still walk the folder, `@` asks again only from this time on.
+  files_again_at: Int = 0
   mention_selected: Int = 0
   mention_top: Int = 0
   mention_closed: Optional[Int] = none
@@ -162,7 +166,7 @@ enum Msg
   ## The reply to a message sent: the `opened` count when it was sent, and the text.
   Sent(Int, String, Result[Protocol.MessageAccepted])
   ## The reply to a stop.
-  Stopped(Result[Void])
+  Stopped(Result[Bool])
   ## The spinner moves on.
   Spin
   ## The reply to a change of the thinking level.
@@ -594,7 +598,7 @@ def typed(app: Model, piece: String) -> Model
     edited = edited.with(mention_closed: none, mention_selected: 0, mention_top: 0)
   end
 
-  return edited if piece != "@" or edited.reading_files or app.id == ""
+  return edited if piece != "@" or edited.reading_files or app.id == "" or app.now < app.files_again_at
 
   read_files(edited)
 end
@@ -669,6 +673,8 @@ end
 def files_read(app: Model, result: Result[List[String]]) -> Model
   case result
     ok(files) -> app.with(files: some(files))
+    error(e) if e.kind == Client.KIND_TIMEOUT ->
+      noted(app.with(files_again_at: app.now + FILES_AGAIN_MS), "error: the files were not listed: #{e.message}")
     error(e) -> noted(app, "error: the files were not listed: #{e.message}")
   end
 end
@@ -722,7 +728,9 @@ def mention_choices(app: Model, found: Input.Mention) -> List[Input.Choice]
   case found.source
     Input.Source.Commands -> Input.commands(Client.listed(), found.query)
     Input.Source.Files ->
-      Input.matches(app.files.unwrap_or([]), found.query).map { |p| Input.Choice(value: p, label: p) }
+      Input.matches(app.files.unwrap_or([]), found.query).map { |p|
+        Input.Choice(value: p, label: Client.printable(p))
+      }
   end
 end
 
@@ -895,9 +903,10 @@ def sent_reply(app: Model, text: String, result: Result[Protocol.MessageAccepted
   end
 end
 
-def stop_reply(app: Model, result: Result[Void]) -> Model
+def stop_reply(app: Model, result: Result[Bool]) -> Model
   case result
-    ok(_) -> app
+    ok(true) -> app
+    ok(_) -> noted(app.with(stopping: false), "the turn had already ended")
     error(e) -> noted(app.with(stopping: false), "error: the stop was not sent: #{e.message}")
   end
 end
@@ -1189,20 +1198,24 @@ def compacted(server: Client.Server, id: String) -> String
   end
 end
 
-## Stops what runs; with `turn_id`, only that turn, so a stop asked before a message's turn started cannot reach the
-## turn after it.
+## Stops what runs: the turn by its id (`turn_id`, else the one running), so a stop cannot reach the turn after it.
 def stop(app: Model, turn_id: Optional[String] = none) -> Model
   return noted(app.with(stop_wanted: true), "the turn stops once it starts") if not app.turn and not app.outbox.empty?
   return app if not busy?(app) or app.stopping
 
   server = app.server
   id = app.id
+  wanted = turn_id
+  if wanted.none? and app.turn
+    wanted = app.yolo.turn
+  end
+
   stopping = "stopping the turn"
   if not app.turn
     stopping = "stopping the command"
   end
 
-  effect(noted(app.with(stopping: true), stopping), TUI.Cmd.Run(-> { Msg.Stopped(Client.stop(server, id, turn_id)) }))
+  effect(noted(app.with(stopping: true), stopping), TUI.Cmd.Run(-> { Msg.Stopped(Client.stop(server, id, wanted)) }))
 end
 
 # The answer is sent by a command, so the keys go on; its reply comes back as a message.

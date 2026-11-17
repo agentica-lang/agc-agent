@@ -4,6 +4,7 @@
 import HTTP from "std/http"
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
+import Yolo from "pkg/client/yolo"
 import TUI from "pkg/tui/tui"
 import App from "../src/app"
 import Approvals from "../src/approvals"
@@ -310,6 +311,23 @@ def queued_with_stop(app: App.Model) -> App.Model
   opened = app.opened
   reply = TUI.Cmd.Run(-> { App.Msg.Sent(opened, "hi", ok(accepted)) })
   app.with(outbox: ["hi"], stop_wanted: true, effects: app.effects.push(reply))
+end
+
+# Esc while a turn runs stops it by the id its `turn_started` gave.
+def test_escape_stops_the_running_turn_by_its_id() -> Result[Void]
+  within(
+    80,
+    24,
+    &running_stop,
+    {},
+    some(->(app: App.Model) { app.with(turn: true, yolo: Yolo.running(app.yolo, some("t5"))) }),
+  )
+end
+
+def running_stop(rig: Rig) -> Result[Void]
+  try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
+  try Test.eq(rig.requests.recv(2000), ok("POST #{Protocol.stop_path("s1")}"))
+  Test.eq(rig.bodies.recv(2000), ok(Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: some("t5")))))
 end
 
 def early_stop(rig: Rig) -> Result[Void]

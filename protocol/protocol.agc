@@ -139,6 +139,9 @@ export Replies.encode_server_status
 export Replies.decode_server_status
 export Replies.encode_shell_accepted
 export Replies.decode_shell_accepted
+export Replies.Stopped
+export Replies.encode_stopped
+export Replies.decode_stopped
 export Replies.FileList
 export Replies.encode_file_list
 export Replies.decode_file_list

@@ -337,8 +337,8 @@ end
 
 def stop_turn(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   request = try Protocol.decode_stop_turn(try String.from_bytes(conn.body))
-  _ = try Sessions.stop_turn(sessions, try Bond.param(conn, "id"), request.turn_id)
-  ok("{}")
+  stopped = try Sessions.stop_turn(sessions, try Bond.param(conn, "id"), request.turn_id)
+  ok(Protocol.encode_stopped(Protocol.Stopped(stopped: stopped)))
 end
 
 def files(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
