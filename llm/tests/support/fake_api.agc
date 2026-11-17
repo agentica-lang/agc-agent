@@ -6,6 +6,7 @@ import HTTP from "std/http"
 # The fixtures, from the package folder (`make unit`) or from the repository root.
 FIXTURE_DIRS = ["tests/fixtures", "llm/tests/fixtures"]
 WAIT_MS = 5000
+STALL_MS = 10_000
 
 ## One answer of the fake.
 struct Reply
@@ -16,6 +17,8 @@ struct Reply
   piece_bytes: Int = 0
   ## Announces a longer body than it sends, then closes: a cut connection.
   cut: Bool = false
+  ## After this many bytes, the body stays silent for `STALL_MS`: an API that stalls. -1 never stalls.
+  stall_after: Int = -1
 end
 
 ## A request the fake got.
@@ -114,7 +117,7 @@ def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Res
   )
 
   reply = script.replies.recv(0).unwrap_or(Reply(status: 500, body: "{\"error\": \"no reply left\"}".bytes))
-  if reply.piece_bytes == 0 and not reply.cut
+  if reply.piece_bytes == 0 and not reply.cut and reply.stall_after < 0
     return ok(HTTP.Answer.Whole(HTTP.Response(status: reply.status, headers: reply.headers, body: reply.body)))
   end
 
@@ -136,6 +139,10 @@ def produce(job: Pieces) -> Void
   size = [job.reply.piece_bytes, 1].max.unwrap!
   start = 0
   while start < job.reply.body.size
+    if job.reply.stall_after >= 0 and start >= job.reply.stall_after
+      Task.sleep(STALL_MS)
+    end
+
     if not job.channel.send(job.reply.body.drop(start).take(size), WAIT_MS).ok?
       _ = job.left.send(true, 0)
       break

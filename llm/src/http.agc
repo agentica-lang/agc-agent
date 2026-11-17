@@ -12,8 +12,10 @@ EVENTS_CAPACITY = 64
 
 ## How a provider talks to its API.
 struct Options
-  ## The longest wait for the API: the connect, the head, and each piece of the stream.
+  ## The longest wait for the API to answer: the connect and the head (and a whole call, such as `GET /models`).
   timeout_ms: Int = 120_000
+  ## The longest wait for the next piece of a stream: a stream silent for longer fails.
+  read_timeout_ms: Int = 120_000
   ## Tries of a request that fails before its stream starts (429, 5xx, network), with waits from `retry_base_ms`,
   ## doubled each time, at most `retry_max_ms`, or what `Retry-After` asks when it asks for longer.
   tries: Int = 3
@@ -135,7 +137,7 @@ def read_events[S](job: Job[S]) -> Result[Types.Response]
   parser = SSE.parser()
   state = job.wire.begin.call()
   while not job.wire.ended.call(state)
-    case job.http.body.recv(job.config.options.timeout_ms)
+    case job.http.body.recv(job.config.options.read_timeout_ms)
       ok(piece) ->
         fed = try sse_error(SSE.feed(parser, piece))
         parser = fed.parser
@@ -152,7 +154,7 @@ def read_events[S](job: Job[S]) -> Result[Types.Response]
   end
 
   if not job.wire.ended.call(state)
-    try cut(Task.await(job.http.done))
+    try cut(Task.await(job.http.done), job.config.options.read_timeout_ms)
   end
 
   response = try job.wire.finish.call(state)
@@ -223,7 +225,11 @@ def merge_headers(own: List[HTTP.Header], extra: Map[String, String]) -> List[HT
 end
 
 def client_options(config: Config) -> HTTP.ClientOptions
-  HTTP.ClientOptions(timeout_ms: config.options.timeout_ms, idle_timeout_ms: config.options.timeout_ms)
+  HTTP.ClientOptions(
+    timeout_ms: config.options.timeout_ms,
+    read_timeout_ms: config.options.read_timeout_ms,
+    idle_timeout_ms: config.options.timeout_ms,
+  )
 end
 
 # The body of an error answer, up to a limit: only its message is used.
@@ -251,9 +257,12 @@ def network[T](result: Result[T]) -> Result[T]
   end
 end
 
-def cut(result: Result[Void]) -> Result[Void]
+# A stream that the API left silent for `read_ms` is a network failure; any other cut is the API's.
+def cut(result: Result[Void], read_ms: Int) -> Result[Void]
   case result
     ok(_) -> ok()
+    error(e) if e.kind == "net.timeout" ->
+      error("llm: the API sent nothing for #{read_ms} ms", kind: "llm.network", cause: e)
     error(e) -> error("llm: the stream was cut: #{e.message}", kind: "llm.protocol", cause: e)
   end
 end

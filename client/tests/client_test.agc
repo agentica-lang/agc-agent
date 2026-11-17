@@ -12,13 +12,6 @@ def test_the_state_folder_option_wins_and_is_resolved() -> Result[Void]
   Test.eq(Client.state_dir(launch), ok("/tmp/finn-test-none"))
 end
 
-# An event stream is quiet while the model thinks: its limits are a day, not the 30 s of a call.
-def test_an_event_stream_is_never_cut_by_a_timeout() -> Result[Void]
-  options = Http.events_options()
-  try Test.assert(options.timeout_ms >= 3_600_000, "timeout #{options.timeout_ms}")
-  Test.assert(options.idle_timeout_ms >= 3_600_000, "idle #{options.idle_timeout_ms}")
-end
-
 def test_a_server_that_does_not_listen_is_unreachable() -> Result[Void]
   case Client.health(CLOSED)
     ok(_) -> error("a closed port answered")
@@ -368,6 +361,30 @@ def test_a_max_tokens_stop_names_the_output_limit() -> Result[Void]
   Test.eq(notes, ["the reply hit the model's output limit (500 tokens)", "the reply hit the model's output limit", ""])
 end
 
+# The event stream has no heartbeat: its body is read with no time limit (only its head has one), so a session that is
+# quiet while the model thinks keeps its stream.
+def test_a_quiet_event_stream_is_not_cut() -> Result[Void]
+  options = Http.events_options()
+  try Test.eq([options.read_timeout_ms, options.timeout_ms], [0, Http.EVENTS_HEAD_MS])
+  handler = ->(_request: HTTP.Request, _body: HTTP.RequestBody) {
+    pieces: Channel[Bytes] = Channel.new(4)
+    Task.spawn(-> { quiet_events(pieces) })
+    headers = [HTTP.Header(name: "Content-Type", value: "text/event-stream")]
+    ok(HTTP.Answer.Stream(HTTP.StreamResponse(status: 200, headers: headers, body: pieces)))
+  }
+
+  listening = try HTTP.serve("127.0.0.1", 0, handler)
+  server = Http.Server(url: "http://127.0.0.1:#{HTTP.local_port(listening)}", token: "t")
+  read = events_read(server)
+  # The same quiet stream with a read limit under its quiet time is cut.
+  url = "#{server.url}#{Protocol.events_path("s1")}"
+  short = try HTTP.open("GET", url, "".bytes, [], options.with(read_timeout_ms: 500))
+  cut = Task.await(short.done)
+  HTTP.close_server(listening)
+  try Test.eq(cut.ok?, false)
+  Test.eq(try read, "id: 1\ndata: {}\n\nid: 2\ndata: {}\n\n")
+end
+
 # A file that appears before the export is made is an error and is left as it is.
 def test_an_export_never_removes_a_file_it_did_not_make() -> Result[Void]
   path = "#{System.env("TMPDIR").unwrap_or("/tmp")}/finn-export-#{Random.int(0, 999_999_999)}.md"
@@ -514,4 +531,24 @@ def test_the_help_lists_the_session_commands() -> Result[Void]
   lines = Client.help(Client.custom(list))
   try Test.assert(lines.include?("/review [TEXT]             Review a change"), lines.join("\n"))
   Test.assert(lines.include?("/bad [TEXT]                does not load: bad.md: unknown key colour"), lines.join("\n"))
+end
+
+def quiet_events(pieces: Channel[Bytes]) -> Void
+  _ = pieces.send("id: 1\ndata: {}\n\n".bytes, 5000)
+  Task.sleep(1200)
+  _ = pieces.send("id: 2\ndata: {}\n\n".bytes, 5000)
+  pieces.close
+end
+
+def events_read(server: Http.Server) -> Result[String]
+  http = try Http.open_events(server, "s1", 0)
+  text = ""
+  while true
+    case http.body.recv(5000)
+      ok(piece) -> text = text + try String.from_bytes(piece)
+      error(_) -> break if http.body.closed? and http.body.empty?
+    end
+  end
+
+  ok(text)
 end
