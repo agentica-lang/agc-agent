@@ -9,4 +9,4 @@ blank_line_after_end = true
 client = { git = "https://github.com/agentica-lang/agc-agent", subdir = "client", tag = "client-0.0.1" }
 protocol = { git = "https://github.com/agentica-lang/agc-agent", subdir = "protocol", tag = "protocol-0.0.1" }
 sse = { git = "https://github.com/agentica-lang/agc-agent", subdir = "sse", tag = "sse-0.0.1" }
-tui = { git = "https://github.com/agentica-lang/agentica-tui", ref = "9b5c607e6d9d19b1f718057f5ffa81acd90e6db3" }
+tui = { git = "https://github.com/agentica-lang/agentica-tui", ref = "b4a5acc436d949b96526c7764c0a63d29844c900" }

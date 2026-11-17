@@ -36,7 +36,7 @@ def on_key(app: State.Model, event: TUI.Event) -> State.Model
     return Files.on_mention_key(app, found, event) if Files.mention_key?(app, found, event)
   end
 
-  on_prompt_key(unselected(app, event), event)
+  on_prompt_key(unselected(aimed(app, event), event), event)
 end
 
 private
@@ -59,7 +59,8 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(exit: some(0))
     TUI.Event.Key(TUI.Key.Enter, mods) if mods.alt -> follow_up(app)
     TUI.Event.Key(TUI.Key.Enter, _) -> send(app)
-    TUI.Event.Key(TUI.Key.Ctrl("d"), _) if app.prompt == "" -> app.with(exit: some(0))
+    TUI.Event.Key(TUI.Key.Ctrl("d"), _) if app.prompt == "" and not State.busy?(app) and app.approvals.pending.empty? ->
+      app.with(exit: some(0))
     TUI.Event.Key(TUI.Key.Up, _) -> line_moved(app, -1)
     TUI.Event.Key(TUI.Key.Down, _) -> line_moved(app, 1)
     TUI.Event.Key(TUI.Key.Ctrl("t"), _) ->
@@ -70,11 +71,8 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
       State.noted(shown, "tool output: #{Views.shown_name(shown.tools)}")
     TUI.Event.Key(TUI.Key.Ctrl("j"), _) -> typed(app, "\n")
     TUI.Event.Key(TUI.Key.Backspace, mods) if mods.alt -> cut_to(app, Prompt.word_left(app.prompt, State.cursor(app)))
-    TUI.Event.Key(TUI.Key.Backspace, _) ->
-      at = State.cursor(app)
-      app.with(prompt: Prompt.backspace(app.prompt, at), cursor: [at - 1, 0].max.unwrap!, recall: none)
-    TUI.Event.Key(TUI.Key.Delete, _), TUI.Event.Key(TUI.Key.Ctrl("d"), _) ->
-      app.with(prompt: Prompt.delete(app.prompt, State.cursor(app)), recall: none)
+    TUI.Event.Key(TUI.Key.Backspace, _) -> cut_to(app, State.cursor(app) - 1)
+    TUI.Event.Key(TUI.Key.Delete, _), TUI.Event.Key(TUI.Key.Ctrl("d"), _) -> deleted(app)
     TUI.Event.Key(TUI.Key.Ctrl("w"), _) -> cut_to(app, Prompt.word_left(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Ctrl("u"), _) -> cut_to(app, line_back(app))
     TUI.Event.Key(TUI.Key.Ctrl("k"), _) -> cut_to(app, line_forward(app))
@@ -84,8 +82,10 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
       app.with(cursor: Prompt.word_left(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Right, mods) if mods.ctrl or mods.alt ->
       app.with(cursor: Prompt.word_right(app.prompt, State.cursor(app)))
-    TUI.Event.Char("b", mods) if mods.alt -> app.with(cursor: Prompt.word_left(app.prompt, State.cursor(app)))
-    TUI.Event.Char("f", mods) if mods.alt -> app.with(cursor: Prompt.word_right(app.prompt, State.cursor(app)))
+    TUI.Event.Char(c, mods) if mods.alt and c.downcase == "b" ->
+      app.with(cursor: Prompt.word_left(app.prompt, State.cursor(app)))
+    TUI.Event.Char(c, mods) if mods.alt and c.downcase == "f" ->
+      app.with(cursor: Prompt.word_right(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Left, _) -> app.with(cursor: [State.cursor(app) - 1, 0].max.unwrap!)
     TUI.Event.Key(TUI.Key.Right, _) -> app.with(cursor: Prompt.clamp(app.prompt, State.cursor(app) + 1))
     TUI.Event.Key(TUI.Key.Home, _) -> app.with(cursor: 0)
@@ -131,8 +131,28 @@ end
 # The text from the cursor to `to`, either side of it, is cut, and the cursor goes to the start of the cut.
 def cut_to(app: State.Model, to: Int) -> State.Model
   at = State.cursor(app)
-  from = [at, to].min.unwrap!
-  app.with(prompt: Prompt.cut(app.prompt, from, [at, to].max.unwrap!), cursor: from, recall: none)
+  edge = Prompt.clamp(app.prompt, to)
+  # An edit that deletes nothing keeps the prompt recalled.
+  return app if edge == at
+
+  from = [at, edge].min.unwrap!
+  app.with(prompt: Prompt.cut(app.prompt, from, [at, edge].max.unwrap!), cursor: from, recall: none)
+end
+
+# Delete and Ctrl+D delete the character after the cursor, with the zero-width ones joined to it.
+def deleted(app: State.Model) -> State.Model
+  text = Prompt.delete(app.prompt, State.cursor(app))
+  return app if text == app.prompt
+
+  app.with(prompt: text, recall: none)
+end
+
+# Up and Down keep their column across shorter rows; any other key forgets it.
+def aimed(app: State.Model, event: TUI.Event) -> State.Model
+  case event
+    TUI.Event.Key(TUI.Key.Up, _), TUI.Event.Key(TUI.Key.Down, _) -> app
+    _ -> app.with(goal_column: none)
+  end
 end
 
 # Ctrl+U cuts to the start of the line; at its start, the line end before it.
@@ -158,8 +178,10 @@ end
 def line_moved(app: State.Model, step: Int) -> State.Model
   return recalled(app, step) if app.prompt == "" and step < 0
 
-  case Prompt.vertical(app.prompt, State.cursor(app), app.width, step)
-    some(at) -> app.with(cursor: at)
+  at = State.cursor(app)
+  goal = app.goal_column.unwrap_or(Prompt.column(app.prompt, at, app.width))
+  case Prompt.vertical(app.prompt, at, app.width, step, goal)
+    some(moved) -> app.with(cursor: moved, goal_column: some(goal))
     none if app.recall.some? -> recalled(app, step)
     none -> app
   end
@@ -172,10 +194,10 @@ def recalled(app: State.Model, step: Int) -> State.Model
   at = app.recall.unwrap_or(app.history.size) + step
   return app if at < 0
 
-  return app.with(prompt: "", cursor: 0, recall: none) if at >= app.history.size
+  return app.with(prompt: "", cursor: 0, recall: none, goal_column: none) if at >= app.history.size
 
   text = app.history[at]
-  app.with(prompt: text, cursor: text.length, recall: some(at))
+  app.with(prompt: text, cursor: text.length, recall: some(at), goal_column: none)
 end
 
 # Alt+Enter: while a turn runs (or a message that starts one is on its way), the text waits for the turn's end.

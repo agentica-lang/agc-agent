@@ -522,12 +522,13 @@ class PtyTest(unittest.TestCase):
         term = self.start([Reply("text.sse")])
         term.type("one two three")
         term.wait_for(" one two three")
-        for key in ["\x1b[1;3D", "\x17", "\x01", "\x1b[3~"]:
+        # Ctrl+Left, Alt+B, Alt+Backspace, Ctrl+Right, Alt+F, Ctrl+W, Ctrl+A, Delete.
+        for key in ["\x1b[1;5D", "\x1bb", "\x1b\x7f", "\x1b[1;5C", "\x1bf", "\x17", "\x01", "\x1b[3~"]:
             term.type(key)
-        term.wait_for(" ne three")
+        term.wait_until(lambda rows: " wo" in rows, "the edited prompt")
         term.type("\r")
         term.wait_for(ANSWER)
-        self.assertEqual(self.fake.requests.get(timeout=5)["messages"][-1]["content"], "ne three")
+        self.assertEqual(self.fake.requests.get(timeout=5)["messages"][-1]["content"], "wo")
         term.wait_for("ready")
         term.type("\x04")
         self.assertEqual(term.finish(), 0)

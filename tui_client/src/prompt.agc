@@ -45,7 +45,8 @@ def delete(text: String, at: Int) -> String
   cut = clamp(text, at)
   return text if cut == text.length
 
-  text.slice(0, cut) + text.slice(cut + 1, text.length - cut - 1)
+  last = grapheme_end(text.split(""), cut)
+  text.slice(0, cut) + text.slice(last, text.length - last)
 end
 
 ## The text without the characters from `from` up to `to`.
@@ -55,15 +56,18 @@ def cut(text: String, from: Int, to: Int) -> String
   text.slice(0, first) + text.slice(last, text.length - last)
 end
 
-## The start of the word before `at`, past the spaces before it; letters and punctuation are words of their own.
+## The start of the word before `at`, past the spaces before it; letters and punctuation are words of their own. A
+## move never crosses a line end: at the start of a line it goes to the end of the line before.
 def word_left(text: String, at: Int) -> Int
   chars = text.split("")
   i = clamp(text, at)
-  while i > 0 and class_of(chars[i - 1]) == 0
+  return i - 1 if i > 0 and chars[i - 1] == "\n"
+
+  while i > 0 and class_of(chars[i - 1]) == SPACE
     i = i - 1
   end
 
-  return i if i == 0
+  return i if i == 0 or chars[i - 1] == "\n"
 
   kind = class_of(chars[i - 1])
   while i > 0 and class_of(chars[i - 1]) == kind
@@ -73,15 +77,17 @@ def word_left(text: String, at: Int) -> Int
   i
 end
 
-## The end of the word after `at`, past the spaces before it.
+## The end of the word after `at`, past the spaces before it; at the end of a line, the start of the line after.
 def word_right(text: String, at: Int) -> Int
   chars = text.split("")
   i = clamp(text, at)
-  while i < chars.size and class_of(chars[i]) == 0
+  return i + 1 if i < chars.size and chars[i] == "\n"
+
+  while i < chars.size and class_of(chars[i]) == SPACE
     i = i + 1
   end
 
-  return i if i == chars.size
+  return i if i == chars.size or chars[i] == "\n"
 
   kind = class_of(chars[i])
   while i < chars.size and class_of(chars[i]) == kind
@@ -103,29 +109,27 @@ def line_end(text: String, at: Int) -> Int
   cut + text.slice(cut, text.length - cut).split("\n")[0].length
 end
 
-## The place in the row drawn `step` rows above (negative) or below `at`, at the same column or the end of a shorter
-## row; none past the first or the last row. `width` is the screen's.
-def vertical(text: String, at: Int, width: Int, step: Int) -> Optional[Int]
-  columns = [width - LEAD.length - 1, 1].max.unwrap!
-  all: List[Piece] = []
-  start = 0
-  for line in text.split("\n")
-    all = all + cut_line(line, start, columns)
-    start = start + line.length + 1
-  end
-
+## The column of `at` in the row drawn for it. `width` is the screen's.
+def column(text: String, at: Int, width: Int) -> Int
   cut = clamp(text, at)
-  row = row_of(all, cut)
-  target = row + step
+  all = drawn_rows(text, width)
+  piece = all[row_of(all, cut)]
+  Width.text(text.slice(piece.start, cut - piece.start))
+end
+
+## The place in the row drawn `step` rows above (negative) or below `at`, at `goal` (a column) or the end of a shorter
+## row; none past the first or the last row.
+def vertical(text: String, at: Int, width: Int, step: Int, goal: Int) -> Optional[Int]
+  all = drawn_rows(text, width)
+  target = row_of(all, clamp(text, at)) + step
   return none if target < 0 or target >= all.size
 
-  piece = all[row]
-  goal = all[target]
-  index = goal.start + Width.cut(goal.text, Width.text(text.slice(piece.start, cut - piece.start)))[0].length
-  goal_end = goal.start + goal.text.length
+  row = all[target]
+  index = row.start + Width.cut(row.text, goal)[0].length
+  row_end = row.start + row.text.length
   # The end of a row cut by the width is the start of the next one: the cursor stays on its row.
-  wrapped = target + 1 < all.size and all[target + 1].start == goal_end
-  return some(index - 1) if wrapped and index == goal_end and goal.text.length > 0
+  wrapped = target + 1 < all.size and all[target + 1].start == row_end
+  return some(index - 1) if wrapped and index == row_end and row.text.length > 0
 
   some(index)
 end
@@ -155,6 +159,8 @@ end
 
 private
 
+ZWJ = 0x200D
+SPACE = 0
 # Characters of their own word class: a word move stops where letters and these meet.
 PUNCTUATION = Set.new("!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~".split(""))
 
@@ -241,12 +247,36 @@ def row_of(all: List[Piece], cursor: Int) -> Int
   found
 end
 
-# 0 for a space, 1 for punctuation, 2 for a letter of a word.
+# SPACE for a space, 1 for punctuation, 2 for a letter of a word, 3 for a line end.
 def class_of(c: String) -> Int
-  return 0 if c == " " or c == "\t" or c == "\n"
+  return SPACE if c == " " or c == "\t"
   return 1 if PUNCTUATION.include?(c)
+  return 3 if c == "\n"
 
   2
+end
+
+# The end of the character at `at` with the zero-width code points after it and a character joined by a ZWJ.
+def grapheme_end(chars: List[String], at: Int) -> Int
+  last = at + 1
+  while last < chars.size and (Width.char(chars[last]) == 0 or chars[last - 1].code == ZWJ)
+    last = last + 1
+  end
+
+  last
+end
+
+# Every row the text draws in `width`, each line cut by the width.
+def drawn_rows(text: String, width: Int) -> List[Piece]
+  columns = [width - LEAD.length - 1, 1].max.unwrap!
+  all: List[Piece] = []
+  start = 0
+  for line in text.split("\n")
+    all = all + cut_line(line, start, columns)
+    start = start + line.length + 1
+  end
+
+  all
 end
 
 def kept?(c: String) -> Bool
