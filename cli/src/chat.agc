@@ -506,14 +506,14 @@ def fresh(chat: Chat) -> Chat
 end
 
 def listed(chat: Chat) -> Result[Chat]
-  lines = Client.listing(try Client.list_sessions(chat.server))
+  lines = Client.listing(try Client.list_sessions(chat.server), chat.id)
   return ok(note(chat, "[no sessions]")) if lines.empty?
 
   ok(note(chat, lines.join("\n")))
 end
 
 def switched(chat: Chat, choice: String) -> Result[Chat]
-  id = try Client.pick(try Client.list_sessions(chat.server), choice)
+  id = try Client.pick(try Client.list_sessions(chat.server), choice, chat.id)
   resume(fresh(chat).with(id: id), id)
 end
 

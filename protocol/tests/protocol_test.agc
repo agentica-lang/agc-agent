@@ -144,7 +144,7 @@ def test_replies_round_trip() -> Result[Void]
   try Test.eq(queued, Protocol.MessageAccepted(turn_id: "t1", message_id: some("t1.1")))
 
   list = try decode_fixture("session_list", &Protocol.decode_session_list, &Protocol.encode_session_list)
-  try Test.eq(list.sessions.size, 1)
+  try Test.eq(list.sessions.map { |s| s.empty }, [false, true])
   try Test.eq(Protocol.decode_session_list(Protocol.encode_session_list(list)), ok(list))
   providers = try decode_fixture("provider_list", &Protocol.decode_provider_list, &Protocol.encode_provider_list)
   try Test.eq(providers.providers.map { |p| p.name }, ["local", "fireworks"])

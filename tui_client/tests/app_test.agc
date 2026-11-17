@@ -985,7 +985,8 @@ end
 
 # The argument of `/model`, `/resume`, `/tree` and `/profile` is listed from the server once its command is typed, in
 # the list
-# under the editor; `/thinking` lists its levels. Tab completes the selected choice; Enter runs the line as typed.
+# under the editor; `/thinking` lists its levels. Tab completes the selected choice; Enter runs the line as typed. An
+# empty session, or the session itself, is in neither the list nor the picker of `/resume`.
 def test_arguments_complete_from_the_server() -> Result[Void]
   providers = Protocol.ProviderList(
     provider: "p",
@@ -993,6 +994,8 @@ def test_arguments_complete_from_the_server() -> Result[Void]
   )
 
   summary = Protocol.SessionSummary(id: "s9", cwd: "/w", model: "m", api: "chat", title: "fix the tests")
+  blank = Protocol.SessionSummary(id: "s0", cwd: "/w", model: "m", api: "chat", empty: true)
+  own = Protocol.SessionSummary(id: "s1", cwd: "/w", model: "m", api: "chat", title: "this one")
   tree = Protocol.SessionTree(nodes: [Protocol.TreeNode(id: 1, text: "hello", last: 2)])
   profiles = Protocol.ProfileList(
     profiles: [
@@ -1003,7 +1006,7 @@ def test_arguments_complete_from_the_server() -> Result[Void]
 
   backend = Client.unreachable_backend().with(
     list_providers: -> { ok(providers) },
-    list_sessions: -> { ok(Protocol.SessionList(sessions: [summary])) },
+    list_sessions: -> { ok(Protocol.SessionList(sessions: [summary, own, blank])) },
     tree: ->(_id: String) { ok(tree) },
     list_profiles: ->(_id: String) { ok(profiles) },
   )
@@ -1019,6 +1022,9 @@ def test_arguments_complete_from_the_server() -> Result[Void]
   end
 
   try Test.eq(completed, ["/model p/large", "/resume s9", "/tree 1", "/profile plan"])
+  # The picker of `/resume` leaves out an empty session and the session itself, as its list does.
+  picking = App.update(model.with(prompt: "/resume", cursor: 7), enter()).model
+  try Test.eq(picking.picker.map { |p| p.sessions.map { |s| s.id } }, some(["s9"]))
   levels = model.with(prompt: "/thinking h", cursor: 11)
   try Test.assert(rows(levels).any? { |row| row.start_with?("high") }, "#{rows(levels)}")
   try Test.eq(App.update(levels, tab()).model.prompt, "/thinking high")
@@ -1440,6 +1446,7 @@ end
 
 # Enter on the untouched list of a command's argument sends the command alone: `/model`, `/resume`, `/tree` and `/fork`
 # open their one picker, `/thinking` says the level; nothing changes. The list starts on the session's model and level.
+# A row moved to in the list of one command no longer counts once the command changes.
 def test_enter_on_an_untouched_argument_list_runs_nothing() -> Result[Void]
   providers = Protocol.ProviderList(
     provider: "p",
@@ -1492,6 +1499,28 @@ def test_enter_on_an_untouched_argument_list_runs_nothing() -> Result[Void]
     kinds = kinds.push("#{command} #{after.picker.map { |p| p.kind.to_s }.unwrap_or("none")} #{after.id}")
   end
 
+  # A row moved to in the list of `/fork ` does not count for `/thinking ` typed after Backspace to `/`.
+  forking = App.update(model.with(prompt: "/fork", cursor: 5), key_char(" "))
+  edited = forking.model
+  for cmd in forking.cmds
+    edited = App.update(edited, run(cmd)[0]).model
+  end
+
+  edited = App.update(edited, down()).model
+  for _ in 1..5
+    edited = App.update(edited, backspace()).model
+  end
+
+  for c in "thinking ".split("")
+    edited = App.update(edited, key_char(c)).model
+  end
+
+  sent = App.update(edited, enter())
+  for cmd in sent.cmds
+    _ = run(cmd)
+  end
+
+  kinds = kinds.push("#{edited.prompt} #{sent.model.effort.unwrap_or("none")}")
   try Test.eq(changed.recv(0).ok?, false)
   Test.eq(
     kinds,
@@ -1503,6 +1532,7 @@ def test_enter_on_an_untouched_argument_list_runs_nothing() -> Result[Void]
       "/fork Kind.Fork s1",
       "/thinking high",
       "/thinking none s1",
+      "/thinking  high",
     ],
   )
 end

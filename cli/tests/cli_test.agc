@@ -664,12 +664,15 @@ def test_yolo_asks_an_approval_of_a_turn_it_did_not_start() -> Result[Void]
 end
 
 # The session commands: /model and /thinking change the session, a bad level is refused before any request,
-# /resume lists the sessions and switches to the one picked, /new makes another one, and /help lists them all with
+# /resume lists the sessions but the empty ones and its own and switches to the one picked, /new makes another one, and
+# /help lists
+# them all with
 # the session's slash commands.
 def test_session_commands() -> Result[Void]
   list = Protocol.SessionList(
     sessions: [
       Protocol.SessionSummary(id: "s1", cwd: "/work", model: "m", api: "openai"),
+      Protocol.SessionSummary(id: "s0", cwd: "/empty", model: "m", api: "openai", empty: true),
       Protocol.SessionSummary(id: "s2", cwd: "/other", model: "m2", api: "openai"),
     ],
   )
@@ -720,8 +723,8 @@ def test_session_commands() -> Result[Void]
     try Driver.say(cli, "/thinking high")
     try Driver.read_until(cli, "[thinking high from the next turn]")
     try Driver.say(cli, "/resume")
-    try Driver.read_until(cli, "2. s2  m2  /other")
-    try Driver.say(cli, "/resume 2")
+    try Driver.read_until(cli, "1. s2  m2  /other")
+    try Driver.say(cli, "/resume 1")
     try Driver.read_until(cli, "[session s2]")
     try Driver.say(cli, "/new")
     try Driver.read_until(cli, "[session s3]")

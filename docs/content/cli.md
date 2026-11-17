@@ -61,7 +61,7 @@ Type them in either client:
 | Command | What it does |
 |---|---|
 | `/new` | a new session in this folder |
-| `/resume [N\|ID]` | list the sessions; with a number or an id, switch to it |
+| `/resume [N\|ID]` | list the other sessions that hold something; with a number or an id, switch to one |
 | `/tree [N\|N+]` | the session's messages; `N` goes back before message N, `N+` after its answer |
 | `/fork [N\|N+]` | a new session from before message N (or after its answer) |
 | `/clone` | a new session with this one's history |

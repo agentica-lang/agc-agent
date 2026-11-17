@@ -50,8 +50,8 @@ struct MessageAccepted
 end
 
 ## `api` is the model API of the session, by the name the server gives it, and `provider` its provider (none from a
-## server before providers). `model` is the one the session uses now, `updated_s` when its file last changed (Unix seconds), and `title` its first
-## user message ("" before one).
+## server before providers). `model` is the one the session uses now, `updated_s` when its file last changed (Unix
+## seconds), and `title` its first user message ("" before one).
 struct SessionSummary
   id: String
   cwd: String
@@ -60,6 +60,8 @@ struct SessionSummary
   provider: Optional[String] = none
   updated_s: Int = 0
   title: String = ""
+  ## No message, compaction or output of a tool or command yet: a client's list of sessions to resume leaves it out.
+  empty: Bool = false
 end
 
 ## The answer of `GET /v1/sessions`.
