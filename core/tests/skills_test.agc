@@ -61,6 +61,22 @@ def test_the_model_and_the_user_load_skills_once() -> Result[Void]
   end
 end
 
+# A `Message` handler of an extension gets the message after the skills it names are expanded.
+def test_a_message_handler_gets_the_skills_a_message_names() -> Result[Void]
+  mark = ->(text: String) { "#{text} [#{text.start_with?("<skill_content name=\"release\">")}]" }
+  registry = Core.registry() |> Core.on(Core.Event.Message(mark))
+  H.using(H.Setup(replies: ["text.sse"], skills: true, registry: some(registry))) do |h|
+    try write("#{h.base}/home/.agents/skills/release/SKILL.md", RELEASE)
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "/release now")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    asked = try last_content(h)
+    Test.assert(asked.end_with?("</skill_content>\n\n/release now [true]"), asked)
+  end
+end
+
 # A message queued into a turn loads the skills it names before the turn reads it, before a tool round or a final
 # answer, and the session keeps them loaded.
 def test_a_queued_message_loads_its_skills() -> Result[Void]

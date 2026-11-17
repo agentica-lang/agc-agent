@@ -73,6 +73,39 @@ struct Registry
   handler_ms: Int = HANDLER_MS
   service_ms: Int = SERVICE_MS
   tool_ms: Int = TOOL_MS
+  ## The core's own extensions (the skills), and the tools that come later (the MCP servers that still list them).
+  builtins: List[Builtin] = []
+  late: List[Fn[List[Spec.Tool]]] = []
+end
+
+## A session folder as the core's own extensions see it: its skills count when it is `trusted`.
+struct Place
+  root: String
+  home: String
+  trusted: Bool
+end
+
+## One of the core's own extensions, which needs more than the public API: `system` adds to the system prompt of a new
+## session, and `open` gives a session what it needs as it opens with its system prompt. Not part of `Core`.
+struct Builtin
+  system: Fn[Place, String, String]
+  open: Fn[Place, String, Opened]
+end
+
+## What a session gets from one of the core's own extensions: folders that `read_file` reads too, the tools of its
+## turns, what a user message becomes (with the names the session noted so far), and the text a fold adds.
+struct Opened
+  read_roots: List[String] = []
+  tools: List[Spec.TurnTool] = []
+  message: Fn[String, List[String], Noted]
+  fold: Fn[List[String], List[LLM.Message], String]
+  warnings: List[String] = []
+end
+
+## A message as an extension of the core made it, and the names it noted.
+struct Noted
+  text: String
+  names: List[String]
 end
 
 ## A service that started, in the task that owns it.
@@ -161,6 +194,63 @@ end
 ## `system` with the prompts of the extensions after it.
 def prompt(registry: Registry, system: String) -> String = ([system] + registry.prompts).join("\n\n")
 
+## A call of a tool in the session folder `root`, for the tests of an extension: its paths resolve in `root`, with no
+## deny rule.
+def call(root: String, input: JSON.Value) -> Call
+  Call(root: root, input: input, resolve: ->(path: String) { Sandbox.resolve(root, path) })
+end
+
+def add_builtin(registry: Registry, builtin: Builtin) -> Registry
+  registry.with(builtins: registry.builtins.push(builtin))
+end
+
+def add_late_tools(registry: Registry, tools: Fn[List[Spec.Tool]]) -> Registry
+  registry.with(late: registry.late.push(tools))
+end
+
+## The tools that come later, none without any.
+def late_tools(registry: Registry) -> Optional[Fn[List[Spec.Tool]]]
+  return none if registry.late.empty?
+
+  late = registry.late
+  some(-> { late.flat_map { |tools| tools.call() } })
+end
+
+## The system prompt of a new session in `place`: `system` with what the core's own extensions add.
+def new_system(registry: Registry, place: Place, system: String) -> String
+  out = system
+  for builtin in registry.builtins
+    out = builtin.system.call(place, out)
+  end
+
+  out
+end
+
+## What the core's own extensions give a session in `place` that opens with `system`.
+def open(registry: Registry, place: Place, system: String) -> List[Opened]
+  registry.builtins.map { |builtin| builtin.open.call(place, system) }
+end
+
+def read_roots(opened: List[Opened]) -> List[String] = opened.flat_map { |o| o.read_roots }
+
+def turn_tools(opened: List[Opened]) -> List[Spec.TurnTool] = opened.flat_map { |o| o.tools }
+
+## `text` as the core's own extensions make it, in order, each seeing the names noted before it.
+def noted(opened: List[Opened], text: String, marks: List[String]) -> Noted
+  out = Noted(text: text, names: [])
+  for o in opened
+    made = o.message.call(out.text, marks + out.names)
+    out = Noted(text: made.text, names: out.names + made.names)
+  end
+
+  out
+end
+
+## The text the core's own extensions add after the summary of a fold.
+def folded(opened: List[Opened], marks: List[String], staying: List[LLM.Message]) -> String
+  opened.map { |o| o.fold.call(marks, staying) }.join("")
+end
+
 ## Starts the services in order, each in a task of its own. One that fails, crashes or takes over `ms` stops those
 ## started before it, in the reverse order, and the start fails.
 def start_services(services: List[Service], ms: Int = SERVICE_MS) -> Result[List[Running]]
@@ -195,7 +285,7 @@ end
 private
 
 # The task of a service: it starts it, waits for the stop, and stops it.
-def owned(service: Service, news: Channel[Note], stopping: Channel[Bool]) -> Void
+def owned(service: Service, news: Channel[Note], stopping: Channel[Bool], ms: Int) -> Void
   case service.start.call()
     ok(_) -> _ = news.send(Note.Started, 0)
     error(e) ->
@@ -203,7 +293,7 @@ def owned(service: Service, news: Channel[Note], stopping: Channel[Bool]) -> Voi
       return
   end
 
-  while not stopping.recv(SERVICE_MS).ok?
+  while not stopping.recv(ms).ok?
     nil
   end
 
@@ -213,7 +303,7 @@ end
 def started(service: Service, ms: Int) -> Result[Running]
   news: Channel[Note] = Channel.new(4)
   stopping: Channel[Bool] = Channel.new(1)
-  task = Task.spawn do owned(service, news, stopping) end
+  task = Task.spawn do owned(service, news, stopping, ms) end
   Task.monitor(task, news) do |down| Note.Down(down) end
   case news.recv(ms)
     ok(Note.Started) -> ok(Running(name: service.name, task: task, stopping: stopping, news: news, ms: ms))

@@ -17,8 +17,8 @@ import Catalog from "src/agent/catalog"
 import Cli from "src/config/cli"
 import Config from "src/config/config"
 import Extensions from "src/config/registry"
-import McpTools from "src/ext/mcp"
 import Server from "src/http/server"
+import Builtins from "src/session/builtins"
 import Tools from "src/tools/tools"
 
 ## The version of the core: that of the package, which `/v1/health` and `--version` give.
@@ -67,6 +67,9 @@ end
 ## rule of `read_file` hides.
 def resolve(call: Extensions.Call, path: String) -> Result[String] = call.resolve.call(path)
 
+## A call of a tool in the folder `root`, for the tests of an extension: its paths resolve in `root`, with no deny rule.
+def call(root: String, input: JSON.Value) -> Extensions.Call = Extensions.call(root, input)
+
 ## Runs the server with `registry` until a signal or `finn server stop` ends it; a failed start, or an extension tool
 ## whose name is taken, stops the process with status 2.
 def serve(registry: Extensions.Registry) -> Void
@@ -112,7 +115,6 @@ def stop_on_signals(server: Server.Server) -> Void
   end
 end
 
-# The MCP servers run as long as the server: the end of the process stops them.
 def start(registry: Extensions.Registry) -> Result[Server.Server]
   clashes = Extensions.clashes(registry, Tools.all().map { |tool| tool.name })
   return error(clashes.join("\n")) if not clashes.empty?
@@ -123,16 +125,15 @@ def start(registry: Extensions.Registry) -> Result[Server.Server]
     IO.warn(warning)
   end
 
-  mcp = McpTools.background(try McpTools.servers(read, options.state_dir), ->(warning: String) { IO.warn(warning) })
-
+  # The core's own extensions: the skills, and the MCP servers, which start now.
+  all = try Builtins.mcp(registry |> Builtins.skills(), read, options.state_dir)
   catalog = Catalog.start(
     Catalog.Options(url: options.models_url, cache: "#{options.state_dir}/#{Catalog.CACHE_FILE}"),
   )
 
   extended = options.with(
     tools: options.tools + Extensions.spec_tools(registry),
-    registry: some(registry),
-    late_tools: some(-> { McpTools.tools(mcp) }),
+    registry: some(all),
     catalog: some(catalog),
   )
 

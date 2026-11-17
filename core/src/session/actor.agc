@@ -23,7 +23,6 @@ import Compaction from "../agent/compaction"
 import Extension from "../approval/extension"
 import Extensions from "../config/registry"
 import Spec from "../tools/spec"
-import Skills from "../ext/skills"
 import Store from "store"
 import Tools from "../tools/tools"
 
@@ -80,7 +79,8 @@ struct Setup
   cache: Bool = false
   ## A provider with a fresh token, after a 401.
   refresh: Optional[Fn[Result[LLM.Provider]]] = none
-  skills: List[Skills.Skill] = []
+  ## What the core's own extensions (the skills) give the session.
+  builtins: List[Extensions.Opened] = []
   ## The thinking level of the calls; none leaves it to the model.
   effort: Optional[String] = none
   ## The provider and model API by name, and the endpoint of a provider (with the API now) for a `PATCH`.
@@ -747,7 +747,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     catalog: setup.catalog,
     catalog_provider: setup.catalog_provider,
     catalog_wait_ms: setup.catalog_wait_ms,
-    turn_tools: Skills.tools(setup.skills),
+    turn_tools: Extensions.turn_tools(setup.builtins),
     marks: state.marks,
     on_fold: some(on_fold(setup)),
     effort: setup.effort,
@@ -807,7 +807,7 @@ def take(state: State, turn_id: String, after: Int, reply: Channel[List[Agent.Qu
         IO.warn("session #{state.setup.id}: #{handled.message}")
       end
 
-      expanded = handled.unwrap_or(Skills.on_message(typed, state.setup.skills, marks))
+      expanded = handled.unwrap_or(Extensions.noted(state.setup.builtins, typed, marks))
 
       read = read.push(Agent.Queued(typed: typed, text: expanded.text, names: expanded.names))
       marks = marks + expanded.names
@@ -835,8 +835,8 @@ def wait_approval(address: Address[Msg], turn_id: String, call: Agent.Ask, timeo
 end
 
 # A message after the skills it names and the `message` handlers of the extensions.
-def on_message(setup: Setup, typed: String, marks: List[String]) -> Result[Skills.Expanded]
-  expanded = Skills.on_message(typed, setup.skills, marks)
+def on_message(setup: Setup, typed: String, marks: List[String]) -> Result[Extensions.Noted]
+  expanded = Extensions.noted(setup.builtins, typed, marks)
   case setup.registry
     some(registry) -> ok(expanded.with(text: try Extensions.message(registry, expanded.text)))
     none -> ok(expanded)
@@ -845,9 +845,10 @@ end
 
 # What a fold adds after the summary: the skills in use, then the `fold` handlers of the extensions.
 def on_fold(setup: Setup) -> Fn[List[String], List[LLM.Message], String]
-  skills = Skills.on_fold(setup.skills)
   ->(marks: List[String], staying: List[LLM.Message]) {
-    "#{skills.call(marks, staying)}#{setup.registry.map { |r| Extensions.fold(r, staying) }.unwrap_or("")}"
+    (
+      "#{Extensions.folded(setup.builtins, marks, staying)}#{setup.registry.map { |r| Extensions.fold(r, staying) }.unwrap_or("")}"
+    )
   }
 end
 

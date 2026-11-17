@@ -16,6 +16,7 @@ import Extensions from "../../src/config/registry"
 import Logins from "../../src/config/logins"
 import Providers from "../../src/config/providers"
 import Server from "../../src/http/server"
+import Builtins from "../../src/session/builtins"
 import Tools from "../../src/tools/tools"
 import Fake from "fake_llm"
 
@@ -231,7 +232,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     env: &fake_env,
     approvals: some(user.rules),
     asking: user.asking,
-    registry: setup.registry,
+    registry: some(registry_of(setup)),
     keep_events: setup.keep_events,
     approval_timeout_ms: setup.approval_timeout_ms,
     drain_ms: setup.drain_ms,
@@ -241,7 +242,6 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     before_load: setup.before_load,
     after_load: setup.after_load,
     tools: setup.tools + setup.registry.map { |r| Extensions.spec_tools(r) }.unwrap_or([]),
-    late_tools: setup.late_tools,
     diff: setup.diff,
     code_mode: code_mode(setup.monty),
     catalog: setup.catalog,
@@ -315,6 +315,16 @@ def code_mode(fixture: String) -> Optional[CodeMode.Settings]
   agentica = System.env("AGENTICA").unwrap_or("agentica")
   words = [agentica, "tests/support/fake_monty.agc", "tests/fixtures/monty/#{fixture}"]
   some(CodeMode.Settings(worker: -> { ok(words) }, limits: Monty.Limits()))
+end
+
+# The extensions of the setup with the core's own, as `Core.serve` adds them.
+def registry_of(setup: Setup) -> Extensions.Registry
+  registry = Builtins.skills(setup.registry.unwrap_or(Extensions.Registry()))
+  for late in option_list(setup.late_tools)
+    registry = Extensions.add_late_tools(registry, late)
+  end
+
+  registry
 end
 
 def skills_home(setup: Setup, base: String) -> String

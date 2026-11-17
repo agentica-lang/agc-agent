@@ -63,9 +63,8 @@ struct Options
   ## allows waits for an answer; off, only the deny rules count.
   approvals: Optional[Approval.Rules] = none
   asking: Bool = false
-  ## The tools of the MCP servers, and those of the servers that list them after the start.
+  ## The tools after the built-in ones: those of the extensions (the MCP servers' come later, through `registry`).
   tools: List[Tools.Tool] = []
-  late_tools: Optional[Fn[List[Tools.Tool]]] = none
   ## What the extensions add (`Core.serve`).
   registry: Optional[Extensions.Registry] = none
   ## A test seam: makes the diff of each tool call (see `Tools.Context.diff`).
