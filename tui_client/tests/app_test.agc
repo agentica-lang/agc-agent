@@ -8,6 +8,7 @@ import Editor from "../src/editor"
 import Input from "../src/input"
 import Picker from "../src/picker"
 import Prompt from "../src/prompt"
+import Rate from "../src/rate"
 import Session from "../src/session"
 import State from "../src/state"
 import Transcript from "../src/transcript"
@@ -23,6 +24,26 @@ def test_keys_edit_the_prompt_and_the_view_draws_it() -> Result[Void]
   resized = App.update(model, App.Msg.Key(TUI.Event.Resize(20, 4))).model
   try Test.eq([resized.width, resized.height], [20, 4])
   Test.eq(rows(resized).size, 4)
+end
+
+# The footer shows the model's output speed: estimated while a reply streams, exact from the call's usage, and kept
+# into the next turn.
+def test_the_footer_shows_the_rate_of_the_output() -> Result[Void]
+  model = model_of(100, 8).with(generation: 1, id: "s1", serving: "local/m")
+  try Test.assert(not rows(model).last.include?("tok/s"), rows(model).last)
+  event = ->(n: Int, e: Protocol.Event) { App.Msg.Stream(1, [Client.Item.Event(some(n), e)]) }
+  # The call began streaming ten seconds ago.
+  streaming = model.with(streamed: some(Rate.Streamed(first_ms: Time.monotonic_ms - 10_000)))
+  text = Protocol.Event.TextDelta(Protocol.TextDelta(text: "x" * 400))
+  live = App.update(streaming, event.call(1, text)).model
+  try Test.assert(rows(live).last.include?("~10 tok/s"), rows(live).last)
+  used = Protocol.Usage(input: 1, output: 300, cache_read: 0, cache_write: 0, context: 1)
+  usage = Protocol.Event.Usage(used.with(call_output: some(300), output_ms: some(1500)))
+  done = App.update(live, event.call(2, usage)).model
+  try Test.assert(rows(done).last.include?("· 200 tok/s"), rows(done).last)
+  next_turn = App.update(done, event.call(3, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: "t2")))).model
+  try Test.eq(next_turn.streamed, none)
+  Test.assert(rows(next_turn).last.include?("· 200 tok/s"), rows(next_turn).last)
 end
 
 # The items of the current stream are drawn and the stream is read again; those of an old stream are dropped.

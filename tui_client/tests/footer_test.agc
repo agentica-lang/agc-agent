@@ -1,5 +1,6 @@
 import Protocol from "pkg/protocol/protocol"
 import Footer from "../src/footer"
+import Rate from "../src/rate"
 import Width from "../src/width"
 
 # Counts round to the unit shown and never show four digits of one; a cost under a tenth of a cent says so, and a
@@ -42,4 +43,39 @@ def test_a_narrow_row_drops_counts_before_the_model() -> Result[Void]
   try Test.eq(narrow, " ready · ↑4.8k ↓40 $0.013  (anthropic) claude-so… ")
   try Test.eq(Footer.status(["ready"], none, hints, "(local) m", 31), " ready · Enter send  (local) m ")
   Test.eq([row, narrow].map { |r| Width.text(r) }, [80, 50])
+end
+
+# The rate of the model's output follows the counts, and a row too narrow for all of it drops the rate first.
+def test_a_narrow_row_drops_the_rate_first() -> Result[Void]
+  used = Protocol.Usage(
+    input: 1200,
+    output: 340,
+    cache_read: 3600,
+    cache_write: 0,
+    context: 4800,
+    session_cost: some(0.0125),
+    window: some(32_000),
+    call_output: some(40),
+  )
+
+  model = "(local) m"
+  full = " ready · ↑4.8k ↓40 R3.6k 75% cached $0.013 15.0%/32k"
+  wide = Footer.status(["ready"], some(used), [], model, 140, "~42 tok/s")
+  try Test.assert(wide.start_with?("#{full} · ~42 tok/s  "), wide)
+  fits = Width.text(full) + Width.text(model) + 3
+  Test.eq(Footer.status(["ready"], some(used), [], model, fits, "~42 tok/s"), "#{full}  #{model} ")
+end
+
+# While a call streams the rate is estimated at 4 characters a token, once it has streamed for half a second; its usage
+# gives the exact rate, its output tokens over the time of its output. No data shows no rate.
+def test_the_rate_is_estimated_then_exact() -> Result[Void]
+  started = Rate.streamed(none, "Hello", 1000)
+  later = Rate.streamed(some(started), "x" * 800, 2000)
+  try Test.eq([started.chars, later.chars], [0, 800])
+  try Test.eq([Rate.live(later, 1400), Rate.live(started, 3000)], [none, none])
+  try Test.eq(Rate.text(Rate.live(later, 3000)), "~100 tok/s")
+  call = Protocol.Usage(input: 1, output: 9000, cache_read: 0, cache_write: 0, context: 1, call_output: some(300))
+  try Test.eq(Rate.text(Rate.exact(call.with(output_ms: some(1500)))), "200 tok/s")
+  try Test.eq([Rate.exact(call), Rate.exact(call.with(output_ms: some(0)))], [none, none])
+  Test.eq(Rate.text(none), "")
 end

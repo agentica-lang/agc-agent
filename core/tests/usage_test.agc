@@ -2,7 +2,8 @@ import Protocol from "pkg/protocol/protocol"
 import H from "support/harness"
 
 # Each `usage` has the call's input and cache counts, their sum as the context, the session's output so far, which
-# goes on after a restart, and the model's window. The session keeps the last one for a client that attaches later.
+# goes on after a restart, and the model's window, and how long its output took (the tool call of the first counts).
+# The session keeps the last one for a client that attaches later.
 def test_usage_sums_the_output_of_the_session() -> Result[Void]
   setup = H.Setup(replies: ["write_file.sse", "text.sse", "text_cached.sse", "text.sse"])
   H.using(setup) do |h|
@@ -16,6 +17,7 @@ def test_usage_sums_the_output_of_the_session() -> Result[Void]
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
     try Test.eq(usages(a.seen), ["100 20 0 0 100", "22 31 0 0 22", "30 38 120 0 150"])
+    try Test.eq(timings(a.seen), [some(true), some(true), some(true)])
     last = (try H.session(h, id)).usage
     try Test.eq(
       last.map { |u| "#{u.input} #{u.output} #{u.call_output} #{u.cache_read} #{u.window}" },
@@ -79,4 +81,17 @@ def usages(seen: List[H.Seen]) -> List[String]
   end
 
   counts
+end
+
+# Whether each `usage` has a time of output that is not negative.
+def timings(seen: List[H.Seen]) -> List[Optional[Bool]]
+  found: List[Optional[Bool]] = []
+  for s in seen
+    case s.event
+      Protocol.Event.Usage(u) -> found = found.push(u.output_ms.map { |ms| ms >= 0 })
+      _ -> nil
+    end
+  end
+
+  found
 end
