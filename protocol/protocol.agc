@@ -20,6 +20,8 @@ import Routes from "src/routes"
 
 VERSION = "0.0.1"
 
+export Replies.ASKS_KEY
+export Replies.ASKS_URL
 export Kinds.KIND_INVALID
 export Kinds.KIND_UNKNOWN
 export Kinds.KIND_UNAUTHORIZED

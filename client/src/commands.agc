@@ -26,9 +26,9 @@ COMMANDS = [
   Usage(
     name: "/login",
     args: "[PROVIDER]",
-    about: "set up a provider with its key (the full screen); alone: pick one",
+    about: "set up a provider with its key, or local with its base URL (the full screen); alone: pick one",
   ),
-  Usage(name: "/logout", args: "[PROVIDER]", about: "remove a stored key; alone: every one"),
+  Usage(name: "/logout", args: "[PROVIDER]", about: "remove a stored key or base URL; alone: every one"),
   Usage(name: "/stop", about: "stop the running turn"),
   Usage(name: "/cost", about: "what the session cost", listed: false),
   Usage(name: "/help", about: "this list"),
@@ -123,6 +123,14 @@ end
 
 ## The commands the help and the suggestions show.
 def listed() -> List[Usage] = COMMANDS.select { |usage| usage.listed }
+
+## What a logout of `name` (none: all) says it removed: `local` keeps a base URL, the others a key.
+def logged_out(name: Optional[String]) -> String
+  return "every stored key and base URL is removed" if name.none?
+  return "the stored base URL of local is removed" if name == some("local")
+
+  "the key of #{name.unwrap_or("")} is removed"
+end
 
 ## What a client says when the first turn after `/model NAME` fails: the server takes any name.
 def model_warning(model: String) -> String

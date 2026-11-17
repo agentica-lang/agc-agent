@@ -57,7 +57,7 @@ end
 ## Writes `keys` to `path`, readable only by its user from the start. A new file is made private under another name in
 ## the same folder, then renamed; an existing one is checked again (its mode may have changed since it was read) and
 ## replaced in one step, keeping its mode.
-def save(path: String, keys: Map[String, String], owner: Optional[Int], urls: Map[String, String] = {}) -> Result[Void]
+def save(path: String, keys: Map[String, String], owner: Optional[Int], urls: Map[String, String]) -> Result[Void]
   if File.stat(path).ok?
     for why in option_list(refusal(path, owner))
       return error(why)
@@ -70,7 +70,7 @@ def save(path: String, keys: Map[String, String], owner: Optional[Int], urls: Ma
 end
 
 ## Writes `keys` to a new file at `path`, private from the start; `io.exists` when another process made one first.
-def create(path: String, keys: Map[String, String], urls: Map[String, String] = {}) -> Result[Void]
+def create(path: String, keys: Map[String, String], urls: Map[String, String]) -> Result[Void]
   text = text_of(keys, urls)
   parts = path.split("/")
   dir = parts.take(parts.size - 1).join("/")

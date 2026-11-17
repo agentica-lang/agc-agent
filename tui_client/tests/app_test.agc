@@ -623,7 +623,8 @@ def model_of(width: Int, height: Int) -> App.Model
   App.seed(Client.Server(url: "http://127.0.0.1:1", token: ""), options, Channel.new(1), width, height)
 end
 
-# The login of a local server lists its base URL; picked, it asks for one, filled with that, and Esc cancels it.
+# The login of a local server lists its base URL; picked, it asks for a new one (the prompt empty, the note says the
+# current one), and Esc cancels it.
 def test_a_local_login_is_listed_with_its_url_and_asks_for_one() -> Result[Void]
   label = "a local server of the OpenAI API (llama.cpp)"
   url = "http://127.0.0.1:8080/v1"
@@ -633,7 +634,7 @@ def test_a_local_login_is_listed_with_its_url_and_asks_for_one() -> Result[Void]
     key_env: "FINN_BASE_URL",
     from: "",
     coming: false,
-    asks: "url",
+    asks: Protocol.ASKS_URL,
     base_url: url,
   )
 
@@ -643,10 +644,10 @@ def test_a_local_login_is_listed_with_its_url_and_asks_for_one() -> Result[Void]
   asked = App.update(picking, enter()).model
   try Test.eq(
     [asked.key_for, some(asked.secret), some(asked.asking_url.to_s)],
-    [some("local"), some(url), some("true")],
+    [some("local"), some(""), some("true")],
   )
 
-  try Test.assert(rows(asked).any? { |row| row.include?("base URL of local: #{url}") }, "#{rows(asked)}")
+  try Test.assert(asked.entries.last.text.include?("now #{url}"), asked.entries.last.text)
   cancelled = App.update(asked, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model
   try Test.eq([cancelled.secret, "#{cancelled.key_for}", cancelled.asking_url.to_s], ["", "none", "false"])
   stored = local.with(from: "stored", base_url: "http://127.0.0.1:9090/v1")

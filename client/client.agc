@@ -71,6 +71,7 @@ export Commands.printable
 export Commands.listing
 export Commands.pick
 export Commands.model_warning
+export Commands.logged_out
 export Commands.model_change
 
 export Tree.TreeRow

@@ -28,7 +28,7 @@ Your config file can add more, or replace one of these: see [Your own provider](
 finn login              # pick a provider, then paste its key
 finn login openrouter   # or name it
 finn logout openrouter  # remove its stored key
-finn logout             # remove every stored key
+finn logout             # remove every stored key (and the base URL of local)
 ```
 
 In `finn` (the full screen), `/login` and `/logout` do the same. The key is asked for and hidden; it is never an argument.
@@ -63,7 +63,7 @@ finn
 | `FINN_API_KEY` | | none |
 | `FINN_MODEL` | `--model` | `default` |
 
-`finn login local` (or `/login local`) sets the base URL without a variable: it asks for the URL, checks that `GET /models` answers there (with no key), and stores it in `auth.json`, so the server uses it from then on, also after a restart. `FINN_BASE_URL` wins over a stored URL. `finn logout local` goes back to the default.
+`finn login local` (or `/login local`) sets the base URL without a variable: it asks for the URL, checks that `GET /models` answers there, and stores it in `auth.json`, so the server uses it (and its `/props`) from then on, also after a restart. The check sends `FINN_API_KEY` as a Bearer token when it is set, as the turns do, so a server that needs a key can log in. The URL is `http://` or `https://`, a host and a path, with no user, password, query or fragment. `FINN_BASE_URL` wins over a stored URL. `finn logout local` goes back to the default.
 
 ## Anthropic
 

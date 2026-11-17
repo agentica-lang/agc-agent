@@ -973,11 +973,11 @@ def named_login(app: Model, logins: List[Protocol.LoginStatus], name: String) ->
   return login_closed(noted(app, "no login has that name: /login lists them")) if found.empty?
   return login_closed(noted(app, "#{found[0].label}: coming, there is no login for it yet")) if found[0].coming
 
-  if found[0].asks == "url"
-    asked = app.with(key_for: some(name), secret: found[0].base_url, asking_url: true)
+  if found[0].asks == Protocol.ASKS_URL
+    asked = app.with(key_for: some(name), secret: "", asking_url: true)
     return noted(
       asked,
-      "the base URL of #{name} (llama.cpp or another server of the OpenAI API): Enter checks it, Esc cancels",
+      "the base URL of #{name} (now #{found[0].base_url}), as http://127.0.0.1:8080/v1: Enter checks it, Esc cancels",
     )
   end
 
@@ -1001,7 +1001,7 @@ def on_secret_key(app: Model, name: String, event: TUI.Event) -> Model
     TUI.Event.Key(TUI.Key.Enter, _) if app.asking_url and not app.secret.strip.empty? ->
       server = app.server
       url = app.secret.strip
-      checking = noted(app.with(key_for: none, secret: "", asking_url: false), "checking #{url}")
+      checking = noted(app.with(key_for: none, secret: "", asking_url: false), "checking the base URL of #{name}")
       effect(checking, TUI.Cmd.Run(-> { Msg.LoggedIn(name, Client.login_url(server, name, url)) }))
     TUI.Event.Key(TUI.Key.Enter, _) if not app.secret.strip.empty? ->
       server = app.server
@@ -1014,9 +1014,9 @@ end
 
 def logged_in(app: Model, name: String, result: Result[Protocol.LoginStatus]) -> Model
   done = case result
-    ok(status) if status.asks == "url" and status.from == "env" ->
+    ok(status) if status.asks == Protocol.ASKS_URL and status.from == "env" ->
       noted(app, "#{name}: the URL is stored, but #{status.key_env} is set and wins over it")
-    ok(status) if status.asks == "url" ->
+    ok(status) if status.asks == Protocol.ASKS_URL ->
       noted(app, "#{name} is set up at #{status.base_url}: /model lists its models")
     ok(status) if status.from == "env" ->
       noted(app, "#{name}: the key is stored, but #{status.key_env} is set and wins over it")
@@ -1041,8 +1041,7 @@ end
 
 def logout_command(app: Model, name: Optional[String]) -> Result[Model]
   try Client.logout(app.server, name)
-  removed = name.map { |n| "the key of #{n} is removed" }.unwrap_or("every stored key is removed")
-  ok(noted(app, removed))
+  ok(noted(app, Client.logged_out(name)))
 end
 
 def note_entry(text: String) -> Transcript.Entry = Transcript.Entry(kind: Transcript.Kind.Notice, text: text)

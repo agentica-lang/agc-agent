@@ -4,6 +4,10 @@ import Events from "events"
 import Kinds from "kinds"
 import Wire from "wire"
 
+## What a login gives (`LoginStatus.asks`): a key, or the base URL of a local server.
+ASKS_KEY = "key"
+ASKS_URL = "url"
+
 ## Who wrote a message of the history. The history is display text: an entry of another kind (a tool call) will be a
 ## new type, not a new `Role`, so a `case` on `Role` stays exhaustive.
 enum Role
@@ -82,7 +86,7 @@ struct LoginStatus
   key_env: String
   from: String
   coming: Bool
-  asks: String = "key"
+  asks: String = ASKS_KEY
   base_url: String = ""
 end
 

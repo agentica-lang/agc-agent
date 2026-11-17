@@ -47,7 +47,9 @@ def parse(args: List[String]) -> Result[Command]
       Opt(
         name: "login",
         kind: Kind.Flag,
-        help: "set up the --provider with its key (pick one when none is given), then exit",
+        help: (
+          "set up the --provider with its key, or local with its base URL (pick one when none is given), then exit"
+        ),
       ),
       Opt(name: "version", kind: Kind.Flag, help: "print the version"),
     ],

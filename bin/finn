@@ -22,8 +22,9 @@ usage: finn [tui] [options]       talk to the agent in this folder on the full s
        finn chat [options]        the same as a line chat (finn chat --help lists the options)
        finn -p TASK [--yolo]      one task (- reads it from stdin): the answer on stdout, the rest on stderr
        finn serve [options]       run the server in the foreground
-       finn login [PROVIDER]      set up a provider with its key: checked, then stored (pick one when none is given)
-       finn logout [PROVIDER]     remove the stored key of a provider, or every stored key
+       finn login [PROVIDER]      set up a provider with its key, or local with its base URL: checked, then stored
+                                  (pick one when none is given)
+       finn logout [PROVIDER]     remove the stored key (or base URL) of a provider, or every stored key and URL
        finn server ACTION         status, start, stop, restart or logs of the server of the state folder
                                   (stop waits for the running turns, --now cancels them; finn server --help)
        finn --version | --help

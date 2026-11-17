@@ -217,6 +217,7 @@ def login_setup(setup: Setup, fake: Fake.Fake, base: String) -> Optional[Logins.
       read: &fake_env,
       rebuild: ->(keys: Map[String, String], urls: Map[String, String]) { ok(providers(setup, fake, keys, urls)) },
       local_url: local_url_of(setup, fake),
+      local_key: "test-key",
     ),
   )
 end

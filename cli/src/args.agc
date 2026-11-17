@@ -91,7 +91,10 @@ def parse(args: List[String]) -> Result[Command]
         help: "with approvals on (FINN_APPROVALS=1), allow the tool calls of the turns this client starts (also -p)",
       ),
       Opt(name: "delete", help: "id of a session to delete (with its file), then exit"),
-      Opt(name: "logout", help: "remove the stored key of this provider (all: every stored key), then exit"),
+      Opt(
+        name: "logout",
+        help: "remove the stored key (or base URL) of this provider (all: every stored key and URL), then exit",
+      ),
       Opt(name: "version", kind: Kind.Flag, help: "print the version"),
     ],
     "SERVER_COMMAND",

@@ -20,8 +20,6 @@ FROM_FILE = "stored"
 ANTHROPIC_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN"
 ## The variable of the base URL of `local`, which wins over a stored one.
 LOCAL_ENV = "FINN_BASE_URL"
-ASKS_KEY = "key"
-ASKS_URL = "url"
 
 ## What a login needs, from `Config.from_env`.
 struct Setup
@@ -36,6 +34,10 @@ struct Setup
   rebuild: Fn[Map[String, String], Map[String, String], Result[Map[String, Providers.Provider]]]
   ## The base URL of `local` without a stored one (its variable, else the default); empty: no login sets it.
   local_url: String = ""
+  ## Its variable is set, so it wins over a stored one.
+  local_env: Bool = false
+  ## `FINN_API_KEY`, sent to the check of a base URL as the turns send it.
+  local_key: String = ""
   ## The server's provider was chosen (`FINN_BASE_URL`, `FINN_PROVIDER` or `FINN_API` is set): no login is offered.
   chosen: Bool = false
 end
@@ -48,7 +50,7 @@ struct Status
   from: String = ""
   coming: Bool = false
   ## What a login gives: a key, or the base URL of a local server (`base_url` is the one it uses now).
-  asks: String = ASKS_KEY
+  asks: String = Protocol.ASKS_KEY
   base_url: String = ""
 end
 
@@ -61,6 +63,12 @@ end
 
 struct Holder
   ref: Actor.Ref[State, Msg]
+end
+
+## The providers the server offers now, and the base URL `local` uses now (empty when no login sets it).
+struct Current
+  providers: Map[String, Providers.Provider]
+  local_url: String = ""
 end
 
 ## Holds `providers`; without `setup` there is no login (`list` is empty).
@@ -77,6 +85,12 @@ end
 ## The providers the server offers now.
 def providers(holder: Holder) -> Result[Map[String, Providers.Provider]]
   Actor.call(holder.ref.address, CALL_MS) do |reply| Msg.Current(reply) end
+end
+
+def current(holder: Holder) -> Result[Current]
+  state = try now(holder)
+  url = state.setup.map { |setup| local_status(setup, state.stored).map { |l| l.base_url }.join("") }
+  ok(Current(providers: state.providers, local_url: url.unwrap_or("")))
 end
 
 def list(holder: Holder) -> Result[Listing]
@@ -124,14 +138,14 @@ def login_url(holder: Holder, name: String, url: String) -> Result[Status]
     return error("only #{Providers.LOCAL} takes a base URL", kind: Protocol.KIND_INVALID)
   end
 
-  base = url.strip
+  base = url
   while base.end_with?("/")
     base = base.slice(0, base.length - 1)
   end
 
-  if not (base.start_with?("http://") or base.start_with?("https://")) or base.include?(" ")
+  if not plain_url?(base)
     return error(
-      "a base URL starts with http:// or https://, as http://127.0.0.1:8080/v1",
+      "a base URL is http:// or https://, a host and a path, as http://127.0.0.1:8080/v1: no user, password, query or spaces",
       kind: Protocol.KIND_INVALID,
     )
   end
@@ -142,7 +156,7 @@ def login_url(holder: Holder, name: String, url: String) -> Result[Status]
     end
   end
 
-  try check_url(base)
+  try check_url(base, setup.local_key)
   stored: Result[Result[Status]] = Actor.call(holder.ref.address, CALL_MS) do |reply|
     Msg.StoreUrl(name, base, reply)
   end
@@ -167,15 +181,36 @@ def skip(holder: Holder) -> Result[Void]
 end
 
 ## Checks that `GET /models` at `base` answers, once, without a key and without following a redirect.
-def check_url(base: String) -> Result[Void]
+def check_url(base: String, key: String) -> Result[Void]
+  headers: List[HTTP.Header] = []
+  if not key.empty?
+    headers = [HTTP.Header(name: "Authorization", value: "Bearer #{key}")]
+  end
+
   client = try HTTP.client(HTTP.ClientOptions(timeout_ms: CHECK_MS))
-  answer = HTTP.request(client, "GET", "#{base}/models", "".bytes, [])
+  answer = HTTP.request(client, "GET", "#{base}/models", "".bytes, headers)
   HTTP.close_client(client)
   case answer
     ok(response) if response.status >= 200 and response.status < 300 -> ok()
-    ok(response) -> rejected("#{base} did not answer GET /models (HTTP #{response.status})")
-    error(_) -> rejected("#{base} cannot be reached")
+    ok(response) -> rejected("the server did not answer GET /models (HTTP #{response.status})")
+    error(_) -> rejected("the server cannot be reached")
   end
+end
+
+# `http://` or `https://`, a host, and a path at most: the URL goes into requests and the clients show it, so it
+# carries no user or password, query, fragment, space or control character.
+def plain_url?(url: String) -> Bool
+  rest = ""
+  for scheme in ["http://", "https://"]
+    if url.start_with?(scheme)
+      rest = url.slice(scheme.length, url.length - scheme.length)
+    end
+  end
+
+  host = rest.split("/")[0]
+  return false if (host.empty? or host.start_with?(":") or ["@", "?", "#"].any? { |c| url.include?(c) })
+
+  url.bytes.to_a.all? { |b| b > 32 and b != 127 }
 end
 
 ## Checks `key` at the provider's own base URL, once, without following a redirect: `GET /models` of Anthropic, else
@@ -287,7 +322,7 @@ def skipped(state: State) -> Result[State]
   return ok(found) if File.stat(path).ok?
 
   # Never over a file another process made since the check above.
-  case Auth.create(path, {})
+  case Auth.create(path, {}, {})
     ok(_) -> ok(found)
     error(e) if e.kind == "io.exists" -> ok(found)
     error(e) -> error("#{path} cannot be written: #{e.message}", kind: Protocol.KIND_LOGIN_STORAGE)
@@ -322,13 +357,22 @@ def local_status(setup: Setup, stored: Auth.Stored) -> List[Status]
     base_url = stored.urls[Providers.LOCAL]
   end
 
-  if not setup.read.call(LOCAL_ENV).unwrap_or("").empty?
+  if setup.local_env
     from = FROM_ENV
     base_url = setup.local_url
   end
 
   label = "a local server of the OpenAI API (llama.cpp)"
-  [Status(name: Providers.LOCAL, label: label, key_env: LOCAL_ENV, from: from, asks: ASKS_URL, base_url: base_url)]
+  [
+    Status(
+      name: Providers.LOCAL,
+      label: label,
+      key_env: LOCAL_ENV,
+      from: from,
+      asks: Protocol.ASKS_URL,
+      base_url: base_url,
+    ),
+  ]
 end
 
 def env_names(entry: Providers.Custom) -> List[String]

@@ -187,8 +187,8 @@ def first_login(rig: Rig) -> Result[Void]
   Test.eq(shown.any? { |row| row.include?("sk-9") }, false)
 end
 
-# The login of a local server asks for its base URL, shown as typed and filled with the one it uses now; Enter sends
-# it as a URL, not a key.
+# The login of a local server asks for its base URL, shown as typed (the note says the one it uses now); Enter sends it
+# as a URL, not a key.
 def test_a_local_login_asks_for_the_base_url() -> Result[Void]
   set_up = local("stored", "http://127.0.0.1:9090/v1")
   replies = {
@@ -207,12 +207,8 @@ def local_login(rig: Rig) -> Result[Void]
   end
 
   try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
-  try shows(rig, "base URL of local: #{DEFAULT_URL}")
-  for _ in 0...7
-    try press(rig, TUI.Event.Key(TUI.Key.Backspace, TUI.Mods()))
-  end
-
-  for char in "9090/v1".split("")
+  try shows(rig, "now #{DEFAULT_URL}")
+  for char in "http://127.0.0.1:9090/v1".split("")
     try press(rig, TUI.Event.Char(char, TUI.Mods()))
   end
 
@@ -236,7 +232,7 @@ def local(from: String, url: String) -> Protocol.LoginStatus
     key_env: "FINN_BASE_URL",
     from: from,
     coming: false,
-    asks: "url",
+    asks: Protocol.ASKS_URL,
     base_url: url,
   )
 end

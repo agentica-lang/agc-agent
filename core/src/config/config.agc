@@ -157,6 +157,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     read: read,
     rebuild: rebuild,
     local_url: base_url,
+    local_env: env_url.some?,
+    local_key: api_key,
     chosen: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
   )
 
@@ -199,17 +201,13 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   )
 end
 
-def local_url(fallback: String, env_url: Optional[String], urls: Map[String, String]) -> String
-  return env_url.unwrap! if env_url.some?
-
-  urls.get(Providers.LOCAL).unwrap_or(fallback)
-end
-
-## `options` with the providers the server offers now (a login or a logout changes them).
+## `options` with the providers the server offers now (a login or a logout changes them), and the `/props` of the
+## base URL `local` uses now.
 def now(options: Options) -> Options
   for holder in option_list(options.logins)
-    case Logins.providers(holder)
-      ok(providers) -> return options.with(providers: providers)
+    case Logins.current(holder)
+      ok(current) if current.local_url.empty? -> return options.with(providers: current.providers)
+      ok(current) -> return options.with(providers: current.providers, props_url: props_url(current.local_url))
       error(_) -> nil
     end
   end
@@ -255,6 +253,10 @@ end
 def data_dir(read: Fn[String, Result[String]]) -> Result[String] = folder(read, DATA_DIR_ENV, "XDG_DATA_HOME", "share")
 
 private
+
+def local_url(fallback: String, env_url: Optional[String], urls: Map[String, String]) -> String
+  env_url.unwrap_or(urls.get(Providers.LOCAL).unwrap_or(fallback))
+end
 
 def folder(read: Fn[String, Result[String]], own: String, xdg: String, under_local: String) -> Result[String]
   for dir in option_list(set(read, own))
