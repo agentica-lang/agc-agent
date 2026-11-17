@@ -40,7 +40,8 @@ def profiles_path(session_id: String) -> String = "#{session_path(session_id)}/p
 
 def commands_path(session_id: String) -> String = "#{session_path(session_id)}/commands"
 
-## A login to a provider (`POST`), or its logout (`DELETE`). `AUTH_PATH` lists the logins (`GET`), removes every
+## A login to a provider (`POST`), or its logout (`DELETE`); for a device login (`chatgpt`) the `POST` starts it, `GET`
+## says where it is, and `DELETE` also ends a wait. `AUTH_PATH` lists the logins (`GET`), removes every
 ## stored key (`DELETE`), or makes an empty key file when there is none (`PUT`: a first-start login skipped).
 def auth_path(provider: String) -> String = "#{AUTH_PATH}/#{provider}"
 

@@ -35,7 +35,9 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `GET /v1/auth` | the logins: each provider, where its key comes from, and what a login asks for (`asks`: `key`, or `url` with the `base_url` of `local`) |
 | `PUT /v1/auth` | make an empty key file when there is none, so the first-start login is not offered again |
 | `POST /v1/auth/PROVIDER` | log in: `{"key": "..."}`, checked at the provider, then stored; `local` takes `{"base_url": "..."}`, checked with its `GET /models` |
-| `DELETE /v1/auth/PROVIDER` | remove the stored key of a provider (the base URL of `local`); `DELETE /v1/auth` removes all |
+| `DELETE /v1/auth/PROVIDER` | remove the stored key of a provider (the base URL of `local`, the tokens of `chatgpt`, which also ends a login that waits); `DELETE /v1/auth` removes all |
+| `POST /v1/auth/chatgpt` | start the device login of a ChatGPT subscription: `{"user_code", "url", "expires_in"}`; the user opens `url` and types the code, and the server waits for that and stores the tokens in `chatgpt.json` of its state folder (0600) |
+| `GET /v1/auth/chatgpt` | where that login is: `{"state", "message"}`, `state` being `none`, `waiting`, `done` or `failed` (`message` says why) |
 | `POST /v1/sessions` | a new session: `{"cwd": "/path", "model": null}`, plus `provider`, `api` and `profile`; it answers its `id` and `profile` |
 | `GET /v1/sessions` | the sessions, the last changed first |
 | `GET /v1/sessions/ID` | one session: its settings, history, the `usage` of its last model call, the model's `todos` and its `profile` (`name`, `source`: `built-in`, `user`, `project` or empty when it does not load, `description`, `warnings`) |

@@ -26,6 +26,7 @@ import Monty from "pkg/monty/monty"
 import Approval from "../approval/approval"
 import Auth from "../providers/auth"
 import Catalog from "../providers/catalog"
+import Chatgpt from "../providers/chatgpt"
 import CodeMode from "../tools/code_mode"
 import Logins from "../providers/logins"
 import Offered from "../providers/offered"
@@ -132,6 +133,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
 
   auth_path = Auth.path(read)
   owner = Auth.owner(read)
+  states = try state_dir(read)
+  chatgpt = try Chatgpt.login(states, owner, read)
   stored = auth_path.map { |path| Auth.load(path, owner) }.unwrap_or(Auth.Stored())
   # A base URL a login stored serves `local` unless FINN_BASE_URL is set.
   server = Offered.Server(
@@ -147,7 +150,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   at_start = try Offered.anthropic_access(read, api == "anthropic", ant, claude_key)
   rebuild = ->(keys: Map[String, String], urls: Map[String, String]) {
     current = server.with(base_url: local_url(base_url, env_url, urls))
-    Offered.all_providers(current, customs, keys, Offered.access_for(current, keys, claude_key, at_start))
+    built = Offered.all_providers(current, customs, keys, Offered.access_for(current, keys, claude_key, at_start))
+    Chatgpt.added(built, chatgpt, LLM.Options())
   }
 
   providers = try rebuild.call(stored.keys, stored.urls)
@@ -163,6 +167,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     local_env: set_name(read, "FINN_BASE_URL").unwrap_or(""),
     local_key: api_key,
     chosen: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
+    chatgpt: some(chatgpt),
   )
 
   provider = set(read, "FINN_PROVIDER").unwrap_or(Offered.default_provider(api))
@@ -174,17 +179,26 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
 
   if provider != Offered.default_provider(api)
     model = DEFAULT_MODEL
+    own = providers[provider].apis[providers[provider].api].model
+    if not own.empty?
+      model = own
+    end
   end
 
   user = try Permissions.user_rules(read, try approvals_switch(read))
   ok(
     Options(
-      state_dir: try state_dir(read),
+      state_dir: states,
       data_dir: try data_dir(read),
       providers: providers,
       provider: provider,
       key_envs: Providers.key_envs(customs),
-      warnings: Providers.shared_keys(customs) + [stored.refused].select { |w| not w.empty? } + moved,
+      warnings: (
+        Providers.shared_keys(customs) +
+        [stored.refused].select { |w| not w.empty? } +
+        option_list(Chatgpt.refusal(chatgpt)) +
+        moved
+      ),
       login: some(login),
       model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,

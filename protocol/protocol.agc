@@ -25,6 +25,7 @@ BIDI = Set.new([0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 
 
 export Replies.ASKS_KEY
 export Replies.ASKS_URL
+export Replies.ASKS_DEVICE
 export Kinds.KIND_INVALID
 export Kinds.KIND_UNKNOWN
 export Kinds.KIND_UNAUTHORIZED
@@ -128,6 +129,8 @@ export Replies.ServerStatus
 export Replies.ShellAccepted
 export Replies.LoginStatus
 export Replies.LoginList
+export Replies.DeviceLogin
+export Replies.DeviceState
 export Replies.roles
 export Replies.role_name
 export Replies.parse_role
@@ -172,6 +175,10 @@ export Replies.encode_login_status
 export Replies.decode_login_status
 export Replies.encode_login_list
 export Replies.decode_login_list
+export Replies.encode_device_login
+export Replies.decode_device_login
+export Replies.encode_device_state
+export Replies.decode_device_state
 
 export Errors.Failure
 export Errors.encode_failure

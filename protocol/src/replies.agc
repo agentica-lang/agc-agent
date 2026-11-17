@@ -4,9 +4,11 @@ import Events from "events"
 import Kinds from "kinds"
 import Wire from "wire"
 
-## What a login gives (`LoginStatus.asks`): a key, or the base URL of a local server.
+## What a login gives (`LoginStatus.asks`): a key, the base URL of a local server, or a code the user confirms in a
+## browser (a device login).
 ASKS_KEY = "key"
 ASKS_URL = "url"
+ASKS_DEVICE = "device"
 
 ## Who wrote a message of the history. The history is display text: an entry of another kind (a tool call) will be a
 ## new type, not a new `Role`, so a `case` on `Role` stays exhaustive.
@@ -119,6 +121,21 @@ struct LoginStatus
   coming: Bool
   asks: String = ASKS_KEY
   base_url: String = ""
+end
+
+## The answer of `POST /v1/auth/chatgpt`: a device login started. The user opens `url` and types `user_code`; the
+## server waits for that, at most `expires_in` seconds.
+struct DeviceLogin
+  user_code: String
+  url: String
+  expires_in: Int
+end
+
+## The answer of `GET /v1/auth/chatgpt`: where the device login is, `none`, `waiting`, `done` or `failed` (`message`
+## says why).
+struct DeviceState
+  state: String
+  message: String
 end
 
 ## The answer of `GET /v1/auth`. `first`: no key file and no key in the environment, so a client offers a login.
@@ -307,6 +324,14 @@ def encode_login_status(reply: LoginStatus) -> String = JSON.encode(reply)
 
 def decode_login_status(text: String) -> Result[LoginStatus] = Wire.decode(text, LoginStatus.codec)
 
+def encode_device_login(reply: DeviceLogin) -> String = JSON.encode(reply)
+
+def decode_device_login(text: String) -> Result[DeviceLogin] = Wire.decode(text, DeviceLogin.codec)
+
+def encode_device_state(reply: DeviceState) -> String = JSON.encode(reply)
+
+def decode_device_state(text: String) -> Result[DeviceState] = Wire.decode(text, DeviceState.codec)
+
 def encode_login_list(reply: LoginList) -> String = JSON.encode(reply)
 
 def decode_login_list(text: String) -> Result[LoginList] = Wire.decode(text, LoginList.codec)
@@ -415,6 +440,8 @@ def shape() -> List[String]
     Wire.record("FileList", FileList.members),
     Wire.record("LoginStatus", LoginStatus.members),
     Wire.record("LoginList", LoginList.members),
+    Wire.record("DeviceLogin", DeviceLogin.members),
+    Wire.record("DeviceState", DeviceState.members),
     Wire.record("MessageWire", MessageWire.members),
     Wire.record("SessionWire", SessionWire.members),
   ]

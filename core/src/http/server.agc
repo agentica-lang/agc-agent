@@ -10,6 +10,7 @@ import Bond from "pkg/bond/bond"
 import Protocol from "pkg/protocol/protocol"
 import Config from "../config/config"
 import Cli from "../config/cli"
+import Chatgpt from "../providers/chatgpt"
 import Logins from "../providers/logins"
 import Providers from "../providers/providers"
 import Extensions from "../config/registry"
@@ -147,6 +148,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.delete(Protocol.AUTH_PATH, ->(conn) { reply(conn, 200, logout(sessions, none)) })
     |> Bond.put(Protocol.AUTH_PATH, ->(conn) { reply(conn, 200, skip(sessions)) })
     |> Bond.post(provider, ->(conn) { reply(conn, 200, login(sessions, conn)) })
+    |> Bond.get(provider, ->(conn) { reply(conn, 200, device_state(sessions, conn)) })
     |> Bond.delete(provider, ->(conn) { reply(conn, 200, logout(sessions, some(try Bond.param(conn, "provider")))) })
     |> Bond.get(one, ->(conn) { reply(conn, 200, snapshot(sessions, conn)) })
     |> Bond.patch(one, ->(conn) { reply(conn, 200, update(sessions, conn)) })
@@ -384,6 +386,12 @@ def login(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   name = try Bond.param(conn, "provider")
   body = try String.from_bytes(conn.body)
   holder = try holder(sessions)
+  if name == Chatgpt.NAME
+    device = try Logins.device_start(holder)
+    started = Protocol.DeviceLogin(user_code: device.user_code, url: device.url, expires_in: Chatgpt.DEVICE_MS / 1000)
+    return ok(Protocol.encode_device_login(started))
+  end
+
   if name == Providers.LOCAL
     request = try Protocol.decode_login_url(body)
     return ok(Protocol.encode_login_status(login_status(try Logins.login_url(holder, name, request.base_url))))
@@ -391,6 +399,15 @@ def login(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
 
   request = try Protocol.decode_login(body)
   ok(Protocol.encode_login_status(login_status(try Logins.login(holder, name, request.key))))
+end
+
+# Only a device login has a state to ask for.
+def device_state(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  name = try Bond.param(conn, "provider")
+  return error("only #{Chatgpt.NAME} has a login to wait for", kind: Protocol.KIND_INVALID) if name != Chatgpt.NAME
+
+  found = try Logins.device_state(try holder(sessions))
+  ok(Protocol.encode_device_state(Protocol.DeviceState(state: found.state, message: found.message)))
 end
 
 def logout(sessions: Sessions.Sessions, name: Optional[String]) -> Result[String]

@@ -780,7 +780,7 @@ def endpoint_of(options: Config.Options, provider: String, api: String) -> Resul
       provider: model_api.provider,
       extra: model_api.extra,
       cache: model_api.cache,
-      refresh: model_api.refresh,
+      refresh: refresh_of(model_api),
       props_url: if_local(model_api, options.props_url),
       api_key: if_local(model_api, options.api_key),
       compact_model: compact,
@@ -802,6 +802,15 @@ def switched_endpoint(options: Config.Options, provider: String, now: String) ->
   end
 
   endpoint_of(options, provider, api)
+end
+
+# A session's own refresh when the API makes one per session, else the API's.
+def refresh_of(api: Config.ModelApi) -> Optional[Fn[Result[LLM.Provider]]]
+  for make in option_list(api.renewer)
+    return some(make.call())
+  end
+
+  api.refresh
 end
 
 def if_local(api: Config.ModelApi, url: String) -> String

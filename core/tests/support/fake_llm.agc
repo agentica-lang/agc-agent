@@ -28,6 +28,8 @@ struct Seen
   path: String
   headers: List[HTTP.Header]
   body: String
+  ## When it came (`Time.monotonic_ms`).
+  at_ms: Int = 0
 end
 
 ## A running fake. `url` is the base URL a provider takes. `left` gets one value each time a client left a streamed
@@ -118,7 +120,11 @@ def content_type(value: String) -> HTTP.Header = HTTP.Header(name: "Content-Type
 def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Result[HTTP.Answer]
   bytes = try HTTP.read_all(body, 1_048_576)
   text = try String.from_bytes(bytes)
-  try script.seen.send(Seen(method: request.method, path: request.path, headers: request.headers, body: text), WAIT_MS)
+  try script.seen.send(
+    Seen(method: request.method, path: request.path, headers: request.headers, body: text, at_ms: Time.monotonic_ms),
+    WAIT_MS,
+  )
+
   reply = script.replies.recv(0).unwrap_or(Reply(status: 500, body: "{\"error\": \"no reply left\"}".bytes))
   Task.sleep(reply.delay_ms)
   if reply.hold

@@ -32,3 +32,5 @@ Changed or written by hand, from the documented event shapes:
 
 The 429 and 401 tests use the bodies in `../openai_chat/` (the same error
 shape). Files here are compared byte for byte (`.gitattributes`: `-text`).
+- `codex_models.json`: the answer of Codex's `GET /models`, written by hand
+  in its shape (`models` with `slug` and `context_window`).
