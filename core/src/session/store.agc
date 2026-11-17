@@ -360,17 +360,24 @@ def listing(file: Ref) -> Result[Listing]
   )
 end
 
-## What the turn shows after `event`: a tool call adds its line, which its end completes, and a turn that did not end
-## as asked adds how it ended.
+## What the turn shows after `event`: a tool call adds its line, which its end completes (without its output and diff,
+## which a history of many calls cannot carry), and a turn that did not end as asked adds how it ended.
 def shown_after(shown: List[Protocol.Message], event: Protocol.Event) -> List[Protocol.Message]
   case event
     Protocol.Event.ToolStarted(started) ->
       shown.push(Protocol.Message(role: Protocol.Role.Assistant, text: "", tool: some(started)))
     Protocol.Event.ToolFinished(done) ->
-      at = (0...shown.size).to_a.reverse.select { |i| shown[i].tool.map { |t| t.call_id } == some(done.call_id) }
-      return shown if at.empty?
+      # The call is among the last lines, the tool calls of the round that runs.
+      i = shown.size - 1
+      while i >= 0 and shown[i].tool.some?
+        if shown[i].tool.unwrap!.call_id == done.call_id
+          return shown.set(i, shown[i].with(done: some(done.with(output: none, diff: none))))
+        end
 
-      shown.take(at[0]) + [shown[at[0]].with(done: some(done))] + shown.drop(at[0] + 1)
+        i = i - 1
+      end
+
+      shown
     Protocol.Event.TurnFinished(finished) if finished.stop_reason != Protocol.StopReason.EndTurn ->
       stop = finished.with(history_size: none)
       shown.push(Protocol.Message(role: Protocol.Role.Assistant, text: "", stop: some(stop)))
@@ -378,8 +385,8 @@ def shown_after(shown: List[Protocol.Message], event: Protocol.Event) -> List[Pr
   end
 end
 
-## What the turn shows after a round of the model: its thinking goes before the first of the tool calls it made, whose
-## lines came in during the round, else at the end.
+## What the turn shows after a round of the model: its thinking goes before the tool calls it made, the last lines,
+## else at the end.
 def with_thinking(shown: List[Protocol.Message], messages: List[LLM.Message]) -> List[Protocol.Message]
   said = messages.select { |m| m.role == LLM.Role.Assistant }.flat_map { |m| m.content }
   thought: List[Protocol.Message] = []
@@ -395,10 +402,9 @@ def with_thinking(shown: List[Protocol.Message], messages: List[LLM.Message]) ->
 
   return shown if thought.empty?
 
-  ours = (0...shown.size).to_a.select { |i| calls.include?(shown[i].tool.map { |t| t.call_id }.unwrap_or("")) }
   at = shown.size
-  if not ours.empty?
-    at = ours[0]
+  while at > 0 and calls.include?(shown[at - 1].tool.map { |t| t.call_id }.unwrap_or(""))
+    at = at - 1
   end
 
   shown.take(at) + thought + shown.drop(at)

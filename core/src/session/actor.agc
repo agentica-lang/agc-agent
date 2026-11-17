@@ -354,7 +354,7 @@ def session(state: Session.State) -> Protocol.Session
     turn_id: state.turn.map { |t| t.id },
     turn_from_event_id: state.turn.map { |t| t.from_event_id },
     pending_approvals: state.pending.map { |w| w.request },
-    history: state.display,
+    history: state.turn.map { |t| state.display.take(t.shown) }.unwrap_or(state.display),
     accept_edits: state.setup.approver.map { |a| a.accept_edits }.unwrap_or(false),
     cost: state.cost,
     effort: state.setup.effort,

@@ -69,7 +69,7 @@ struct Chat
   shown_id: Int = 0
   ## The size of the session's history the client has seen, so a resync prints only the rest.
   known: Int = 0
-  ## The session has something in it: a history, or a turn seen.
+  ## The session has something in it: a history, a turn or a `!` command seen.
   used: Bool = false
   turn: Bool = false
   ## A `!` command of this client runs.
@@ -288,7 +288,8 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
     Protocol.Event.ApprovalRequested(request) -> shown.with(pending: added(shown.pending, request))
     Protocol.Event.ApprovalResolved(resolved) -> forgotten(shown, resolved.approval_id)
     Protocol.Event.MessageQueued(queued) -> shown.with(yolo: Yolo.steered(shown.yolo, queued))
-    Protocol.Event.ShellFinished(_) -> shown.with(shell: false, stopping: false)
+    Protocol.Event.ShellStarted(_) -> shown.with(used: true)
+    Protocol.Event.ShellFinished(_) -> shown.with(shell: false, stopping: false, used: true)
     _ -> shown
   end
 

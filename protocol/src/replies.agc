@@ -161,7 +161,8 @@ end
 ## The answer of `GET /v1/sessions/ID`. Subscribe with `Last-Event-ID` set to `last_event_id` to miss and repeat no
 ## event; 0 is before the first event, and it is never negative.
 ##
-## `history` holds the finished messages. While a turn runs, `turn_id` is its id and `turn_from_event_id` is the event
+## `history` holds the finished messages and what their turns did (see `Message`); while a turn runs, it stops at the
+## start of that turn, its user message included. While a turn runs, `turn_id` is its id and `turn_from_event_id` is the event
 ## id just before its `turn_started` (none when no turn runs). A client that attaches mid-turn subscribes with
 ## `Last-Event-ID` set to `turn_from_event_id` instead: the normal replay then gives it the whole running turn, its
 ## deltas, tool events and approval requests. `pending_approvals` lists the approvals still waiting, for a client that

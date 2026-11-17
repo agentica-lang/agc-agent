@@ -165,6 +165,8 @@ struct Running
   texts: List[String] = []
   ## The messages queued into the turn so far, which number their ids.
   queued: Int = 0
+  ## The size of the display when the turn started: what it shows of the turn after that, the events give again.
+  shown: Int = 0
 end
 
 ## A command a client runs in the session folder.

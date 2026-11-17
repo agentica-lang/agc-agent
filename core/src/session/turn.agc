@@ -121,7 +121,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
-  running = Session.Running(id: turn_id, task: task, from_event_id: state.counter)
+  running = Session.Running(id: turn_id, task: task, from_event_id: state.counter, shown: state.display.size + 1)
   started = state.with(
     turn: some(running),
     turns: state.turns + 1,

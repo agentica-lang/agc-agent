@@ -262,7 +262,8 @@ def test_a_bang_line_runs_a_shell_command() -> Result[Void]
 
     try Driver.say(cli, "!! ls")
     try Driver.read_until(cli, "[not run] a turn is running")
-    _ = try Driver.finish(cli)
+    # A session that only ran commands has something in it too.
+    try Test.eq((try Driver.finish(cli)).lines, ["[to come back: finn chat --session s1]"])
     sent: List[Fake.Seen] = []
     for _i in 1..3
       sent = sent.push(try Fake.request(rig.fake, "POST", Protocol.shell_path("s1")))
