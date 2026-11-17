@@ -6,21 +6,25 @@ import Permissions from "../src/approval/permissions"
 import Tools from "../src/tools/tools"
 import H from "support/harness"
 
-# `allow_prefix` allows the next `wc`, `allow_tool` every bash call after it; the request says what each
+# `allow_prefix` allows the next `ls`, `allow_tool` every bash call after it; the request says what each
 # command's "always" allows, and after the first answer only the `cat | tee` asks.
 def test_session_answers_allow_a_prefix_or_the_whole_tool() -> Result[Void]
-  replies = ["wc_a.sse", "wc_b.sse", "bash.sse", "bash_echo.sse", "text.sse"]
+  replies = ["ls_a.sse", "ls_b.sse", "bash.sse", "bash_echo.sse", "text.sse"]
   H.using(H.Setup(replies: replies)) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Add both, then show and echo.")
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
     add = try H.approval(a)
-    try Test.eq([add.preview, add.prefix.unwrap_or("")], ["wc -l a.txt", "wc *"])
+    try Test.eq([add.preview, add.prefix.unwrap_or("")], ["ls -l a.txt", "ls *"])
     _ = try H.approve(h, id, add.approval_id, Protocol.Decision.AllowPrefix)
     a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
     cat = try H.approval(a)
-    try Test.eq([cat.preview, cat.prefix.unwrap_or("none")], ["cat hello.txt | tee copy.txt", "cat *, tee copy.txt"])
+    try Test.eq(
+      [cat.preview, cat.prefix.unwrap_or("none")],
+      ["cat hello.txt | tee copy.txt", "cat hello.txt, tee copy.txt"],
+    )
+
     _ = try H.approve(h, id, cat.approval_id, Protocol.Decision.AllowTool)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
@@ -117,9 +121,9 @@ def test_the_deny_rules_count_with_the_approvals_on_or_off() -> Result[Void]
 end
 
 # With the approvals off nobody can be asked: a bash command a `bash` deny rule matches is refused from the model and
-# as a `!` command, and a `write_file` rule refuses a write. A `read_file` rule covers the file tools only:
-# `cat secret.txt` runs.
-def test_with_the_approvals_off_a_bash_deny_rule_refuses_and_a_read_rule_does_not() -> Result[Void]
+# as a `!` command, and a `write_file` rule refuses a write. A `read_file` rule covers the files `cat` names too:
+# `cat secret.txt` is refused.
+def test_with_the_approvals_off_a_bash_deny_rule_and_a_read_rule_refuse() -> Result[Void]
   replies = ["bash_rm_then_true.sse", "bash_rm_quoted.sse", "bash_cat_secret.sse", "write_open.sse", "text.sse"]
   deny = ["read_file(secret*)", "bash(rm *)", "write_file(open*)"]
   H.using(H.Setup(replies: replies, approvals: false, deny: deny)) do |h|
@@ -138,14 +142,14 @@ def test_with_the_approvals_off_a_bash_deny_rule_refuses_and_a_read_rule_does_no
     end
 
     try Test.eq(File.read_text("#{h.work}/open.txt"), ok("x"))
-    try Test.eq([text.include?("s3cr3t"), H.kinds(a.seen).include?("approval_requested")], [true, false])
-    Test.eq(statuses, [403, 403, 202])
+    try Test.eq([text.include?("s3cr3t"), H.kinds(a.seen).include?("approval_requested")], [false, false])
+    Test.eq(statuses, [403, 403, 403])
   end
 end
 
 # The verdict of a `bash` call, in both modes: each command of the line is checked, so `bash(rm *)` after
-# `bash(*)` denies `ls && rm x`. A `read_file` rule does not refuse `cat .env`. With the asking on, what no rule allows
-# asks.
+# `bash(*)` denies `ls && rm x`, and a `read_file` rule denies `cat .env`, the file it names. With the asking on, what
+# no rule allows asks.
 def test_a_deny_rule_after_an_allow_rule_wins_for_bash() -> Result[Void]
   deny = ["deny read_file(.env*)", "deny bash(rm *)"]
   allowed = try Approval.parse_rules(["allow bash(*)"] + deny)
@@ -163,10 +167,10 @@ def test_a_deny_rule_after_an_allow_rule_wins_for_bash() -> Result[Void]
   try Test.eq(
     shown,
     [
-      ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Allow"],
-      ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Allow"],
-      ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Allow"],
-      ["Verdict.Deny", "Verdict.Deny", "Verdict.Ask", "Verdict.Ask"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Deny", "Verdict.Allow"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Deny", "Verdict.Allow"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Deny", "Verdict.Allow"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Deny", "Verdict.Ask"],
     ],
   )
 
@@ -239,11 +243,11 @@ def test_by_default_tools_run_without_asking_and_a_project_cannot_ask() -> Resul
 end
 
 # A session allow keeps the deny rules: a command one matches is not allowed through an "always" answer or the whole
-# tool, nor a line with a command no answer allows. A `read_file` rule does not touch bash: `cat *` allows `cat .env`.
+# tool, nor a line with a command no answer allows.
 def test_session_allows_keep_the_deny_rules() -> Result[Void]
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
-  rules = try Approval.parse_rules(["deny bash(rm -rf *)", "deny bash(git push*)", "deny read_file(.env)"])
-  always = ["rm *", "git push *", "ls *", "cat *"].map { |p|
+  rules = try Approval.parse_rules(["deny bash(rm -rf *)", "deny bash(git push*)"])
+  always = ["rm *", "git push *", "ls *", "df *"].map { |p|
     Approval.Rule(action: Tools.Verdict.Allow, tool: "bash", pattern: p)
   }
 
@@ -256,8 +260,7 @@ def test_session_allows_keep_the_deny_rules() -> Result[Void]
 
   refused = ["ls; git status", "ls $(id)", "ls && rm -rf x"]
   try Test.eq(refused.select { |c| Permissions.allows?(answers, rules, root, "bash", c) }, [])
-  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "ls -la | cat"), true)
-  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "cat .env"), true)
+  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "ls -la | df"), true)
   Test.eq(Permissions.allows?(whole, rules, root, "bash", "ls -la"), true)
 end
 
@@ -272,7 +275,7 @@ end
 
 # A deny rule of `read_file` does not touch bash: the request still offers a prefix.
 def test_a_read_deny_rule_keeps_the_prefix_of_the_request() -> Result[Void]
-  H.using(H.Setup(replies: ["wc_a.sse", "text.sse"], deny: ["read_file(secret*)"])) do |h|
+  H.using(H.Setup(replies: ["ls_a.sse", "text.sse"], deny: ["read_file(secret*)"])) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Add it.")
@@ -281,7 +284,7 @@ def test_a_read_deny_rule_keeps_the_prefix_of_the_request() -> Result[Void]
     _ = try H.approve(h, id, add.approval_id, Protocol.Decision.Deny)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
-    Test.eq([add.preview, add.prefix.unwrap_or("none")], ["wc -l a.txt", "wc *"])
+    Test.eq([add.preview, add.prefix.unwrap_or("none")], ["ls -l a.txt", "ls *"])
   end
 end
 
