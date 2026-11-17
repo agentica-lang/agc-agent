@@ -35,24 +35,23 @@ def test_message_handlers_change_the_message_or_refuse_it() -> Result[Void]
 end
 
 # An observer gets the events it names, of every session, in order, and the session's start and end. Nothing waits for
-# a slow observer: the turn ends at once, and the events past its inbox are dropped.
+# an observer: one that is stuck until the end still lets the turn end, and loses the events past its inbox.
 def test_observers_see_the_events_in_order_and_never_slow_a_turn() -> Result[Void]
   names = ["session_started", "turn_started", "tool_finished", "turn_finished", "session_ended"]
   got: Channel[String] = Channel.new(32)
-  slow_got: Channel[String] = Channel.new(32)
+  stuck_got: Channel[String] = Channel.new(32)
+  gate: Channel[Bool] = Channel.new(1)
   registry = (
-    Core.registry().with(observer_inbox: 1)
+    Core.registry().with(observer_inbox: 1, handler_ms: 10_000)
     |> Core.on(Core.Event.Seen(names, ->(seen: Core.Seen) { observed_as(got, seen) }))
-    |> Core.on(Core.Event.Seen(names, ->(seen: Core.Seen) { slowly(slow_got, seen) }))
+    |> Core.on(Core.Event.Seen(names, ->(seen: Core.Seen) { stuck(stuck_got, gate, seen) }))
   )
 
   H.using(H.Setup(replies: ["read_file.sse", "text.sse"], registry: some(registry))) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
-    started = Time.monotonic_ms
     _ = try H.send(h, id, "Read a.txt.")
     a = try H.until(a, Protocol.EventKind.TurnFinished)
-    took = Time.monotonic_ms - started
     H.close(a)
     try Test.eq((try H.call(h, "DELETE", Protocol.session_path(id), "", H.auth(h))).status, 200)
     seen = (1..5).to_a.map { |_| got.recv(5000).unwrap_or("none") }
@@ -61,9 +60,10 @@ def test_observers_see_the_events_in_order_and_never_slow_a_turn() -> Result[Voi
       ["session_started #{id} true", "turn_started", "tool_finished", "turn_finished", "session_ended deleted"],
     )
 
-    try Test.assert(took < 400, "the turn waited for the slow observer: #{took} ms")
-    slow_seen = (1..5).to_a.map { |_| slow_got.recv(1500).unwrap_or("") }.select { |name| not name.empty? }
-    Test.assert(slow_seen.size < 5, "the slow observer lost none: #{slow_seen}")
+    gate.close
+    stuck_seen = [stuck_got.recv(5000).unwrap_or(""), stuck_got.recv(5000).unwrap_or("")]
+    try Test.assert(stuck_seen[0] == "session_started" and not stuck_seen[1].empty?, "stuck: #{stuck_seen}")
+    Test.assert(not stuck_got.recv(200).ok?, "the stuck observer lost no event")
   end
 end
 
@@ -430,9 +430,9 @@ def observed_as(got: Channel[String], seen: Core.Seen) -> Void
   _ = got.send("#{seen.name} #{detail}".strip, 0)
 end
 
-def slowly(got: Channel[String], seen: Core.Seen) -> Void
+def stuck(got: Channel[String], gate: Channel[Bool], seen: Core.Seen) -> Void
   _ = got.send(seen.name, 0)
-  Task.sleep(300)
+  _ = gate.recv(60_000)
 end
 
 def crash_on_boom(text: String) -> String

@@ -244,14 +244,7 @@ def fold(registry: Registry, staying: List[LLM.Message]) -> String
 end
 
 ## Starts a task for each `Seen` handler of `registry`, which gets its events one at a time.
-def observe(registry: Registry) -> List[Observer]
-  registry.events.flat_map do |event|
-    case event
-      Event.Seen(names, handler) -> [observer(names, handler, registry)]
-      _ -> []
-    end
-  end
-end
+def observe(registry: Registry) -> List[Observer] = registry.events.flat_map { |event| observers_of(event, registry) }
 
 ## Whether an observer wants the events of `name`: publishing an event that none wants costs nothing more.
 def wanted?(observers: List[Observer], name: String) -> Bool = observers.any? { |o| o.names.include?(name) }
@@ -509,6 +502,14 @@ def bounded[T](what: String, ms: Int, body: Fn[Result[T]]) -> Result[T]
       Task.cancel(task)
       _ = Task.await(task, END_MS)
       error("#{what} took over #{ms} ms")
+  end
+end
+
+def observers_of(event: Event, registry: Registry) -> List[Observer]
+  case event
+    Event.Seen(names, handler) -> [observer(names, handler, registry)]
+    Event.Message(_) -> []
+    Event.Fold(_) -> []
   end
 end
 
