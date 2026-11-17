@@ -53,7 +53,7 @@ def started(
   palette = Theme.colors256?(System.env("TERM").unwrap_or(""), System.env("COLORTERM").unwrap_or(""))
   output = TUI.OutputMode.Colors256
   edits = case Client.state_dir(Args.launch(options))
-    ok(dir) -> Editor.folder_of(dir)
+    ok(dir) -> Editor.folder_of(dir, Time.now_ms / 1000)
     error(_) -> ""
   end
 

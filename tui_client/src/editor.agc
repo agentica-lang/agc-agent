@@ -6,14 +6,19 @@ import TUI from "pkg/tui/tui"
 import Input from "input"
 import State from "state"
 
-## The folders of edits under the private state folder `state_dir`, with what a client that is gone left there cleared:
-## each client edits in a folder named by its pid.
-def folder_of(state_dir: String) -> String
+## The folders of edits under the private state folder `state_dir`, each client's named by its pid. What a client that
+## was killed left there goes once it is a day old (at `now_s`): a younger folder may be another client's edit.
+def folder_of(state_dir: String, now_s: Int) -> String
   edits = "#{state_dir}/edits"
   _ = Dir.mkdir_private(edits, FILE_MS)
   names: List[String] = Dir.list(edits, FILE_MS).unwrap_or([])
   for name in names
-    if not File.stat("/proc/#{name}", FILE_MS).ok?
+    old = case File.stat("#{edits}/#{name}", FILE_MS)
+      ok(info) -> info.modified_seconds < now_s - LEFT_S
+      error(_) -> true
+    end
+
+    if old
       _ = Path.remove("#{edits}/#{name}", FILE_MS)
     end
   end
@@ -50,6 +55,7 @@ end
 private
 
 WAIT_MS = 60_000
+LEFT_S = 86_400
 FILE_MS = 5000
 
 # The editor runs through the shell, as git runs it, so that `$EDITOR` may hold arguments. With no signal keys, a

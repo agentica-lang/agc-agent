@@ -1041,7 +1041,7 @@ def test_ctrl_g_edits_the_prompt_in_the_editor() -> Result[Void]
   ]
 
   try File.write_text("#{folder}/editor", lines.join("\n"))
-  edits = Editor.folder_of(folder)
+  edits = Editor.folder_of(folder, Time.now_ms / 1000)
   paste = "pasted words"
   draft = model_of(40, 8).with(
     prompt: "draft #{Input.token(1, paste)}",
@@ -1086,17 +1086,18 @@ def test_ctrl_g_edits_the_prompt_in_the_editor() -> Result[Void]
   Test.eq([State.editor_of(" ", " vi "), State.editor_of("code -w", "vi")], ["vi", "code -w"])
 end
 
-# The edit folders of the clients that are gone are cleared at the start; the one of a running client stays.
-def test_the_edit_folders_of_gone_clients_are_cleared() -> Result[Void]
+# An edit folder stays at the start while it is younger than a day, whatever its pid: it may be another client's edit.
+# An older one is what a killed client left, and goes.
+def test_the_edit_folders_older_than_a_day_are_cleared() -> Result[Void]
   folder = "#{System.env("TMPDIR").unwrap_or("/tmp")}/tui-edits-#{Random.int(0, 999_999_999)}"
   try Dir.mkdir_private(folder)
   try Dir.mkdir("#{folder}/edits/999999999")
   try File.write_text("#{folder}/edits/999999999/prompt.md", "left")
-  try Dir.mkdir("#{folder}/edits/#{System.pid()}")
-  edits = Editor.folder_of(folder)
-  kept = Dir.list(edits)
+  now_s = Time.now_ms / 1000
+  fresh = Dir.list(Editor.folder_of(folder, now_s))
+  old = Dir.list(Editor.folder_of(folder, now_s + 2 * 86_400))
   _ = Path.remove(folder)
-  Test.eq(kept, ok([System.pid().to_s]))
+  Test.eq([fresh.unwrap_or(["unread"]), old.unwrap_or(["unread"]).map { |name| "kept #{name}" }], [["999999999"], []])
 end
 
 # Alt+y (or Escape and y read together) on a focused approval panel answers nothing and types nothing; y allows.
