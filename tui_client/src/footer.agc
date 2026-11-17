@@ -8,8 +8,6 @@ import Width from "width"
 ## The characters of the first message that name the session.
 TITLE_CHARS = 40
 MAX_USD = 1_000_000.0
-## The most parts `counts` drops.
-LEAST = 3
 
 ## Where the session is: `cwd` with `home` as `~`, the branch in parentheses and `title`, one line.
 def place(cwd: String, home: String, branch: String, title: String, width: Int) -> String
@@ -31,8 +29,8 @@ def place(cwd: String, home: String, branch: String, title: String, width: Int) 
 end
 
 ## The status row: `state` (as `ready`), the counts of `usage`, the `hints` that fit, and `right` (the model) at its
-## end, at least two cells after them. When the row is too narrow, the counts lose the part cached, then the window,
-## then the cache read, and then `right` is cut.
+## end, two cells after them. When the row is too narrow, the counts lose the part cached, then the window, then the
+## cache read, and then `right` is cut, or left out when fewer than 2 cells are left for it.
 def status(
   state: List[String],
   usage: Optional[Protocol.Usage],
@@ -42,7 +40,7 @@ def status(
 ) -> String
   room = width - Width.text(right) - 3
   text = left(state, usage, 0)
-  for detail in 1..LEAST
+  for detail in 1..MOST_DROPPED
     break if Width.text(text) <= room
 
     text = left(state, usage, detail)
@@ -127,6 +125,9 @@ def model(serving: String, level: Optional[String]) -> String
 end
 
 private
+
+## How many parts `counts` drops at most.
+MOST_DROPPED = 3
 
 def left(state: List[String], usage: Optional[Protocol.Usage], detail: Int) -> String
   " #{(state + option_list(usage).map { |u| counts(u, detail) }).join(" · ")}"

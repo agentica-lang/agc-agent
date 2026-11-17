@@ -23,6 +23,13 @@ def test_keys_move_filter_and_pick() -> Result[Void]
   Test.eq(Picker.key(none_left, key(TUI.Key.Enter)), Picker.Step.Stay(none_left))
 end
 
+# A title from an older server keeps no control or bidi character in its row.
+def test_a_title_shows_no_control_or_bidi_character() -> Result[Void]
+  odd = "fix#{String.from_code(0x202E)}it#{String.from_code(27)}[2J"
+  rows = Picker.rows(Picker.Picker(sessions: [summary("s1", odd)]), 200, 3, 1000).map { |row| row.text }
+  Test.eq(rows.any? { |row| row.include?("fix it [2J") }, true)
+end
+
 def test_rows_keep_the_selected_session_in_sight() -> Result[Void]
   sessions = (1..20).map { |n| summary("s#{n}", "task #{n}") }
   picker = Picker.Picker(sessions: sessions, selected: 14)
