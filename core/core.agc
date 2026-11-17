@@ -126,7 +126,13 @@ def start(registry: Extensions.Registry) -> Result[Server.Server]
   end
 
   # The core's own extensions: the skills, and the MCP servers, which start now.
-  all = try Builtins.mcp(registry |> Builtins.skills(), read, options.state_dir)
+  own = (
+    Extensions.Served(registry: registry)
+    |> Builtins.skills()
+    |> Builtins.approvals(options.approvals, options.asking)
+  )
+
+  all = try Builtins.mcp(own, read, options.state_dir)
   catalog = Catalog.start(
     Catalog.Options(url: options.models_url, cache: "#{options.state_dir}/#{Catalog.CACHE_FILE}"),
   )

@@ -322,14 +322,19 @@ def crashed_start() -> Result[Void]
   ok()
 end
 
-# The tests of an extension build a call with `Core.call`: its paths resolve in the folder.
+# The tests of an extension build a call with `Core.call`: its paths resolve in the real folder, behind a link or
+# relative.
 def test_core_call_builds_a_call_for_the_tests_of_an_extension() -> Result[Void]
   base = try fresh()
-  call = Core.call(base, JSON.object({"text": JSON.from("one")}))
+  try Dir.mkdir("#{base}/real")
+  _ = try H.run("ln", ["-s", "real", "#{base}/link"])
+  call = Core.call("#{base}/link", JSON.object({"text": JSON.from("one")}))
   results = [Core.resolve(call, "a.txt"), Core.resolve(call, "../outside")]
+  here = Core.resolve(Core.call(".", JSON.object({})), "agentica.toml")
   _ = Path.remove(base)
-  try Test.eq(results[0], ok("#{base}/a.txt"))
-  Test.error?(results[1])
+  try Test.eq(results[0], ok("#{base}/real/a.txt"))
+  try Test.error?(results[1])
+  Test.eq(here, ok("#{try Path.real(".")}/agentica.toml"))
 end
 
 def crashing_tool() -> Core.Tool

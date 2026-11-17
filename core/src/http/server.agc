@@ -59,7 +59,7 @@ def start(options: Config.Options) -> Result[Server]
     return error("a server already runs for #{options.state_dir}")
   end
 
-  registry = options.registry.unwrap_or(Extensions.Registry())
+  registry = options.registry.map { |served| served.registry }.unwrap_or(Extensions.Registry())
   begun = Extensions.start_services(registry.services, registry.service_ms)
   if not begun.ok?
     _ = File.close(lock)

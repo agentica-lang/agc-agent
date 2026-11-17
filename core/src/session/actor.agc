@@ -20,7 +20,6 @@ import Agent from "../agent/agent"
 import Catalog from "../agent/catalog"
 import CodeMode from "../tools/code_mode"
 import Compaction from "../agent/compaction"
-import Extension from "../approval/extension"
 import Extensions from "../config/registry"
 import Spec from "../tools/spec"
 import Store from "store"
@@ -91,8 +90,8 @@ struct Setup
   origin: String = ""
   ## Why a turn cannot start (the provider is not offered now); empty when it can.
   refused: String = ""
-  ## The approval extension, with what the session's answers and mode allowed so far; none runs every call.
-  approvals: Optional[Extension.Approvals] = none
+  ## The approval, with what the session's answers and mode allowed so far; none runs every call.
+  approver: Optional[Extensions.Approver] = none
   ## What the extensions of the server add: the `message` and `fold` handlers.
   registry: Optional[Extensions.Registry] = none
 end
@@ -478,7 +477,7 @@ def session(state: State) -> Protocol.Session
     turn_from_event_id: state.turn.map { |t| t.from_event_id },
     pending_approvals: state.pending.map { |w| w.request },
     history: state.display,
-    accept_edits: state.setup.approvals.map { |a| Extension.accept_edits?(a) }.unwrap_or(false),
+    accept_edits: state.setup.approver.map { |a| a.accept_edits }.unwrap_or(false),
     cost: state.cost,
     effort: state.setup.effort,
     provider: state.setup.provider_name,
@@ -751,7 +750,7 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     marks: state.marks,
     on_fold: some(on_fold(setup)),
     effort: setup.effort,
-    gate: gate(setup.approvals),
+    gate: gate(setup.approver),
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
@@ -852,16 +851,15 @@ def on_fold(setup: Setup) -> Fn[List[String], List[LLM.Message], String]
   }
 end
 
-def gate(approvals: Optional[Extension.Approvals]) -> Optional[Fn[Tools.Context, String, JSON.Value, Tools.Verdict]]
-  case approvals
-    some(a) if Extension.gated?(a) ->
-      some(->(ctx: Tools.Context, name: String, input: JSON.Value) { Extension.verdict(a, ctx, name, input) })
-    _ -> none
+def gate(approver: Optional[Extensions.Approver]) -> Optional[Fn[Tools.Context, String, JSON.Value, Tools.Verdict]]
+  case approver
+    some(a) -> a.verdict
+    none -> none
   end
 end
 
 def ask(state: State, call: Agent.Ask, reply: Channel[Protocol.Decision]) -> State
-  allowed = state.setup.approvals.map { |a| Extension.allows?(a, call.tool, call.target) }.unwrap_or(false)
+  allowed = state.setup.approver.map { |a| a.allows.call(call.tool, call.target) }.unwrap_or(false)
   if allowed
     _ = reply.send(Protocol.Decision.Allow, 0)
     return state
@@ -873,7 +871,7 @@ def ask(state: State, call: Agent.Ask, reply: Channel[Protocol.Decision]) -> Sta
     tool: call.tool,
     preview: call.target,
     detail: call.detail,
-    prefix: Extension.prefix(call.tool, call.target),
+    prefix: state.setup.approver.map { |a| a.prefix.call(call.tool, call.target) }.unwrap_or(none),
   )
 
   waiting = Waiting(request: request, reply: reply, asked_ms: Time.monotonic_ms)
@@ -923,9 +921,9 @@ def resolve(state: State, approval_id: String, decision: Protocol.Decision, sour
       _ = waiting.reply.send(decision, 0)
       asked = waiting.request
       name = Protocol.decision_name(decision)
-      approvals = state.setup.approvals.map { |a| Extension.answered(a, name, asked.tool, asked.preview) }
+      approver = state.setup.approver.map { |a| a.answered.call(name, asked.tool, asked.preview) }
       next_state = state.with(
-        setup: state.setup.with(approvals: approvals),
+        setup: state.setup.with(approver: approver),
         pending: state.pending.select { |w| w.request.approval_id != approval_id },
         resolved: state.resolved.push(approval_id),
       )
@@ -1024,7 +1022,7 @@ def busy_reason(state: State) -> String
 end
 
 def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Result[Void]]) -> State
-  asking = state.setup.approvals.map { |a| a.asking }.unwrap_or(false)
+  asking = state.setup.approver.map { |a| a.asking }.unwrap_or(false)
   if change.accept_edits.some? and not asking
     Actor.reply(reply, error("accept_edits needs the approvals on (FINN_APPROVALS=1)", kind: Protocol.KIND_INVALID))
 
@@ -1043,7 +1041,7 @@ def update_setup(state: State, change: Protocol.UpdateSession, reply: Channel[Re
 
   setup = setup.with(model: change.model.unwrap_or(setup.model))
   for on in option_list(change.accept_edits)
-    setup = setup.with(approvals: setup.approvals.map { |a| Extension.with_accept_edits(a, on) })
+    setup = setup.with(approver: setup.approver.map { |a| a.with_accept_edits.call(on) })
   end
 
   case change.effort
@@ -1273,7 +1271,7 @@ def run_shell(state: State, request: Protocol.RunShell, reply: Channel[Result[Pr
 
   # The user can stop the command, so it may run as long as a `bash` call can.
   input = JSON.object({"command": JSON.from(request.command), "timeout_ms": JSON.from(Tools.MAX_BASH_TIMEOUT_MS)})
-  verdict = gate(state.setup.approvals).map { |g| g.call(state.setup.ctx, Tools.BASH, input) }
+  verdict = gate(state.setup.approver).map { |g| g.call(state.setup.ctx, Tools.BASH, input) }
   if verdict == some(Tools.Verdict.Deny)
     Actor.reply(reply, error("a rule of the config denies this command", kind: Protocol.KIND_SHELL_DENIED))
     return state

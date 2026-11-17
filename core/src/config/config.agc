@@ -65,8 +65,8 @@ struct Options
   asking: Bool = false
   ## The tools after the built-in ones: those of the extensions (the MCP servers' come later, through `registry`).
   tools: List[Tools.Tool] = []
-  ## What the extensions add (`Core.serve`).
-  registry: Optional[Extensions.Registry] = none
+  ## What the extensions add (`Core.serve`), with the core's own (the skills, MCP and the approval).
+  registry: Optional[Extensions.Served] = none
   ## A test seam: makes the diff of each tool call (see `Tools.Context.diff`).
   diff: Optional[Fn[String, JSON.Value, String]] = none
   port: Int = 0

@@ -232,7 +232,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     env: &fake_env,
     approvals: some(user.rules),
     asking: user.asking,
-    registry: some(registry_of(setup)),
+    registry: some(served_of(setup, user)),
     keep_events: setup.keep_events,
     approval_timeout_ms: setup.approval_timeout_ms,
     drain_ms: setup.drain_ms,
@@ -318,13 +318,14 @@ def code_mode(fixture: String) -> Optional[CodeMode.Settings]
 end
 
 # The extensions of the setup with the core's own, as `Core.serve` adds them.
-def registry_of(setup: Setup) -> Extensions.Registry
-  registry = Builtins.skills(setup.registry.unwrap_or(Extensions.Registry()))
+def served_of(setup: Setup, user: Permissions.User) -> Extensions.Served
+  served = Extensions.Served(registry: setup.registry.unwrap_or(Extensions.Registry()))
+  served = Builtins.approvals(Builtins.skills(served), some(user.rules), user.asking)
   for late in option_list(setup.late_tools)
-    registry = Extensions.add_late_tools(registry, late)
+    served = Extensions.add_late_tools(served, late)
   end
 
-  registry
+  served
 end
 
 def skills_home(setup: Setup, base: String) -> String
