@@ -199,8 +199,10 @@ def test_an_early_stop_reaches_a_turn_of_another_client() -> Result[Void]
   try Test.eq([queued.model.stopping, queued.model.stop_wanted], [true, false])
   try Test.eq(queued.cmds.size, 1)
   # A stop that found its turn ended says so.
-  late = App.update(queued.model, App.Msg.Stopped(ok(false))).model
+  late = App.update(queued.model, App.Msg.Stopped("turn", ok(false))).model
   try Test.eq([late.stopping.to_s, late.entries.last.text], ["false", "the turn had already ended"])
+  command = App.update(queued.model, App.Msg.Stopped("command", ok(false))).model
+  try Test.eq(command.entries.last.text, "the command had already ended")
   stray = App.update(model_of(30, 8), App.Msg.Leveled(ok()))
   Test.eq([stray.model.entries.size, stray.cmds.size], [0, 0])
 end
@@ -450,8 +452,17 @@ def test_at_lists_the_files_and_tab_completes_one() -> Result[Void]
   model = model_of(40, 10).with(id: "s1", prompt: "see ", cursor: 4)
   asked = App.update(model, App.Msg.Key(TUI.Event.Char("@", TUI.Mods())))
   try Test.eq([asked.cmds.size.to_s, asked.model.reading_files.to_s], ["1", "true"])
-  model = App.update(asked.model, App.Msg.Files(asked.model.opened, ok(["README.md", "thinking.sse"]))).model
+  listed = Protocol.FileList(files: ["README.md", "thinking.sse"])
+  model = App.update(asked.model, App.Msg.Files(asked.model.opened, ok(listed))).model
   try Test.eq(model.files, some(["README.md", "thinking.sse"]))
+  # A cut list is said once, until a whole one comes.
+  cut = App.update(model, App.Msg.Files(model.opened, ok(listed.with(truncated: true)))).model
+  try Test.eq(cut.entries.last.text, "the @ list is cut: the folder has more files than it reads")
+  try Test.eq(
+    App.update(cut, App.Msg.Files(model.opened, ok(listed.with(truncated: true)))).model.entries.size,
+    cut.entries.size,
+  )
+
   again = App.update(model.with(prompt: "", cursor: 0), App.Msg.Key(TUI.Event.Char("@", TUI.Mods())))
   try Test.eq(again.cmds.size, 1)
   failed = App.update(again.model, App.Msg.Files(again.model.opened, error("refused")))
@@ -462,7 +473,11 @@ def test_at_lists_the_files_and_tab_completes_one() -> Result[Void]
   try Test.eq(App.update(slow.with(prompt: "", cursor: 0), App.Msg.Key(TUI.Event.Char("@", TUI.Mods()))).cmds.size, 0)
   # A name with control bytes is drawn without them.
   odd = "a#{String.from_code(27)}[2Jb.txt"
-  shown = App.update(model.with(prompt: "@", cursor: 1), App.Msg.Files(model.opened, ok([odd]))).model
+  shown = App.update(
+    model.with(prompt: "@", cursor: 1),
+    App.Msg.Files(model.opened, ok(Protocol.FileList(files: [odd]))),
+  ).model
+
   try Test.assert(rows(shown).any? { |row| row.include?("a [2Jb.txt") }, "#{rows(shown)}")
   for char in ["t", "h", "k"]
     model = App.update(model, App.Msg.Key(TUI.Event.Char(char, TUI.Mods()))).model

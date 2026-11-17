@@ -330,6 +330,25 @@ def running_stop(rig: Rig) -> Result[Void]
   Test.eq(rig.bodies.recv(2000), ok(Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: some("t5")))))
 end
 
+# Esc after the reply that started this client's turn, before its `turn_started`, stops it by the reply's id.
+def test_escape_before_turn_started_names_the_turn_of_the_reply() -> Result[Void]
+  within(80, 24, &own_stop, {}, some(&own_turn_accepted))
+end
+
+def own_turn_accepted(app: App.Model) -> App.Model
+  accepted = Protocol.MessageAccepted(turn_id: "t3")
+  opened = app.opened
+  reply = TUI.Cmd.Run(-> { App.Msg.Sent(opened, "hi there", ok(accepted)) })
+  app.with(outbox: ["hi there"], effects: app.effects.push(reply))
+end
+
+def own_stop(rig: Rig) -> Result[Void]
+  try shows(rig, "hi there")
+  try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
+  try Test.eq(rig.requests.recv(2000), ok("POST #{Protocol.stop_path("s1")}"))
+  Test.eq(rig.bodies.recv(2000), ok(Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: some("t3")))))
+end
+
 def early_stop(rig: Rig) -> Result[Void]
   try Test.eq(rig.requests.recv(2000), ok("POST #{Protocol.stop_path("s1")}"))
   Test.eq(rig.bodies.recv(2000), ok(Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: some("t9")))))
