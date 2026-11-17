@@ -1,5 +1,7 @@
+import HTTP from "std/http"
 import Protocol from "pkg/protocol/protocol"
 import Client from "../client"
+import Export from "../src/export"
 import Http from "../src/http"
 
 # A port nothing listens on: the one of a server that was just closed.
@@ -220,6 +222,51 @@ def test_an_export_file_is_private_and_never_replaced_without_force() -> Result[
   result = exports_to(dir)
   _ = Path.remove(dir)
   result
+end
+
+# An export over the limit of the call says so, without blaming the server; under it, the export comes whole.
+def test_an_export_over_the_limit_is_too_large() -> Result[Void]
+  big = Protocol.encode_session_export(
+    sample().with(entries: [Protocol.ExportEntry(kind: "user", text: "x" * 1_100_000)]),
+  )
+
+  app = HTTP.app(->(_request) { ok(HTTP.Response(status: 200, headers: [], body: big.bytes)) })
+  listening = try HTTP.serve("127.0.0.1", 0, app)
+  server = Http.Server(url: "http://127.0.0.1:#{HTTP.local_port(listening)}", token: "t")
+  over = Http.exported(server, "s1", 1_048_576)
+  whole = Http.exported(server, "s1")
+  HTTP.close_server(listening)
+  try Test.eq(
+    [message_of_export(over), kind_of(over)],
+    ["the export of the session is over 1 MiB", Http.KIND_TOO_LARGE],
+  )
+
+  Test.eq((try whole).entries[0].text.length, 1_100_000)
+end
+
+# A file that appears before the export is made is an error and is left as it is.
+def test_an_export_never_removes_a_file_it_did_not_make() -> Result[Void]
+  path = "#{System.env("TMPDIR").unwrap_or("/tmp")}/finn-export-#{Random.int(0, 999_999_999)}.md"
+  try File.write_text(path, "other")
+  made = Export.created(path, "# Fix it\n")
+  kept = File.read_text(path)
+  _ = Path.remove(path)
+  try Test.eq(kind_of(made), "io.exists")
+  Test.eq(kept, ok("other"))
+end
+
+def kind_of[T](result: Result[T]) -> String
+  case result
+    ok(_) -> "ok"
+    error(e) -> e.kind
+  end
+end
+
+def message_of_export(result: Result[Protocol.SessionExport]) -> String
+  case result
+    ok(_) -> "ok"
+    error(e) -> e.message
+  end
 end
 
 def exports_to(dir: String) -> Result[Void]

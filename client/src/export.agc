@@ -72,20 +72,25 @@ def saved(exported: Protocol.SessionExport, path: String, force: Bool) -> Result
   ok(path)
 end
 
+## Makes the file `path`, 0600, with `text`. A path that exists is an error and stays as it is; a file whose write
+## fails is removed.
+def created(path: String, text: String) -> Result[Void]
+  file = try File.open(path, "create_private", FILE_MS)
+  written = written_to(file, text.bytes)
+  closed = File.close(file, FILE_MS)
+  if not written.ok? or not closed.ok?
+    _ = Path.remove(path, FILE_MS)
+  end
+
+  try written
+  closed
+end
+
 private
 
 HEX = "0123456789abcdef"
 # The most one write takes.
 WRITE_BYTES = 1_048_576
-
-def created(path: String, text: String) -> Result[Void]
-  written: Result[Void] = File.open(path, "create_private", FILE_MS) do |file| written_to(file, text.bytes) end
-  if not written.ok?
-    _ = Path.remove(path, FILE_MS)
-  end
-
-  written
-end
 
 def written_to(file: File.Handle, bytes: Bytes) -> Result[Void]
   at = 0

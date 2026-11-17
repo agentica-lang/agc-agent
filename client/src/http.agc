@@ -19,6 +19,8 @@ ERROR_BODY_BYTES = 65_536
 ## The server did not answer: nothing listens, or the connection failed.
 KIND_UNREACHABLE = "client.unreachable"
 KIND_TIMEOUT = "client.timeout"
+## A reply over the limit of the call, the kind of `HTTP`.
+KIND_TOO_LARGE = "http.too_large"
 
 ## What `--yolo` does on a server whose approvals are on, or not known.
 YOLO_ASKS_NOT = "--yolo: the tool calls of the turns this client starts run without asking"
@@ -162,12 +164,12 @@ def tree(server: Server, id: String) -> Result[Protocol.SessionTree]
 end
 
 ## The branch the session is on, for `/export`.
-def exported(server: Server, id: String) -> Result[Protocol.SessionExport]
-  options = HTTP.ClientOptions(timeout_ms: EXPORT_TIMEOUT_MS, max_body_bytes: EXPORT_BODY_BYTES)
+def exported(server: Server, id: String, max_bytes: Int = EXPORT_BODY_BYTES) -> Result[Protocol.SessionExport]
+  options = HTTP.ClientOptions(timeout_ms: EXPORT_TIMEOUT_MS, max_body_bytes: max_bytes)
   case call_with(server, "GET", Protocol.export_path(id), "", options)
     ok(body) -> Protocol.decode_session_export(body)
-    error(e) if e.message.include?("max_body_bytes") ->
-      error("the export of the session is over 64 MiB", kind: "client.too_large", cause: e)
+    error(e) if e.kind == KIND_TOO_LARGE ->
+      error("the export of the session is over #{max_bytes / 1_048_576} MiB", kind: KIND_TOO_LARGE, cause: e)
     error(e) -> error(e)
   end
 end
@@ -258,6 +260,7 @@ end
 def network[T](result: Result[T]) -> Result[T]
   case result
     ok(value) -> ok(value)
+    error(e) if e.kind == KIND_TOO_LARGE -> error(e)
     error(e) -> error("cannot reach the server: #{e.message}", kind: unreachable_kind(e.message), cause: e)
   end
 end
