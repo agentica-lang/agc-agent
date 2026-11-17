@@ -12,6 +12,7 @@ import Config from "../config/config"
 import Cli from "../config/cli"
 import Logins from "../config/logins"
 import Extensions from "../config/registry"
+import Folders from "../config/folders"
 import Sessions from "../session/session"
 
 SERVER_JSON = "server.json"
@@ -49,9 +50,9 @@ end
 
 ## Starts the server in the calling task, which owns it: call it from the task that keeps it.
 def start(options: Config.Options) -> Result[Server]
-  try private_folder(options.state_dir)
-  try private_folder(options.data_dir)
-  try private_folder(Sessions.folder(options))
+  try Folders.private_folder(options.state_dir)
+  try Folders.private_folder(options.data_dir)
+  try Folders.private_folder(Sessions.folder(options))
   lock = try File.open("#{options.state_dir}/#{LOCK_FILE}", "append")
   locked = File.try_lock(lock, 1000)
   if locked != ok(true)
@@ -194,43 +195,6 @@ def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handl
       Bond.stop(http)
       error(e)
   end
-end
-
-def private_folder(given: String) -> Result[Void]
-  path = try Path.resolve(given)
-  if not File.stat(path).ok?
-    try Dir.mkdir(parent(path))
-    try Dir.mkdir_private(path)
-  end
-
-  info = try File.stat(path)
-  return error("#{path} is not a folder") if info.kind != "directory"
-  return error("#{path} must be private (mode 0700), it has mode #{info.mode}") if info.mode % 64 != 0
-
-  for me in option_list(owner_id())
-    return error("#{path} is not owned by you") if info.user_id != me
-  end
-
-  ok()
-end
-
-def parent(path: String) -> String
-  parts = path.split("/")
-  return "/" if parts.size <= 2
-
-  parts.take(parts.size - 1).join("/")
-end
-
-# The user id of this process, from the owner of its /proc entry or of the home folder; none where neither is there.
-def owner_id() -> Optional[Int]
-  for place in ["/proc/self", System.env("HOME").unwrap_or("")]
-    case File.stat(place)
-      ok(info) if place != "" -> return some(info.user_id)
-      _ -> nil
-    end
-  end
-
-  none
 end
 
 def write_server_json(dir: String, info: Protocol.ServerInfo) -> Result[Void]
@@ -539,11 +503,4 @@ end
 
 def json(conn: Bond.Conn, status: Int, text: String) -> Bond.Conn
   Bond.header(Bond.text(conn, status, text), "content-type", "application/json")
-end
-
-def option_list[T](value: Optional[T]) -> List[T]
-  case value
-    some(v) -> [v]
-    none -> []
-  end
 end
