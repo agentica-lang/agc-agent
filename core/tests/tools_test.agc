@@ -1,4 +1,5 @@
 import Approval from "../src/approval/approval"
+import BashTool from "../src/tools/shell"
 import Diff from "../src/tools/diff"
 import Tools from "../src/tools/tools"
 
@@ -202,8 +203,8 @@ def test_bash_gets_only_the_kept_variables_of_the_real_environment() -> Result[V
   done(s)
 end
 
-# A read-only command, which may run without asking, finds its programs in /usr/bin:/bin, never in a `.` of the
-# user's PATH; another command keeps the user's PATH.
+# A read-only command, which may run without asking, finds its programs in the folders only root can change, never in
+# a `.` of the user's PATH or a folder of the user; another command keeps the user's PATH.
 def test_a_read_only_command_runs_with_a_fixed_path() -> Result[Void]
   s = try setup()
   try File.write_text("#{s.root}/cat", "#!/bin/sh\necho PWNED\n")
@@ -212,6 +213,12 @@ def test_a_read_only_command_runs_with_a_fixed_path() -> Result[Void]
   ctx = s.ctx.with(env: &dot_env)
   try Test.eq(Tools.run(ctx, "bash", JSON.from({"command": "cat a.txt"})).text, "one\ntwo\nthree\nfour\n")
   try Test.eq(Tools.run(ctx, "bash", JSON.from({"command": "echo $PATH"})).text, ".:/usr/bin:/bin\n")
+  try Test.eq(BashTool.trusted_path(["/usr/bin", s.root]), "/usr/bin")
+  try Test.eq(
+    [BashTool.read_only?(s.root, "cat a.txt"), BashTool.read_only?(s.root, "which -a /etc/passwd")],
+    [true, false],
+  )
+
   done(s)
 end
 

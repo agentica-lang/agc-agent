@@ -104,7 +104,8 @@ def spec(name: String) -> Optional[Spec]
     "file" -> some(Spec(flags: "bi", long: ["--brief", "--mime-type"]))
     "stat" -> some(Spec(flags: "Lt", values: "c"))
     "pwd" -> some(Spec(paths: false))
-    "which" -> some(Spec(flags: "a", paths: false))
+    # Its operands are paths too: `which -a /outside/x` tells whether a file outside the folder exists.
+    "which" -> some(Spec(flags: "a"))
     _ -> none
   end
 end
