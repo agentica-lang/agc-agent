@@ -20,10 +20,41 @@ env:
   AGENTICA_SHA256: ec2a71e7c655e9c4a2f9e0c72ec6d3e661878ca561da4ce18ec84ae2c8d6ea95
 
 jobs:
+  # What a pull request changed decides which jobs run: `code` is every file but the user guide and the top-level .md
+  # files, `docs` is the user guide and what builds it. A push to main runs every job. A skipped job counts as passed.
+  changes:
+    runs-on: [self-hosted, agentica-lang]
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      code: ${{ github.event_name != 'pull_request' || steps.filter.outputs.code }}
+      docs: ${{ github.event_name != 'pull_request' || steps.filter.outputs.docs }}
+    steps:
+      - id: filter
+        if: github.event_name == 'pull_request'
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          predicate-quantifier: some-with-excludes
+          filters: |
+            code:
+              - '**'
+              - '!docs/**'
+              - '!*.md'
+              - '!.gitmodules'
+            docs:
+              - 'docs/**'
+              - '.gitmodules'
+              - 'Makefile'
+              - '.github/workflows/ci.yml'
+
   # The targets of `make test` in three jobs that run at once on the runners of the organization. A job installs the
   # pinned Agentica, and the packages that `make install` fetches are cached by their locks.
   test:
     name: ${{ matrix.name }}
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: [self-hosted, agentica-lang]
     timeout-minutes: 15
     strategy:
@@ -77,6 +108,8 @@ jobs:
 
   # The user guide: `make docs` with the pinned Hugo and Dart Sass (a warning fails the build).
   docs:
+    needs: changes
+    if: needs.changes.outputs.docs == 'true'
     runs-on: [self-hosted, agentica-lang]
     timeout-minutes: 10
     env:
