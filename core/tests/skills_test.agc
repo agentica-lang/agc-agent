@@ -3,6 +3,7 @@
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Core from "../core"
 import Skills from "../src/ext/skills"
 import Tools from "../src/tools/tools"
 import H from "support/harness"
@@ -194,10 +195,12 @@ def test_the_server_wires_skills_into_a_session() -> Result[Void]
   end
 end
 
-# A fold of a round that loaded a skill puts its content after the summary.
+# A fold of a round that loaded a skill puts its content after the summary, then the text of the `Fold` handlers of
+# the extensions, which get the texts that stay.
 def test_a_fold_puts_back_the_skill_it_folded() -> Result[Void]
   replies = ["activate_skill.sse", "bash_echo.sse", "summary.sse", "text.sse"]
-  H.using(H.Setup(replies: replies, context_window: 120, skills: true)) do |h|
+  registry = Core.registry() |> Core.on(Core.Event.Fold(->(staying: List[String]) { "kept: #{staying.join("|")}" }))
+  H.using(H.Setup(replies: replies, context_window: 120, skills: true, registry: some(registry))) do |h|
     try write("#{h.base}/home/.agents/skills/release/SKILL.md", RELEASE)
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
@@ -213,7 +216,12 @@ def test_a_fold_puts_back_the_skill_it_folded() -> Result[Void]
     after = try JSON.list(try JSON.get(try JSON.parse((try H.next_request(h)).body), "messages"))
     summary = try JSON.string(try JSON.get(after[2], "content"))
     try Test.assert(summary.start_with?("Summary of the session so far:"), summary)
-    Test.assert(summary.include?("The skills loaded in this session:\n\n<skill_content name=\"release\">"), summary)
+    try Test.assert(
+      summary.include?("The skills loaded in this session:\n\n<skill_content name=\"release\">"),
+      summary,
+    )
+
+    Test.assert(summary.include?("</skill_content>\n\nkept: "), summary)
   end
 end
 

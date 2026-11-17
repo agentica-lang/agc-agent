@@ -683,7 +683,15 @@ def start_turn(state: State, typed: String, reply: Channel[Result[Protocol.Messa
     return emit(queued, Protocol.Event.MessageQueued(event))
   end
 
-  expanded = on_message(state.setup, typed, state.marks)
+  handled = on_message(state.setup, typed, state.marks)
+  if not handled.ok?
+    IO.warn("session #{state.setup.id}: #{handled.message}")
+    Actor.reply(reply, error("an extension refused the message: #{handled.message}", kind: Protocol.KIND_INVALID))
+    return state
+  end
+
+  expanded = handled.unwrap!
+
   shells = not state.shells.empty?
   text = Store.with_shells(state.shells, expanded.text)
   case save(state, -> { Store.append_user(state.setup.file, expanded.text, typed, expanded.names, shells) })
@@ -793,7 +801,14 @@ def take(state: State, turn_id: String, after: Int, reply: Channel[List[Agent.Qu
   if current
     marks = state.marks
     for typed in state.queued.drop(after)
-      expanded = on_message(state.setup, typed, marks)
+      # Accepted already: a handler that fails leaves it as the skills made it.
+      handled = on_message(state.setup, typed, marks)
+      if not handled.ok?
+        IO.warn("session #{state.setup.id}: #{handled.message}")
+      end
+
+      expanded = handled.unwrap_or(Skills.on_message(typed, state.setup.skills, marks))
+
       read = read.push(Agent.Queued(typed: typed, text: expanded.text, names: expanded.names))
       marks = marks + expanded.names
     end
@@ -820,11 +835,11 @@ def wait_approval(address: Address[Msg], turn_id: String, call: Agent.Ask, timeo
 end
 
 # A message after the skills it names and the `message` handlers of the extensions.
-def on_message(setup: Setup, typed: String, marks: List[String]) -> Skills.Expanded
+def on_message(setup: Setup, typed: String, marks: List[String]) -> Result[Skills.Expanded]
   expanded = Skills.on_message(typed, setup.skills, marks)
   case setup.registry
-    some(registry) -> expanded.with(text: Extensions.message(registry, expanded.text))
-    none -> expanded
+    some(registry) -> ok(expanded.with(text: try Extensions.message(registry, expanded.text)))
+    none -> ok(expanded)
   end
 end
 

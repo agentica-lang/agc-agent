@@ -9,10 +9,11 @@ import HTTP from "std/http"
 import Bond from "pkg/bond/bond"
 import Protocol from "pkg/protocol/protocol"
 import Config from "../config/config"
+import Cli from "../config/cli"
 import Logins from "../config/logins"
+import Extensions from "../config/registry"
 import Sessions from "../session/session"
 
-VERSION = "0.0.1"
 SERVER_JSON = "server.json"
 LOCK_FILE = "core.lock"
 MAX_BODY_BYTES = 1_048_576
@@ -42,6 +43,8 @@ struct Server
   lock: File.Handle
   state_dir: String
   control: Control
+  ## The services of the extensions that started: they run while the server holds its lock.
+  services: List[Extensions.Service] = []
 end
 
 ## Starts the server in the calling task, which owns it: call it from the task that keeps it.
@@ -56,14 +59,27 @@ def start(options: Config.Options) -> Result[Server]
     return error("a server already runs for #{options.state_dir}")
   end
 
+  services = options.registry.map { |r| r.services }.unwrap_or([])
+  begun = Extensions.start_services(services)
+  if not begun.ok?
+    _ = File.close(lock)
+    return error(begun.message)
+  end
+
+  running = begun.unwrap!
+
   sessions = Sessions.start(options)
   started = serve(options, sessions, lock)
   if not started.ok?
     Sessions.stop(sessions)
+    Extensions.stop_services(running)
     _ = File.close(lock)
   end
 
-  started
+  case started
+    ok(server) -> ok(server.with(services: running))
+    error(e) -> error(e)
+  end
 end
 
 def new_control(drain_ms: Int) -> Control
@@ -97,6 +113,7 @@ def shutdown(server: Server, now: Bool, http_ms: Int = SHUTDOWN_MS) -> Void
   drain(server.sessions, server.control)
   Sessions.stop(server.sessions)
   HTTP.shutdown(server.http, http_ms)
+  Extensions.stop_services(server.services)
   _ = Path.remove("#{server.state_dir}/#{SERVER_JSON}")
   _ = File.close(server.lock)
 end
@@ -105,6 +122,7 @@ def stop(server: Server) -> Void
   Bond.stop(server.http)
   _ = Bond.wait(server.http)
   Sessions.stop(server.sessions)
+  Extensions.stop_services(server.services)
   _ = Path.remove("#{server.state_dir}/#{SERVER_JSON}")
   _ = File.close(server.lock)
 end
@@ -224,7 +242,11 @@ def write_server_json(dir: String, info: Protocol.ServerInfo) -> Result[Void]
 end
 
 def health(conn: Bond.Conn) -> Result[Bond.Conn]
-  reply(conn, 200, ok(Protocol.encode_health(Protocol.Health(version: VERSION, wire: some(Protocol.wire_digest())))))
+  reply(
+    conn,
+    200,
+    ok(Protocol.encode_health(Protocol.Health(version: Cli.VERSION, wire: some(Protocol.wire_digest())))),
+  )
 end
 
 def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
@@ -233,7 +255,7 @@ def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
     Protocol.encode_server_status(
       Protocol.ServerStatus(
         pid: System.pid,
-        version: VERSION,
+        version: Cli.VERSION,
         started_s: control.started_s,
         sessions: activity.sessions,
         running_turns: activity.running,

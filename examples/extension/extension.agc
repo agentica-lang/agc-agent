@@ -1,5 +1,6 @@
-## An example extension of Finn: a `word_count` tool, and a wrapper that adds the time a call took to the output of
-## every tool. A program serves it with `Core.serve(Extension.register(Core.registry()))` (`main.agc`).
+## An example extension of Finn: a `word_count` tool, a wrapper that adds the time a call took to the output of every
+## tool, and a service that says when it starts and stops. A program serves it with
+## `Core.serve(Extension.register(Core.registry()))` (`main.agc`).
 
 import Core from "pkg/core/core"
 
@@ -8,6 +9,7 @@ def register(registry: Core.Registry) -> Core.Registry
     registry
     |> Core.add_tool(word_count())
     |> Core.wrap_tools(&timed)
+    |> Core.add_service(Core.Service(name: "greeter", start: &greet, stop: &farewell))
   )
 end
 
@@ -22,26 +24,30 @@ def word_count() -> Core.Tool
       "required": JSON.from(["text"]),
     }),
     asks: false,
-    run: ->(_ctx: Core.Context, input: JSON.Value) { count(input) },
-    target: ->(_ctx: Core.Context, _input: JSON.Value) { ok("") },
+    run: &count,
+    target: ->(_call: Core.Call) { ok("") },
   )
 end
 
-## `tool` with the time its call took after its output.
-def timed(tool: Core.Tool) -> Core.Tool
-  run = tool.run
-  tool.with(
-    run: ->(ctx: Core.Context, input: JSON.Value) {
-      started = Time.monotonic_ms()
-      output = try run.call(ctx, input)
-      ok("#{output}\n(#{tool.name} took #{Time.monotonic_ms() - started} ms)")
-    },
-  )
+## The output of `next` with the time the call of the tool `name` took after it.
+def timed(name: String, call: Core.Call, next: Fn[Core.Call, Result[String]]) -> Result[String]
+  started = Time.monotonic_ms()
+  output = try next.call(call)
+  ok("#{output}\n(#{name} took #{Time.monotonic_ms() - started} ms)")
 end
 
 private
 
-def count(input: JSON.Value) -> Result[String]
-  text = try JSON.string(try JSON.get(input, "text"))
+def count(call: Core.Call) -> Result[String]
+  text = try JSON.string(try JSON.get(call.input, "text"))
   ok("#{text.split(" ").select { |word| not word.empty? }.size} words")
+end
+
+def greet() -> Result[Void]
+  puts("greeter started")
+  ok()
+end
+
+def farewell() -> Void
+  puts("greeter stopped")
 end

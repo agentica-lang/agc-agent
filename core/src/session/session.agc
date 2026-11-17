@@ -16,6 +16,7 @@ import Providers from "../config/providers"
 import Extensions from "../config/registry"
 import Skills from "../ext/skills"
 import Sandbox from "../tools/sandbox"
+import Spec from "../tools/spec"
 import Tools from "../tools/tools"
 import SessionActor from "actor"
 import Prompt from "prompt"
@@ -809,9 +810,9 @@ def system_of(options: Config.Options, root: String) -> String
   options.registry.map { |r| Extensions.prompt(r, system) }.unwrap_or(system)
 end
 
-def wrap_of(options: Config.Options) -> Optional[Fn[Tools.Tool, Tools.Tool]]
+def wrap_of(options: Config.Options) -> Optional[Fn[String, Spec.Run, Spec.Run]]
   for registry in option_list(options.registry)
-    return some(->(tool: Tools.Tool) { Extensions.wrapped(registry, tool) }) if not registry.wrappers.empty?
+    return Extensions.wrap(registry)
   end
 
   none

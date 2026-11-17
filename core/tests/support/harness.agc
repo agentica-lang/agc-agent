@@ -90,6 +90,8 @@ struct Setup
   approvals_env: Optional[Fn[String, Result[String]]] = none
   ## What extensions add (`Core.serve`): its tools join those of the server.
   registry: Optional[Extensions.Registry] = none
+  ## The server ends as `Core.serve` ends it (`Server.shutdown`), not at once.
+  shutdown: Bool = false
   model: String = "qwen2.5-0.5b-instruct"
   catalog: Optional[Catalog.Catalog] = none
   ## The token that Anthropic fetches again after a 401; none when empty.
@@ -139,6 +141,7 @@ def with_fake(setup: Setup, base: String, body: Fn[Harness, Result[Void]]) -> Re
   end
 
   case started
+    ok(h) if setup.shutdown -> Server.shutdown(h.server, true)
     ok(h) -> Server.stop(h.server)
     error(_) -> nil
   end
@@ -237,7 +240,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     props_url: props_url(setup, fake),
     before_load: setup.before_load,
     after_load: setup.after_load,
-    tools: setup.tools + setup.registry.map { |r| r.tools }.unwrap_or([]),
+    tools: setup.tools + setup.registry.map { |r| Extensions.spec_tools(r) }.unwrap_or([]),
     late_tools: setup.late_tools,
     diff: setup.diff,
     code_mode: code_mode(setup.monty),

@@ -75,10 +75,16 @@ fmt-check:
 unit:
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} $(MAKE) --no-print-directory unit-package PACKAGE={}
 
-# The cli tests run the client and the fake server from bytecode compiled once, not from source in every process. A
-# package without tests (the example extension, which core's tests run) has none to run.
+# The packages without tests of their own: core's tests run the example extension.
+NO_TESTS = examples/extension
+
+# The cli tests run the client and the fake server from bytecode compiled once, not from source in every process; the
+# core tests run the example extension so too.
 unit-package:
-	@[ -d $(PACKAGE)/tests ] || exit 0; \
+	@if [ -n "$(filter $(PACKAGE),$(NO_TESTS))" ]; then echo "$(PACKAGE): no tests (NO_TESTS)"; exit 0; fi; \
+	if [ "$(PACKAGE)" = core ]; then mkdir -p core/_build/bin && \
+	  $(AGENTICA) compile examples/extension/main.agc -o core/_build/bin/extension.agcb >/dev/null && \
+	  export EXTENSION_BYTECODE='$(CURDIR)/core/_build/bin/extension.agcb'; fi; \
 	if [ "$(PACKAGE)" = cli ]; then mkdir -p cli/_build/bin && \
 	  $(AGENTICA) compile cli/main.agc -o cli/_build/bin/cli.agcb >/dev/null && \
 	  $(AGENTICA) compile cli/tests/support/fake_main.agc -o cli/_build/bin/fake.agcb >/dev/null && \
