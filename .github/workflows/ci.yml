@@ -136,3 +136,19 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
           echo "$RUNNER_TEMP/dart-sass" >> "$GITHUB_PATH"
       - run: make docs
+
+  # The one check to require: a skipped matrix job reports as `matrix.name`, never as `core`, so a rule that named a
+  # matrix job would wait forever on a docs-only pull request. This passes when every job passed or was skipped.
+  result:
+    needs: [changes, test, docs]
+    if: ${{ !cancelled() }}
+    runs-on: [self-hosted, agentica-lang]
+    timeout-minutes: 5
+    steps:
+      - env:
+          CHANGES: ${{ needs.changes.result }}
+          TEST: ${{ needs.test.result }}
+          DOCS: ${{ needs.docs.result }}
+        run: |
+          echo "changes: $CHANGES, test: $TEST, docs: $DOCS"
+          [ "$CHANGES" = success ] && [[ "$TEST" =~ ^(success|skipped)$ ]] && [[ "$DOCS" =~ ^(success|skipped)$ ]]
