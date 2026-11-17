@@ -11,6 +11,9 @@ import Kinds from "kinds"
 import Requests from "requests"
 import Wire from "wire"
 
+## The states of an item of the model's todo list.
+TODO_STATUSES = ["pending", "in_progress", "completed"]
+
 enum EventKind
   TurnStarted
   TextDelta
@@ -26,6 +29,7 @@ enum EventKind
   MessageQueued
   ShellStarted
   ShellFinished
+  Todos
 end
 
 ## Who resolved an approval.
@@ -169,6 +173,17 @@ struct ShellFinished
   duration_ms: Int
 end
 
+## An item of the model's todo list: `status` is one of `TODO_STATUSES`.
+struct Todo
+  content: String
+  status: String
+end
+
+## The model's whole todo list, after each `todo_write` call.
+struct Todos
+  todos: List[Todo]
+end
+
 struct TurnFinished
   turn_id: String
   stop_reason: StopReason
@@ -191,6 +206,7 @@ enum Event
   MessageQueued(MessageQueued)
   ShellStarted(ShellStarted)
   ShellFinished(ShellFinished)
+  Todos(Todos)
 end
 
 ## Every kind of event, in a fixed order.
@@ -212,6 +228,7 @@ def event_kind(event: Event) -> EventKind
     Event.MessageQueued(_) -> EventKind.MessageQueued
     Event.ShellStarted(_) -> EventKind.ShellStarted
     Event.ShellFinished(_) -> EventKind.ShellFinished
+    Event.Todos(_) -> EventKind.Todos
   end
 end
 
@@ -231,6 +248,7 @@ def kind_name(kind: EventKind) -> String
     EventKind.MessageQueued -> "message_queued"
     EventKind.ShellStarted -> "shell_started"
     EventKind.ShellFinished -> "shell_finished"
+    EventKind.Todos -> "todos"
   end
 end
 
@@ -309,6 +327,7 @@ def encode_event(event: Event) -> String
     Event.MessageQueued(data) -> JSON.encode(data)
     Event.ShellStarted(data) -> JSON.encode(data)
     Event.ShellFinished(data) -> JSON.encode(data)
+    Event.Todos(data) -> JSON.encode(data)
   end
 end
 
@@ -330,6 +349,7 @@ def decode_event(name: String, data: String) -> Result[Event]
     EventKind.MessageQueued -> ok(Event.MessageQueued(try Wire.decode(data, MessageQueued.codec)))
     EventKind.ShellStarted -> ok(Event.ShellStarted(try Wire.decode(data, ShellStarted.codec)))
     EventKind.ShellFinished -> decode_shell_finished(data)
+    EventKind.Todos -> decode_todos(data)
   end
 end
 
@@ -359,6 +379,8 @@ def shape() -> List[String]
     Wire.record("MessageQueued", MessageQueued.members),
     Wire.record("ShellStarted", ShellStarted.members),
     Wire.record("ShellFinished", ShellFinished.members),
+    Wire.record("Todo", Todo.members),
+    Wire.record("Todos", Todos.members),
     Wire.record("TurnFinished", TurnFinished.members),
     Wire.record("ResolvedWire", ResolvedWire.members),
     Wire.record("TurnStartedWire", TurnStartedWire.members),
@@ -370,6 +392,7 @@ def shape() -> List[String]
     Wire.values("EventKind", event_kinds().map(&kind_name)),
     Wire.values("ApprovalSource", approval_sources().map(&source_name)),
     Wire.values("StopReason", known_stop_reasons().map(&stop_reason_name)),
+    Wire.values("TodoStatus", TODO_STATUSES),
   ]
 
   records + values
@@ -454,7 +477,8 @@ def following_kind(kind: EventKind) -> Optional[EventKind]
     EventKind.Resync -> some(EventKind.MessageQueued)
     EventKind.MessageQueued -> some(EventKind.ShellStarted)
     EventKind.ShellStarted -> some(EventKind.ShellFinished)
-    EventKind.ShellFinished -> none
+    EventKind.ShellFinished -> some(EventKind.Todos)
+    EventKind.Todos -> none
   end
 end
 
@@ -488,6 +512,18 @@ def decode_shell_finished(data: String) -> Result[Event]
   finished = try Wire.decode(data, ShellFinished.codec)
   try Wire.non_negative("duration_ms", finished.duration_ms)
   ok(Event.ShellFinished(finished))
+end
+
+## A list whose items have a status out of `TODO_STATUSES` is invalid.
+def decode_todos(data: String) -> Result[Event]
+  todos = try Wire.decode(data, Todos.codec)
+  for todo in todos.todos
+    if not TODO_STATUSES.include?(todo.status)
+      return error("invalid todo status: #{todo.status}", kind: Kinds.KIND_INVALID)
+    end
+  end
+
+  ok(Event.Todos(todos))
 end
 
 def decode_usage(data: String) -> Result[Event]

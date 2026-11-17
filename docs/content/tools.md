@@ -18,6 +18,7 @@ The model works through tools. Each call shows in the client: the file it reads 
 | `glob` | list the files whose path matches a pattern such as `**/*.py` |
 | `grep` | find the lines that match a regex, in the files a `glob` picks |
 | `bash` | run a command with bash in the session folder |
+| `todo_write` | keep a todo list for a task of several steps: each call gives the whole list (`pending`, `in_progress` or `completed`, one in progress at most), which the clients show and the session keeps |
 | `apply_patch` | add, delete and change files with one patch, in the format of Codex; offered on the OpenAI Responses API only |
 
 Skills add `activate_skill` ([Skills](skills.md)), MCP servers add their own tools ([MCP](mcp.md)), and an [extension](extensions.md) can add more. Which calls ask before they run is on [Approvals and security](security.md#what-asks).

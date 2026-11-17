@@ -51,6 +51,7 @@ def event(event: Protocol.Event, style: Style) -> Optional[Out]
     Protocol.Event.MessageQueued(queued) -> some(line("[queued] #{Client.printable(queued.text)}"))
     Protocol.Event.ShellStarted(started) -> some(line(shell_started(started)))
     Protocol.Event.ShellFinished(finished) -> some(line(shell_finished(finished)))
+    Protocol.Event.Todos(list) -> some(line(todos(list.todos)))
   end
 end
 
@@ -118,6 +119,24 @@ def finished(tool: Protocol.ToolFinished) -> String
   return "[tool ok] #{tool.summary} (#{tool.duration_ms} ms)" if tool.ok
 
   "[tool failed] #{tool.summary} (#{tool.duration_ms} ms)"
+end
+
+# The list, one item a line: `[x]` completed, `[>]` in progress, `[ ]` pending.
+def todos(list: List[Protocol.Todo]) -> String
+  return "[todos] none" if list.empty?
+
+  items = list.map do |todo|
+    box = "[ ]"
+    case todo.status
+      "completed" -> box = "[x]"
+      "in_progress" -> box = "[>]"
+      _ -> nil
+    end
+
+    "  #{box} #{Client.printable(todo.content)}"
+  end
+
+  (["[todos]"] + items).join("\n")
 end
 
 def shell_started(started: Protocol.ShellStarted) -> String

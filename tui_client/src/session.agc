@@ -269,8 +269,27 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
     Protocol.Event.MessageQueued(queued) ->
       steered = shown.with(yolo: Yolo.steered(shown.yolo, queued))
       State.noted(steered, "queued: #{Client.printable(queued.text)}")
+    Protocol.Event.Todos(list) -> State.noted(shown, todos(list.todos))
     _ -> shown
   end
+end
+
+## The model's todo list as a notice, one item a line: `[x]` completed, `[>]` in progress, `[ ]` pending.
+def todos(list: List[Protocol.Todo]) -> String
+  return "todos: none" if list.empty?
+
+  items = list.map do |todo|
+    box = "[ ]"
+    case todo.status
+      "completed" -> box = "[x]"
+      "in_progress" -> box = "[>]"
+      _ -> nil
+    end
+
+    "#{box} #{Client.printable(todo.content)}"
+  end
+
+  (["todos:"] + items).join("\n")
 end
 
 def finished(app: State.Model, reason: Protocol.StopReason) -> State.Model

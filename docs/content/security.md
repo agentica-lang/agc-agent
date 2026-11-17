@@ -31,7 +31,7 @@ Any of these:
 
 With the approvals on, a call of these tools waits for your answer unless a rule or an earlier answer allows it: `write_file`, `edit_file`, `apply_patch`, `bash`, the MCP tools, and the tools of an [extension](extensions.md) that has `asks: true`.
 
-`read_file`, `glob`, `grep`, `activate_skill` and `run_script` never ask. The calls that a `run_script` script makes are checked one by one, as direct calls.
+`read_file`, `glob`, `grep`, `todo_write`, `activate_skill` and `run_script` never ask. The calls that a `run_script` script makes are checked one by one, as direct calls.
 
 Every `bash` call asks unless an allow rule or an earlier answer allows each of its commands, even one that only reads. A read of a `.env` or `.env.*` file asks too, but `.env.example`, with the `read_file` tool or, best effort, with `cat .env` and the like; an `allow read_file(*)` rule turns that off.
 

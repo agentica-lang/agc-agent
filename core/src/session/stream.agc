@@ -82,6 +82,11 @@ def emit_counted(state: Session.State, event: Protocol.Event) -> Session.State
       return emitted if emitted.counter == state.counter
 
       emitted.with(output: output, context: usage.context, usage: some(counted), cost: cost, turn_cost: turn_cost)
+    Protocol.Event.Todos(list) ->
+      emitted = emit(state, event)
+      return emitted if emitted.counter == state.counter
+
+      emitted.with(todos: list.todos)
     _ -> emit(state, event)
   end
 end

@@ -178,6 +178,9 @@ export Events.TurnFinished
 export Events.MessageQueued
 export Events.ShellStarted
 export Events.ShellFinished
+export Events.Todo
+export Events.Todos
+export Events.TODO_STATUSES
 export Events.event_kinds
 export Events.event_kind
 export Events.kind_name
