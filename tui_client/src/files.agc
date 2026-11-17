@@ -72,8 +72,8 @@ def arguments_read(app: State.Model, command: String, result: Result[Input.Argum
   return asked(app) if current != some(command)
 
   case result
-    ok(listed) if listed.tree.some? -> asked(app.with(arguments: some(listed), listed: listed.tree))
-    ok(listed) -> asked(app.with(arguments: some(listed)))
+    ok(listed) if listed.tree.some? -> asked(fresh_list(app).with(arguments: some(listed), listed: listed.tree))
+    ok(listed) -> asked(fresh_list(app).with(arguments: some(listed)))
     error(e) ->
       failed = app.with(arguments_failed: some(command))
       State.noted(failed, "error: the choices of #{command} were not listed: #{Client.printable(e.message)}")
@@ -116,6 +116,31 @@ def mention_key?(app: State.Model, found: Input.Mention, event: TUI.Event) -> Bo
   end
 end
 
+## Enter on the list of a command's argument runs the command with the row moved to, so a pick there is the one that
+## counts and no picker opens after it. Untouched, the line is sent as typed: the command alone opens its picker.
+def runs_choice?(app: State.Model, found: Input.Mention, event: TUI.Event) -> Bool
+  case event
+    TUI.Event.Key(TUI.Key.Enter, mods) if not mods.alt and found.source == Input.Source.Arguments ->
+      moved_in?(app, found) and not mention_choices(app, found).empty?
+    _ -> false
+  end
+end
+
+## The selected row of the list: the one moved to; before a move, the session's model or thinking level when the list
+## of `/model` or `/thinking` has it, else the first.
+def selected_row(app: State.Model, found: Input.Mention, choices: List[Input.Choice]) -> Int
+  moved = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
+  return moved if moved_in?(app, found) or found.source != Input.Source.Arguments
+
+  current = case found.command
+    "/model" -> Client.printable(app.serving)
+    "/thinking" -> app.effort.unwrap_or(Protocol.EFFORT_DEFAULT)
+    _ -> ""
+  end
+
+  choices.map { |c| c.value }.index(current).unwrap_or(moved)
+end
+
 def mention_choices(app: State.Model, found: Input.Mention) -> List[Input.Choice]
   case found.source
     Input.Source.Commands -> Input.commands(Client.listed() + app.custom, found.query)
@@ -131,16 +156,23 @@ end
 ## the list.
 def on_mention_key(app: State.Model, found: Input.Mention, event: TUI.Event) -> State.Model
   choices = mention_choices(app, found)
-  selected = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
+  selected = selected_row(app, found, choices)
   case event
-    TUI.Event.Key(TUI.Key.Up, _) -> selected_choice(app, [selected - 1, 0].max.unwrap!, choices.size)
-    TUI.Event.Key(TUI.Key.Down, _) -> selected_choice(app, [selected + 1, choices.size - 1].min.unwrap!, choices.size)
+    TUI.Event.Key(TUI.Key.Up, _) -> selected_choice(app, found, [selected - 1, 0].max.unwrap!, choices.size)
+    TUI.Event.Key(TUI.Key.Down, _) ->
+      selected_choice(app, found, [selected + 1, choices.size - 1].min.unwrap!, choices.size)
     TUI.Event.Key(TUI.Key.Escape, _) -> app.with(mention_closed: some(found.start))
     _ if choices.empty? -> app
     _ ->
       at = State.cursor(app)
       text = Input.completed(app.prompt, at, found, choices[selected].value)
-      app.with(prompt: text, cursor: at + text.length - app.prompt.length, mention_selected: 0, mention_top: 0)
+      app.with(
+        prompt: text,
+        cursor: at + text.length - app.prompt.length,
+        mention_selected: 0,
+        mention_top: 0,
+        mention_moved: none,
+      )
   end
 end
 
@@ -195,7 +227,7 @@ def listing(
 
       ok(Input.Arguments(command: command, choices: choices))
     "/resume" ->
-      sessions = (try backend.list_sessions.call()).sessions
+      sessions = Client.resumable(try backend.list_sessions.call(), id)
       shown = Picker.shown(Picker.Picker(sessions: sessions), now_s)
       choices = shown.map { |c| Input.Choice(value: Client.printable(c.key), label: c.text) }
       ok(Input.Arguments(command: command, choices: choices))
@@ -217,12 +249,16 @@ def completes?(app: State.Model, found: Input.Mention) -> Bool
   not mention_choices(app, found).any? { |choice| choice.value.strip == word }
 end
 
+def fresh_list(app: State.Model) -> State.Model = app.with(mention_selected: 0, mention_top: 0, mention_moved: none)
+
 # The rows under the editor that the list may take.
 def list_room(app: State.Model) -> Int
   Screen.panel_room(app.height, Prompt.view(app.prompt, State.cursor(app), app.width, app.height).rows.size)
 end
 
-def selected_choice(app: State.Model, selected: Int, size: Int) -> State.Model
+def moved_in?(app: State.Model, found: Input.Mention) -> Bool = app.mention_moved == some(found.command)
+
+def selected_choice(app: State.Model, found: Input.Mention, selected: Int, size: Int) -> State.Model
   top = Input.window(app.mention_top, selected, list_room(app), size)
-  app.with(mention_selected: selected, mention_top: top)
+  app.with(mention_selected: selected, mention_top: top, mention_moved: some(found.command))
 end

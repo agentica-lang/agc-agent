@@ -157,6 +157,18 @@ class FakeModel:
             def log_message(self, *_args) -> None:
                 pass
 
+            def do_GET(self) -> None:
+                """`GET /models`, where a login checks a key: any key passes."""
+                if not self.path.endswith("/models"):
+                    self.send_error(404)
+                    return
+                data = json.dumps({"object": "list", "data": [{"id": "test-model"}]}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
             def do_POST(self) -> None:
                 body = self.rfile.read(int(self.headers.get("Content-Length", "0")))
                 fake.requests.put(json.loads(body or b"{}"))
@@ -467,6 +479,66 @@ class PtyTest(unittest.TestCase):
         terminal.wait_for("ready")
         return terminal
 
+    def test_a_first_start_login_moves_the_session_to_the_new_provider(self) -> None:
+        """A first start with no provider set up offers a login. A key for a provider of the config file offers its
+        models in the picker, and the pick moves the session from the local fallback, where no server answers, to that
+        provider: the footer names it and the next turn goes to it."""
+        base = self.folder()
+        model = self.model([Reply("text.sse")])
+        config = base / "home" / ".config" / "finn"
+        config.mkdir(parents=True)
+        box = {"name": "box", "base_url": model.url, "key_env": "BOX_API_KEY", "models": ["test-model"]}
+        (config / "config.json").write_text(json.dumps({"providers": [box]}))
+        self.addCleanup(stop_server, base / "state")
+        args = ["--state-dir", str(base / "state"), "--", *program(CORE), "serve"]
+        terminal = Terminal(base, model, args, env={"FINN_BASE_URL": ""})
+        self.addCleanup(terminal.close)
+        terminal.wait_for("no provider is set up")
+        terminal.type("box")
+        terminal.wait_for("box")
+        terminal.type("\r")
+        terminal.wait_for("the key of box")
+        terminal.type("sk-test\r")
+        terminal.wait_for("pick a model of box")
+        terminal.type("\r")
+        rows = terminal.wait_for("box/test-model from the next turn")
+        self.assertTrue(any("(box) test-model" in row for row in rows), text_of(rows))
+        terminal.type("hello\r")
+        terminal.wait_for(ANSWER)
+        self.assertEqual(model.requests.get(timeout=TIMEOUT)["model"], "test-model")
+
+    def test_a_pick_in_a_list_or_a_picker_is_the_one_applied(self) -> None:
+        """Enter on the list of a command's argument runs the command with the row moved to, from the session's model or
+        level, and no picker opens after it; `/model` alone opens one picker, whose pick closes it. Each pick is the
+        one applied."""
+        base = self.folder()
+        model = self.model([])
+        config = base / "home" / ".config" / "finn"
+        config.mkdir(parents=True)
+        box = {"name": "box", "base_url": model.url, "key_env": "BOX_API_KEY", "models": ["m1", "m2"]}
+        (config / "config.json").write_text(json.dumps({"providers": [box]}))
+        self.addCleanup(stop_server, base / "state")
+        args = ["--state-dir", str(base / "state"), "--", *program(CORE), "serve"]
+        terminal = Terminal(base, model, args, env={"BOX_API_KEY": "sk-test"})
+        self.addCleanup(terminal.close)
+        terminal.wait_for("ready")
+        down = "\x1b[B"
+        up = "\x1b[A"
+        for typed, listed, keys, applied, footer in [
+            ("/mo\r", "box/m2", up * 20 + down, "model box/m2 from the next turn", "(box) m2"),
+            ("/model\r", "pick a model", "m1", "model box/m1 from the next turn", "(box) m1"),
+            ("/thinking ", "medium", up, "thinking high from the next turn", "(box) m1 · high"),
+        ]:
+            terminal.type(typed)
+            terminal.wait_for(listed)
+            terminal.type(keys)
+            terminal.settle(0.3)
+            terminal.type("\r")
+            terminal.wait_for(applied)
+            rows = terminal.settle(0.5)
+            self.assertFalse(any("pick a" in row or row.strip() == "box/m1" for row in rows), text_of(rows))
+            self.assertTrue(rows[-1].endswith(footer), text_of(rows))
+
     def start_proxied(
         self, replies: list[Reply], plan: list, approvals: list[str] = [], extra: list[str] = []
     ) -> Terminal:
@@ -653,15 +725,16 @@ class PtyTest(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline, "the old session stayed on the screen")
             rows = term.settle(0.2)
         self.assertNotIn(first, text_of(rows))
+        # The new session, empty and the one in use, is not in the list.
         term.type("/resume\r")
-        term.wait_for("resume a session (2 of 2)")
+        term.wait_for("resume a session (1 of 1)")
         term.type("\x1b")
         rows = term.settle()
         self.assertNotIn("resume a session", text_of(rows))
         term.type("/resume\r")
-        term.wait_for("resume a session (2 of 2)")
+        term.wait_for("resume a session (1 of 1)")
         term.type(first[:8])
-        rows = term.wait_for("resume a session (1 of 2)")
+        rows = term.wait_for(f"resume a session (1 of 1) · filter: {first[:8]}")
         row = next(row for row in rows if first in row)
         self.assertTrue(row.startswith("› "), row)
         self.assertIn("other-model", row)

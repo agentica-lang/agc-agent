@@ -28,22 +28,24 @@ def place(cwd: String, home: String, branch: String, title: String, width: Int) 
   padded(" #{parts.join(" · ")}", width)
 end
 
-## The status row: `state` (as `ready`), the counts of `usage`, the `hints` that fit, and `right` (the model) at its
-## end, two cells after them. When the row is too narrow, the counts lose the part cached, then the window, then the
-## cache read, and then `right` is cut, or left out when fewer than 2 cells are left for it.
+## The status row: `state` (as `ready`), the counts of `usage`, the `rate` of the model's output, the `hints` that fit,
+## and `right` (the model) at its end, two cells after them. When the row is too narrow, the rate goes first, then the
+## counts lose the part cached, then the window, then the cache read, and then `right` is cut, or left out when fewer
+## than 2 cells are left for it.
 def status(
   state: List[String],
   usage: Optional[Protocol.Usage],
   hints: List[String],
   right: String,
   width: Int,
+  rate: String = "",
 ) -> String
   room = width - Width.text(right) - 3
-  text = left(state, usage, 0)
+  text = left(state, usage, rate, 0)
   for detail in 1..MOST_DROPPED
     break if Width.text(text) <= room
 
-    text = left(state, usage, detail)
+    text = left(state, usage, rate, detail)
   end
 
   model = right
@@ -126,11 +128,16 @@ end
 
 private
 
-# How many parts `counts` drops at most.
-MOST_DROPPED = 3
+# How many parts the status row drops at most: the rate, then those of `counts`.
+MOST_DROPPED = 4
 
-def left(state: List[String], usage: Optional[Protocol.Usage], detail: Int) -> String
-  " #{(state + option_list(usage).map { |u| counts(u, detail) }).join(" · ")}"
+def left(state: List[String], usage: Optional[Protocol.Usage], rate: String, detail: Int) -> String
+  parts = state + option_list(usage).map { |u| counts(u, [detail - 1, 0].max.unwrap!) }
+  if detail == 0 and not rate.empty?
+    parts = parts.push(rate)
+  end
+
+  " #{parts.join(" · ")}"
 end
 
 # `text` in `cells` cells at most, its end replaced by `…` when cut; "" when there is no room.

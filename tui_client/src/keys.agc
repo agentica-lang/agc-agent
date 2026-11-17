@@ -40,6 +40,7 @@ def keyed(app: State.Model, event: TUI.Event) -> State.Model
   return app if Approvals.captures?(app.approvals, event)
 
   for found in State.option_list(Files.mention_list(app))
+    return send(Files.on_mention_key(app, found, event)) if Files.runs_choice?(app, found, event)
     return Files.on_mention_key(app, found, event) if Files.mention_key?(app, found, event)
   end
 
@@ -116,7 +117,7 @@ def typed(app: State.Model, piece: String) -> State.Model
   edited = app.with(prompt: Prompt.insert(app.prompt, at, piece), cursor: at + piece.length, recall: none)
   # A list Esc closed opens again for a new prompt.
   if app.prompt == ""
-    edited = edited.with(mention_closed: none, mention_selected: 0, mention_top: 0)
+    edited = edited.with(mention_closed: none, mention_selected: 0, mention_top: 0, mention_moved: none)
   end
 
   return edited if piece != "@" or edited.reading_files or app.id == "" or app.now < app.files_again_at

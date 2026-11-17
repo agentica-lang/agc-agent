@@ -455,6 +455,7 @@ def summary_now(found: Cached) -> Protocol.SessionSummary
     api: found.listing.api.unwrap_or(found.summary.api),
     updated_s: found.modified_s,
     title: cut.split("").map { |c| Folder.printable(c) }.join(""),
+    empty: found.listing.empty,
   )
 end
 
@@ -633,6 +634,7 @@ def entry(
     file: file,
     window: options.context_window.unwrap_or(0),
     code_mode: options.code_mode,
+    max_tokens: options.max_tokens,
     catalog: options.catalog,
     take_ms: options.take_ms,
     catalog_wait_ms: options.catalog_wait_ms,

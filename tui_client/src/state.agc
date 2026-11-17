@@ -8,6 +8,7 @@ import Args from "args"
 import Input from "input"
 import Picker from "picker"
 import Prompt from "prompt"
+import Rate from "rate"
 import Theme from "theme"
 import Transcript from "transcript"
 import Yolo from "pkg/client/yolo"
@@ -77,6 +78,9 @@ struct Model
   files_again_at: Int = 0
   mention_selected: Int = 0
   mention_top: Int = 0
+  ## The command whose argument list a row was moved to in: until then, or once the command changes, the selected row
+  ## is the current value of the argument, if listed, and Enter sends the line as typed.
+  mention_moved: Optional[String] = none
   mention_closed: Optional[Int] = none
   ## Esc came before the turn of a message sent started: the turn stops once the reply says it did.
   stop_wanted: Bool = false
@@ -127,6 +131,9 @@ struct Model
   theme: Theme.Theme
   ## The `usage` of the session's last model call, the git branch of its folder and the home folder, for the footer.
   usage: Optional[Protocol.Usage] = none
+  ## The model's last output speed, and the text of the call that streams now.
+  rate: Optional[Rate.Rate] = none
+  streamed: Optional[Rate.Streamed] = none
   branch: String = ""
   home: String = ""
   ## The editor of Ctrl+G (`$VISUAL`, else `$EDITOR`), and whether it has the terminal now.

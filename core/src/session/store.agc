@@ -23,6 +23,7 @@ SETTINGS_EXTENSION = ".settings.json"
 ## A listing looks this far into a file for the first user message: the lines, and the bytes.
 TITLE_LINES = 64
 TITLE_BYTES = 262_144
+CONTENT = ["user", "queued", "messages", "answer", "compaction"]
 MAX_LINE_BYTES = 16_777_216
 MAX_WRITE_BYTES = 1_048_576
 ## A node of the tree has this much of its answer.
@@ -133,6 +134,8 @@ struct Listing
   provider: Optional[String] = none
   api: Optional[String] = none
   title: String = ""
+  ## The whole file was read and holds no message, compaction or output of a tool or command.
+  empty: Bool = false
 end
 
 ## The answer texts of a turn when it was compacted, and the size of the history after: the texts of the messages
@@ -342,7 +345,9 @@ end
 ## The model from the file beside the session's, and the first user message from the first TITLE_LINES lines in the
 ## first TITLE_BYTES bytes (none when its line does not end in them).
 def listing(file: Ref) -> Result[Listing]
-  title = first_user(decoded(try file.port.head.call(file.path, TITLE_BYTES)))
+  head = try file.port.head.call(file.path, TITLE_BYTES)
+  start = decoded(head)
+  title = first_user(start)
   side = side_settings(file)
   ok(
     Listing(
@@ -350,6 +355,7 @@ def listing(file: Ref) -> Result[Listing]
       provider: side_field(side, "provider"),
       api: side_field(side, "api"),
       title: title,
+      empty: head.size < TITLE_BYTES and not content?(start),
     ),
   )
 end
@@ -726,6 +732,25 @@ def sequence_size(lead: Int) -> Int
   return 4 if lead >= 0xf0 and lead < 0xf5
 
   0
+end
+
+# Whether the records after the header hold a message, a compaction, or the output of a tool or a `!` command.
+def content?(start: String) -> Bool
+  for text in start.split("\n").drop(1)
+    next if text.strip.empty?
+
+    case JSON.parse(text)
+      ok(json) ->
+        kind = field(json, "type").unwrap_or("")
+        return true if CONTENT.include?(kind)
+
+        name = field(json, "name").unwrap_or("")
+        return true if kind == "event" and (name.start_with?("tool_") or name.start_with?("shell_"))
+      error(_) -> nil
+    end
+  end
+
+  false
 end
 
 def first_user(start: String) -> String

@@ -4,6 +4,8 @@
 
 ### Changed
 
+- The full screen's footer shows the model's output speed (`42 tok/s`; `~42 tok/s` while a reply streams); `usage` events carry `output_ms`.
+- `/resume` leaves out the session itself and the sessions with no message yet; `GET /v1/sessions` marks those `empty`.
 - **Breaking:** `finn` opens the full screen, as `finn tui` does; `finn chat` is the line chat.
 - **Breaking:** tools run without asking by default; turn approvals on with `finn serve --approvals`.
 - **Breaking:** `finn --yolo` allows only the tool calls of the turns it starts.
@@ -23,6 +25,7 @@
 
 ### Added
 
+- A reply may be as long as the model allows (its output limit from models.dev, else the provider's), not 4096 tokens; `FINN_MAX_TOKENS` sets a limit, and a cut reply says which.
 - `files.command` in the user's config names the program that lists the files for `@`, such as `rg --files`.
 - Slash commands: `/NAME` sends the prompt of `NAME.md` in `~/.config/finn/commands/` or a trusted `.finn/commands/`, with `$ARGUMENTS`.
 - With approvals on, a file change under `.finn/` always asks, as one under `.git/` does.
@@ -55,6 +58,9 @@
 
 ### Fixed
 
+- `finn`: Enter on the list after `/model `, `/resume `, `/tree `, `/fork `, `/profile ` or `/thinking ` runs the command with the row moved to, instead of opening a second list whose pick won; the list starts on the session's model or level.
+- A login offers a session on `local` the models of the provider it set up, so a first start no longer stays on a local server that does not answer; Esc keeps `local`.
+- `/model NAME` with a name only another provider lists names that provider's models instead of keeping the session on its provider with a wrong name.
 - A `!` command that a server restart cut ends as failed instead of running forever.
 - Esc stops the turn it was pressed for, never the next one.
 - `finn` stays fast with long pasted lines and long transcripts.

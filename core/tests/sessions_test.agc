@@ -2,6 +2,7 @@ import Protocol from "pkg/protocol/protocol"
 import Config from "../src/config/config"
 import Sessions from "../src/session/session"
 import Store from "../src/session/store"
+import Compaction from "../src/agent/compaction"
 import H from "support/harness"
 
 ROLES = "\"user\" \"assistant\" \"tool\" \"assistant\" \"user\""
@@ -1218,8 +1219,9 @@ def finished(sub: H.Sub) -> Result[Protocol.ShellFinished]
 end
 
 # The registry lists the session files of its store, here in memory: a write moves the file's time of change (the
-# count of its writes in memory), so the next list reads the file again and shows its first message. With no
-# providers in the options the registry still lists it.
+# count of its writes in memory), so the next list reads the file again and shows its first message, and the session is
+# no longer empty. A compaction or the output of a tool alone is not empty either; a reservation of ids is. With no
+# providers in the options the registry still lists them.
 def test_the_list_reads_a_file_again_once_a_write_changes_it() -> Result[Void]
   options = Config.Options(
     state_dir: "/memory/state",
@@ -1233,6 +1235,13 @@ def test_the_list_reads_a_file_again_once_a_write_changes_it() -> Result[Void]
   dir = Sessions.folder(options)
   port = Store.memory([dir])
   file = try Store.create(port, dir, Store.Header(id: "s1", cwd: "/", model: "m", created_ms: 0))
+  reserved = try Store.create(port, dir, Store.Header(id: "s2", cwd: "/", model: "m", created_ms: 0))
+  try Store.append_reserved(reserved, 5)
+  folded = try Store.create(port, dir, Store.Header(id: "s3", cwd: "/", model: "m", created_ms: 0))
+  try Store.append_compaction(folded, Compaction.Compaction(from: 0, to: 2, summary: "Earlier work."), [])
+  tooled = try Store.create(port, dir, Store.Header(id: "s4", cwd: "/", model: "m", created_ms: 0))
+  started = Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "ls")
+  try Store.append_event(tooled, Store.Logged(id: 1, event: Protocol.Event.ToolStarted(started)))
 
   sessions = Sessions.start(options, some(port))
   before = Sessions.list(sessions)
@@ -1240,6 +1249,15 @@ def test_the_list_reads_a_file_again_once_a_write_changes_it() -> Result[Void]
   after = Sessions.list(sessions)
   Sessions.stop(sessions)
   try appended
-  shown = [try before, try after].map { |list| list.map { |s| "#{s.id} #{s.title} #{s.updated_s}" } }
-  Test.eq(shown, [["s1  1"], ["s1 hello 2"]])
+  shown = [try before, try after].map { |list|
+    list.sort_by { |s| s.id }.map { |s| "#{s.id} #{s.title} #{s.updated_s} #{s.empty}" }
+  }
+
+  Test.eq(
+    shown,
+    [
+      ["s1  1 true", "s2  2 true", "s3  2 false", "s4  2 false"],
+      ["s1 hello 2 false", "s2  2 true", "s3  2 false", "s4  2 false"],
+    ],
+  )
 end

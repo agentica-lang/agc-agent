@@ -39,7 +39,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `POST /v1/auth/chatgpt` | start the device login of a ChatGPT subscription: `{"user_code", "url", "expires_in"}`; the user opens `url` and types the code, and the server waits for that and stores the tokens in `chatgpt.json` of its state folder (0600) |
 | `GET /v1/auth/chatgpt` | where that login is: `{"state", "message"}`, `state` being `none`, `waiting`, `done` or `failed` (`message` says why) |
 | `POST /v1/sessions` | a new session: `{"cwd": "/path", "model": null}`, plus `provider`, `api` and `profile`; it answers its `id` and `profile` |
-| `GET /v1/sessions` | the sessions, the last changed first |
+| `GET /v1/sessions` | the sessions, the last changed first; `empty` marks one with no message, compaction or output of a tool or command yet |
 | `GET /v1/sessions/ID` | one session: its settings, history, the `usage` of its last model call, the model's `todos` and its `profile` (`name`, `source`: `built-in`, `user`, `project` or empty when it does not load, `description`, `warnings`) |
 | `PATCH /v1/sessions/ID` | change `provider`, `model`, `effort` (the thinking level), `accept_edits` or `profile` (with the model and thinking level it sets, unless the same request gives them; `409` while a turn, a command or a compaction runs) |
 | `DELETE /v1/sessions/ID` | delete a session and its file |
@@ -72,7 +72,7 @@ A failed request answers with `{"kind": "...", "message": "..."}`. Branch on `ki
 | `approval_requested`, `approval_resolved` | a call waits for an answer, and gets one |
 | `message_queued` | a message sent while the turn runs |
 | `shell_started`, `shell_finished` | a command that a client ran in the session folder (`!CMD`) |
-| `usage` | the tokens of a model call: `input`, `cache_read`, `cache_write` and `context` of that call, `output` summed over the session, `cost`, `turn_cost` and `session_cost` when the catalog has prices, `window`, the model's window in tokens, when it is known, and `call_output`, the output of that call alone |
+| `usage` | the tokens of a model call: `input`, `cache_read`, `cache_write` and `context` of that call, `output` summed over the session, `cost`, `turn_cost` and `session_cost` when the catalog has prices, `window`, the model's window in tokens, when it is known, `call_output`, the output of that call alone, and `output_ms`, the milliseconds from its first output to its end |
 | `todos` | the model's whole todo list after a `todo_write` call: `{"todos": [{"content", "status"}]}` |
 | `turn_finished` | the turn ended, with its stop reason |
 | `error` | a failure, as `{"kind", "message"}` |

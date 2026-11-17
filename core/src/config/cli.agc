@@ -16,7 +16,9 @@ USAGE = <<~TEXT
   and FINN_MODEL. FINN_API=anthropic is the Anthropic Messages API (ANTHROPIC_BASE_URL, else Anthropic's) with
   ANTHROPIC_API_KEY, else ANTHROPIC_AUTH_TOKEN, else the token of `ant auth login` (fetched again after a 401), never
   logged; its default model is claude-opus-5-5, and it caches the prompt. A new session may name another model and API
-  (finn --model, --api), kept in its file. Past 80 % of the model's window (FINN_CONTEXT_WINDOW, else llama-server's
+  (finn --model, --api), kept in its file. FINN_MAX_TOKENS limits a reply, thinking included (default: the model's
+  output limit in the models.dev catalog, else none on the OpenAI APIs and 64000 on Anthropic).
+  Past 80 % of the model's window (FINN_CONTEXT_WINDOW, else llama-server's
   /props for a local server, else the catalog, else /props, else GET /models), the history after the first task becomes
   a summary by FINN_COMPACT_MODEL (a model of FINN_API; else the session's model), whose tokens are not in `usage` and
   are not costed; the last round of the running turn is kept whole. On Anthropic the history folds only between turns:

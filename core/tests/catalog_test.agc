@@ -36,7 +36,10 @@ def test_a_session_counts_what_its_calls_cost() -> Result[Void]
       costs = usages(a).map { |u| [u.cost, u.turn_cost, u.session_cost] }
       try near(costs, [[TEXT_COST, TEXT_COST, TEXT_COST], [CACHED_COST, CACHED_COST, TEXT_COST + CACHED_COST]])
       try near([[(try H.session(h, id)).cost]], [[TEXT_COST + CACHED_COST]])
-      try Test.eq((try H.next_request(h)).path, "/v1/chat/completions")
+      first = try H.next_request(h)
+      try Test.eq(first.path, "/v1/chat/completions")
+      # The model's own output limit, from the catalog.
+      try Test.eq(JSON.get(try JSON.parse(first.body), "max_tokens"), ok(JSON.from(128_000)))
       H.restarted(h, setup, "") do |again| near([[(try H.session(again, id)).cost]], [[TEXT_COST + CACHED_COST]]) end
     end
 
@@ -146,7 +149,7 @@ def test_the_catalog_is_kept_and_read_offline() -> Result[Void]
     try Test.eq(opus.map { |m| m.window }, some(some(1_000_000)))
     try Test.eq(elsewhere, none)
     try Test.eq(fresh.map { |m| m.window }, some(some(272_000)))
-    try Test.eq(offline.map { |m| m.id }, some("gpt-5.1"))
+    try Test.eq(offline.map { |m| [m.id, m.output.unwrap_or(0).to_s] }, some(["gpt-5.1", "128000"]))
     try Test.eq(off, none)
     try Test.eq((try File.stat(cache)).mode % 512, 384)
     Test.eq(hits(dir), ["/api.json", "/other.json"])

@@ -7,6 +7,7 @@ import Input from "input"
 import Picker from "picker"
 import Layout from "panel"
 import Prompt from "prompt"
+import Rate from "rate"
 import Screen from "screen"
 import Transcript from "transcript"
 import State from "state"
@@ -102,7 +103,7 @@ def approval_rows(app: State.Model, room: Int) -> List[Layout.Row]
   case Files.mention_list(app)
     some(found) ->
       choices = Files.mention_choices(app, found)
-      selected = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
+      selected = Files.selected_row(app, found, choices)
       Input.rows(choices, selected, Input.window(app.mention_top, selected, room, choices.size), app.width, room)
     none -> []
   end
@@ -140,5 +141,5 @@ def status(app: State.Model, width: Int) -> String
     model = [app.profile, model].select { |part| not part.empty? }.join(" · ")
   end
 
-  Footer.status(state, app.usage, HINTS, model, width)
+  Footer.status(state, app.usage, HINTS, model, width, Rate.text(app.rate))
 end

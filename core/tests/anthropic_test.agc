@@ -15,7 +15,7 @@ def test_a_session_on_anthropic_caches_and_keeps_its_thinking() -> Result[Void]
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Read the README.")
     a = try H.until(a, Protocol.EventKind.TurnFinished)
-    usage = a.seen.select { |s| Protocol.event_name(s.event) == "usage" }.map { |s| s.event }
+    usage = a.seen.select { |s| Protocol.event_name(s.event) == "usage" }.map { |s| H.untimed(s.event) }
     _ = try H.send(h, id, "Thanks.")
     a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
     H.close(a)

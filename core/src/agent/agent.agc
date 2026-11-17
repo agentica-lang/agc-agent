@@ -88,6 +88,8 @@ struct Turn
   max_rounds: Int = MAX_ROUNDS
   ## Adds `run_script`, which calls the tools from a Python script.
   code_mode: Optional[CodeMode.Settings] = none
+  ## The output limit of each call; none takes the model's from the catalog, else sends none (the API's default).
+  max_tokens: Optional[Int] = none
   ## Where the prices and the window of the model come from: the catalog and the provider of the model there.
   catalog: Optional[Catalog.Catalog] = none
   catalog_provider: String = ""
@@ -128,6 +130,8 @@ end
 struct Outcome
   history: List[LLM.Message]
   reason: Protocol.StopReason
+  ## The output limit of the last call, when it sent one.
+  max_tokens: Optional[Int] = none
 end
 
 def run(started: Turn) -> Outcome
@@ -180,7 +184,7 @@ def run(started: Turn) -> Outcome
       turn.link.commit.call(messages, read.flat_map { |q| q.names }, read)
       read = []
       # A cut or refused answer ends the turn: the messages sent meanwhile start the next one.
-      ended = Outcome(history: messages, reason: stop_reason(response.stop_reason))
+      ended = Outcome(history: messages, reason: stop_reason(response.stop_reason), max_tokens: output_limit(turn))
       cut = [LLM.StopReason.MaxTokens, LLM.StopReason.Refusal].include?(response.stop_reason)
       return ended if cut or turn.link.take.call(0).empty?
 
@@ -409,11 +413,18 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
     extra: turn.extra,
     cache: turn.cache,
     effort: turn.effort,
+    max_tokens: output_limit(turn),
   )
 
   stream = try LLM.stream(turn.provider, request)
+  first: Optional[Int] = none
   while true
-    case stream.events.recv(60000)
+    event = stream.events.recv(60000)
+    if first.none? and output?(event)
+      first = some(Time.monotonic_ms)
+    end
+
+    case event
       ok(LLM.Event.TextDelta(piece)) ->
         turn.link.emit.call(Protocol.Event.TextDelta(Protocol.TextDelta(text: piece.text)))
       ok(LLM.Event.ThinkingDelta(piece)) ->
@@ -423,9 +434,22 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
     end
   end
 
+  ended = Time.monotonic_ms
   response = try LLM.response(stream)
-  turn.link.emit.call(Protocol.Event.Usage(usage(response.usage, turn.listed)))
+  used = usage(response.usage, turn.listed).with(output_ms: first.map { |at| ended - at })
+  turn.link.emit.call(Protocol.Event.Usage(used))
   ok(response)
+end
+
+# A piece of the answer: text, thinking or a tool call.
+def output?(event: Result[LLM.Event]) -> Bool
+  case event
+    ok(LLM.Event.TextDelta(_)) -> true
+    ok(LLM.Event.ThinkingDelta(_)) -> true
+    ok(LLM.Event.ToolUseStart(_)) -> true
+    ok(LLM.Event.ToolInputDelta(_)) -> true
+    _ -> false
+  end
 end
 
 def usage(u: LLM.Usage, listed: Optional[Catalog.Model]) -> Protocol.Usage
@@ -632,6 +656,16 @@ def without_calls(message: LLM.Message) -> LLM.Message
   message.with(
     content: message.content.select { |b| tool_calls(LLM.Message(role: message.role, content: [b])).empty? },
   )
+end
+
+# The user's limit, else the model's own from the catalog.
+def output_limit(turn: Turn) -> Optional[Int]
+  return turn.max_tokens if turn.max_tokens.some?
+
+  case turn.listed
+    some(model) -> model.output
+    none -> none
+  end
 end
 
 def stop_reason(reason: LLM.StopReason) -> Protocol.StopReason

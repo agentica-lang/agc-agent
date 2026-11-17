@@ -7,6 +7,7 @@ import Approvals from "approvals"
 import Calls from "calls"
 import Args from "args"
 import Git from "git"
+import Rate from "rate"
 import Transcript from "transcript"
 import Yolo from "pkg/client/yolo"
 import State from "state"
@@ -274,15 +275,16 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
   shown = app.with(last_event_id: seen, shown_id: seen)
   case event
     Protocol.Event.TextDelta(delta) ->
-      shown.with(entries: Transcript.add(shown.entries, Transcript.Kind.Assistant, delta.text))
+      timed(shown, delta.text).with(entries: Transcript.add(shown.entries, Transcript.Kind.Assistant, delta.text))
     Protocol.Event.ThinkingDelta(delta) ->
-      shown.with(entries: Transcript.add(shown.entries, Transcript.Kind.Thinking, delta.text))
+      timed(shown, delta.text).with(entries: Transcript.add(shown.entries, Transcript.Kind.Thinking, delta.text))
     Protocol.Event.TurnStarted(started) ->
-      shown.with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)))
+      shown.with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)), streamed: none)
     Protocol.Event.TurnFinished(done) ->
       ended = shown.with(turn: false, stopping: false, new_model: none, yolo: Yolo.running(shown.yolo, none))
-      read_branch(Turn.after_turn(finished(ended, done.stop_reason), done.stop_reason))
-    Protocol.Event.Usage(usage) -> shown.with(usage: some(usage))
+      read_branch(Turn.after_turn(finished(ended, done), done.stop_reason))
+    Protocol.Event.Usage(usage) ->
+      shown.with(usage: some(usage), streamed: none, rate: Rate.exact(usage).map { |r| some(r) }.unwrap_or(shown.rate))
     Protocol.Event.ApprovalRequested(request) if Yolo.allows?(shown.yolo) -> Answering.allowed(shown, request)
     Protocol.Event.ApprovalRequested(request) ->
       shown.with(approvals: Approvals.requested(shown.approvals, request, app.now))
@@ -316,9 +318,10 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
       read_branch(shown.with(shell: false, stopping: false, entries: entries))
     # An error (a write of `shell_finished` that failed) also ends a command: no other event of it comes.
     Protocol.Event.Error(failure) ->
-      failed = State.noted(shown.with(shell: false), "error: #{failure.kind}: #{failure.message}")
-      case shown.new_model
-        some(model) -> State.noted(failed.with(new_model: none), "warning: #{Client.model_warning(model)}")
+      failed = State.noted(shown.with(shell: false, new_model: none), "error: #{failure.kind}: #{failure.message}")
+      provider = shown.serving.split("/")[0]
+      case Client.turn_warning(failure.kind, provider, shown.new_model)
+        some(warning) -> State.noted(failed, "warning: #{warning}")
         none -> failed
       end
 
@@ -330,6 +333,12 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
   end
 end
 
+# A piece of the reply: the estimate of the speed, once there is one, takes the place of the last rate.
+def timed(app: State.Model, text: String) -> State.Model
+  streamed = Rate.streamed(app.streamed, text, app.now)
+  app.with(streamed: some(streamed), rate: Rate.live(streamed, app.now).map { |r| some(r) }.unwrap_or(app.rate))
+end
+
 ## The model's todo list as a notice, one item a line.
 def todos(list: List[Protocol.Todo]) -> String
   return "todos: none" if list.empty?
@@ -337,11 +346,13 @@ def todos(list: List[Protocol.Todo]) -> String
   (["todos:"] + Client.todo_lines(list)).join("\n")
 end
 
-def finished(app: State.Model, reason: Protocol.StopReason) -> State.Model
-  case reason
+def finished(app: State.Model, done: Protocol.TurnFinished) -> State.Model
+  note = Client.stop_note(done)
+  case done.stop_reason
     Protocol.StopReason.EndTurn -> app
     Protocol.StopReason.Cancelled -> State.noted(app, "stopped")
-    _ -> State.noted(app, "the turn ended: #{Protocol.stop_reason_name(reason)}")
+    _ if not note.empty? -> State.noted(app, note)
+    _ -> State.noted(app, "the turn ended: #{Protocol.stop_reason_name(done.stop_reason)}")
   end
 end
 

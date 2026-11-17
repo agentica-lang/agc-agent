@@ -93,9 +93,12 @@ export Export.export_path
 export Export.saved
 export Commands.todo_lines
 export Commands.listing
+export Commands.resumable
 export Commands.pick
 export Commands.model_warning
+export Commands.turn_warning
 export Commands.logged_out
+export Commands.stop_note
 export Commands.model_change
 
 export Tree.TreeRow

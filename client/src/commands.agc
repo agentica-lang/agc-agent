@@ -160,46 +160,84 @@ def logged_out(name: Optional[String]) -> String
   "the key of #{name.unwrap_or("")} is removed"
 end
 
+## What a client says of a turn that `done` ended, past its stop reason: why a `max_tokens` stop happened; "" for
+## another stop.
+def stop_note(done: Protocol.TurnFinished) -> String
+  return "" if done.stop_reason != Protocol.StopReason.MaxTokens
+
+  case done.max_tokens
+    some(limit) -> "the reply hit the model's output limit (#{limit} tokens)"
+    none -> "the reply hit the model's output limit"
+  end
+end
+
 ## What a client says when the first turn after `/model NAME` fails: the server takes any name.
 def model_warning(model: String) -> String
   "the call failed after /model #{model}: check the name (/model NAME changes it)"
 end
 
-## The change `/model TEXT` asks for: the model alone when `current`, the session's provider, lists `TEXT` or no provider
-## of `list` has the name before the first `/` (a model name may hold a `/`); else that provider and the rest as its
-## model.
-def model_change(list: Protocol.ProviderList, current: String, text: String) -> Protocol.UpdateSession
+## The warning a client adds to an error of a turn, if any: on `local`, a call that reached no server says the local
+## server does not answer; else, after `/model NAME`, `model_warning`.
+def turn_warning(kind: String, provider: String, new_model: Optional[String]) -> Optional[String]
+  if kind == KIND_NETWORK and provider == LOCAL
+    return some("the local server does not answer: /model PROVIDER/NAME picks another provider, /login sets one up")
+  end
+
+  new_model.map { |model| model_warning(model) }
+end
+
+## The change `/model TEXT` asks for: the model alone when `current`, the session's provider, lists `TEXT`; that
+## provider and the rest as its model when a provider of `list` has the name before the first `/` (a model name may hold
+## a `/`). A name that only other providers list, whole or in part, is an error that names them: a provider never
+## changes unless asked for. Any other text is the model alone.
+def model_change(list: Protocol.ProviderList, current: String, text: String) -> Result[Protocol.UpdateSession]
   own = list.providers.select { |p| p.name == current }
-  return Protocol.UpdateSession(model: some(text)) if (own.any? { |p| p.models.include?(text) })
+  return ok(Protocol.UpdateSession(model: some(text))) if (own.any? { |p| p.models.include?(text) })
 
   case text.index_of("/")
     some(at) ->
       provider = text.slice(0, at)
       model = text.slice(at + 1, text.length - at - 1)
       if (not model.empty? and list.providers.any? { |p| p.name == provider })
-        return Protocol.UpdateSession(provider: some(provider), model: some(model))
+        return ok(Protocol.UpdateSession(provider: some(provider), model: some(model)))
       end
 
     none -> nil
   end
 
-  Protocol.UpdateSession(model: some(text))
+  others = list.providers.select { |p| p.name != current }
+  found = others.flat_map { |p| p.models.select { |m| m == text }.map { |m| "#{p.name}/#{m}" } }
+  if found.empty?
+    wanted = text.downcase
+    found = others.flat_map { |p| p.models.select { |m| m.downcase.include?(wanted) }.map { |m| "#{p.name}/#{m}" } }
+  end
+
+  return ok(Protocol.UpdateSession(model: some(text))) if found.empty?
+
+  error(not_here(text, current, found), kind: KIND_COMMAND)
 end
 
-## The sessions of the server, one numbered line each, for `/resume N`.
-def listing(list: Protocol.SessionList) -> List[String]
-  numbers = (1..list.sessions.size).to_a
+## The sessions a client offers to resume: those with something in them (the server marks the others `empty`), but
+## the `current` one.
+def resumable(list: Protocol.SessionList, current: String = "") -> List[Protocol.SessionSummary]
+  list.sessions.select { |s| not s.empty and s.id != current }
+end
+
+## The sessions to resume, one numbered line each, for `/resume N`.
+def listing(list: Protocol.SessionList, current: String = "") -> List[String]
+  sessions = resumable(list, current)
+  numbers = (1..sessions.size).to_a
   numbers.map do |n|
-    s = list.sessions[n - 1]
+    s = sessions[n - 1]
     "#{n}. #{s.id}  #{s.model}  #{s.cwd}"
   end
 end
 
-## The id `/resume` chose: the number of a line of `listing`, or an id of the list.
-def pick(list: Protocol.SessionList, choice: String) -> Result[String]
-  ids = list.sessions.map { |s| s.id }
-  return ok(choice) if ids.include?(choice)
+## The id `/resume` chose: the number of a line of `listing`, or an id of the list (an empty session's too).
+def pick(list: Protocol.SessionList, choice: String, current: String = "") -> Result[String]
+  return ok(choice) if (list.sessions.any? { |s| s.id == choice })
 
+  ids = resumable(list, current).map { |s| s.id }
   case choice.to_i
     ok(n) if n >= 1 and n <= ids.size -> ok(ids[n - 1])
     _ -> error("no session #{choice}: /resume lists them", kind: KIND_COMMAND)
@@ -267,6 +305,24 @@ def todo_lines(todos: List[Protocol.Todo]) -> List[String]
 end
 
 private
+
+SUGGESTED = 3
+KIND_NETWORK = "llm.network"
+LOCAL = "local"
+
+def not_here(text: String, current: String, found: List[String]) -> String
+  head = "#{printable(text)} is not a model of #{printable(current)}"
+  keep = "(/model #{printable(current)}/#{printable(text)} keeps #{printable(current)})"
+  return "#{head}: did you mean /model #{printable(found[0])}? #{keep}" if found.size == 1
+
+  shown = found.take(SUGGESTED).map { |pair| "/model #{printable(pair)}" }.join(", ")
+  more = ""
+  if found.size > SUGGESTED
+    more = " and #{found.size - SUGGESTED} more"
+  end
+
+  "#{head}; other providers have #{shown}#{more} #{keep}"
+end
 
 def shown(c: String) -> String
   return " " if control?(c.code)

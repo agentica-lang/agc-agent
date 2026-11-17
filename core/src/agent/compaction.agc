@@ -10,6 +10,8 @@ import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 
 PERCENT = 80
+## The most tokens of a summary, thinking included: a limit that most models take.
+SUMMARY_MAX_TOKENS = 16_384
 ## The provider name of Anthropic Messages.
 ANTHROPIC = "anthropic"
 ## The user message after a summary that folded rounds of the running turn, when the turn's task was not folded.
@@ -98,7 +100,13 @@ def summarize(
   prompt = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
   stream = try LLM.stream(
     provider,
-    LLM.Request(model: settings.model, system: SYSTEM, messages: [prompt], extra: settings.extra),
+    LLM.Request(
+      model: settings.model,
+      system: SYSTEM,
+      messages: [prompt],
+      extra: settings.extra,
+      max_tokens: some(SUMMARY_MAX_TOKENS),
+    ),
   )
 
   response = try LLM.response(stream)

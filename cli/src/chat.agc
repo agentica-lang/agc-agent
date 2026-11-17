@@ -235,6 +235,23 @@ def on_stream(chat: Chat, generation: Int, item: Client.Item) -> Result[Step]
   end
 end
 
+# Only a call that reached no server needs the session's provider.
+def warned(chat: Chat, failure: Protocol.Failure) -> Chat
+  provider = ""
+  if failure.kind == "llm.network"
+    case Client.session(chat.server, chat.id)
+      ok(session) -> provider = session.provider
+      error(_) -> nil
+    end
+  end
+
+  done = chat.with(new_model: none, shell: false)
+  case Client.turn_warning(failure.kind, provider, chat.new_model)
+    some(warning) -> note(done, "[warning] #{warning}")
+    none -> done
+  end
+end
+
 def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Step]
   seen = id.unwrap_or(chat.last_event_id)
   repeated = id.some? and seen <= chat.shown_id
@@ -248,8 +265,7 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
       known = started.history_size.unwrap_or(shown.known)
       shown.with(turn: true, stopping: false, known: known, yolo: Yolo.running(shown.yolo, some(started.turn_id)))
     # An error (a write of `shell_finished` that failed) also ends a command: no other event of it comes.
-    Protocol.Event.Error(_) if not repeated and shown.new_model.some? ->
-      note(shown.with(new_model: none, shell: false), "[warning] #{Client.model_warning(shown.new_model.unwrap!)}")
+    Protocol.Event.Error(failure) if not repeated -> warned(shown, failure)
     Protocol.Event.Error(_) -> shown.with(shell: false)
     Protocol.Event.TurnFinished(finished) ->
       shown.with(
@@ -490,14 +506,14 @@ def fresh(chat: Chat) -> Chat
 end
 
 def listed(chat: Chat) -> Result[Chat]
-  lines = Client.listing(try Client.list_sessions(chat.server))
+  lines = Client.listing(try Client.list_sessions(chat.server), chat.id)
   return ok(note(chat, "[no sessions]")) if lines.empty?
 
   ok(note(chat, lines.join("\n")))
 end
 
 def switched(chat: Chat, choice: String) -> Result[Chat]
-  id = try Client.pick(try Client.list_sessions(chat.server), choice)
+  id = try Client.pick(try Client.list_sessions(chat.server), choice, chat.id)
   resume(fresh(chat).with(id: id), id)
 end
 
@@ -517,7 +533,7 @@ end
 
 def model_changed(chat: Chat, text: String) -> Result[Chat]
   current = (try Client.session(chat.server, chat.id)).provider
-  change = Client.model_change(try Client.list_providers(chat.server), current, text)
+  change = try Client.model_change(try Client.list_providers(chat.server), current, text)
   changed(chat, change, "[model #{text} from the next turn]")
 end
 

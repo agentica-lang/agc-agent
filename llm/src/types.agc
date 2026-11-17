@@ -5,6 +5,9 @@
 
 import {StopReason} from "stop_reason"
 
+## The `max_tokens` anthropic sends when a request gives none: the most that every current Claude model takes.
+ANTHROPIC_MAX_TOKENS = 64_000
+
 ## Text the model wrote.
 struct TextPart
   text: String
@@ -63,7 +66,9 @@ struct Request
   messages: List[Message]
   system: String = ""
   tools: List[Tool] = []
-  max_tokens: Int = 4096
+  ## The most tokens of the reply, thinking included. None: the OpenAI APIs leave it out, so the server's own maximum
+  ## holds; anthropic, which needs one, sends `ANTHROPIC_MAX_TOKENS`.
+  max_tokens: Optional[Int] = none
   ## How hard the model thinks (`low`, `medium`, `high`), for the models that take it.
   effort: Optional[String] = none
   ## Ask the provider to cache the stable prefix (the system prompt and the tools) and, on Anthropic, the
