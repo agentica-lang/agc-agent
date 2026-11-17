@@ -10,6 +10,7 @@ import Transcript from "transcript"
 import State from "state"
 import Level from "level"
 import Answering from "answering"
+import Editor from "editor"
 import Files from "files"
 import Logins from "logins"
 import Turn from "turn"
@@ -72,6 +73,7 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
       shown = app.with(tools: not app.tools, entries: Transcript.unfold_tools(app.entries))
       State.noted(shown, "tool output: #{Views.shown_name(shown.tools)}")
     TUI.Event.Key(TUI.Key.Ctrl("j"), _) -> typed(app, "\n")
+    TUI.Event.Key(TUI.Key.Ctrl("g"), _) -> Editor.opened(app)
     TUI.Event.Key(TUI.Key.Backspace, mods) if mods.alt -> cut_to(app, Prompt.word_left(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Backspace, _) -> cut_to(app, Prompt.previous_char(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Delete, _), TUI.Event.Key(TUI.Key.Ctrl("d"), _) -> deleted(app)

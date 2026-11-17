@@ -23,6 +23,7 @@ import Logins from "logins"
 import Turn from "turn"
 import Session from "session"
 import Commands from "commands"
+import Editor from "editor"
 import Views from "views"
 import Keys from "keys"
 
@@ -131,6 +132,7 @@ def handled(app: State.Model, msg: State.Msg) -> State.Model
     State.Msg.Key(TUI.Event.Resize(width, height)) -> app.with(width: width, height: height)
     State.Msg.Key(event) -> Keys.on_key(app, event)
     State.Msg.Signal(signal) -> Session.signalled(app, signal)
+    State.Msg.Edited(result) -> Editor.closed(app, result)
     State.Msg.Note(text) -> State.noted(app, text)
     State.Msg.Answered(approval_id, result) ->
       outcome = Approvals.answered(app.approvals, approval_id, result, app.now)

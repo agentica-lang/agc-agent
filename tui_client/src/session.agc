@@ -16,9 +16,11 @@ import Turn from "turn"
 ## The resyncs in a row after which the client ends.
 MAX_RESYNCS = 2
 
-## A signal ends the client; a wait that ended without one waits again.
+## A signal ends the client; a wait that ended without one waits again. An interrupt while the editor of Ctrl+G has the
+## terminal does not.
 def signalled(app: State.Model, signal: Optional[System.Signal]) -> State.Model
   case signal
+    some(System.Signal.Int) if app.editing -> State.effect(app, State.listen(app.signals))
     some(got) -> app.with(exit: some(128 + System.signal_number(got)))
     none if app.signals.closed? -> app
     none -> State.effect(app, State.listen(app.signals))

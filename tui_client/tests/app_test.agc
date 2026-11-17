@@ -5,7 +5,9 @@ import App from "../src/app"
 import Approvals from "../src/approvals"
 import Args from "../src/args"
 import Picker from "../src/picker"
+import Prompt from "../src/prompt"
 import Session from "../src/session"
+import State from "../src/state"
 import Transcript from "../src/transcript"
 
 def test_keys_edit_the_prompt_and_the_view_draws_it() -> Result[Void]
@@ -915,7 +917,36 @@ def test_arguments_complete_from_the_server() -> Result[Void]
   failed = App.update(failing.model, run(failing.cmds[0])[0]).model
   again = App.update(failed, key_char("x"))
   notes = again.model.entries.select { |entry| entry.text.include?("not listed") }
-  Test.eq([notes.size, again.cmds.size], [1, 0])
+  try Test.eq([notes.size, again.cmds.size], [1, 0])
+  # Nor when the cursor leaves the argument and comes back.
+  back = App.update(App.update(again.model, ctrl("a")).model, ctrl("e"))
+  Test.eq([back.cmds.size == 0, back.model.arguments_failed == some("/model")], [true, true])
+end
+
+# A control or bidi character in a model name or a session's folder shows as a space in the argument list.
+def test_argument_rows_show_no_control_characters() -> Result[Void]
+  rtl = String.from_code(0x202E)
+  escape = String.from_code(0x1B)
+  providers = Protocol.ProviderList(
+    provider: "p",
+    providers: [Protocol.ProviderInfo(name: "p", api: "chat", models: ["sm#{rtl}all"])],
+  )
+
+  summary = Protocol.SessionSummary(id: "s9", cwd: "/w#{escape}x", model: "m", api: "chat", title: "t")
+  backend = Client.unreachable_backend().with(
+    list_providers: -> { ok(providers) },
+    list_sessions: -> { ok(Protocol.SessionList(sessions: [summary])) },
+  )
+
+  model = model_of(80, 20).with(backend: backend, id: "s1")
+  shown: List[Bool] = []
+  for pair in [["/model", "p/sm all"], ["/resume", "s9  /w x  m"]]
+    asking = App.update(model.with(prompt: pair[0], cursor: pair[0].length), key_char(" "))
+    listed = App.update(asking.model, run(asking.cmds[0])[0]).model
+    shown = shown.push(rows(listed).any? { |row| row.include?(pair[1]) })
+  end
+
+  Test.eq(shown, [true, true])
 end
 
 # An Alt key types nothing: not in the prompt, not over a selected prompt, not in a picker's filter, not in a key.
@@ -969,6 +1000,67 @@ def test_a_key_takes_a_whole_character() -> Result[Void]
   try Test.eq(App.update(ending, backspace()).model.prompt, "a")
   try Test.eq(App.update(ending, key(TUI.Key.Left, TUI.Mods())).model.cursor, 1)
   Test.eq(App.update(flags.with(cursor: 4), backspace()).model.prompt, spain)
+end
+
+# A step back from each character boundary lands on the boundary before it, over random text of flag letters, joiners,
+# skin tones, keycaps, combining marks and line breaks.
+def test_a_step_back_undoes_a_step_forward() -> Result[Void]
+  pieces = [0x61, 0x0A, 0x200D, 0x1F1EA, 0x1F1F8, 0x1F1EB, 0x1F3FD, 0x20E3, 0xFE0F, 0x0301, 0x1F469, 0x31].map { |code|
+    String.from_code(code)
+  }
+
+  for _round in 1..400
+    text = (1..Random.int(1, 12)).to_a.map { |_i| pieces[Random.int(0, pieces.size - 1)] }.join("")
+    ends = [0]
+    while ends.last < text.length
+      ends = ends.push(Prompt.next_char(text, ends.last))
+    end
+
+    backs = ends.drop(1).map { |at| Prompt.previous_char(text, at) }
+    codes = text.split("").map { |c| c.code }
+    try Test.eq([codes, backs], [codes, ends.take(ends.size - 1)])
+  end
+
+  ok()
+end
+
+# Ctrl+G gives the prompt to the editor through a file only the user can read, in a folder removed afterwards, and
+# takes back what it saved; with no editor, a failed one or a Ctrl+C meanwhile the prompt and the client stay.
+def test_ctrl_g_edits_the_prompt_in_the_editor() -> Result[Void]
+  folder = "#{System.env("TMPDIR").unwrap_or("/tmp")}/tui-editor-#{Random.int(0, 999_999_999)}"
+  try Dir.mkdir_private(folder)
+  seen = "#{folder}/seen"
+  lines = [
+    "printf '%s %s %s\\n' \"$(stat -c %a \"$1\")\" \"$(stat -c %a \"$(dirname \"$1\")\")\" \"$1\" > #{seen}",
+    "cat \"$1\" >> #{seen}",
+    "printf 'from the editor\\n' > \"$1\"",
+  ]
+
+  try File.write_text("#{folder}/editor", lines.join("\n"))
+  draft = model_of(40, 8).with(prompt: "draft", cursor: 2, editor: "sh #{folder}/editor")
+  opening = App.update(draft, ctrl("g"))
+  try Test.eq([opening.model.editing, opening.cmds.size == 1], [true, true])
+  back = App.update(opening.model, run(opening.cmds[0])[0]).model
+  recorded = File.read_text(seen).unwrap_or("").split("\n")
+  _ = Path.remove(folder)
+  try Test.eq([back.prompt == "from the editor", back.cursor == 15, back.editing], [true, true, false])
+  modes = recorded[0].split(" ")
+  try Test.eq([modes[0], modes[1], recorded[1]], ["600", "700", "draft"])
+  try Test.eq([File.read_text(modes[2]).ok?, Dir.list(modes[2].slice(0, modes[2].length - 10)).ok?], [false, false])
+  unset = App.update(draft.with(editor: ""), ctrl("g"))
+  try Test.eq([unset.cmds.size == 0, unset.model.entries.last.text.include?("set $VISUAL or $EDITOR")], [true, true])
+
+  failing = App.update(draft.with(editor: "false"), ctrl("g"))
+  failed = App.update(failing.model, run(failing.cmds[0])[0]).model
+  try Test.eq(
+    [failed.prompt, failed.entries.last.text],
+    ["draft", "error: the prompt was not edited: the editor exited with 1"],
+  )
+
+  interrupted = App.update(opening.model, App.Msg.Signal(some(System.Signal.Int)))
+  try Test.eq([interrupted.model.exit.none?, interrupted.cmds.size == 1], [true, true])
+  try Test.eq(App.update(draft, App.Msg.Signal(some(System.Signal.Int))).model.exit, some(130))
+  Test.eq([State.editor_of(" ", " vi "), State.editor_of("code -w", "vi")], ["vi", "code -w"])
 end
 
 # Alt+y (or Escape and y read together) on a focused approval panel answers nothing and types nothing; y allows.
@@ -1181,6 +1273,7 @@ end
 def run(cmd: TUI.Cmd[App.Msg]) -> List[App.Msg]
   case cmd
     TUI.Cmd.Run(work) -> [work.call()]
+    TUI.Cmd.Suspend(work) -> [work.call()]
     _ -> []
   end
 end
