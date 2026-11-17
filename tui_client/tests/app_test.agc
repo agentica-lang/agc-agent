@@ -623,6 +623,37 @@ def model_of(width: Int, height: Int) -> App.Model
   App.seed(Client.Server(url: "http://127.0.0.1:1", token: ""), options, Channel.new(1), width, height)
 end
 
+# The login of a local server lists its base URL; picked, it asks for one, filled with that, and Esc cancels it.
+def test_a_local_login_is_listed_with_its_url_and_asks_for_one() -> Result[Void]
+  label = "a local server of the OpenAI API (llama.cpp)"
+  url = "http://127.0.0.1:8080/v1"
+  local = Protocol.LoginStatus(
+    name: "local",
+    label: label,
+    key_env: "FINN_BASE_URL",
+    from: "",
+    coming: false,
+    asks: "url",
+    base_url: url,
+  )
+
+  picking = model_of(80, 12).with(picker: some(Picker.logins(Protocol.LoginList(providers: [local], first: false))))
+  try Test.assert(rows(picking).any? { |row| row.include?("local  base URL, now #{url}") }, "#{rows(picking)}")
+
+  asked = App.update(picking, enter()).model
+  try Test.eq(
+    [asked.key_for, some(asked.secret), some(asked.asking_url.to_s)],
+    [some("local"), some(url), some("true")],
+  )
+
+  try Test.assert(rows(asked).any? { |row| row.include?("base URL of local: #{url}") }, "#{rows(asked)}")
+  cancelled = App.update(asked, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model
+  try Test.eq([cancelled.secret, "#{cancelled.key_for}", cancelled.asking_url.to_s], ["", "none", "false"])
+  stored = local.with(from: "stored", base_url: "http://127.0.0.1:9090/v1")
+  done = App.update(cancelled, App.Msg.LoggedIn("local", ok(stored))).model
+  Test.eq(done.entries.last.text, "local is set up at http://127.0.0.1:9090/v1: /model lists its models")
+end
+
 # A coming login cannot be given a key; Esc in the key prompt drops what was typed; under `finn login` the answer to
 # the login ends the app. A `/login` or `/logout` line, which may hold a key typed by mistake, is not remembered and
 # drops its pastes.

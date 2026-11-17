@@ -67,6 +67,9 @@ export Requests.Fork
 export Requests.StopServer
 export Requests.RunShell
 export Requests.Login
+export Requests.LoginUrl
+export Requests.encode_login_url
+export Requests.decode_login_url
 export Requests.EFFORTS
 export Requests.EFFORT_DEFAULT
 export Requests.decisions

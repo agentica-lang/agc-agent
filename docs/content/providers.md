@@ -63,6 +63,8 @@ finn
 | `FINN_API_KEY` | | none |
 | `FINN_MODEL` | `--model` | `default` |
 
+`finn login local` (or `/login local`) sets the base URL without a variable: it asks for the URL, checks that `GET /models` answers there (with no key), and stores it in `auth.json`, so the server uses it from then on, also after a restart. `FINN_BASE_URL` wins over a stored URL. `finn logout local` goes back to the default.
+
 ## Anthropic
 
 `anthropic` uses the Anthropic Messages API at `ANTHROPIC_BASE_URL`, else Anthropic's own. Its credential is the first of:

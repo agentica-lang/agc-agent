@@ -108,7 +108,8 @@ def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_wit
 
 ## `ant` gives the OAuth token of `ant auth login` when no variable has a credential and `FINN_API` is `anthropic`.
 def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> Result[Options]
-  base_url = set(read, "FINN_BASE_URL").unwrap_or(DEFAULT_BASE_URL)
+  env_url = set(read, "FINN_BASE_URL")
+  base_url = env_url.unwrap_or(DEFAULT_BASE_URL)
   api_key = set(read, "FINN_API_KEY").unwrap_or("")
   api = set(read, "FINN_API").unwrap_or(APIS[0])
   return error("FINN_API must be one of #{APIS.join(", ")}, not #{api.inspect}") if not APIS.include?(api)
@@ -126,15 +127,24 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   auth_path = Auth.path(read)
   owner = Auth.owner(read)
   stored = auth_path.map { |path| Auth.load(path, owner) }.unwrap_or(Auth.Stored())
-  server = Offered.Server(read: read, base_url: base_url, api_key: api_key, api: api, ant: ant)
+  # A base URL a login stored serves `local` unless FINN_BASE_URL is set.
+  server = Offered.Server(
+    read: read,
+    base_url: local_url(base_url, env_url, stored.urls),
+    api_key: api_key,
+    api: api,
+    ant: ant,
+  )
+
   claude_key = stored.keys.get(Providers.ANTHROPIC).unwrap_or("")
   # `ant` runs here only: a login or a logout later builds the providers without it.
   at_start = try Offered.anthropic_access(read, api == "anthropic", ant, claude_key)
-  rebuild = ->(keys: Map[String, String]) {
-    Offered.all_providers(server, customs, keys, Offered.access_for(server, keys, claude_key, at_start))
+  rebuild = ->(keys: Map[String, String], urls: Map[String, String]) {
+    current = server.with(base_url: local_url(base_url, env_url, urls))
+    Offered.all_providers(current, customs, keys, Offered.access_for(current, keys, claude_key, at_start))
   }
 
-  providers = try rebuild.call(stored.keys)
+  providers = try rebuild.call(stored.keys, stored.urls)
   anthropic_url = set(read, "ANTHROPIC_BASE_URL").unwrap_or(LLM.ANTHROPIC_URL)
   login = Logins.Setup(
     path: auth_path,
@@ -143,6 +153,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     entries: Offered.login_entries(customs, anthropic_url),
     read: read,
     rebuild: rebuild,
+    local_url: base_url,
     chosen: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
   )
 
@@ -174,7 +185,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       context_window: try context_window(read),
       drain_ms: try drain_ms(read),
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
-      props_url: props_url(base_url),
+      props_url: props_url(server.base_url),
       api_key: api_key,
       code_mode: try code_mode(read),
       models_url: set(read, "FINN_MODELS_URL").unwrap_or(Catalog.URL),
@@ -183,6 +194,12 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
     ),
   )
+end
+
+def local_url(fallback: String, env_url: Optional[String], urls: Map[String, String]) -> String
+  return env_url.unwrap! if env_url.some?
+
+  urls.get(Providers.LOCAL).unwrap_or(fallback)
 end
 
 ## `options` with the providers the server offers now (a login or a logout changes them).

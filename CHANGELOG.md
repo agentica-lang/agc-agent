@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- `finn login local` and `/login local` set the base URL of a local server (llama.cpp or another of the OpenAI API): it is checked with `GET /models`, with no key, and stored in `auth.json`, so the server uses it after a restart; `FINN_BASE_URL` wins over it.
 - **Breaking:** `finn` alone (or with options) opens the full screen, as `finn tui` does; `finn chat` is the line chat. Without a terminal, plain `finn` refuses and points to `finn chat` and `finn -p`.
 - MCP servers on streamable HTTP: an entry of `FINN_MCP_CONFIG` with `url` and `headers` (`"Authorization": "Bearer ${TOKEN}"` takes the token from the environment, and no error or log shows it). Answers come as JSON or SSE; the client keeps the session id, resumes a cut stream with `Last-Event-ID`, starts a session the server ended again for the same call, and ends the session with a DELETE. Its tools follow the approvals and deny rules as the stdio ones do.
 - Approvals: an approval request for `bash` offers no prefix while a `read_file` deny rule exists, since only the same call can be allowed then.

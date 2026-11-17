@@ -10,6 +10,8 @@ import App from "../src/app"
 import Approvals from "../src/approvals"
 import Args from "../src/args"
 
+## The base URL of `local` when nothing sets another.
+DEFAULT_URL = "http://127.0.0.1:8080/v1"
 SSE_HEADERS = [HTTP.Header(name: "Content-Type", value: "text/event-stream")]
 
 struct Rig
@@ -183,6 +185,60 @@ def first_login(rig: Rig) -> Result[Void]
   try Test.eq(rig.bodies.recv(2000), ok("{\"key\":\"sk-9\"}"))
   shown = try shows(rig, "groq is set up")
   Test.eq(shown.any? { |row| row.include?("sk-9") }, false)
+end
+
+# The login of a local server asks for its base URL, shown as typed and filled with the one it uses now; Enter sends
+# it as a URL, not a key.
+def test_a_local_login_asks_for_the_base_url() -> Result[Void]
+  set_up = local("stored", "http://127.0.0.1:9090/v1")
+  replies = {
+    "GET #{Protocol.AUTH_PATH}": Protocol.encode_login_list(
+      Protocol.LoginList(providers: [local("", DEFAULT_URL)], first: false),
+    ),
+    "POST #{Protocol.auth_path("local")}": Protocol.encode_login_status(set_up),
+  }
+
+  within(80, 24, &local_login, replies)
+end
+
+def local_login(rig: Rig) -> Result[Void]
+  for char in "/login local".split("")
+    try press(rig, TUI.Event.Char(char, TUI.Mods()))
+  end
+
+  try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+  try shows(rig, "base URL of local: #{DEFAULT_URL}")
+  for _ in 0...7
+    try press(rig, TUI.Event.Key(TUI.Key.Backspace, TUI.Mods()))
+  end
+
+  for char in "9090/v1".split("")
+    try press(rig, TUI.Event.Char(char, TUI.Mods()))
+  end
+
+  try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+  try Test.eq(rig.requests.recv(2000), ok("GET #{Protocol.AUTH_PATH}"))
+  try Test.eq(rig.requests.recv(2000), ok("POST #{Protocol.auth_path("local")}"))
+  _ = try rig.bodies.recv(2000)
+  try Test.eq(
+    rig.bodies.recv(2000),
+    ok(Protocol.encode_login_url(Protocol.LoginUrl(base_url: "http://127.0.0.1:9090/v1"))),
+  )
+
+  _ = try shows(rig, "local is set up at http://127.0.0.1:9090/v1")
+  ok()
+end
+
+def local(from: String, url: String) -> Protocol.LoginStatus
+  Protocol.LoginStatus(
+    name: "local",
+    label: "a local server of the OpenAI API (llama.cpp)",
+    key_env: "FINN_BASE_URL",
+    from: from,
+    coming: false,
+    asks: "url",
+    base_url: url,
+  )
 end
 
 # Closing the first-start picker makes an empty key file when there is none (PUT), so the login is offered once.
