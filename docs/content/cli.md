@@ -90,10 +90,10 @@ Review $ARGUMENTS: look for bugs first, then for missing tests.
 ```
 
 - `/review src/a.agc` sends the prompt with `$ARGUMENTS` replaced by `src/a.agc`. Without `$ARGUMENTS`, the text after the name goes after the prompt, after a blank line.
-- The model gets the prompt; your history shows what you typed. The file is read again at each use.
-- NAME is lowercase letters, digits, `-` and `_`; the front matter (only `description`) is optional, and the file holds at most 64 KiB. Another file there is skipped with a warning, and a broken one fails only its own name.
+- The model gets the prompt; your history shows what you typed. The file is read again at each use. A `/name` of a [skill](skills.md) in the prompt loads that skill, as in a message you type.
+- NAME is lowercase letters, digits, `-` and `_`; the front matter (only `description`) is optional, and the file holds at most 64 KiB. Another file there is skipped with a warning (a link counts only when it leads to a file inside the folder), and a broken one fails only its own name. With the approvals on, a change of the model under `.finn/` always asks ([why](security.md)).
 - The clients' own commands keep their names: a `model.md` is skipped. A command wins over a [skill](skills.md) of the same name, with a warning.
-- `/help` lists the session's commands, and `finn` suggests them after `/`.
+- `/help` lists the session's commands, and `finn` suggests them after `/` (read when a session of another folder opens, and again on `/help`).
 
 ## Shell commands
 

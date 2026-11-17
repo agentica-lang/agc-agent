@@ -45,6 +45,23 @@ end
 
 def inside?(root: String, path: String) -> Bool = path == root or root == "/" or path.start_with?("#{root}/")
 
+## The size of `path` when it is a regular file whose real path (its links followed) is inside the real `dir`; none
+## for a link out of `dir`, a folder, a FIFO or anything else.
+def file_inside(dir: String, path: String) -> Optional[Int]
+  size = case File.stat(path)
+    ok(found) if found.kind == "file" -> found.size_bytes
+    _ -> -1
+  end
+
+  return none if size < 0
+
+  real_dir = Path.real(dir).unwrap_or("")
+  real = Path.real(path).unwrap_or("")
+  return none if real_dir.empty? or real.empty? or not inside?(real_dir, real)
+
+  some(size)
+end
+
 def parent(path: String) -> String
   parts = path.split("/")
   parent_parts = parts.take(parts.size - 1)

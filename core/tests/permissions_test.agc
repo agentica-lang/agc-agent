@@ -273,6 +273,18 @@ def test_a_patch_that_touches_git_is_never_allowed_by_the_session() -> Result[Vo
   Test.eq(Permissions.allows?(edits, Approval.Rules(all: []), "/", "apply_patch", target), false)
 end
 
+# A write under `.finn/` (the project's rules, skills, profiles and slash commands) is protected as `.git/` is,
+# case and
+# trailing dots aside: no answer or accept-edits runs it.
+def test_a_write_under_finn_is_never_allowed_by_the_session() -> Result[Void]
+  edits = Permissions.Allows(accept_edits: true, tools: ["write_file", "edit_file"])
+  targets = [".finn/commands/review.md", "sub/.FINN./profiles/plan.md", ".finn/config.json"]
+  try Test.eq(targets.select { |t| Approval.protected?("write_file", t) }, targets)
+  try Test.eq(Approval.protected?("write_file", "finn/commands/review.md"), false)
+  try Test.eq(Approval.protected?("read_file", ".finn/commands/review.md"), false)
+  Test.eq(Permissions.allows?(edits, Approval.Rules(all: []), "/", "edit_file", targets[0]), false)
+end
+
 # A deny rule of `read_file` does not touch bash: the request still offers a prefix.
 def test_a_read_deny_rule_keeps_the_prefix_of_the_request() -> Result[Void]
   H.using(H.Setup(replies: ["ls_a.sse", "text.sse"], deny: ["read_file(secret*)"])) do |h|

@@ -225,12 +225,17 @@ def test_the_profile_command_changes_the_footer() -> Result[Void]
 end
 
 # The status line names the session's profile, unless it is the built-in `build`.
-# The session's slash commands are suggested after `/` with the clients' own, and Tab completes one.
+# The session's slash commands are suggested after `/` with the clients' own, and Tab completes one; `/help` reads
+# them again.
 def test_the_session_commands_are_suggested() -> Result[Void]
   custom = [Client.Usage(name: "/review", args: "[TEXT]", about: "Review a change")]
   typed = model_of(80, 20).with(id: "s1", custom: custom, prompt: "/rev", cursor: 4)
   try Test.assert(rows(typed).any? { |row| row.include?("Review a change") }, rows(typed).join("\n"))
-  Test.eq(App.update(typed, tab()).model.prompt, "/review ")
+  try Test.eq(App.update(typed, tab()).model.prompt, "/review ")
+  listed = Protocol.CommandList(commands: [Protocol.CommandInfo(name: "plan", source: "user", description: "Plan it")])
+  backend = Client.unreachable_backend().with(list_commands: ->(_id: String) { ok(listed) })
+  helped = App.update(typed.with(backend: backend, prompt: "/help", cursor: 5), enter()).model
+  Test.assert(helped.entries.any? { |e| e.text.include?("Plan it") }, "the help reads the commands again")
 end
 
 def test_the_footer_names_the_profile() -> Result[Void]

@@ -100,8 +100,9 @@ def test_an_untrusted_project_profile_is_not_read() -> Result[Void]
   ok()
 end
 
-# A stray file is skipped with a warning and a broken one fails only its own name; a BOM is fine, an empty
-# `tools_allow` and a project file that replaces a profile warn, and a profile only an untrusted project has says so.
+# A stray file (a link out of the folder too) is skipped with a warning and a broken one fails only its own name; a BOM
+# is fine, an empty `tools_allow` and a project file that replaces a profile warn, and a profile only an untrusted
+# project has says so.
 def test_a_stray_or_broken_file_fails_only_its_own_name() -> Result[Void]
   base = try fresh()
   user = "#{base}/user"
@@ -113,8 +114,11 @@ def test_a_stray_or_broken_file_fails_only_its_own_name() -> Result[Void]
   try write("#{user}/empty.md", "---\ntools_allow:\n---\n")
   try write("#{base}/.finn/profiles/plan.md", "---\ntools_deny: [bash]\n---\n")
   try write("#{base}/.finn/profiles/mine.md", "---\n---\n")
+  try write("#{base}/outside.md", "---\ntools_allow: [bash]\n---\n")
+  try Test.eq(try H.run("ln", ["-s", "#{base}/outside.md", "#{user}/leak.md"]), 0)
   loaded = Profiles.load(user, base, true)
-  try Test.eq(loaded.warnings.select { |w| w.name.empty? }.size, 3)
+  try Test.eq(loaded.warnings.select { |w| w.name.empty? }.size, 4)
+  try failed(Profiles.find(loaded, "leak"), "unknown profile")
   try Test.eq((try Profiles.find(loaded, "bom")).description, "with a BOM")
   try Test.eq((try Profiles.find(loaded, "build")).source, "built-in")
   plan = try Profiles.find(loaded, "plan")

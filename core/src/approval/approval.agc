@@ -11,9 +11,10 @@
 ## (`Shell.READS`); those of `edit_file` and `write_file` the file tools only. A rule is a convenience and not a
 ## sandbox: see the security model of `Tools`.
 ##
-## A change to a path under `.git/` (`write_file`, `edit_file`, `apply_patch`) always asks, because `.git/config` and
-## the hooks run programs (`core.fsmonitor`, aliases) the next time git runs; the name is compared without case and
-## trailing dots. Only a deny rule can change that. `edit_file` reads the file, so a deny rule of `read_file` denies it
+## A change to a path under `.git/` or `.finn/` (`write_file`, `edit_file`, `apply_patch`) always asks: `.git/config`
+## and the hooks run programs (`core.fsmonitor`, aliases) the next time git runs, and `.finn/` holds the project's
+## rules, skills, profiles and the slash commands whose text the user sends next. The name is compared without case
+## and trailing dots. Only a deny rule can change that. `edit_file` reads the file, so a deny rule of `read_file` denies it
 ## too.
 
 import Regex from "std/regex"
@@ -118,12 +119,15 @@ def match?(text: String, pattern: String) -> Bool
   globbed?(chars, glob.split(""))
 end
 
-## A change under `.git/`, which always asks unless a deny rule refuses it. The target of `apply_patch` is its paths
+## A change under `.git/` or `.finn/`, which always asks unless a deny rule refuses it. The target of `apply_patch` is its paths
 ## joined with ", ": each one is checked.
 def protected?(tool: String, target: String) -> Bool
   return false if not WRITES.include?(tool)
 
-  target.split(", ").any? { |path| path.split("/").any? { |name| Regex.match?(name.downcase, GIT) } }
+  target.split(", ")
+    .any? do |path|
+      path.split("/").any? { |name| Regex.match?(name.downcase, GIT) or Regex.match?(name.downcase, FINN) }
+    end
 end
 
 ## Whether a rule of `read_file` denies the path (relative to the session folder): `glob` and `grep` skip it too.
@@ -156,6 +160,7 @@ end
 private
 
 GIT = /\A\.git\.*\z/
+FINN = /\A\.finn\.*\z/
 WRITES = ["write_file", "edit_file", "apply_patch"]
 
 # Each path of `apply_patch` decides as the call that does the same would: an updated file as `edit_file`, an added

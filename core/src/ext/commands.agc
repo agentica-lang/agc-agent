@@ -3,6 +3,7 @@
 ## start of a message stands for. `$ARGUMENTS` in it becomes the text after the name; without it, that text goes after
 ## the prompt. An optional front matter gives a `description`. The names of the clients' own commands stay theirs.
 
+import Sandbox from "../tools/sandbox"
 import Skills from "skills"
 
 PROJECT_FOLDER = ".finn/commands"
@@ -71,7 +72,9 @@ end
 def expanded(loaded: Loaded, text: String) -> String
   return text if not text.start_with?("/")
 
-  head = text.split("\n")[0].split(" ")[0]
+  chars = text.split("")
+  ends = chars.find_index { |c| c.strip.empty? }.unwrap_or(chars.size)
+  head = text.slice(0, ends)
   name = head.slice(1, head.length - 1)
   case (loaded.commands.find { |c| c.name == name })
     ok(command) ->
@@ -123,13 +126,12 @@ def in_folder(before: Loaded, dir: String, source: String) -> Loaded
   for file in files
     name = file.slice(0, file.length - 3)
     path = "#{dir}/#{file}"
-    kind = case File.stat(path)
-      ok(info) -> info.kind
-      error(_) -> ""
-    end
+    size = Sandbox.file_inside(dir, path)
+    if not named?(name) or size.none?
+      skipped = Note(
+        text: "#{path}: skipped, not a command (a file NAME.md in this folder, NAME of a-z, 0-9, - and _)",
+      )
 
-    if not named?(name) or kind != "file"
-      skipped = Note(text: "#{path}: skipped, not a command (a file NAME.md, NAME of a-z, 0-9, - and _)")
       loaded = loaded.with(warnings: loaded.warnings.push(skipped))
       next
     end
@@ -140,23 +142,26 @@ def in_folder(before: Loaded, dir: String, source: String) -> Loaded
       next
     end
 
-    loaded = with_file(loaded, path, name, source)
+    loaded = with_file(loaded, path, name, source, size.unwrap_or(0))
   end
 
   loaded
 end
 
 # `loaded` with the command of one file, or with its error in `broken`; either replaces a command of that name.
-def with_file(loaded: Loaded, path: String, name: String, source: String) -> Loaded
+def with_file(loaded: Loaded, path: String, name: String, source: String, size: Int) -> Loaded
   warnings = loaded.warnings
   for replaced in (loaded.commands.select { |c| c.name == name })
     warnings = warnings.push(Note(name: name, text: "#{path} replaces the #{replaced.source} command /#{name}"))
   end
 
   others = loaded.commands.select { |c| c.name != name }
-  read = case File.read_text(path)
-    ok(text) -> parse(path, name, text, source)
-    error(e) -> error("#{path}: #{e.message}")
+  read: Result[Command] = error("#{path}: over #{MAX_BYTES} bytes")
+  if size <= MAX_BYTES
+    read = case File.read_text(path)
+      ok(text) -> parse(path, name, text, source)
+      error(e) -> error("#{path}: #{e.message}")
+    end
   end
 
   case read
