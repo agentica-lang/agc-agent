@@ -29,8 +29,8 @@ usage: finn [tui] [options]       talk to the agent in this folder on the full s
                                   (stop waits for the running turns, --now cancels them; finn server --help)
        finn --version | --help
 
-options of finn and finn chat: --provider NAME, --api NAME, --model NAME (of a new session), --session ID, --thinking,
-  --yolo, ... (finn tui --help and finn chat --help list them all)
+options of finn and finn chat: --provider NAME, --api NAME, --model NAME, --profile NAME (of a new session),
+  --session ID, --thinking, --yolo, ... (finn tui --help and finn chat --help list them all)
 in chat and tui: /new, /resume, /model, /thinking, /compact, /login, /logout, /stop, /help, /quit
 one-shot: approvals (when on) are denied unless --yolo; exit 0 when the turn ends normally (also after a denied call),
   130 when it is cancelled, 1 otherwise (a failed or busy send, an empty task); the server keeps running after it

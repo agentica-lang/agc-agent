@@ -131,7 +131,7 @@ def open(chat: Chat, options: Args.Options) -> Result[Chat]
 end
 
 def create(chat: Chat, options: Args.Options) -> Result[Chat]
-  request = try Client.new_session(options.cwd, options.model, options.api, options.provider)
+  request = try Client.new_session(options.cwd, options.model, options.api, options.provider, options.profile)
   id = try Client.create_session(chat.server, request)
 
   ok(subscribe(note(chat, "[session #{id}]").with(id: id), 0))

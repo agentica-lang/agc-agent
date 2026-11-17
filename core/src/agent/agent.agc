@@ -109,6 +109,8 @@ struct Turn
   todos: List[Todos.Todo] = []
   ## The last list the turn sent, under `LATEST`: a call from a script too. Made when the turn starts.
   latest: Optional[ATS[String, List[Todos.Todo]]] = none
+  ## Whether the session's profile shows a tool to the model; none shows every tool.
+  shows: Optional[Fn[String, Bool]] = none
 end
 
 # A `todo_write` call and its list.
@@ -391,7 +393,7 @@ end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   tools = offered(turn).map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }
-  if turn.provider.name == RESPONSES
+  if turn.provider.name == RESPONSES and shown?(turn, Tools.PATCH)
     patch = Tools.patch()
     grammar = Tools.patch_grammar()
     tools = tools.push(
@@ -453,13 +455,23 @@ def listed_model(turn: Turn) -> Optional[Catalog.Model]
 end
 
 def offered(turn: Turn) -> List[Tools.Tool]
-  base = Tools.offered(turn.ctx)
-  extras = turn.turn_tools.map { |t| t.tool }
+  base = shown_tools(turn)
+  extras = turn.turn_tools.map { |t| t.tool }.select { |tool| shown?(turn, tool.name) }
   for _settings in option_list(turn.code_mode)
-    return base.push(CodeMode.spec(base)) + extras
+    return base.push(CodeMode.spec(base)) + extras if shown?(turn, CodeMode.NAME)
   end
 
   base + extras
+end
+
+def shown_tools(turn: Turn) -> List[Tools.Tool] = Tools.offered(turn.ctx).select { |tool| shown?(turn, tool.name) }
+
+def shown?(turn: Turn, name: String) -> Bool
+  for shows in option_list(turn.shows)
+    return shows.call(name)
+  end
+
+  true
 end
 
 def turn_tool(turn: Turn, name: String) -> Optional[Tools.TurnTool]
@@ -536,6 +548,10 @@ def target(turn: Turn, call: LLM.ToolCall) -> Result[String]
 end
 
 def checked_run(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Tools.TurnOutput
+  if not shown?(turn, call.name)
+    return Tools.TurnOutput(output: Tools.Output(text: "the session's profile hides #{call.name}", is_error: true))
+  end
+
   for problem in option_list(call.input_error)
     return Tools.TurnOutput(output: Tools.Output(text: problem, is_error: true))
   end
@@ -554,7 +570,7 @@ def base_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
 
   if call.name == CodeMode.NAME
     for settings in option_list(turn.code_mode)
-      names = Tools.offered(turn.ctx).map { |tool| tool.name }
+      names = shown_tools(turn).map { |tool| tool.name }
       return CodeMode.run(
         settings,
         call.input,

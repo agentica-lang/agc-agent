@@ -109,6 +109,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
     marks: state.marks,
     on_fold: some(on_fold(setup)),
     todos: todos_of(state),
+    shows: setup.shows,
     effort: setup.effort,
     gate: gate(setup.approver),
   )

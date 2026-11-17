@@ -13,6 +13,7 @@ struct Options
   model: Optional[String]
   api: Optional[String]
   provider: Optional[String] = none
+  profile: Optional[String] = none
   thinking: Bool
   ## Every approval asked during this run is allowed without asking.
   yolo: Bool = false
@@ -38,6 +39,7 @@ def parse(args: List[String]) -> Result[Command]
       Opt(name: "model", help: "model of a new session (default: the server's)"),
       Opt(name: "api", help: "model API of a new session: openai or openai_responses (default: the server's)"),
       Opt(name: "provider", help: "provider of a new session (default: the server's)"),
+      Opt(name: "profile", help: "profile of a new session: the tools its model sees (default: build)"),
       Opt(name: "thinking", kind: Kind.Flag, help: "show the model's thinking from the start (Ctrl+T toggles it)"),
       Opt(
         name: "yolo",
@@ -89,6 +91,7 @@ def command(parsed: Parsed) -> Result[Command]
     model: OP.optional_string(parsed, "model"),
     api: OP.optional_string(parsed, "api"),
     provider: OP.optional_string(parsed, "provider"),
+    profile: OP.optional_string(parsed, "profile"),
     thinking: OP.flag(parsed, "thinking"),
     yolo: OP.flag(parsed, "yolo"),
   )
