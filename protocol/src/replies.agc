@@ -186,6 +186,26 @@ struct SessionTree
   nodes: List[TreeNode]
 end
 
+## A line of `SessionExport`: a message (`kind` "user" or "assistant", with its `text`), or a tool call in short
+## (`kind` "tool", `tool` its name, `text` what it was called on, `ok` its result, none when it has none), or where
+## the history was compacted (`kind` "compaction").
+struct ExportEntry
+  kind: String
+  text: String
+  tool: String = ""
+  ok: Optional[Bool] = none
+end
+
+## The answer of `GET /v1/sessions/ID/export`: the branch the session is on, in order, for a file. `title` is the first
+## line of its first user message, `created_ms` when the session began, `todos` its todo list now.
+struct SessionExport
+  id: String
+  title: String
+  created_ms: Int
+  entries: List[ExportEntry]
+  todos: List[Events.Todo]
+end
+
 ## The answer of `branch` and (`201`) of `fork`: the session that goes on, and the user message the branch went back
 ## before, for the editor ("" after a turn or for a copy).
 struct Branched
@@ -253,6 +273,10 @@ def decode_session_list(text: String) -> Result[SessionList] = Wire.decode(text,
 def encode_session_tree(reply: SessionTree) -> String = JSON.encode(reply)
 
 def decode_session_tree(text: String) -> Result[SessionTree] = Wire.decode(text, SessionTree.codec)
+
+def encode_session_export(reply: SessionExport) -> String = JSON.encode(reply)
+
+def decode_session_export(text: String) -> Result[SessionExport] = Wire.decode(text, SessionExport.codec)
 
 def encode_server_status(reply: ServerStatus) -> String = JSON.encode(reply)
 
@@ -379,6 +403,8 @@ def shape() -> List[String]
     Wire.record("ServerInfo", ServerInfo.members),
     Wire.record("TreeNode", TreeNode.members),
     Wire.record("SessionTree", SessionTree.members),
+    Wire.record("ExportEntry", ExportEntry.members),
+    Wire.record("SessionExport", SessionExport.members),
     Wire.record("Branched", Branched.members),
     Wire.record("ServerStatus", ServerStatus.members),
     Wire.record("ShellAccepted", ShellAccepted.members),

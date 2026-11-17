@@ -41,7 +41,8 @@ def test_the_commands_of_the_folders() -> Result[Void]
   Test.eq(Commands.load(user, base, false).commands.map { |c| c.source }, ["user"])
 end
 
-# The model gets the command's prompt and the history what was typed; a command wins over a skill of its name, and the
+# The model gets the command's prompt and the history and the export what was typed; a command wins over a skill of its
+# name, and the
 # listing says so.
 def test_a_session_runs_a_command() -> Result[Void]
   setup = H.Setup(replies: ["text.sse"], profiles: true, skills: true)
@@ -56,6 +57,8 @@ def test_a_session_runs_a_command() -> Result[Void]
     first = try H.request_messages(h, 1)
     try Test.eq(JSON.get(first.last, "content"), ok(JSON.from("Review src/a.agc.")))
     try Test.eq((try H.session(h, id)).history[0].text, "/review src/a.agc")
+    exported = try Protocol.decode_session_export((try H.get(h, Protocol.export_path(id))).text)
+    try Test.eq([exported.title, exported.entries[0].text], ["/review src/a.agc", "/review src/a.agc"])
     listed = try Protocol.decode_command_list((try H.get(h, Protocol.commands_path(id))).text)
     try Test.eq(listed.commands.map { |c| "#{c.name}:#{c.source}:#{c.description}" }, ["review:user:Review"])
     Test.assert(

@@ -25,6 +25,7 @@
 - Slash commands: `/NAME` sends the prompt of `NAME.md` in `~/.config/finn/commands/` or a trusted `.finn/commands/`, with `$ARGUMENTS`.
 - Profiles: `--profile NAME` or `/profile NAME` picks the tools the model sees, and may set its model and thinking level; `build` (every tool) and `plan` (reads only) are built in, `NAME.md` files add more, and the footer names the profile.
 - `finn`: Ctrl+G edits the prompt in `$VISUAL` or `$EDITOR`.
+- `/export [PATH]` and `finn export SESSION [PATH]` write the branch a session is on to a Markdown file (0600).
 - Finn Agent, a coding agent: `finn` (full screen) and `finn chat` (lines) talk to a local server.
 - Tools: read, write and edit files, `glob`, `grep`, `bash`, and `apply_patch` for models that use it.
 - `todo_write`: the model keeps a todo list that `finn` and `finn chat` show and the session keeps.
