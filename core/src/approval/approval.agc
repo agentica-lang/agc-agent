@@ -1,9 +1,9 @@
 ## What the agent may do without asking. A rule is `tool(pattern)`, where `*` in the pattern matches any text.
 ##
-## For `bash`, a rule matches only a plain command (see `plain?`): any other command asks, whatever the rules say, so a
-## deny rule of `bash` does not stop `rm x; true`, which asks. A `*` after a word matches only the end or a space and
-## more text, so `git status*` matches `git status --short` and not `git statusx`. A rule is a convenience and not a
-## sandbox: see the security model of `Tools`.
+## For `bash`, an allow rule matches only a plain command (see `plain?`): any other command asks, whatever the allow
+## rules say. A deny rule is also checked against each simple command of any command (`Permissions.bash_denial`). A
+## `*` after a word matches only the end or a space and more text, so `git status*` matches `git status --short` and
+## not `git statusx`. A rule is a convenience and not a sandbox: see the security model of `Tools`.
 ##
 ## A change to a path under `.git/` (`write_file`, `edit_file`, `apply_patch`) always asks, because `.git/config` and the hooks run
 ## programs (`core.fsmonitor`, aliases) the next time git runs; the name is compared without case and trailing dots.
@@ -23,6 +23,12 @@ end
 struct Rules
   allow: List[Rule]
   deny: List[Rule]
+end
+
+## A deny rule of `bash`, compiled once for the many words of a command: the text before its first `*` and the rule.
+struct Compiled
+  start: String
+  regex: Regex.Regex
 end
 
 def parse_rule(text: String) -> Result[Rule]
@@ -111,6 +117,38 @@ def guarded?(rules: Rules) -> Bool = rules.deny.any? { |rule| rule.tool == "read
 
 ## Whether a deny rule of `read_file` covers the path (relative to the session folder): `glob` and `grep` skip it too.
 def read_denied?(rules: Rules, path: String) -> Bool = rules.deny.any? { |rule| matches?(rule, "read_file", path) }
+
+## Whether `path` (relative to the session folder) is the folder of a `read_file` deny rule `dir/**` or `dir/*`: a
+## command given the folder reads what the rule hides.
+def folder_denied?(rules: Rules, path: String) -> Bool
+  rules.deny.any? do |rule| rule.tool == "read_file" and ["#{path}/**", "#{path}/*"].include?(rule.pattern) end
+end
+
+## Whether a deny rule of `read_file` exists.
+def read_rules?(rules: Rules) -> Bool = rules.deny.any? { |rule| rule.tool == "read_file" }
+
+## The deny rules of `bash`, compiled.
+def bash_denies(rules: Rules) -> List[Compiled]
+  found: List[Compiled] = []
+  for rule in (rules.deny.select { |rule| rule.tool == "bash" })
+    case Regex.compile("\\A#{command_regex(rule.pattern.split(""), 0, "")}\\z")
+      ok(regex) -> found = found.push(Compiled(start: rule.pattern.split("*").first, regex: regex))
+      error(_) -> nil
+    end
+  end
+
+  found
+end
+
+## Whether `head`, the first words of a command (or all of them), starts as a compiled deny rule does.
+def compiled_start?(denies: List[Compiled], head: String) -> Bool
+  denies.any? { |c| head.start_with?(c.start) or "#{head} x".start_with?(c.start) }
+end
+
+## Whether a compiled deny rule matches the command `text`.
+def compiled_denied?(denies: List[Compiled], text: String) -> Bool
+  denies.any? { |c| text.start_with?(c.start) and Regex.match?(text, c.regex) }
+end
 
 def wildcard?(pattern: String, text: String) -> Bool
   parts = pattern.split("*")

@@ -12,7 +12,8 @@
 ## (`Permissions`); the deny rules always count, and a call no rule allows asks only when `FINN_APPROVALS=1`, or the
 ## user's file has `"approvals": true` and `FINN_APPROVALS` is not `0`. The names of before Finn still work:
 ## `AGC_AGENT_` in place of `FINN_`, and an `agc-agent` state or data folder while no `finn` folder is there; but an
-## old config file, `auth.json`, `AGC_AGENT_CONFIG` or `AGC_AGENT_MCP_CONFIG` stops the start (`left_behind`).
+## old config file, `AGC_AGENT_CONFIG` or `AGC_AGENT_MCP_CONFIG` stops the start, and an old `auth.json` is a warning
+## (`left_behind`).
 ##
 ## The `anthropic` API is at `ANTHROPIC_BASE_URL` (else Anthropic's), with `ANTHROPIC_API_KEY`, else
 ## `ANTHROPIC_AUTH_TOKEN`, else the token that `ant auth print-credentials --access-token` prints: at start when
@@ -109,7 +110,7 @@ def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_wit
 
 ## `ant` gives the OAuth token of `ant auth login` when no variable has a credential and `FINN_API` is `anthropic`.
 def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> Result[Options]
-  try left_behind(read)
+  moved = try left_behind(read)
   base_url = set(read, "FINN_BASE_URL").unwrap_or(DEFAULT_BASE_URL)
   api_key = set(read, "FINN_API_KEY").unwrap_or("")
   api = set(read, "FINN_API").unwrap_or(APIS[0])
@@ -167,7 +168,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       providers: providers,
       provider: provider,
       key_envs: Providers.key_envs(customs),
-      warnings: Providers.shared_keys(customs) + [stored.refused].select { |w| not w.empty? },
+      warnings: Providers.shared_keys(customs) + [stored.refused].select { |w| not w.empty? } + moved,
       login: some(login),
       model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,
@@ -258,9 +259,9 @@ def named_folder(base: String) -> Result[String]
   ok(dir)
 end
 
-# What Finn read before its rename and does not read now: an error that says where to move it, so its deny rules, MCP
-# servers and keys are not lost without a word.
-def left_behind(read: Fn[String, Result[String]]) -> Result[Void]
+# What Finn read before its rename and does not read now: an error that says where to move it, so its deny rules and
+# MCP servers are not lost without a word; the stored keys, which hold no rule, only warn.
+def left_behind(read: Fn[String, Result[String]]) -> Result[List[String]]
   given = ->(name: String) { not read.call(name).unwrap_or("").empty? }
   for name in ["FINN_CONFIG", "FINN_MCP_CONFIG"]
     old = "#{OLD_PREFIX}#{name.slice(PREFIX.length, name.length - PREFIX.length)}"
@@ -270,23 +271,16 @@ def left_behind(read: Fn[String, Result[String]]) -> Result[Void]
   base = read.call("XDG_CONFIG_HOME").unwrap_or("")
   if base.empty?
     home = read.call("HOME").unwrap_or("")
-    return ok() if home.empty?
+    return ok([]) if home.empty?
 
     base = "#{home}/.config"
   end
 
-  files = ["auth.json"]
-  if not given.call("FINN_CONFIG")
-    files = ["config.json", "auth.json"]
-  end
+  left = ->(file: String) { File.stat("#{base}/agc-agent/#{file}").ok? and not File.stat("#{base}/finn/#{file}").ok? }
+  moving = ->(file: String) { "#{base}/agc-agent/#{file} is not read any more: move it to #{base}/finn/#{file}" }
+  return error(moving.call("config.json")) if not given.call("FINN_CONFIG") and left.call("config.json")
 
-  for file in files
-    was = "#{base}/agc-agent/#{file}"
-    now = "#{base}/finn/#{file}"
-    return error("#{was} is not read any more: move it to #{now}") if File.stat(was).ok? and not File.stat(now).ok?
-  end
-
-  ok()
+  ok(["auth.json"].select { |file| left.call(file) }.map { |file| moving.call(file) })
 end
 
 def set(read: Fn[String, Result[String]], name: String) -> Optional[String]

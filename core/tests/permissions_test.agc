@@ -197,25 +197,86 @@ def test_a_deny_rule_wins_over_an_allow_rule_for_bash() -> Result[Void]
   )
 end
 
-# A `!` command that a deny rule matches is refused in both modes: a denied command behind a runner (`env rm`) and a
-# command that names a hidden file.
+# A `!` command that a deny rule matches or cannot clear is refused in both modes: a denied command behind a runner
+# (`env rm`) or by its path (`/bin/rm`), a command that names a hidden file, and a glob while a `read_file`
+# rule exists.
+# One the rules clear runs.
 def test_a_deny_rule_refuses_a_shell_command_in_both_modes() -> Result[Void]
   for asking in [false, true]
     try H.using(H.Setup(replies: ["text.sse"], approvals: asking, deny: ["read_file(secret*)", "bash(rm *)"])) do |h|
       try File.write_text("#{h.work}/open.txt", "x")
       id = try H.new_session(h)
       statuses: List[Int] = []
-      for command in ["env rm open.txt", "cat secret.txt"]
+      for command in ["env rm open.txt", "/bin/rm open.txt", "cat secret.txt", "cat secre?.txt", "true"]
         run = Protocol.RunShell(command: command, context: false)
         statuses = statuses.push((try H.post(h, Protocol.shell_path(id), Protocol.encode_run_shell(run))).status)
       end
 
       try Test.eq(File.read_text("#{h.work}/open.txt"), ok("x"))
-      Test.eq([asking.to_s] + statuses.map { |s| s.to_s }, [asking.to_s, "403", "403"])
+      shown = [asking.to_s] + statuses.map { |s| s.to_s }
+      Test.eq(shown, [asking.to_s, "403", "403", "403", "403", "202"])
     end
   end
 
   ok()
+end
+
+# What the deny rules say of a command. A `bash` rule matches a program the command runs: by its path, behind a
+# launcher, in a shell's `-c` script, after `eval`, `xargs` or `find -exec`; elsewhere (`echo rm`) the command is not
+# cleared. A `read_file` rule matches a word naming the file once resolved against the session folder, or its folder;
+# while one exists, a word that is not plain is not cleared. A command over MAX_CHECKED bytes is not cleared, and one
+# just under it is checked quickly.
+def test_the_deny_rules_match_what_a_command_runs_and_reads() -> Result[Void]
+  root = "/work/project"
+  both = try Approval.parse_rules([], ["bash(rm *)", "read_file(.env*)", "read_file(secrets/**)"])
+  reads = try Approval.parse_rules([], ["read_file(.env*)", "read_file(secrets/**)"])
+  matched = [
+    "/bin/rm -rf x",
+    "./rm x",
+    "sudo /bin/rm x",
+    "timeout 5 rm x",
+    "ls | xargs rm",
+    "bash -c 'rm x'",
+    "sh -c 'ls; rm x'",
+    "eval rm x",
+    "find . -exec rm x +",
+    "cat sub/../secrets/key",
+    "cat #{root}/secrets/key",
+    "grep -r KEY secrets",
+    "tar cf - secrets/",
+    "cat .env",
+  ]
+
+  uncleared = ["echo rm", "grep -rn rm src", "git commit -m 'rm old code'", "bash -c 'rm x", "ls $(echo x)"]
+  read_uncleared = ["cat .e*", "cat .[e]nv", "cat .*", "python3 -c \"open('.env')\"", "cat secre?.txt"]
+  clear = ["ls -la", "cat a.txt", "git status", "grep -r KEY src"]
+  denial = ->(rules: Approval.Rules, c: String) { "#{c}: #{Permissions.bash_denial(rules, root, c)}" }
+  try Test.eq(matched.map { |c| denial.call(both, c) }, matched.map { |c| "#{c}: Denial.Matched" })
+  try Test.eq(uncleared.map { |c| denial.call(both, c) }, uncleared.map { |c| "#{c}: Denial.Uncleared" })
+  try Test.eq(read_uncleared.map { |c| denial.call(reads, c) }, read_uncleared.map { |c| "#{c}: Denial.Uncleared" })
+  try Test.eq(clear.map { |c| denial.call(both, c) }, clear.map { |c| "#{c}: Denial.Clear" })
+  long = "echo#{" a" * (Permissions.MAX_CHECKED / 2)}"
+  try Test.eq(Permissions.bash_denial(both, root, long), Permissions.Denial.Uncleared)
+  under = "echo#{" a" * (Permissions.MAX_CHECKED / 2 - 8)}"
+  started = Time.monotonic_ms
+  try Test.eq(Permissions.bash_denial(both, root, under), Permissions.Denial.Clear)
+  Test.assert(Time.monotonic_ms - started < 2000, "a command under the cap took #{Time.monotonic_ms - started} ms")
+end
+
+# With approvals on, a tail match at a program is refused before any ask, one elsewhere asks, and an exact answer does
+# not run a command the deny rules cannot clear.
+def test_with_the_approvals_on_a_deny_rule_refuses_a_program_and_asks_for_the_rest() -> Result[Void]
+  rules = try Approval.parse_rules([], ["bash(rm *)", "read_file(.env*)"])
+  root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
+  ctx = try Tools.context(root, ->(_name: String) { error("unset") })
+  a = Extension.open(rules, root, false, true).unwrap!
+  verdicts = ["sudo rm -rf x", "echo rm", "cat $F"].map do |c|
+    Extension.verdict(a, ctx, "bash", JSON.object({"command": JSON.from(c)})).to_s
+  end
+
+  try Test.eq(verdicts, ["Verdict.Deny", "Verdict.Ask", "Verdict.Ask"])
+  exact = Permissions.answered(Permissions.Allows(), "allow_session", "bash", "cat $F")
+  Test.eq(Permissions.allows?(exact, rules, "bash", "cat $F", root), false)
 end
 
 # With the approvals off a `read_file` rule refuses only the bash commands that name a file it hides: `ls` and

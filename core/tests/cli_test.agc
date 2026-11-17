@@ -106,25 +106,38 @@ def located(values: Map[String, String], name: String) -> Result[String]
   from_map(values, name)
 end
 
-# The config of before the rename is not read: an old config file or `auth.json` without the new one, or an old
-# variable without the new one, stops the start with an error that names where it goes, so its deny rules are not lost.
+# The config of before the rename is not read: an old config file without the new one (under `$XDG_CONFIG_HOME` or
+# `~/.config`), or an old variable without the new one, stops the start with an error that names where it goes, so its
+# deny rules are not lost; an old `auth.json` holds no rule and only warns.
 def test_the_config_of_before_finn_stops_the_start() -> Result[Void]
   home = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-old-#{Random.int(0, 999999999)}"
-  for dir in [home, "#{home}/.config", "#{home}/.config/agc-agent", "#{home}/.config/finn"]
+  for dir in [
+    home,
+    "#{home}/.config",
+    "#{home}/.config/agc-agent",
+    "#{home}/.config/finn",
+    "#{home}/x",
+    "#{home}/x/agc-agent",
+  ]
     try Dir.mkdir(dir)
   end
 
   at = {"HOME": home}
-  try Config.from_env(->(n) { located(at, n) })
+  try Test.eq((try Config.from_env(->(n) { located(at, n) })).warnings, [])
+  try File.write_text("#{home}/.config/agc-agent/auth.json", "{}")
+  warned = (try Config.from_env(->(n) { located(at, n) })).warnings
+  try Test.eq(warned.select { |w| w.include?("#{home}/.config/finn/auth.json") }.size, 1)
+  try File.write_text("#{home}/.config/agc-agent/config.json", "{}")
+  try File.write_text("#{home}/x/agc-agent/config.json", "{}")
   results: List[String] = []
-  for file in ["config.json", "auth.json"]
-    try File.write_text("#{home}/.config/agc-agent/#{file}", "{}")
-    failed = Config.from_env(->(n) { located(at, n) })
+  for env in [at, at.put("XDG_CONFIG_HOME", "#{home}/x")]
+    failed = Config.from_env(->(n) { located(env, n) })
     results = results.push(failed.ok?.to_s)
-    try Test.assert(failed.message.include?("#{home}/.config/finn/#{file}"), failed.message)
-    try File.write_text("#{home}/.config/finn/#{file}", "{}")
+    moved = "#{env.get("XDG_CONFIG_HOME").unwrap_or("#{home}/.config")}/finn/config.json"
+    try Test.assert(failed.message.include?(moved), failed.message)
   end
 
+  try File.write_text("#{home}/.config/finn/config.json", "{}")
   try Config.from_env(->(n) { located(at, n) })
   for name in ["CONFIG", "MCP_CONFIG"]
     results = results.push(Config.from_env(->(n) { located(at.put("AGC_AGENT_#{name}", "/x.json"), n) }).ok?.to_s)
