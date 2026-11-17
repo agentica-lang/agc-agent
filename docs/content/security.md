@@ -41,8 +41,8 @@ When no client is attached for 90 seconds, a call that waits is denied. `finn -p
 
 Both clients show the call: the tool, its path or command, and what it would write.
 
-- `finn tui`: Ctrl+Y allows and Ctrl+N denies from the prompt. Tab moves to the approval panel, where `y` allows, `n` denies and `a` allows the same call for the rest of the session; Tab or Esc goes back to the prompt.
-- `finn`: type `y`, `n` or `a` and Enter.
+- `finn`: Ctrl+Y allows and Ctrl+N denies from the prompt. Tab moves to the approval panel, where `y` allows, `n` denies and `a` allows the same call for the rest of the session; Tab or Esc goes back to the prompt.
+- `finn chat`: type `y`, `n` or `a` and Enter.
 
 The [HTTP API](server.md#routes) takes two more answers:
 
@@ -69,7 +69,7 @@ A rule is `tool(pattern)`, where `*` matches any text. In a `bash` rule, a `*` r
 - **Deny rules count with the approvals on or off.** They win over every allow rule and answer ([How deny rules check bash](#how-deny-rules-check-bash)).
 - **Allow rules** let a call run without asking, with the approvals on.
 - The rules come from your config file and from the project's `.finn/config.json` ([Configuration](config.md)). The project's deny rules always count; its allow rules count only under a [trusted folder](config.md#trusted-folders).
-- A deny rule of `read_file` also denies `edit_file`, and hides the file from `glob`, `grep` and the `@` completion of `finn tui`.
+- A deny rule of `read_file` also denies `edit_file`, and hides the file from `glob`, `grep` and the `@` completion of `finn`.
 
 ### How deny rules check bash
 

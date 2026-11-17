@@ -44,12 +44,12 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `POST /v1/sessions/ID/messages` | send `{"text": "..."}`; it starts a turn, or joins the running one |
 | `GET /v1/sessions/ID/events` | the event stream of the session |
 | `POST /v1/sessions/ID/approvals/AID` | answer an approval: `{"decision": "allow"}` |
-| `POST /v1/sessions/ID/stop` | stop the running turn or command |
+| `POST /v1/sessions/ID/stop` | stop the running turn or command; `{"turn_id": "..."}` stops only that turn while it runs; answers `{"stopped": true}` or `false` |
 | `POST /v1/sessions/ID/compact` | fold the history now |
 | `GET /v1/sessions/ID/tree` | the user messages of every branch |
 | `POST /v1/sessions/ID/branch` | go on from an earlier message |
 | `POST /v1/sessions/ID/fork` | a new session from an earlier message |
-| `GET /v1/sessions/ID/files` | the files of the session folder that the deny rules do not hide, for the `@` completion |
+| `GET /v1/sessions/ID/files` | the files of the session folder that the deny rules do not hide, for the `@` completion: `{"files": [...], "truncated": false}`; `truncated` is true when the walk stopped at 5000 files, 2000 folders or about 2 s |
 | `POST /v1/sessions/ID/shell` | run `{"command": "...", "context": true}` in the session folder |
 
 A decision is `allow`, `deny`, `allow_session`, `allow_prefix` or `allow_tool` ([Answer](security.md#answer)).

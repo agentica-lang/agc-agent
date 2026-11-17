@@ -79,7 +79,7 @@ enum Msg
   Send(String, Channel[Result[Protocol.MessageAccepted]])
   Answer(String, Protocol.Decision, Channel[Result[Void]])
   Stop(Optional[String], Channel[Bool])
-  Context(Channel[Tools.Context])
+  Place(Channel[Place])
   Close(Channel[Result[Void]])
   Emit(String, Protocol.Event)
   Ask(String, Agent.Ask, Channel[Protocol.Decision])
@@ -105,6 +105,12 @@ enum Msg
 end
 
 ## Whether the session works now (a turn or a shell command), and whether all it waits for is an answer to an approval.
+## The folder of a session and what its rules hide from a listing of it.
+struct Place
+  root: String
+  hidden: Optional[Fn[String, Bool]] = none
+end
+
 struct Load
   running: Bool
   asking: Bool

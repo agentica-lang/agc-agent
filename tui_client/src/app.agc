@@ -97,6 +97,8 @@ struct Model
   ## the word that Esc closed.
   files: Optional[List[String]] = none
   reading_files: Bool = false
+  ## The last list read was cut: said once, until a whole one comes.
+  files_cut: Bool = false
   ## After a read that timed out, while the server may still walk the folder, `@` asks again only from this time on.
   files_again_at: Int = 0
   mention_selected: Int = 0
@@ -166,7 +168,7 @@ enum Msg
   ## The reply to a message sent: the `opened` count when it was sent, and the text.
   Sent(Int, String, Result[Protocol.MessageAccepted])
   ## The reply to a stop.
-  Stopped(Result[Bool])
+  Stopped(String, Result[Bool])
   ## The spinner moves on.
   Spin
   ## The reply to a change of the thinking level.
@@ -176,7 +178,7 @@ enum Msg
   ## The reply to a login, with no key in it.
   LoggedIn(String, Result[Protocol.LoginStatus])
   ## The files of the session's folder, for the `opened` count when they were asked.
-  Files(Int, Result[List[String]])
+  Files(Int, Result[Protocol.FileList])
   ## The reply to a `!` command: the command, and whether it runs.
   ShellSent(String, Result[Protocol.ShellAccepted])
 end
@@ -346,7 +348,7 @@ def handled(app: Model, msg: Msg) -> Model
     Msg.Sent(opened, text, result) if opened == app.opened and not app.outbox.empty? ->
       released(next_send(sent_reply(app.with(outbox: app.outbox.drop(1)), text, result)))
     Msg.Sent(_, _, _) -> app
-    Msg.Stopped(result) -> stop_reply(app, result)
+    Msg.Stopped(what, result) -> stop_reply(app, what, result)
     Msg.Spin -> app.with(spin: (app.spin + 1) % SPINNER.size)
     Msg.Leveled(result) -> level_reply(app, result)
     Msg.Moved(result) -> moved(app, result)
@@ -670,9 +672,14 @@ def read_files(app: Model) -> Model
   effect(app.with(reading_files: true), TUI.Cmd.Run(-> { Msg.Files(opened, Client.files(server, id)) }))
 end
 
-def files_read(app: Model, result: Result[List[String]]) -> Model
+def files_read(app: Model, result: Result[Protocol.FileList]) -> Model
   case result
-    ok(files) -> app.with(files: some(files))
+    ok(list) if list.truncated and not app.files_cut ->
+      noted(
+        app.with(files: some(list.files), files_cut: true),
+        "the @ list is cut: the folder has more files than it reads",
+      )
+    ok(list) -> app.with(files: some(list.files), files_cut: list.truncated)
     error(e) if e.kind == Client.KIND_TIMEOUT ->
       noted(app.with(files_again_at: app.now + FILES_AGAIN_MS), "error: the files were not listed: #{e.message}")
     error(e) -> noted(app, "error: the files were not listed: #{e.message}")
@@ -888,7 +895,9 @@ def sent_reply(app: Model, text: String, result: Result[Protocol.MessageAccepted
       stop(queued.with(turn: true, stop_wanted: false), some(accepted.turn_id))
     ok(accepted) ->
       entries = Transcript.add(app.entries, Transcript.Kind.User, text)
-      started = app.with(entries: entries, turn: true, stopping: false, yolo: Yolo.accepted(app.yolo, accepted))
+      # Until its `turn_started`, Esc stops this turn by the id of the reply.
+      yolo = Yolo.running(Yolo.accepted(app.yolo, accepted), some(accepted.turn_id))
+      started = app.with(entries: entries, turn: true, stopping: false, yolo: yolo)
       return started if not app.stop_wanted
 
       stop(started.with(stop_wanted: false), some(accepted.turn_id))
@@ -903,10 +912,10 @@ def sent_reply(app: Model, text: String, result: Result[Protocol.MessageAccepted
   end
 end
 
-def stop_reply(app: Model, result: Result[Bool]) -> Model
+def stop_reply(app: Model, what: String, result: Result[Bool]) -> Model
   case result
     ok(true) -> app
-    ok(_) -> noted(app.with(stopping: false), "the turn had already ended")
+    ok(_) -> noted(app.with(stopping: false), "the #{what} had already ended")
     error(e) -> noted(app.with(stopping: false), "error: the stop was not sent: #{e.message}")
   end
 end
@@ -1210,12 +1219,15 @@ def stop(app: Model, turn_id: Optional[String] = none) -> Model
     wanted = app.yolo.turn
   end
 
-  stopping = "stopping the turn"
+  what = "turn"
   if not app.turn
-    stopping = "stopping the command"
+    what = "command"
   end
 
-  effect(noted(app.with(stopping: true), stopping), TUI.Cmd.Run(-> { Msg.Stopped(Client.stop(server, id, wanted)) }))
+  effect(
+    noted(app.with(stopping: true), "stopping the #{what}"),
+    TUI.Cmd.Run(-> { Msg.Stopped(what, Client.stop(server, id, wanted)) }),
+  )
 end
 
 # The answer is sent by a command, so the keys go on; its reply comes back as a message.

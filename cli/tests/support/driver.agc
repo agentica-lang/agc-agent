@@ -114,8 +114,10 @@ def own_cache(dir: String, build: String) -> Result[Map[String, String]]
       Process.Options(env: env),
     )
 
-    code = try Process.wait(compile, COMPILE_MS)
+    # Closed before the result is read: a compile still running at the timeout is killed, not left behind.
+    waited = Process.wait(compile, COMPILE_MS)
     Process.close(compile)
+    code = try waited
     return error("compiling #{source} failed with #{code}") if code != 0
   end
 

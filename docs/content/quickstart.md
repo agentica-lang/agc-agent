@@ -27,7 +27,7 @@ finn login anthropic    # or name the provider
 
 Finn checks the key with one call to the provider, then stores it for the next starts. A key in the environment works too, and wins over a stored one: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `FIREWORKS_API_KEY`, `GROQ_API_KEY` or `DEEPSEEK_API_KEY`. See [Providers](providers.md).
 
-On the first start, `finn tui` opens the login list itself when there is no key file, no key of a provider in the environment, and none of `FINN_BASE_URL`, `FINN_PROVIDER` and `FINN_API` is set. Close it with no key and it is not offered again: `/login` sets up a provider later.
+On the first start, `finn` opens the login list itself when there is no key file, no key of a provider in the environment, and none of `FINN_BASE_URL`, `FINN_PROVIDER` and `FINN_API` is set. Close it with no key and it is not offered again: `/login` sets up a provider later.
 
 ## The first session
 
@@ -35,8 +35,8 @@ Go to the folder of your project and start a client:
 
 ```sh
 cd ~/src/my-project
-finn tui        # the full screen
-finn            # or the line-mode client
+finn            # the full screen (finn tui is the same)
+finn chat       # or the line-mode client
 ```
 
 The client starts the server when none runs, and leaves it running when you quit. Type a task and press Enter. The model answers, and shows each tool call it makes: the files it reads and edits, the commands it runs.
@@ -44,10 +44,10 @@ The client starts the server when none runs, and leaves it running when you quit
 Some things to try:
 
 - `/model` lists the models of your providers; `/model anthropic/NAME` picks one.
-- `@` then part of a name completes a file path of the folder in your message (`finn tui`).
+- `@` then part of a name completes a file path of the folder in your message (`finn`).
 - `!git status` runs the command and gives its output to the model with your next message.
 - `/resume` lists your sessions and switches to one.
-- Esc (`finn tui`) or Ctrl+C (`finn`) stops the running turn ([Stop](cli.md#stop)).
+- Esc (`finn`) or Ctrl+C (`finn chat`) stops the running turn ([Stop](cli.md#stop)).
 
 The rest is on [CLI and TUI](cli.md).
 

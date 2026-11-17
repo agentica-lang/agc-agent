@@ -9,9 +9,9 @@ weight: 120
 Finn is a server and its clients, written in Agentica. The repository is an Agentica workspace: one folder per package.
 
 ```text
-finn tui ─┐                        ┌─ LLM APIs (Anthropic, OpenAI, ...)
-finn     ─┼─ HTTP + SSE ── core ───┼─ tools: files, bash, Monty
-your app ─┘   (localhost)          └─ MCP servers (stdio, HTTP)
+finn      ─┐                        ┌─ LLM APIs (Anthropic, OpenAI, ...)
+finn chat ─┼─ HTTP + SSE ── core ───┼─ tools: files, bash, Monty
+your app  ─┘   (localhost)          └─ MCP servers (stdio, HTTP)
 ```
 
 ## The server
@@ -26,7 +26,7 @@ One server runs per state folder: it holds a lock there, and a client that finds
 
 ## The clients
 
-`finn` (the `cli` package) and `finn tui` (`tui_client`) are separate programs. They reach the server only through the `client`, `protocol` and `sse` packages, never through `core`. Any program that speaks the [HTTP API](server.md) is a client too.
+`finn` (`tui_client`) and `finn chat` (the `cli` package) are separate programs. They reach the server only through the `client`, `protocol` and `sse` packages, never through `core`. Any program that speaks the [HTTP API](server.md) is a client too.
 
 ## The packages
 

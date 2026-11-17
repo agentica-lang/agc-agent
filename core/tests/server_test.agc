@@ -196,7 +196,8 @@ def test_the_files_route_lists_the_session_folder() -> Result[Void]
     id = try H.new_session_in(h, root)
     answer = try H.get(h, Protocol.files_path(id))
     try Test.eq(answer.status, 200)
-    try Test.eq((try Protocol.decode_file_list(answer.text)).files, ["a.txt", "b.txt", "src/main.agc"])
+    whole = Protocol.FileList(files: ["a.txt", "b.txt", "src/main.agc"], truncated: false)
+    try Test.eq(Protocol.decode_file_list(answer.text), ok(whole))
     try Test.eq((try H.get(h, Protocol.files_path("s-none"))).status, 404)
     many = "#{h.work}/many"
     try Dir.mkdir(many)
@@ -205,8 +206,8 @@ def test_the_files_route_lists_the_session_folder() -> Result[Void]
     end
 
     cut = try Protocol.decode_file_list((try H.get(h, Protocol.files_path(try H.new_session_in(h, many)))).text)
-    try Test.eq(cut.files.size, Folder.MAX_FILES)
-    Test.eq(Folder.files(many, none, 0), [])
+    try Test.eq([cut.files.size.to_s, cut.truncated.to_s], [Folder.MAX_FILES.to_s, "true"])
+    Test.eq(Folder.files(many, none, 0), Protocol.FileList(files: [], truncated: true))
   end
 end
 

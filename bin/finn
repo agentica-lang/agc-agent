@@ -17,9 +17,10 @@ agentica=${AGENTICA:-agentica}
 
 usage() {
   cat <<'TEXT'
-usage: finn [chat] [options]      talk to the agent in this folder (starts the server when none runs)
+usage: finn [tui] [options]       talk to the agent in this folder on the full screen (starts the server when none
+                                  runs; needs a terminal; finn tui --help lists the options)
+       finn chat [options]        the same as a line chat (finn chat --help lists the options)
        finn -p TASK [--yolo]      one task (- reads it from stdin): the answer on stdout, the rest on stderr
-       finn tui [options]         the same on the full screen, --yolo too (finn tui --help lists the options)
        finn serve [options]       run the server in the foreground
        finn login [PROVIDER]      set up a provider with its key: checked, then stored (pick one when none is given)
        finn logout [PROVIDER]     remove the stored key of a provider, or every stored key
@@ -27,8 +28,8 @@ usage: finn [chat] [options]      talk to the agent in this folder (starts the s
                                   (stop waits for the running turns, --now cancels them; finn server --help)
        finn --version | --help
 
-chat options: --provider NAME, --api NAME, --model NAME (of a new session), --session ID, --thinking, --yolo, ...
-  (finn chat --help lists them all)
+options of finn and finn chat: --provider NAME, --api NAME, --model NAME (of a new session), --session ID, --thinking,
+  --yolo, ... (finn tui --help and finn chat --help list them all)
 in chat and tui: /new, /resume, /model, /thinking, /compact, /login, /logout, /stop, /help, /quit
 one-shot: approvals (when on) are denied unless --yolo; exit 0 when the turn ends normally (also after a denied call),
   130 when it is cancelled, 1 otherwise (a failed or busy send, an empty task); the server keeps running after it
@@ -86,5 +87,29 @@ case ${1:-} in
       *) shift; exec "$agentica" "$root/cli/main.agc" --logout "${1:-all}" ;;
     esac
     ;;
-  *) exec "$agentica" "$root/cli/main.agc" "$@" ;;
+  *)
+    # The forms of the line client go there (a task, a delete, a logout, a server command or action); the rest opens
+    # the full screen, which needs a terminal unless it only prints its help or version. The words after -- are the
+    # server command's, and the word after an option that takes one is its value.
+    screen=yes
+    value=no
+    for arg in "$@"; do
+      if [ $value = yes ]; then
+        value=no
+        continue
+      fi
+      case $arg in
+        --) break ;;
+        --state-dir|--session|--cwd|--model|--api|--provider) value=yes ;;
+        -p*|--prompt|--prompt=*|--delete|--delete=*|--logout|--logout=*|--server-command|--server-command=*|server)
+          exec "$agentica" "$root/cli/main.agc" "$@" ;;
+        -h|--help|--version) screen=no ;;
+      esac
+    done
+    if [ $screen = yes ] && { [ ! -t 0 ] || [ ! -t 1 ]; }; then
+      echo "finn: the full screen needs a terminal: finn chat is the line chat, finn -p TASK runs one task" >&2
+      exit 2
+    fi
+    exec "$agentica" "$root/tui_client/main.agc" "$@"
+    ;;
 esac

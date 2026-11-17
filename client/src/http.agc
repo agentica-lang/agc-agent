@@ -166,8 +166,8 @@ def stop(server: Server, id: String, turn_id: Optional[String] = none) -> Result
 end
 
 ## The files of the session's folder, for the `@` list.
-def files(server: Server, id: String) -> Result[List[String]]
-  ok((try Protocol.decode_file_list(try call(server, "GET", Protocol.files_path(id), ""))).files)
+def files(server: Server, id: String) -> Result[Protocol.FileList]
+  Protocol.decode_file_list(try call(server, "GET", Protocol.files_path(id), ""))
 end
 
 ## The event stream of a session from the event after `last_event_id`. A failed answer is read and becomes the error.

@@ -87,15 +87,17 @@ def signalled(dir: String) -> Result[Void]
   try Test.assert(started.code == 0, "start: #{started.errors}")
   pid = try Client.server_pid(dir)
   try System.signal(pid, System.Signal.Term, "agentica")
+  # server.json goes before the last line of the log, which the server writes once its shutdown returns: wait for both.
+  said = -> { File.read_text("#{dir}/server.log").unwrap_or("").include?("Finn Agent core stopped") }
   waited = 0
-  while waited < 10_000 and not Client.exited?(dir, pid)
+  while waited < 10_000 and not (Client.exited?(dir, pid) and said.call())
     Task.sleep(100)
     waited = waited + 100
   end
 
   try Test.assert(Client.exited?(dir, pid), "the server did not stop")
   try Test.assert(not File.stat("#{dir}/server.json").ok?, "server.json is removed")
-  Test.assert((try File.read_text("#{dir}/server.log")).include?("Finn Agent core stopped"), "the log says it stopped")
+  Test.assert(said.call(), "the log says it stopped")
 end
 
 def model_that_waits() -> Result[Model]
