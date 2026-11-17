@@ -431,11 +431,14 @@ def test_resyncs_in_a_row_end_the_client() -> Result[Void]
   )
 
   froms: Channel[Int] = Channel.new(Session.MAX_RESYNCS + 2)
+  # Every read is one reader that already ended, so the test leaves no task running.
+  reader = idle()
+  Task.await(reader)
   backend = Client.unreachable_backend().with(
     session: ->(_id: String) { ok(session) },
     subscribe: ->(_id: String, from: Int, _sink: Fn[Client.Item, Result[Void]]) {
       _ = froms.send(from, 0)
-      idle()
+      reader
     },
   )
 
