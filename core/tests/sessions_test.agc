@@ -121,6 +121,61 @@ def test_a_fold_gives_the_model_its_todo_list_again() -> Result[Void]
   end
 end
 
+# A second fold in the same turn gives the list once: the first summary, which had it, is folded with the rest.
+def test_a_second_fold_gives_the_todo_list_once() -> Result[Void]
+  replies = [
+    "todo_write.sse",
+    "bash_echo.sse",
+    "summary.sse",
+    "bash_echo_small.sse",
+    "read_file.sse",
+    "summary.sse",
+    "text.sse",
+  ]
+
+  H.using(H.Setup(replies: replies, context_window: 120)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Plan, echo twice, then read.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.AllowSession)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.stop_reason(a), "end_turn")
+    for _i in 1..6
+      _ = try H.next_request(h)
+    end
+
+    Test.eq(lists_in((try H.next_request(h)).body), 1)
+  end
+end
+
+# A list that a script wrote comes back after a fold too.
+def test_a_fold_gives_back_a_list_a_script_wrote() -> Result[Void]
+  replies = ["run_script_todo.sse", "bash_echo.sse", "summary.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, context_window: 120, monty: "todo.json")) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Plan with a script, then echo.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    for _i in 1..3
+      _ = try H.next_request(h)
+    end
+
+    body = (try H.next_request(h)).body
+    try Test.eq(lists_in(body), 1)
+    Test.assert(body.include?("[>] Plan the change"), body)
+  end
+end
+
+# How many times a request gives the model its todo list again.
+def lists_in(body: String) -> Int = body.split("Your todo list (`todo_write`)").size - 1
+
 def list_sizes(h: H.Harness, ids: List[String]) -> Result[List[Int]]
   sizes: List[Int] = []
   for id in ids

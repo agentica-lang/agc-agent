@@ -58,7 +58,7 @@ end
 
 def create(app: State.Model) -> Result[State.Model]
   options = app.options
-  request = try Client.new_session(options.cwd, options.model, options.api, options.provider)
+  request = try Client.new_session(options.cwd, options.model, options.api, options.provider, options.profile)
   cwd = request.cwd
   id = try app.backend.create_session.call(request)
   serving = State.serving_of(try app.backend.session.call(id))

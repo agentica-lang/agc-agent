@@ -25,6 +25,27 @@ Skills add `activate_skill` ([Skills](skills.md)), MCP servers add their own too
 
 The model sees at most 30000 characters of a tool's output; the rest is cut, with a note that says how long it was.
 
+## Profiles
+
+A profile decides which tools the model of a session sees. Pick one for a new session with `--profile NAME`. There are two built in:
+
+- `build`, the default: every tool;
+- `plan`: `read_file`, `glob`, `grep`, `todo_write` and `activate_skill`, with a note in the system prompt to change nothing. No `bash`, no writes, no MCP tools.
+
+A profile is a file `NAME.md` in `~/.config/finn/profiles/` (`$XDG_CONFIG_HOME/finn/profiles/`), or in `.finn/profiles/` of a [trusted](config.md#trusted-folders) project, which wins over yours. A file named `build` or `plan` replaces the built-in one.
+
+```markdown
+---
+description: Reads and plans, changes nothing
+tools_allow: [read_file, grep, glob, todo_write, "mcp__github__*"]
+---
+Plan the change. Do not edit files.
+```
+
+`tools_allow` shows only the tools it names, and `tools_deny` all but those; set one of them, or neither for every tool. A `*` matches any text, so `mcp__github__*` covers one MCP server. The text after the front matter goes after the system prompt. A bad file stops a session from opening, with the file and the key in the error; a name that no tool has is a warning.
+
+A profile only hides tools: a call to a hidden one is refused, and the [approval rules](security.md) still decide on the calls of the tools it shows. A profile never allows what a rule denies.
+
 ## The session folder
 
 The file tools reach only files whose real path is inside the session folder: a `..` or a link that leads out is refused. `read_file` also reads the files of a skill the session can load. `glob` and `grep` never follow a link.

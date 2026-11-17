@@ -27,6 +27,8 @@ struct NewSession
   model: Optional[String]
   api: Optional[String] = none
   provider: Optional[String] = none
+  ## The profile of the session: the tools its model sees (default: `build`, every tool).
+  profile: Optional[String] = none
 end
 
 ## `POST /v1/sessions/ID/messages`.
@@ -119,6 +121,7 @@ def decode_new_session(text: String) -> Result[NewSession]
   try Wire.non_empty_if_present("model", body.model)
   try Wire.non_empty_if_present("api", body.api)
   try Wire.non_empty_if_present("provider", body.provider)
+  try Wire.non_empty_if_present("profile", body.profile)
   ok(body)
 end
 

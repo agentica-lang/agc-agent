@@ -5,8 +5,8 @@ import {Kind, Opt, Parsed} from "std/option_parser"
 VERSION = "0.0.1"
 # The options of a client that take the next word.
 VALUE_OPTIONS = [
-  "--state-dir", "--server-command", "--session", "--cwd", "--model", "--api", "--provider", "--prompt", "-p",
-  "--delete", "--logout",
+  "--state-dir", "--server-command", "--session", "--cwd", "--model", "--api", "--provider", "--profile", "--prompt",
+  "-p", "--delete", "--logout",
 ]
 
 ## The options of a run. `none` takes the default: the state folder from the environment, a new session in the current
@@ -20,6 +20,7 @@ struct Options
   model: Optional[String]
   api: Optional[String] = none
   provider: Optional[String] = none
+  profile: Optional[String] = none
   thinking: Bool
   ## One-shot: the task to send; the client prints the turn and exits with its status.
   prompt: Optional[String] = none
@@ -79,6 +80,7 @@ def parse(args: List[String]) -> Result[Command]
       Opt(name: "model", help: "model of a new session (default: the server's)"),
       Opt(name: "api", help: "model API of a new session: openai or openai_responses (default: the server's)"),
       Opt(name: "provider", help: "provider of a new session (default: the server's)"),
+      Opt(name: "profile", help: "profile of a new session: the tools its model sees (default: build)"),
       Opt(name: "thinking", kind: Kind.Flag, help: "show the model's thinking, dimmed"),
       Opt(
         name: "prompt",
@@ -172,6 +174,7 @@ def command(parsed: Parsed) -> Result[Command]
     model: OP.optional_string(parsed, "model"),
     api: OP.optional_string(parsed, "api"),
     provider: OP.optional_string(parsed, "provider"),
+    profile: OP.optional_string(parsed, "profile"),
     thinking: OP.flag(parsed, "thinking"),
     prompt: OP.optional_string(parsed, "prompt"),
     yolo: OP.flag(parsed, "yolo"),

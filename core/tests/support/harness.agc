@@ -109,6 +109,8 @@ struct Setup
   ## the test's folder itself when none) are trusted.
   skills: Bool = false
   trust: Optional[List[String]] = none
+  ## The user's profiles are in `config/finn/profiles` of the test's folder (`XDG_CONFIG_HOME`).
+  profiles: Bool = false
 end
 
 ## Lets a held reply of the fake go on (`name@hold` in `replies`).
@@ -254,7 +256,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     login: login_setup(setup, fake, base),
     key_envs: setup.key_envs,
     model: setup.model,
-    env: &fake_env,
+    env: env_of(setup, base),
     approvals: some(user.rules),
     asking: user.asking,
     registry: some(served_of(setup, user)),
@@ -353,6 +355,17 @@ def served_of(setup: Setup, user: Permissions.User) -> Extensions.Served
   served
 end
 
+def env_of(setup: Setup, base: String) -> Fn[String, Result[String]]
+  return &fake_env if not setup.profiles
+
+  ->(name: String) {
+    case name
+      "XDG_CONFIG_HOME" -> ok("#{base}/config")
+      _ -> fake_env(name)
+    end
+  }
+end
+
 def skills_home(setup: Setup, base: String) -> String
   return "" if not setup.skills
 
@@ -433,8 +446,9 @@ def new_session_in(
   cwd: String,
   api: Optional[String] = none,
   provider: Optional[String] = none,
+  profile: Optional[String] = none,
 ) -> Result[String]
-  asked = Protocol.NewSession(cwd: cwd, model: none, api: api, provider: provider)
+  asked = Protocol.NewSession(cwd: cwd, model: none, api: api, provider: provider, profile: profile)
   answer = try post(h, Protocol.SESSIONS_PATH, Protocol.encode_new_session(asked))
 
   return error("POST /v1/sessions: #{answer.status} #{answer.text}") if answer.status != 201

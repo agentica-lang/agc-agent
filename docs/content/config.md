@@ -39,7 +39,8 @@ Every key is optional, and so is the file. How the rules work is on [Approvals a
 `FINN_TRUSTED_DIRS` lists folders, separated by `:`. A session in one of them, or below, reads two things that anyone who can write its repository could plant:
 
 - the `allow` and `ask` rules of its `.finn/config.json`;
-- its skills ([Skills](skills.md)).
+- its skills ([Skills](skills.md));
+- its profiles, in `.finn/profiles/` ([Profiles](tools.md#profiles)).
 
 The deny rules of a project count everywhere.
 
