@@ -11,7 +11,8 @@ import State from "state"
 ## Esc puts the follow-ups back in the prompt, before what it holds.
 def put_back(app: State.Model) -> State.Model
   text = (app.follow_ups + [app.prompt].select { |t| t.strip != "" }).join("\n")
-  State.noted(app.with(prompt: text, cursor: text.length, follow_ups: []), "follow-ups back in the prompt")
+  put = app.with(prompt: text, cursor: text.length, goal_column: none, follow_ups: [])
+  State.noted(put, "follow-ups back in the prompt")
 end
 
 ## The follow-ups go as one message once the turn ended by itself; a stopped turn puts them back in the prompt.
@@ -52,7 +53,7 @@ def shell_reply(app: State.Model, command: String, result: Result[Protocol.Shell
       return failed if app.prompt != ""
 
       text = "!#{command}"
-      failed.with(prompt: text, cursor: text.length)
+      failed.with(prompt: text, cursor: text.length, goal_column: none)
   end
 end
 
@@ -95,7 +96,7 @@ def sent_reply(app: State.Model, text: String, result: Result[Protocol.MessageAc
       failed = State.noted(app, "error: the message was not sent: #{e.message}: #{Client.printable(text)}")
       return failed if app.prompt != ""
 
-      failed.with(prompt: text, cursor: text.length)
+      failed.with(prompt: text, cursor: text.length, goal_column: none)
   end
 end
 

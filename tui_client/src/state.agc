@@ -5,6 +5,7 @@ import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
 import Args from "args"
+import Input from "input"
 import Picker from "picker"
 import Prompt from "prompt"
 import Theme from "theme"
@@ -63,6 +64,9 @@ struct Model
   ## the word that Esc closed.
   files: Optional[List[String]] = none
   reading_files: Bool = false
+  ## The choices of the argument of the command in the prompt, read from the server when its argument starts.
+  arguments: Optional[Input.Arguments] = none
+  reading_arguments: Bool = false
   ## The last list read was cut: said once, until a whole one comes.
   files_cut: Bool = false
   ## After a read that timed out, while the server may still walk the folder, `@` asks again only from this time on.
@@ -151,6 +155,8 @@ enum Msg
   LoggedIn(String, Result[Protocol.LoginStatus])
   ## The files of the session's folder, for the `opened` count when they were asked.
   Files(Int, Result[Protocol.FileList])
+  ## The choices of a command's argument, for the `opened` count when they were asked.
+  Arguments(Int, Result[Input.Arguments])
   ## The reply to a `!` command: the command, and whether it runs.
   ShellSent(String, Result[Protocol.ShellAccepted])
   ## The git branch of the session's folder, for the `opened` count when it was read.

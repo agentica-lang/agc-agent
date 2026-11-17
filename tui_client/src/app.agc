@@ -156,6 +156,9 @@ def handled(app: State.Model, msg: State.Msg) -> State.Model
     State.Msg.Rechecked(_, _) -> app
     State.Msg.Files(opened, result) if opened == app.opened -> Files.files_read(app.with(reading_files: false), result)
     State.Msg.Files(_, _) -> app
+    State.Msg.Arguments(opened, result) if opened == app.opened ->
+      Files.arguments_read(app.with(reading_arguments: false), result)
+    State.Msg.Arguments(_, _) -> app
     State.Msg.ShellSent(command, result) -> Turn.shell_reply(app, command, result)
     State.Msg.Branch(opened, name) if opened == app.opened -> app.with(branch: name)
     State.Msg.Branch(_, _) -> app

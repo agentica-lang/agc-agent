@@ -47,7 +47,7 @@ def test_streamed_text_joins_the_last_entry_of_its_kind() -> Result[Void]
 end
 
 def test_the_prompt_shows_its_last_rows_with_a_lead() -> Result[Void]
-  text = Prompt.backspace(Prompt.insert(Prompt.insert("one", 3, "\n"), 4, "twoo"), 8)
+  text = Prompt.insert(Prompt.insert("one", 3, "\n"), 4, "two")
   try Test.eq(Prompt.rows(text, 20), [" one", " two"])
   try Test.eq(Prompt.rows("", 20), [" "])
   try Test.eq(Prompt.rows("1\n2\n3\n4\n5\n6\n7", 20).size, Prompt.MAX_ROWS)
@@ -70,8 +70,6 @@ def test_the_prompt_cursor_and_clicks() -> Result[Void]
   # A row keeps its last column for the cursor, so a wide character at the end of a full row is not under it.
   try Test.eq([Prompt.view("日本語", 3, 8, 24).rows, [Prompt.view("日本語", 3, 8, 24).cursor_x.to_s]], [[" 日本語"], ["7"]])
   try Test.eq(Prompt.insert("held", 2, "XY"), "heXYld")
-  try Test.eq(Prompt.backspace("held", 2), "hld")
-  try Test.eq(Prompt.backspace("held", 0), "held")
   text = "abcdefgh\n日本語"
   view = Prompt.view(text, 3, 7, 24)
   try Test.eq(view.rows, [" abcde", " fgh", " 日本", " 語"])

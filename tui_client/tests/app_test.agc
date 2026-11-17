@@ -835,6 +835,100 @@ def test_the_command_list_gives_way_to_an_approval_and_to_esc() -> Result[Void]
   Test.eq(App.update(closed, escape()).model.stopping, true)
 end
 
+# The argument of `/model`, `/resume` and `/tree` is listed from the server once its command is typed, in the list
+# under the editor; `/thinking` lists its levels. Tab completes the selected choice; Enter runs the line as typed.
+def test_arguments_complete_from_the_server() -> Result[Void]
+  providers = Protocol.ProviderList(
+    provider: "p",
+    providers: [Protocol.ProviderInfo(name: "p", api: "chat", models: ["small", "large"])],
+  )
+
+  summary = Protocol.SessionSummary(id: "s9", cwd: "/w", model: "m", api: "chat", title: "fix the tests")
+  tree = Protocol.SessionTree(nodes: [Protocol.TreeNode(id: 1, text: "hello", last: 2)])
+  backend = Client.unreachable_backend().with(
+    list_providers: -> { ok(providers) },
+    list_sessions: -> { ok(Protocol.SessionList(sessions: [summary])) },
+    tree: ->(_id: String) { ok(tree) },
+  )
+
+  model = model_of(80, 20).with(backend: backend, id: "s1")
+  completed: List[String] = []
+  for command in ["/model", "/resume", "/tree"]
+    asking = App.update(model.with(prompt: command, cursor: command.length), key_char(" "))
+    try Test.eq(asking.cmds.size, 1)
+    listed = App.update(asking.model, run(asking.cmds[0])[0]).model
+    picked = App.update(App.update(listed, down()).model, tab()).model
+    completed = completed.push(picked.prompt)
+  end
+
+  try Test.eq(completed, ["/model p/large", "/resume s9", "/tree 1"])
+  levels = model.with(prompt: "/thinking h", cursor: 11)
+  try Test.assert(rows(levels).any? { |row| row.start_with?("high") }, "#{rows(levels)}")
+  try Test.eq(App.update(levels, tab()).model.prompt, "/thinking high")
+  # The tree listed for `/tree N` is the one its numbers name; leaving the command forgets the choices.
+  asking = App.update(model.with(prompt: "/tree", cursor: 5), key_char(" "))
+  listed = App.update(asking.model, run(asking.cmds[0])[0]).model
+  try Test.eq([listed.listed.some?, rows(listed).any? { |row| row.start_with?("1. ") }], [true, true])
+  left = App.update(listed, backspace()).model
+  try Test.eq(left.arguments.none?, true)
+  # Enter runs the line as typed, with no completion.
+  typed = App.update(listed.with(prompt: "/thinking hi", cursor: 12), enter()).model
+  Test.eq(typed.entries.last.text, "the thinking level is one of low, medium, high, default")
+end
+
+# An Alt key types nothing: not in the prompt, not over a selected prompt, not in a picker's filter, not in a key.
+def test_an_alt_key_types_nothing() -> Result[Void]
+  alt_x = App.Msg.Key(TUI.Event.Char("x", TUI.Mods(alt: true)))
+  typed = App.update(model_of(40, 8).with(prompt: "ab", cursor: 2), alt_x).model
+  selected = App.update(model_of(40, 8).with(prompt: "keep", cursor: 4, prefilled: true), alt_x).model
+  picking = App.update(model_of(40, 8).with(picker: some(Picker.Picker())), alt_x).model
+  secret = App.update(model_of(40, 8).with(key_for: some("openai")), alt_x).model
+  Test.eq(
+    [typed.prompt, selected.prompt, picking.picker.map { |p| p.filter }.unwrap_or("closed"), secret.secret],
+    ["ab", "keep", "", ""],
+  )
+end
+
+# Ctrl+D on an empty prompt does not quit while a command runs, an approval waits or a message is on its way.
+def test_ctrl_d_waits_for_what_runs() -> Result[Void]
+  request = Protocol.ApprovalRequested(approval_id: "a1", call_id: "c1", tool: "write_file", preview: "x", detail: "")
+  waiting = [
+    model_of(40, 8).with(shell: true),
+    model_of(40, 8).with(approvals: Approvals.requested(Approvals.Panel(), request, 0)),
+    model_of(40, 8).with(outbox: ["hi"]),
+    model_of(40, 8).with(moving: true),
+    model_of(40, 8).with(stopping: true),
+  ]
+
+  for model in waiting
+    try Test.eq(App.update(model, ctrl("d")).model.exit, none)
+  end
+
+  sent = App.update(model_of(40, 8).with(id: "s1", prompt: "hi", cursor: 2), enter()).model
+  after = App.update(sent, ctrl("d")).model
+  Test.eq([after.exit.none?, after.outbox == ["hi"]], [true, true])
+end
+
+# One key deletes or crosses a whole character: a flag (two flag letters), a skin tone, a ZWJ sequence.
+def test_a_key_takes_a_whole_character() -> Result[Void]
+  spain = "#{String.from_code(0x1F1EA)}#{String.from_code(0x1F1F8)}"
+  france = "#{String.from_code(0x1F1EB)}#{String.from_code(0x1F1F7)}"
+  thumb = "#{String.from_code(0x1F44D)}#{String.from_code(0x1F3FD)}"
+  zwj = String.from_code(0x200D)
+  coder = "#{String.from_code(0x1F469)}#{String.from_code(0x1F3FD)}#{zwj}#{String.from_code(0x1F4BB)}"
+  delete = key(TUI.Key.Delete, TUI.Mods())
+  flags = model_of(40, 8).with(prompt: spain + france, cursor: 0)
+  try Test.eq(App.update(flags, delete).model.prompt, france)
+  right = App.update(flags, key(TUI.Key.Right, TUI.Mods())).model
+  try Test.eq([right.cursor, App.update(right, key(TUI.Key.Right, TUI.Mods())).model.cursor], [2, 4])
+  try Test.eq(App.update(model_of(40, 8).with(prompt: thumb + "x", cursor: 0), delete).model.prompt, "x")
+  try Test.eq(App.update(model_of(40, 8).with(prompt: coder + "!", cursor: 0), delete).model.prompt, "!")
+  ending = model_of(40, 8).with(prompt: "a" + coder, cursor: 5)
+  try Test.eq(App.update(ending, backspace()).model.prompt, "a")
+  try Test.eq(App.update(ending, key(TUI.Key.Left, TUI.Mods())).model.cursor, 1)
+  Test.eq(App.update(flags.with(cursor: 4), backspace()).model.prompt, spain)
+end
+
 # Alt+y (or Escape and y read together) on a focused approval panel answers nothing and types nothing; y allows.
 def test_alt_y_does_not_answer_an_approval() -> Result[Void]
   request = Protocol.ApprovalRequested(
