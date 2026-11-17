@@ -383,6 +383,12 @@ def load(file: Ref, leaf: Optional[Int] = none) -> Result[Saved]
   ok(totals(saved, entries))
 end
 
+## The records of the branch the file is on now, in order, as JSON.
+def branch_records(file: Ref) -> Result[List[JSON.Value]]
+  entries = try read_entries(file)
+  ok(branch(entries, entries.leaf).map { |record| json_of(record) })
+end
+
 ## The text of a user message after the output of the commands before it.
 def with_shells(shells: List[String], text: String) -> String = (shells + [text]).join("\n\n")
 

@@ -9,6 +9,9 @@ CALL_TIMEOUT_MS = 10_000
 LOGIN_TIMEOUT_MS = 20_000
 PROBE_TIMEOUT_MS = 2_000
 COMPACT_TIMEOUT_MS = 600_000
+EXPORT_TIMEOUT_MS = 120_000
+## The most a client takes of an export, the limit of `HTTP`.
+EXPORT_BODY_BYTES = 67_108_864
 # A session can be quiet for as long as the model thinks, and the protocol has no heartbeat: the stream is read without
 # a timeout of practical size.
 EVENTS_TIMEOUT_MS = 86_400_000
@@ -158,6 +161,17 @@ def tree(server: Server, id: String) -> Result[Protocol.SessionTree]
   Protocol.decode_session_tree(try call(server, "GET", Protocol.tree_path(id), ""))
 end
 
+## The branch the session is on, for `/export`.
+def exported(server: Server, id: String) -> Result[Protocol.SessionExport]
+  options = HTTP.ClientOptions(timeout_ms: EXPORT_TIMEOUT_MS, max_body_bytes: EXPORT_BODY_BYTES)
+  case call_with(server, "GET", Protocol.export_path(id), "", options)
+    ok(body) -> Protocol.decode_session_export(body)
+    error(e) if e.message.include?("max_body_bytes") ->
+      error("the export of the session is over 64 MiB", kind: "client.too_large", cause: e)
+    error(e) -> error(e)
+  end
+end
+
 ## Goes on from `entry` of the tree in the same session.
 def branch(server: Server, id: String, entry: Int) -> Result[Protocol.Branched]
   body = Protocol.encode_branch(Protocol.Branch(entry: entry))
@@ -215,7 +229,17 @@ def call(server: Server, method: String, path: String, body: String) -> Result[S
 end
 
 def call_within(server: Server, method: String, path: String, body: String, timeout_ms: Int) -> Result[String]
-  client = try network(HTTP.client(HTTP.ClientOptions(timeout_ms: timeout_ms)))
+  call_with(server, method, path, body, HTTP.ClientOptions(timeout_ms: timeout_ms))
+end
+
+def call_with(
+  server: Server,
+  method: String,
+  path: String,
+  body: String,
+  options: HTTP.ClientOptions,
+) -> Result[String]
+  client = try network(HTTP.client(options))
   result = HTTP.request(client, method, "#{server.url}#{path}", body.bytes, headers(server, body))
   HTTP.close_client(client)
   response = try network(result)

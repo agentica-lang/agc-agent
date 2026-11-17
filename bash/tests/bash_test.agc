@@ -72,7 +72,8 @@ def test_a_command_keeps_its_text() -> Result[Void]
 end
 
 # A syntax error is flagged; a known misread (a stray backtick, a dropped `-`, two commands merged across a line end,
-# a line continuation inside a word) makes the line unclear; a line over MAX_LINE bytes is not read.
+# a line continuation inside a word) makes the line unclear; a line of MAX_PIPES stages is read, one over MAX_LINE
+# bytes is not.
 def test_a_broken_unclear_or_long_line() -> Result[Void]
   try Test.eq([(try Bash.parse("echo (")).error, (try Bash.parse("echo ok")).error], [true, false])
   for line in [
@@ -87,12 +88,14 @@ def test_a_broken_unclear_or_long_line() -> Result[Void]
     try Test.eq([line, (try Bash.parse(line)).unclear.to_s], [line, "false"])
   end
 
+  try Test.ok?(Bash.parse("a|" * Bash.MAX_PIPES + "a"))
   Test.error?(Bash.parse("x" * (Bash.MAX_LINE + 1)))
 end
 
-# A parse over LIMIT_MS gives an error, and so does a nesting whose commands would hold too much text; both end soon.
+# A parse over LIMIT_MS gives an error, and so do a pipeline of over MAX_PIPES stages (whose tree tree-sitter builds
+# without checking the limit) and a nesting whose commands would hold too much text; all end soon.
 def test_a_slow_or_deep_line_ends_with_an_error() -> Result[Void]
-  for line in ["a|" * 32000, "#{"$(" * 10000}x#{")" * 10000}"]
+  for line in ["a|" * 32000, "a|" * 8000, "#{"$(" * 10000}x#{")" * 10000}"]
     started = Time.monotonic_ms
     try Test.error?(Bash.parse(line))
     elapsed = Time.monotonic_ms - started

@@ -2,7 +2,7 @@
 ## as written. It reads only; what a command means is for the caller to decide.
 ##
 ## The module is built by the first run on a machine with a C compiler. Without one, `parse` gives an error, and so
-## does a line over `MAX_LINE` bytes or one whose parse takes over `LIMIT_MS`.
+## does a line over `MAX_LINE` bytes, one with over `MAX_PIPES` `|`, or one whose parse takes over `LIMIT_MS`.
 ##
 ## tree-sitter-bash 0.25.1 misreads some lines; `Parsed.unclear` is set for those known, and a caller should not
 ## trust the commands of such a line, nor of one with `Parsed.error` (an error may drop commands, `case ... esac | x`):
@@ -22,6 +22,10 @@ VERSION = "0.0.1"
 MAX_LINE = 65_536
 ## The longest a parse may take, in milliseconds.
 LIMIT_MS = 200
+## The most `|` a line may hold. tree-sitter checks `LIMIT_MS` while it reads, but not while it builds the tree of a
+## line with an error at its end, which takes time quadratic in the length of a pipeline (`a|a|...a|`): on a laptop
+## 1,000 stages take 60 ms, 2,000 take 0.17 s, 8,000 take 1.6 s and 16,000 take 16 s.
+MAX_PIPES = 1_000
 
 export Tree.Word
 export Tree.Command
@@ -30,6 +34,7 @@ export Tree.Parsed
 ## The commands of `line`, those inside subshells, groups, loops and substitutions included, in the order they start.
 def parse(line: String) -> Result[Tree.Parsed]
   return error("the line is over #{MAX_LINE} bytes") if line.bytesize > MAX_LINE
+  return error("the line has over #{MAX_PIPES} |") if line.split("|").length - 1 > MAX_PIPES
 
   try Native.load("bash")
   Tree.commands(line, LIMIT_MS)

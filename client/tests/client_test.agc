@@ -39,6 +39,9 @@ def test_commands_parse_with_their_arguments() -> Result[Void]
   try Test.eq(Client.parse_command("hello /new"), none)
   try Test.eq(Client.parse_command("  /new "), some(ok(Client.Command.New)))
   try Test.eq(Client.parse_command("/resume"), some(ok(Client.Command.Resume(none))))
+  try Test.eq(Client.parse_command("/export"), some(ok(Client.Command.Export(none, false))))
+  try Test.eq(Client.parse_command("/export --force a  b.md"), some(ok(Client.Command.Export(some("a  b.md"), true))))
+  try Test.eq(Client.parse_command("/export a --force"), some(ok(Client.Command.Export(some("a --force"), false))))
   try Test.eq(Client.parse_command("/resume 2"), some(ok(Client.Command.Resume(some("2")))))
   try Test.eq(Client.parse_command("/model qwen3:8b"), some(ok(Client.Command.Model(some("qwen3:8b")))))
   try Test.eq(Client.parse_command("/thinking high"), some(ok(Client.Command.Thinking(some("high")))))
@@ -184,6 +187,122 @@ def error_kind_of[T](result: Result[T]) -> String
     ok(_) -> "ok"
     error(e) -> e.kind
   end
+end
+
+# The Markdown of an export: the title and date, each message under its role in a fence longer than any run of
+# backticks in it, the tool calls of an answer as a list with their result, where the history was compacted, and the
+# todo list. An escape or bidi character is written as its code.
+def test_an_export_is_markdown_with_its_tools_and_todos() -> Result[Void]
+  text = Client.markdown(sample())
+  expected = [
+    "# Fix it",
+    "Session `s1`, started 2026-06-12T10:55:02Z.",
+    "## User",
+    "```\nFix it\nnow \\u001b[2J and \\u202eevil\n```",
+    "- `read_file` a.txt (ok)\n- `bash` make (error)\n- `bash` sleep 9 (no result)",
+    "## Assistant",
+    "```\nDone.\n```",
+    "*History compacted here.*",
+    "## Assistant",
+    "`````\nx ````\n## User\n`````",
+    "## Todos",
+    "- [x] Write the test\n- [ ] Fix the bug (in progress)\n- [ ] Ship",
+  ]
+
+  Test.eq(text, expected.join("\n\n") + "\n")
+end
+
+# The file is made 0600 at `ID.md` by default, `~` is the home folder. A path that exists is refused unless --force,
+# which replaces only a file, in one step and 0600; a link, even one to nowhere, or a folder is never replaced.
+def test_an_export_file_is_private_and_never_replaced_without_force() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/finn-export-#{Random.int(0, 999_999_999)}"
+  try Dir.mkdir_private(dir)
+  result = exports_to(dir)
+  _ = Path.remove(dir)
+  result
+end
+
+def exports_to(dir: String) -> Result[Void]
+  path = Client.export_path("s1", some("#{dir}/out.md"))
+  try Test.eq(Client.saved(sample(), path, false), ok(path))
+  try Test.eq((try File.stat(path)).mode.to_s, "384")
+  again = Client.saved(sample().with(title: "Other"), path, false)
+  try Test.eq(
+    [message_of(again), (try File.read_text(path)).split("\n")[0]],
+    ["#{path} exists: add --force to replace it", "# Fix it"],
+  )
+
+  shared = "#{dir}/shared.md"
+  try File.write_text(shared, "old")
+  try run("chmod", ["644", shared])
+  try Test.eq(Client.saved(sample().with(title: "Other"), shared, true), ok(shared))
+  try Test.eq([(try File.read_text(shared)).split("\n")[0], (try File.stat(shared)).mode.to_s], ["# Other", "384"])
+  try run("ln", ["-s", path, "#{dir}/link.md"])
+  try run("ln", ["-s", "#{dir}/missing.md", "#{dir}/dangling.md"])
+  refused: List[String] = []
+  for force in [false, true]
+    for name in ["link.md", "dangling.md", "."]
+      refused = refused.push(message_of(Client.saved(sample().with(title: "Other"), "#{dir}/#{name}", force)))
+    end
+  end
+
+  try Test.eq(
+    refused,
+    [
+      "#{dir}/link.md exists: add --force to replace it",
+      "#{dir}/dangling.md exists: add --force to replace it",
+      "#{dir}/. exists: add --force to replace it",
+      "#{dir}/link.md is not a file",
+      "#{dir}/dangling.md is not a file",
+      "#{dir}/. is not a file",
+    ],
+  )
+
+  try Test.eq((try File.read_text(path)).split("\n")[0], "# Fix it")
+  try Test.eq((try Dir.list(dir)).sort, ["dangling.md", "link.md", "out.md", "shared.md"])
+  home = System.env("HOME").unwrap_or("")
+  Test.eq([Client.export_path("s1", none), Client.export_path("s1", some("~/a b.md"))], ["s1.md", "#{home}/a b.md"])
+end
+
+def run(program: String, args: List[String]) -> Result[Void]
+  process = try Process.spawn(program, args)
+  code = Process.wait(process, 5000)
+  Process.close(process)
+  return error("#{program} failed") if try code != 0
+
+  ok()
+end
+
+def message_of(result: Result[String]) -> String
+  case result
+    ok(_) -> "ok"
+    error(e) -> e.message
+  end
+end
+
+def sample() -> Protocol.SessionExport
+  Protocol.SessionExport(
+    id: "s1",
+    title: "Fix it",
+    created_ms: 1_781_261_702_345,
+    entries: [
+      Protocol.ExportEntry(
+        kind: "user",
+        text: "Fix it\nnow #{String.from_code(0x1B)}[2J and #{String.from_code(0x202E)}evil",
+      ),
+      Protocol.ExportEntry(kind: "tool", tool: "read_file", text: "a.txt", ok: some(true)),
+      Protocol.ExportEntry(kind: "tool", tool: "bash", text: "make", ok: some(false)),
+      Protocol.ExportEntry(kind: "tool", tool: "bash", text: "sleep 9"),
+      Protocol.ExportEntry(kind: "assistant", text: "Done."),
+      Protocol.ExportEntry(kind: "compaction", text: ""),
+      Protocol.ExportEntry(kind: "assistant", text: "x ````\n## User"),
+    ],
+    todos: [
+      Protocol.Todo(content: "Write the test", status: "completed"),
+      Protocol.Todo(content: "Fix the bug", status: "in_progress"),
+      Protocol.Todo(content: "Ship", status: "pending"),
+    ],
+  )
 end
 
 # A client names a profile other than the built-in `build`, then the server's warnings about it, printable.

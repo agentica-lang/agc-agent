@@ -1209,6 +1209,28 @@ def test_the_edit_folders_older_than_a_day_are_cleared() -> Result[Void]
   Test.eq([fresh.unwrap_or(["unread"]), old.unwrap_or(["unread"]).map { |name| "kept #{name}" }], [["999999999"], []])
 end
 
+# /export writes the session's branch to the file in a task and says where; a file that exists is refused.
+def test_export_writes_the_session_and_says_where() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/tui-export-#{Random.int(0, 999_999_999)}"
+  try Dir.mkdir_private(dir)
+  exported = Protocol.SessionExport(id: "s1", title: "Hi", created_ms: 0, entries: [], todos: [])
+  backend = Client.unreachable_backend().with(exported: ->(_id: String) { ok(exported) })
+  model = model_of(80, 20).with(backend: backend, id: "s1", prompt: "/export #{dir}/out.md", cursor: 0)
+  asking = App.update(model, enter())
+  written = App.update(asking.model, run(asking.cmds.last)[0]).model
+  retry = App.update(written.with(prompt: "/export #{dir}/out.md"), enter())
+  again = App.update(retry.model, run(retry.cmds.last)[0])
+  text = File.read_text("#{dir}/out.md")
+  _ = Path.remove(dir)
+  try Test.eq(written.entries.last.text, "exported to #{dir}/out.md")
+  try Test.assert(again.model.entries.last.text.include?("exists: add --force"), again.model.entries.last.text)
+  try Test.assert(text.unwrap_or("").start_with?("# Hi\n"), "the file")
+  Test.eq(
+    App.update(model_of(80, 20).with(prompt: "/export"), enter()).model.entries.last.text,
+    "no session to export yet",
+  )
+end
+
 # Alt+y (or Escape and y read together) on a focused approval panel answers nothing and types nothing; y allows.
 def test_alt_y_does_not_answer_an_approval() -> Result[Void]
   request = Protocol.ApprovalRequested(

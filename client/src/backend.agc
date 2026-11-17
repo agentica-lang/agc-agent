@@ -18,6 +18,7 @@ struct Backend
   update_session: Fn[String, Protocol.UpdateSession, Result[Void]]
   compact: Fn[String, Result[Bool]]
   tree: Fn[String, Result[Protocol.SessionTree]]
+  exported: Fn[String, Result[Protocol.SessionExport]]
   branch: Fn[String, Int, Result[Protocol.Branched]]
   fork: Fn[String, Optional[Int], Result[Protocol.Branched]]
   list_sessions: Fn[Result[Protocol.SessionList]]
@@ -50,6 +51,7 @@ def http_backend(server: Http.Server) -> Backend
     update_session: ->(id, change) { Http.update_session(server, id, change) },
     compact: ->(id) { Http.compact(server, id) },
     tree: ->(id) { Http.tree(server, id) },
+    exported: ->(id) { Http.exported(server, id) },
     branch: ->(id, entry) { Http.branch(server, id, entry) },
     fork: ->(id, entry) { Http.fork(server, id, entry) },
     list_sessions: -> { Http.list_sessions(server) },
@@ -83,6 +85,7 @@ def unreachable_backend() -> Backend
     update_session: ->(_id, _change) { failed() },
     compact: ->(_id) { failed() },
     tree: ->(_id) { failed() },
+    exported: ->(_id) { failed() },
     branch: ->(_id, _entry) { failed() },
     fork: ->(_id, _entry) { failed() },
     list_sessions: -> { failed() },
