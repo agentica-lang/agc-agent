@@ -85,3 +85,4 @@ with `finn serve --approvals` or `FINN_APPROVALS=1`.
 
 `finn server status`, `start`, `stop`, `restart` and `logs` manage the server
 that a client started. `finn serve` runs it in the foreground instead.
+
