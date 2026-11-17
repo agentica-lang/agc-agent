@@ -22,24 +22,19 @@
 
 ### Added
 
-- `finn` completes the argument of `/model`, `/resume`, `/tree`, `/fork` and `/thinking` from the server's lists, with Tab.
-- `finn`: Ctrl+Left/Right, Alt+B/F and Alt+Backspace work; Delete takes a whole character, word moves stop at line ends, and Up/Down keep their column; an Alt key types nothing.
-- `finn` has pi's editing keys: Ctrl+A/E, Ctrl+W, Ctrl+U/K, Delete, Alt+Left/Right by word, Up/Down between the rows of the prompt, and Ctrl+D on an empty prompt quits when nothing runs.
-- `finn` shows a footer: the folder, git branch and first message, then the last model call's tokens, cache and context, the session's cost, and the model with its thinking level.
-- `finn login local` stores the base URL of a local server; `FINN_BASE_URL` wins.
 - Finn Agent, a coding agent: `finn` (full screen) and `finn chat` (lines) talk to a local server.
 - Tools: read, write and edit files, `glob`, `grep`, `bash`, and `apply_patch` for models that use it.
 - `finn -p TASK` runs one task and prints the answer.
 - Sessions are kept on disk and resume after a restart; `finn --delete ID` removes one.
 - Long histories are compacted into a summary before the context window fills.
-- Session commands: `/new`, `/resume`, `/model`, `/thinking`, `/compact`, `/stop`, `/help` and `/quit`.
-- `/tree`, `/fork` and `/clone` go back in a session, branch it into a new one, or copy it.
+- Session commands: `/new`, `/resume`, `/model`, `/thinking`, `/compact`, `/stop`, `/help` and `/quit`; `/tree`, `/fork` and `/clone` go back in a session, branch it into a new one, or copy it. `finn` completes their arguments with Tab.
 - A message sent while a turn runs is queued and read before the next model call.
 - `!CMD` runs a shell command in the session folder; `!!CMD` keeps its output from the model.
-- `finn` keys: `@` completes files, `/` lists commands, Alt+Enter queues a follow-up, Up recalls prompts.
+- `finn` keys: `@` completes files, `/` lists commands, Alt+Enter queues a follow-up, Up recalls prompts, and pi's editing keys (Ctrl+A/E, Ctrl+W, Ctrl+U/K, word moves, Ctrl+D on an empty prompt).
+- `finn` shows a footer: the folder, git branch and first message, the last call's tokens and context, the session's cost, and the model.
 - `finn` shows tool output and diffs, takes the mouse, and keeps a large paste as one token.
 - Providers: local, anthropic, openai, fireworks, openrouter, groq, deepseek and custom; `/model provider/model` switches.
-- `finn login` and `finn logout` store and remove a provider key.
+- `finn login` and `finn logout` store and remove a provider key; `finn login local` stores the base URL of a local server.
 - The `openai_responses` and `anthropic` APIs, with thinking and prompt cache.
 - Cost in USD from the models.dev catalog.
 - Approval rules in config files; allow a `bash` prefix, a tool or edits for the session.
