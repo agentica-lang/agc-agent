@@ -6,7 +6,7 @@
 ## most the client's call timeout (10 s) for each of them.
 ##
 ## This file only routes: the model and its messages are in `state`, and each part of `update` has its own file
-## (`keys`, `turn`, `session`, `commands`, `logins`, `files`, `approving`, `level`), as `views` has the frame.
+## (`keys`, `turn`, `session`, `commands`, `logins`, `files`, `answering`, `level`), as `views` has the frame.
 
 import Client from "pkg/client/client"
 import TUI from "pkg/tui/tui"
@@ -17,7 +17,7 @@ import Theme from "theme"
 import Transcript from "transcript"
 import State from "state"
 import Level from "level"
-import Approving from "approving"
+import Answering from "answering"
 import Files from "files"
 import Logins from "logins"
 import Turn from "turn"
@@ -134,7 +134,7 @@ def handled(app: State.Model, msg: State.Msg) -> State.Model
     State.Msg.Note(text) -> State.noted(app, text)
     State.Msg.Answered(approval_id, result) ->
       outcome = Approvals.answered(app.approvals, approval_id, result, app.now)
-      answered = Approving.unyolo(app.with(approvals: outcome.panel), approval_id, result)
+      answered = Answering.unyolo(app.with(approvals: outcome.panel), approval_id, result)
       case outcome.note
         some(text) -> State.noted(answered, text)
         none -> answered

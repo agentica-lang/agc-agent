@@ -8,9 +8,6 @@ import Prompt from "prompt"
 import Screen from "screen"
 import State from "state"
 
-## How long `@` waits to ask the server again after a read of the files timed out.
-FILES_AGAIN_MS = 10_000
-
 ## The files of the session's folder come from the server each time an `@` is typed; the list shows the ones read last.
 def read_files(app: State.Model) -> State.Model
   backend = app.backend
@@ -92,6 +89,9 @@ def on_mention_key(app: State.Model, found: Input.Mention, event: TUI.Event) -> 
 end
 
 private
+
+# How long `@` waits to ask the server again after a read of the files timed out.
+FILES_AGAIN_MS = 10_000
 
 # Enter on part of a command's name completes it as Tab does; on a whole name it runs the command, and after `/` alone
 # or under the file list it sends the prompt.

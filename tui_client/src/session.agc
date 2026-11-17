@@ -10,15 +10,10 @@ import Git from "git"
 import Transcript from "transcript"
 import Yolo from "pkg/client/yolo"
 import State from "state"
-import Approving from "approving"
+import Answering from "answering"
 import Turn from "turn"
 
-FEED_CAPACITY = 1024
-## The most stream items one message carries, so a long stream still lets the keys in between draws.
-FEED_BATCH = 256
-SEND_MS = 30_000
-RECONNECT_MS = 300
-MAX_RECONNECTS = 3
+## The resyncs in a row after which the client ends.
 MAX_RESYNCS = 2
 
 ## A signal ends the client; a wait that ended without one waits again.
@@ -109,6 +104,13 @@ def read_feed(generation: Int, feed: Channel[Client.Item]) -> TUI.Cmd[State.Msg]
 end
 
 private
+
+FEED_CAPACITY = 1024
+# The most stream items one message carries, so a long stream still lets the keys in between draws.
+FEED_BATCH = 256
+SEND_MS = 30_000
+RECONNECT_MS = 300
+MAX_RECONNECTS = 3
 
 def same_folder(app: State.Model, cwd: String) -> String
   return app.branch if cwd == app.cwd
@@ -225,12 +227,12 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
       ended = shown.with(turn: false, stopping: false, new_model: none, yolo: Yolo.running(shown.yolo, none))
       read_branch(Turn.after_turn(finished(ended, done.stop_reason), done.stop_reason))
     Protocol.Event.Usage(usage) -> shown.with(usage: some(usage))
-    Protocol.Event.ApprovalRequested(request) if Yolo.allows?(shown.yolo) -> Approving.allowed(shown, request)
+    Protocol.Event.ApprovalRequested(request) if Yolo.allows?(shown.yolo) -> Answering.allowed(shown, request)
     Protocol.Event.ApprovalRequested(request) ->
       shown.with(approvals: Approvals.requested(shown.approvals, request, app.now))
     Protocol.Event.ApprovalResolved(done) ->
       decided = "approval #{done.approval_id}: #{Protocol.decision_name(done.decision)}"
-      State.noted(Approving.resolved(shown, done.approval_id), "#{decided} (#{Protocol.source_name(done.source)})")
+      State.noted(Answering.resolved(shown, done.approval_id), "#{decided} (#{Protocol.source_name(done.source)})")
     Protocol.Event.ToolStarted(tool) -> shown.with(entries: Transcript.tool_started(shown.entries, tool))
     Protocol.Event.ToolFinished(tool) -> shown.with(entries: Transcript.tool_finished(shown.entries, tool))
     Protocol.Event.ShellStarted(started) ->
