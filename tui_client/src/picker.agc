@@ -166,7 +166,7 @@ def login_state(login: Protocol.LoginStatus) -> String
 end
 
 def session_choice(session: Protocol.SessionSummary, now_s: Int) -> Choice
-  title = session.title.split("\n")[0]
+  title = Client.printable(session.title.split("\n").take(1).join(""))
   Choice(
     key: session.id,
     search: [session.id, session.cwd, session.model, session.title].join(" "),

@@ -142,3 +142,49 @@ def test_model_change_splits_a_known_provider() -> Result[Void]
   try Test.eq(Client.model_change(list, "local", "fw/"), Protocol.UpdateSession(model: some("fw/")))
   Test.eq(Client.model_change(list, "local", "m"), Protocol.UpdateSession(model: some("m")))
 end
+
+# A replay starts at the running turn unless the server lost that start; a new session without a folder takes the
+# client's; a compaction says whether it folded anything.
+def test_the_session_rules_both_clients_share() -> Result[Void]
+  idle = Protocol.Session(
+    id: "s1",
+    cwd: "/w",
+    model: "m",
+    last_event_id: 9,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+  )
+
+  running = idle.with(turn_id: some("t1"), turn_from_event_id: some(4))
+  try Test.eq(
+    [Client.replay_from(idle, false), Client.replay_from(running, false), Client.replay_from(running, true)],
+    [9, 4, 9],
+  )
+
+  try Test.eq((try Client.new_session(none, some("m"), none, none)).cwd, try Path.cwd())
+  try Test.eq((try Client.new_session(some("/w"), none, none, none)).cwd, "/w")
+  try Test.eq(
+    [Client.compacted(ok(true)), Client.compacted(ok(false))],
+    [ok("compacted"), ok("nothing to compact yet")],
+  )
+
+  Test.eq(Client.thinking(running.with(effort: some("high"))), "thinking high")
+end
+
+# The backend of a test fails every call it does not replace, as an unreachable server, and its stream ends at once.
+def test_an_unreachable_backend_fails_and_ends() -> Result[Void]
+  backend = Client.unreachable_backend()
+  try Test.eq(error_kind_of(backend.session.call("s1")), Client.KIND_UNREACHABLE)
+  told: Channel[Client.Item] = Channel.new(1)
+  Task.await(backend.subscribe.call("s1", 0, ->(item) { told.send(item, 1000) }))
+  Test.eq(told.recv(1000), ok(Client.Item.Ended("no server")))
+end
+
+def error_kind_of[T](result: Result[T]) -> String
+  case result
+    ok(_) -> "ok"
+    error(e) -> e.kind
+  end
+end

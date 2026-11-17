@@ -131,15 +131,8 @@ def open(chat: Chat, options: Args.Options) -> Result[Chat]
 end
 
 def create(chat: Chat, options: Args.Options) -> Result[Chat]
-  cwd = case options.cwd
-    some(dir) -> dir
-    none -> try Path.cwd()
-  end
-
-  id = try Client.create_session(
-    chat.server,
-    Protocol.NewSession(cwd: cwd, model: options.model, api: options.api, provider: options.provider),
-  )
+  request = try Client.new_session(options.cwd, options.model, options.api, options.provider)
+  id = try Client.create_session(chat.server, request)
 
   ok(subscribe(note(chat, "[session #{id}]").with(id: id), 0))
 end
@@ -164,10 +157,7 @@ def attach(chat: Chat, session: Protocol.Session, skip_replay: Bool) -> Chat
     shown = note(chat, "[the turn ended while the stream was away]")
   end
 
-  from = session.last_event_id
-  if running and not skip_replay
-    from = session.turn_from_event_id.unwrap_or(session.last_event_id)
-  end
+  from = Client.replay_from(session, skip_replay)
 
   fresh = shown.with(
     known: session.history.size,
@@ -472,7 +462,7 @@ def shown_setting(chat: Chat, name: String) -> Result[Chat]
   session = try Client.session(chat.server, chat.id)
   return ok(note(chat, "[model (#{session.provider}) #{session.model}]")) if name == "model"
 
-  ok(note(chat, "[thinking #{session.effort.unwrap_or("as the model's default")}]"))
+  ok(note(chat, "[#{Client.thinking(session)}]"))
 end
 
 def model_command(chat: Chat, model: Optional[String]) -> Result[Step]
@@ -506,9 +496,8 @@ def compact_command(chat: Chat) -> Chat
 end
 
 def compacted(server: Client.Server, id: String) -> String
-  case Client.compact(server, id)
-    ok(folded) if folded -> "[compacted]"
-    ok(_) -> "[nothing to compact yet]"
+  case Client.compacted(Client.compact(server, id))
+    ok(text) -> "[#{text}]"
     error(e) -> "[error] #{e.message}"
   end
 end

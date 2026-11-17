@@ -125,6 +125,19 @@ def test_a_compaction_refuses_turns_and_another_compaction() -> Result[Void]
   end
 end
 
+# A bidi control in the first message becomes a space in the list, so it cannot reorder a client's row.
+def test_a_bidi_control_in_the_title_becomes_a_space() -> Result[Void]
+  setup = H.Setup(replies: [])
+  H.using(setup) do |h|
+    head = "{\"type\":\"session\",\"id\":\"rlo\",\"cwd\":\"#{h.work}\",\"model\":\"m\",\"created_ms\":1}\n"
+    try File.write_text(H.session_file(h, "rlo"), "#{head}{\"type\":\"user\",\"text\":\"fix \\u202eit\\u2067\"}\n")
+    H.restarted(h, setup, "") do |r|
+      listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
+      Test.eq(listed.sessions.map { |l| l.title }, ["fix  it "])
+    end
+  end
+end
+
 # A byte that is not UTF-8 in the first message spoils only its character in the list.
 def test_a_bad_byte_in_the_title_becomes_a_replacement_character() -> Result[Void]
   setup = H.Setup(replies: [])

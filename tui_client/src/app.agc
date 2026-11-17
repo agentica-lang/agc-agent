@@ -54,7 +54,8 @@ SPIN_MS = 80
 LEVELS: List[Optional[String]] = [none, some("low"), some("medium"), some("high")]
 
 struct Model
-  server: Client.Server
+  ## The calls on the server (`Client.http_backend`; a test gives its own).
+  backend: Client.Backend
   id: String
   ## The folder of the session.
   cwd: String = ""
@@ -193,25 +194,25 @@ enum Msg
 end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
-def run(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
-  started(screen, server, options, &opened)
+def run(screen: TUI.Raw.Screen, backend: Client.Backend, options: Args.Options) -> Result[Int]
+  started(screen, backend, options, &opened)
 end
 
 ## `finn login` on `screen`: the login of the provider of `options` (the picker when none), then the end.
-def login(screen: TUI.Raw.Screen, server: Client.Server, options: Args.Options) -> Result[Int]
-  started(screen, server, options, ->(model: Model) { login_only(model, options.provider) })
+def login(screen: TUI.Raw.Screen, backend: Client.Backend, options: Args.Options) -> Result[Int]
+  started(screen, backend, options, ->(model: Model) { login_only(model, options.provider) })
 end
 
 def started(
   screen: TUI.Raw.Screen,
-  server: Client.Server,
+  backend: Client.Backend,
   options: Args.Options,
   first: Fn[Model, Result[Model]],
 ) -> Result[Int]
   signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
   palette = Theme.colors256?(System.env("TERM").unwrap_or(""), System.env("COLORTERM").unwrap_or(""))
   output = TUI.OutputMode.Colors256
-  start = try first.call(seed(server, options, signals, TUI.Raw.width(screen), TUI.Raw.height(screen)))
+  start = try first.call(seed(backend, options, signals, TUI.Raw.width(screen), TUI.Raw.height(screen)))
   if not palette
     output = TUI.OutputMode.Normal
     start = start.with(theme: Theme.basic())
@@ -248,14 +249,14 @@ end
 
 ## The model before the session is opened.
 def seed(
-  server: Client.Server,
+  backend: Client.Backend,
   options: Args.Options,
   signals: Channel[System.Signal],
   width: Int,
   height: Int,
 ) -> Model
   Model(
-    server: server,
+    backend: backend,
     id: "",
     options: options,
     signals: signals,
@@ -275,7 +276,7 @@ end
 def opened(model: Model) -> Result[Model]
   app = try open(model, model.options)
   if model.options.yolo
-    app = noted(app, Client.yolo_warning(app.server))
+    app = noted(app, app.backend.yolo_warning.call())
   end
 
   ok(effect(welcomed(app), listen(app.signals)))
@@ -284,7 +285,7 @@ end
 ## `finn login`: the login picker on its own, until a login ends or it is closed.
 def login_only(model: Model, provider: Optional[String]) -> Result[Model]
   app = effect(model.with(login_only: true), listen(model.signals))
-  list = try Client.list_logins(app.server)
+  list = try app.backend.list_logins.call()
   for name in option_list(provider)
     return ok(named_login(app, list.providers, name))
   end
@@ -294,7 +295,7 @@ end
 
 ## The first start offers a login when the server has no key file and no key in the environment.
 def welcomed(app: Model) -> Model
-  case Client.list_logins(app.server)
+  case app.backend.list_logins.call()
     ok(list) if list.first ->
       shown = noted(app, "no provider is set up: pick one to give its key, or Esc to go on with the local server")
       shown.with(picker: some(Picker.logins(list)), first_login: true)
@@ -466,29 +467,22 @@ end
 
 def create(app: Model) -> Result[Model]
   options = app.options
-  cwd = case options.cwd
-    some(dir) -> dir
-    none -> try Path.cwd()
-  end
-
-  request = Protocol.NewSession(cwd: cwd, model: options.model, api: options.api, provider: options.provider)
-  id = try Client.create_session(app.server, request)
-  serving = serving_of(try Client.session(app.server, id))
+  request = try Client.new_session(options.cwd, options.model, options.api, options.provider)
+  cwd = request.cwd
+  id = try app.backend.create_session.call(request)
+  serving = serving_of(try app.backend.session.call(id))
   made = app.with(id: id, cwd: cwd, opened: app.opened + 1, serving: serving, usage: none, branch: "")
   ok(read_branch(subscribe(noted(made, "session #{id}"), 0)))
 end
 
 def resume(app: Model, id: String) -> Result[Model]
-  ok(noted(attach(app.with(id: id), try Client.session(app.server, id), false), "session #{id}"))
+  ok(noted(attach(app.with(id: id), try app.backend.session.call(id), false), "session #{id}"))
 end
 
 # Draws the history of the session and reads the events after it; while a turn runs, from the start of the turn, unless
 # `skip_replay` (a server that no longer has that start).
 def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
-  from = session.last_event_id
-  if not skip_replay
-    from = session.turn_from_event_id.unwrap_or(session.last_event_id)
-  end
+  from = Client.replay_from(session, skip_replay)
 
   entries = Transcript.from_history(session.history)
   fresh = app.with(
@@ -530,15 +524,8 @@ def subscribe(app: Model, from: Int) -> Model
 
   generation = app.generation + 1
   feed: Channel[Client.Item] = Channel.new(FEED_CAPACITY)
-  reader = Client.Feed(
-    server: app.server,
-    session_id: app.id,
-    last_event_id: from,
-    tell: ->(item) { feed.send(item, SEND_MS) },
-  )
-
   started = app.with(
-    stream: some(Client.start(reader)),
+    stream: some(app.backend.subscribe.call(app.id, from, ->(item) { feed.send(item, SEND_MS) })),
     feed: some(feed),
     generation: generation,
     last_event_id: from,
@@ -696,10 +683,10 @@ end
 
 # The files of the session's folder come from the server each time an `@` is typed; the list shows the ones read last.
 def read_files(app: Model) -> Model
-  server = app.server
+  backend = app.backend
   id = app.id
   opened = app.opened
-  effect(app.with(reading_files: true), TUI.Cmd.Run(-> { Msg.Files(opened, Client.files(server, id)) }))
+  effect(app.with(reading_files: true), TUI.Cmd.Run(-> { Msg.Files(opened, backend.files.call(id)) }))
 end
 
 def files_read(app: Model, result: Result[Protocol.FileList]) -> Model
@@ -869,9 +856,9 @@ def send(app: Model) -> Model
 end
 
 def shell_send(app: Model, request: Protocol.RunShell) -> Model
-  server = app.server
+  backend = app.backend
   id = app.id
-  effect(app, TUI.Cmd.Run(-> { Msg.ShellSent(request.command, Client.shell(server, id, request)) }))
+  effect(app, TUI.Cmd.Run(-> { Msg.ShellSent(request.command, backend.shell.call(id, request)) }))
 end
 
 # Its `shell_started` and `shell_finished` draw the command; a refusal goes back to an empty prompt, and one that may
@@ -900,10 +887,10 @@ def local?(command: Client.Command) -> Bool
 end
 
 def sending(app: Model, text: String) -> Model
-  server = app.server
+  backend = app.backend
   id = app.id
   opened = app.opened
-  effect(app, TUI.Cmd.Run(-> { Msg.Sent(opened, text, Client.send_message(server, id, text)) }))
+  effect(app, TUI.Cmd.Run(-> { Msg.Sent(opened, text, backend.send_message.call(id, text)) }))
 end
 
 # The next message of the outbox goes once the reply to the one before came, so the server gets them in order.
@@ -986,11 +973,11 @@ def login_command(app: Model, name: Optional[String]) -> Model
 end
 
 def named_from_server(app: Model, name: String) -> Result[Model]
-  ok(named_login(app, (try Client.list_logins(app.server)).providers, name))
+  ok(named_login(app, (try app.backend.list_logins.call()).providers, name))
 end
 
 def login_picking(app: Model) -> Result[Model]
-  ok(app.with(picker: some(Picker.logins(try Client.list_logins(app.server)))))
+  ok(app.with(picker: some(Picker.logins(try app.backend.list_logins.call()))))
 end
 
 def login_picked(app: Model, picker: Picker.Picker, name: String) -> Model = named_login(app, picker.logins, name)
@@ -1027,15 +1014,15 @@ def on_secret_key(app: Model, name: String, event: TUI.Event) -> Model
       login_closed(noted(app.with(key_for: none, secret: "", asking_url: false), "no URL given"))
     TUI.Event.Key(TUI.Key.Escape, _) -> login_closed(noted(app.with(key_for: none, secret: ""), "no key given"))
     TUI.Event.Key(TUI.Key.Enter, _) if app.asking_url and not app.secret.strip.empty? ->
-      server = app.server
+      backend = app.backend
       url = app.secret.strip
       checking = noted(app.with(key_for: none, secret: "", asking_url: false), "checking the base URL of #{name}")
-      effect(checking, TUI.Cmd.Run(-> { Msg.LoggedIn(name, Client.login_url(server, name, url)) }))
+      effect(checking, TUI.Cmd.Run(-> { Msg.LoggedIn(name, backend.login_url.call(name, url)) }))
     TUI.Event.Key(TUI.Key.Enter, _) if not app.secret.strip.empty? ->
-      server = app.server
+      backend = app.backend
       key = app.secret.strip
       checking = noted(app.with(key_for: none, secret: ""), "checking the key of #{name}")
-      effect(checking, TUI.Cmd.Run(-> { Msg.LoggedIn(name, Client.login(server, name, key)) }))
+      effect(checking, TUI.Cmd.Run(-> { Msg.LoggedIn(name, backend.login.call(name, key)) }))
     _ -> app
   end
 end
@@ -1063,12 +1050,12 @@ def login_closed(app: Model) -> Model
   return app.with(exit: some(1)) if app.login_only
   return app if not app.first_login
 
-  _ = Client.skip_login(app.server)
+  _ = app.backend.skip_login.call()
   noted(app.with(first_login: false), "/login sets up a provider later")
 end
 
 def logout_command(app: Model, name: Optional[String]) -> Result[Model]
-  try Client.logout(app.server, name)
+  try app.backend.logout.call(name)
   ok(noted(app, Client.logged_out(name)))
 end
 
@@ -1095,7 +1082,7 @@ def fresh(app: Model) -> Model
     kept = put_back(app)
   end
 
-  seed(app.server, app.options, app.signals, app.width, app.height).with(
+  seed(app.backend, app.options, app.signals, app.width, app.height).with(
     prompt: kept.prompt,
     cursor: kept.cursor,
     thinking: app.thinking,
@@ -1123,7 +1110,7 @@ def switch_command(app: Model, choice: Optional[String]) -> Model
 end
 
 def picking(app: Model) -> Result[Model]
-  list = try Client.list_sessions(app.server)
+  list = try app.backend.list_sessions.call()
   return ok(noted(app, "no sessions")) if list.sessions.empty?
 
   ok(app.with(picker: some(Picker.Picker(sessions: list.sessions))))
@@ -1147,7 +1134,7 @@ def tree_command(app: Model, kind: Picker.Kind, choice: Optional[String]) -> Res
     return ok(move(app, kind, some(try Client.tree_entry(app.listed.unwrap!, picked))))
   end
 
-  tree = try Client.tree(app.server, app.id)
+  tree = try app.backend.tree.call(app.id)
   return ok(noted(app, "no messages yet")) if tree.nodes.empty?
 
   ok(app.with(picker: some(Picker.Picker(tree: Client.tree_rows(tree), kind: kind)), listed: some(tree)))
@@ -1160,14 +1147,14 @@ def move(app: Model, kind: Picker.Kind, entry: Optional[Int]) -> Model
   return noted(app, "a message is being sent: wait for its reply first") if not app.outbox.empty?
   return noted(app, "the session is moving: wait for it") if app.moving
 
-  server = app.server
+  backend = app.backend
   id = app.id
   moving = app.with(moving: true)
   case kind
     Picker.Kind.Tree ->
       at = entry.unwrap_or(0)
-      effect(moving, TUI.Cmd.Run(-> { Msg.Moved(Client.branch(server, id, at)) }))
-    _ -> effect(moving, TUI.Cmd.Run(-> { Msg.Moved(Client.fork(server, id, entry)) }))
+      effect(moving, TUI.Cmd.Run(-> { Msg.Moved(backend.branch.call(id, at)) }))
+    _ -> effect(moving, TUI.Cmd.Run(-> { Msg.Moved(backend.fork.call(id, entry)) }))
   end
 end
 
@@ -1191,7 +1178,7 @@ def moved(app: Model, result: Result[Protocol.Branched]) -> Model
 end
 
 def switched(app: Model, choice: String) -> Result[Model]
-  resume(fresh(app), try Client.pick(try Client.list_sessions(app.server), choice))
+  resume(fresh(app), try Client.pick(try app.backend.list_sessions.call(), choice))
 end
 
 def thinking_command(app: Model, level: Optional[String]) -> Model
@@ -1202,10 +1189,7 @@ def thinking_command(app: Model, level: Optional[String]) -> Model
   end
 end
 
-def shown_thinking(app: Model) -> Result[Model]
-  session = try Client.session(app.server, app.id)
-  ok(noted(app, "thinking #{session.effort.unwrap_or("as the model's default")}"))
-end
+def shown_thinking(app: Model) -> Result[Model] = ok(noted(app, Client.thinking(try app.backend.session.call(app.id))))
 
 # `/model` opens the picker; `/model provider/model` moves the session to that provider when one has that name, else
 # `/model NAME` changes the model.
@@ -1217,19 +1201,19 @@ def model_command(app: Model, given: Optional[String]) -> Model
 end
 
 def model_picking(app: Model) -> Result[Model]
-  list = try Client.list_providers(app.server)
+  list = try app.backend.list_providers.call()
   ok(app.with(picker: some(Picker.models(list, app.serving))))
 end
 
 def model_changed(app: Model, text: String) -> Result[Model]
   current = app.serving.split("/")[0]
-  change = Client.model_change(try Client.list_providers(app.server), current, text)
+  change = Client.model_change(try app.backend.list_providers.call(), current, text)
   done = try changed(app, change, "model #{text} from the next turn")
-  ok(done.with(serving: serving_of(try Client.session(app.server, app.id))))
+  ok(done.with(serving: serving_of(try app.backend.session.call(app.id))))
 end
 
 def changed(app: Model, change: Protocol.UpdateSession, done: String) -> Result[Model]
-  try Client.update_session(app.server, app.id, change)
+  try app.backend.update_session.call(app.id, change)
   shown = noted(app, done)
   for effort in option_list(change.effort)
     shown = shown.with(effort: level_of(effort), confirmed: level_of(effort))
@@ -1242,15 +1226,14 @@ end
 
 # The summary takes as long as a turn: a command asks for it and gives the outcome as a note.
 def compact_command(app: Model) -> Model
-  server = app.server
+  backend = app.backend
   id = app.id
-  noted(effect(app, TUI.Cmd.Run(-> { Msg.Note(compacted(server, id)) })), "compacting the history")
+  noted(effect(app, TUI.Cmd.Run(-> { Msg.Note(compacted(backend, id)) })), "compacting the history")
 end
 
-def compacted(server: Client.Server, id: String) -> String
-  case Client.compact(server, id)
-    ok(folded) if folded -> "compacted"
-    ok(_) -> "nothing to compact yet"
+def compacted(backend: Client.Backend, id: String) -> String
+  case Client.compacted(backend.compact.call(id))
+    ok(text) -> text
     error(e) -> "error: #{e.message}"
   end
 end
@@ -1260,7 +1243,7 @@ def stop(app: Model, turn_id: Optional[String] = none) -> Model
   return noted(app.with(stop_wanted: true), "the turn stops once it starts") if not app.turn and not app.outbox.empty?
   return app if not busy?(app) or app.stopping
 
-  server = app.server
+  backend = app.backend
   id = app.id
   wanted = turn_id
   if wanted.none? and app.turn
@@ -1274,7 +1257,7 @@ def stop(app: Model, turn_id: Optional[String] = none) -> Model
 
   effect(
     noted(app.with(stopping: true), "stopping the #{what}"),
-    TUI.Cmd.Run(-> { Msg.Stopped(what, Client.stop(server, id, wanted)) }),
+    TUI.Cmd.Run(-> { Msg.Stopped(what, backend.stop.call(id, wanted)) }),
   )
 end
 
@@ -1284,9 +1267,9 @@ def answer(app: Model, decision: Protocol.Decision) -> Model
 end
 
 def sent(app: Model, approval_id: String, decision: Protocol.Decision) -> Model
-  server = app.server
+  backend = app.backend
   id = app.id
-  effect(app, TUI.Cmd.Run(-> { Msg.Answered(approval_id, Client.approve(server, id, approval_id, decision)) }))
+  effect(app, TUI.Cmd.Run(-> { Msg.Answered(approval_id, backend.approve.call(id, approval_id, decision)) }))
 end
 
 def allowed(app: Model, request: Protocol.ApprovalRequested) -> Model
@@ -1406,7 +1389,7 @@ end
 def resync(app: Model) -> Model
   return app.with(failure: some("the server keeps asking to read the session again")) if app.resyncs >= MAX_RESYNCS
 
-  case Client.session(app.server, app.id)
+  case app.backend.session.call(app.id)
     ok(session) -> attach(app.with(resyncs: app.resyncs + 1), session, app.resyncs >= 1)
     error(e) -> app.with(failure: some(e.message))
   end
@@ -1417,13 +1400,13 @@ def reconnect(app: Model, reason: String) -> Model
   reconnects = app.reconnects + 1
   return app.with(failure: some("lost the event stream: #{reason}")) if reconnects > MAX_RECONNECTS
 
-  server = app.server
+  backend = app.backend
   generation = app.generation
   pause = RECONNECT_MS * reconnects
   back = TUI.Cmd.Run(
     -> {
       Task.sleep(pause)
-      Msg.Rechecked(generation, Client.recheck(server))
+      Msg.Rechecked(generation, backend.recheck.call())
     },
   )
 
@@ -1521,13 +1504,10 @@ end
 
 def send_level(app: Model) -> Model
   name = level_name(app.effort)
-  server = app.server
+  backend = app.backend
   id = app.id
   change = Protocol.UpdateSession(effort: some(name))
-  effect(
-    app.with(level_sending: some(name)),
-    TUI.Cmd.Run(-> { Msg.Leveled(Client.update_session(server, id, change)) }),
-  )
+  effect(app.with(level_sending: some(name)), TUI.Cmd.Run(-> { Msg.Leveled(backend.update_session.call(id, change)) }))
 end
 
 # A level wanted while the change was on its way goes next; the note comes once the level settles, and a failure
