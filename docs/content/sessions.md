@@ -14,7 +14,7 @@ A client starts a new session in the current folder, unless you name one:
 
 ```sh
 finn --session ID
-finn tui --session ID
+finn chat --session ID
 ```
 
 In a session, `/resume` lists the sessions, the last changed first, and `/resume N` or `/resume ID` switches to one. A session goes on when every client closes: the server keeps running its turn, and a client that attaches later sees what it missed.
@@ -45,7 +45,7 @@ The new session keeps the folder, the system prompt, the provider, the model and
 
 A message you send while the model works waits in the turn's queue: the turn reads it before its next model call, so you can steer it. The queue holds 20 messages at most.
 
-In `finn tui`, Alt+Enter sends a message after the turn ends instead.
+In `finn`, Alt+Enter sends a message after the turn ends instead.
 
 ## Compaction
 
