@@ -13,5 +13,5 @@ blank_line_after_end = true
 #   2e785a761225b6c433410ef9c7b63cfb0a4e83a35a19e0f2aec140b42c06b52d.
 # A system without a C compiler runs without the module: `Bash.parse` gives an error.
 [native.bash]
-build = { sources = ["native/bash.c", "native/runtime/lib.c", "native/grammar/parser.c", "native/grammar/scanner.c"], defines = ["_POSIX_C_SOURCE=200112L", "_DEFAULT_SOURCE"] }
+build = { sources = ["native/bash.c", "native/runtime/lib.c", "native/grammar/parser.c", "native/grammar/scanner.c"], defines = ["_POSIX_C_SOURCE=200112L", "_DEFAULT_SOURCE", "_BSD_SOURCE", "_DARWIN_C_SOURCE", "TREE_SITTER_HIDE_SYMBOLS"] }
 optional = true

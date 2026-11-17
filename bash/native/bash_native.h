@@ -34,7 +34,7 @@ typedef struct {
 enum { BASH_TYPE_Parsed = 0, BASH_TYPE_Command = 1, BASH_TYPE_Word = 2 };
 
 /* The fields of Parsed, in declared order. */
-enum { BASH_Parsed_commands = 0, BASH_Parsed_error = 1 };
+enum { BASH_Parsed_commands = 0, BASH_Parsed_error = 1, BASH_Parsed_unclear = 2 };
 
 /* The fields of Command, in declared order. */
 enum { BASH_Command_text = 0, BASH_Command_words = 1 };
@@ -50,6 +50,7 @@ enum { BASH_Word_kind = 0, BASH_Word_text = 1 };
 typedef struct {
   an_term commands;
   bool error;
+  bool unclear;
 } bash_Parsed;
 an_term bash_Parsed_make(an_env *env, const bash_Parsed *value);
 
@@ -75,6 +76,8 @@ an_term bash_Word_make(an_env *env, const bash_Word *value);
    argument is; _get reads one held as a term. One that is made has _some or _ok (an_none and an_error make the
    others). */
 
+an_term bash_result_Parsed_ok(an_env *env, bash_Parsed value);
+
 typedef struct {
   an_list_builder builder;
 } bash_list_Command_builder;
@@ -89,8 +92,9 @@ void bash_list_Word_begin(an_env *env, bash_list_Word_builder *b, size_t hint);
 void bash_list_Word_push(an_env *env, bash_list_Word_builder *b, bash_Word value);
 an_term bash_list_Word_end(an_env *env, bash_list_Word_builder *b);
 
-/* The commands of `line`, read by tree-sitter-bash. */
-an_term bash_commands(an_env *env, ng_str line);
+/* The commands of `line`, read by tree-sitter-bash; an error when the parse takes over `limit_ms`, or when the
+   commands hold over 1 MiB of text (a substitution's text is in the command around it too). */
+an_term bash_commands(an_env *env, ng_str line, int64_t limit_ms);
 
 #ifdef __cplusplus
 }
@@ -112,9 +116,10 @@ AN_EXPORT const an_module *agentica_native_init(const an_api *api);
 #endif
 
 an_term bash_Parsed_make(an_env *env, const bash_Parsed *value) {
-  an_term fields[2];
+  an_term fields[3];
   fields[0] = value->commands;
   fields[1] = an_bool(env, value->error);
+  fields[2] = an_bool(env, value->unclear);
   return an_struct(env, BASH_TYPE_Parsed, fields);
 }
 
@@ -130,6 +135,10 @@ an_term bash_Word_make(an_env *env, const bash_Word *value) {
   fields[0] = an_string(env, value->kind.data, value->kind.len);
   fields[1] = an_string(env, value->text.data, value->text.len);
   return an_struct(env, BASH_TYPE_Word, fields);
+}
+
+an_term bash_result_Parsed_ok(an_env *env, bash_Parsed value) {
+  return an_ok(env, bash_Parsed_make(env, &value));
 }
 
 void bash_list_Command_begin(an_env *env, bash_list_Command_builder *b, size_t hint) { an_list_begin(env, &b->builder, hint); }
@@ -152,15 +161,17 @@ static an_term bash_native_commands(an_env *env, int argc, const an_term *argv) 
   (void)argc;
   ng_str a0;
   if (!an_get_string(env, argv[0], &a0.data, &a0.len)) return an_badarg(env, 0);
-  return bash_commands(env, a0);
+  int64_t a1;
+  if (!an_get_int(env, argv[1], &a1)) return an_badarg(env, 1);
+  return bash_commands(env, a0, a1);
 }
 
 static const an_function bash_native_functions[] = {
-  {"commands", "(String) -> Parsed", bash_native_commands, AN_SHORT},
+  {"commands", "(String, Int) -> Result[Parsed]", bash_native_commands, AN_DIRTY},
 };
 
 static const an_type bash_native_types[] = {
-  {"Parsed", AN_STRUCT, "commands: List[Command], error: Bool"},
+  {"Parsed", AN_STRUCT, "commands: List[Command], error: Bool, unclear: Bool"},
   {"Command", AN_STRUCT, "text: String, words: List[Word]"},
   {"Word", AN_STRUCT, "kind: String, text: String"},
 };

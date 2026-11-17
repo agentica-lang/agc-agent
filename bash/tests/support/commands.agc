@@ -1,5 +1,5 @@
 ## For the bash peer test: reads a JSON list of lines from the file named first, and prints a JSON list with, for each,
-## `{"error": Bool, "commands": [[[kind, text], ...], ...]}`, or null when it is not read.
+## `{"error": Bool, "unclear": Bool, "commands": [[[kind, text], ...], ...]}`, or null when it is not read.
 
 import Bash from "../../bash"
 
@@ -14,7 +14,13 @@ def read(line: String) -> Optional[JSON.Value]
   case Bash.parse(line)
     ok(parsed) ->
       commands = parsed.commands.map { |c| c.words.map { |w| [w.kind, w.text] } }
-      some(JSON.object({"error": JSON.from(parsed.error), "commands": JSON.from(commands)}))
+      fields = {
+        "error": JSON.from(parsed.error),
+        "unclear": JSON.from(parsed.unclear),
+        "commands": JSON.from(commands),
+      }
+
+      some(JSON.object(fields))
     error(_) -> none
   end
 end

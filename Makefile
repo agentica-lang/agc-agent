@@ -38,7 +38,7 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check native-header native-check unit unit-package smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
+.PHONY: install check coupling fmt-check native-gen native-header native-check unit unit-package smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
 install:
@@ -72,13 +72,21 @@ coupling:
 	@$(call none,core/src/http imports a file of session but session.agc,-g 'core/src/http/**' '^import \w+ from "\.\./session/(?!session")' -P .)
 
 # The header of bash's native module, made by native-gen from the extern block (bash/src/tree.agc); native-check fails
-# when the committed one is stale.
+# when the committed one is stale. The clone is made again when it is not NATIVE_GEN_COMMIT or has no cli.agc (a clone
+# that stopped midway).
 NATIVE_GEN = .tools/native-gen-0.4.0
-$(NATIVE_GEN):
-	git clone -q --depth 1 --branch native-gen-0.4.0 https://github.com/agentica-lang/packages $@
-native-header: $(NATIVE_GEN)
+NATIVE_GEN_COMMIT = 42a1fd2b39a08bc1524aa9c5a2d2525f0f29aba0
+native-gen:
+	@if [ ! -f '$(NATIVE_GEN)/native-gen/cli.agc' ] || \
+	  [ "$$(git -C '$(NATIVE_GEN)' rev-parse HEAD 2>/dev/null)" != $(NATIVE_GEN_COMMIT) ]; then \
+	  rm -rf '$(NATIVE_GEN)' && \
+	  git clone -q --depth 1 --branch native-gen-0.4.0 https://github.com/agentica-lang/packages '$(NATIVE_GEN)' && \
+	  [ "$$(git -C '$(NATIVE_GEN)' rev-parse HEAD)" = $(NATIVE_GEN_COMMIT) ] || \
+	  { echo 'native-gen: the tag native-gen-0.4.0 is not $(NATIVE_GEN_COMMIT)' >&2; exit 1; }; \
+	fi
+native-header: native-gen
 	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h
-native-check: $(NATIVE_GEN)
+native-check: native-gen
 	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h --check
 
 fmt-check:
