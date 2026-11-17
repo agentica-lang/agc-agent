@@ -4,6 +4,7 @@
 
 ### Changed
 
+- **Breaking:** Finn needs Agentica 0.34.0. A model stream that is silent for 2 minutes now fails, rather than hanging; the event stream of a session has no read limit.
 - A resumed session shows the thinking, tool calls and stop notes of its turns, not only the messages; the session line comes first.
 - Leaving `finn` or `finn chat` prints how to come back to the session (`finn --session ID`), unless it is empty.
 - The footer shows no exact tok/s for a reply that came in one burst.

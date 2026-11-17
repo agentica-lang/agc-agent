@@ -62,7 +62,7 @@ A failed request answers with `{"kind": "...", "message": "..."}`. Branch on `ki
 
 ## Events
 
-`GET /v1/sessions/ID/events` is a stream of Server-Sent Events. Each event has its kind as the SSE `event:`, its id as `id:`, and its JSON as `data:`.
+`GET /v1/sessions/ID/events` is a stream of Server-Sent Events. Each event has its kind as the SSE `event:`, its id as `id:`, and its JSON as `data:`. The stream has no heartbeat and stays quiet while the model thinks, so read it with no read timeout (with Agentica's `std/http`, `read_timeout_ms: 0`).
 
 | Event | When |
 |---|---|

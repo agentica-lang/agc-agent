@@ -252,6 +252,22 @@ def test_events_not_read_in_time_are_llm_slow_reader() -> Result[Void]
   Test.eq(Ev.kind(result), "llm.slow_reader")
 end
 
+# An API that goes silent mid-stream fails the call after the read timeout, not after the time of a whole answer.
+def test_a_stream_that_stalls_fails_after_its_read_timeout() -> Result[Void]
+  stalling = (try Fake.sse("openai_chat/text.sse", piece_bytes: 64)).with(stall_after: 1024)
+  fake = try Fake.start([stalling])
+  provider = LLM.openai_chat(fake.url, KEY, LLM.Options(timeout_ms: 5000, read_timeout_ms: 300, tries: 1))
+  started = Time.monotonic_ms
+  call = try LLM.stream(provider, LLM.Request(model: MODEL, messages: [Ev.user("Say hello.")]))
+  events = Ev.collect(call)
+  result = Task.await(call.done)
+  waited = Time.monotonic_ms - started
+  try Fake.stop(fake)
+  try Test.eq([Ev.kind(result), result.message], ["llm.network", "llm: the API sent nothing for 300 ms"])
+  try Test.assert(waited < 5000, "it waited #{waited} ms")
+  Test.eq(events.empty?, false)
+end
+
 def test_a_401_is_llm_auth_and_not_tried_again() -> Result[Void]
   fake = try Fake.start([try Fake.json(401, "openai_chat/unauthorized.json"), try Fake.sse("openai_chat/text.sse")])
   result = LLM.stream(provider(fake), LLM.Request(model: MODEL, messages: [Ev.user("Say hello.")]))

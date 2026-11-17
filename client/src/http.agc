@@ -14,9 +14,9 @@ EXPORT_TIMEOUT_MS = 120_000
 EXPORT_BODY_BYTES = 67_108_864
 ## The most a client takes of a session: its history holds every message of the branch, and a line of each tool call.
 SESSION_BODY_BYTES = 16_777_216
-# A session can be quiet for as long as the model thinks, and the protocol has no heartbeat: the stream is read without
-# a timeout of practical size.
-EVENTS_TIMEOUT_MS = 86_400_000
+# The head of an event stream comes at once. Its body can be quiet for as long as the model thinks, and the protocol
+# has no heartbeat: it is read with no time limit, and a cancel stops it.
+EVENTS_HEAD_MS = 10_000
 ERROR_BODY_BYTES = 65_536
 ## The server did not answer: nothing listens, or the connection failed.
 KIND_UNREACHABLE = "client.unreachable"
@@ -231,10 +231,9 @@ def open_events(server: Server, id: String, last_event_id: Int) -> Result[HTTP.S
   rejected
 end
 
-## The limits of an event stream, which is quiet while the model thinks: no call or idle timeout cuts it.
-def events_options() -> HTTP.ClientOptions
-  HTTP.ClientOptions(timeout_ms: EVENTS_TIMEOUT_MS, idle_timeout_ms: EVENTS_TIMEOUT_MS)
-end
+## The limits of an event stream, which is quiet while the model thinks: the head comes in `EVENTS_HEAD_MS`, and no
+## read timeout cuts the body.
+def events_options() -> HTTP.ClientOptions = HTTP.ClientOptions(timeout_ms: EVENTS_HEAD_MS, read_timeout_ms: 0)
 
 private
 

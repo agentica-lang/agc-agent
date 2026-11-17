@@ -252,7 +252,9 @@ def left(deadline: Int, method: String) -> Result[Int]
   ok(wait)
 end
 
-def options(wait: Int) -> HTTP.ClientOptions = HTTP.ClientOptions(timeout_ms: wait, idle_timeout_ms: wait)
+def options(wait: Int) -> HTTP.ClientOptions
+  HTTP.ClientOptions(timeout_ms: wait, read_timeout_ms: wait, idle_timeout_ms: wait)
+end
 
 # Visible ASCII only, as the spec asks, or none at all.
 def session_id?(session: String) -> Bool

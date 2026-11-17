@@ -23,6 +23,8 @@ A provider is where the model runs: a company's API or a server of your own. The
 
 Your config file can add more, or replace one of these: see [Your own provider](#your-own-provider).
 
+A model call fails when its API sends nothing for 2 minutes in the middle of an answer.
+
 ## Log in
 
 ```sh
