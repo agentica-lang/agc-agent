@@ -21,8 +21,8 @@
 
 ### Added
 
-- `finn`: Ctrl+Left/Right, Alt+B/F and Alt+Backspace work; Delete takes a whole character, word moves stop at line ends, and Up/Down keep their column.
-- `finn` has pi's editing keys: Ctrl+A/E, Ctrl+W, Ctrl+U/K, Delete, Alt+Left/Right by word, Up/Down between the rows of the prompt, and Ctrl+D on an empty prompt quits.
+- `finn`: Ctrl+Left/Right, Alt+B/F and Alt+Backspace work; Delete takes a whole character, word moves stop at line ends, and Up/Down keep their column; an Alt key types nothing.
+- `finn` has pi's editing keys: Ctrl+A/E, Ctrl+W, Ctrl+U/K, Delete, Alt+Left/Right by word, Up/Down between the rows of the prompt, and Ctrl+D on an empty prompt quits when nothing runs.
 - `finn` shows a footer: the folder, git branch and first message, then the last model call's tokens, cache and context, the session's cost, and the model with its thinking level.
 - `finn login local` stores the base URL of a local server; `FINN_BASE_URL` wins.
 - Finn Agent, a coding agent: `finn` (full screen) and `finn chat` (lines) talk to a local server.

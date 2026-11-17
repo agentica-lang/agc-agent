@@ -51,12 +51,12 @@ def moved(app: State.Model, result: Result[Protocol.Branched]) -> State.Model
       if opened.prompt != ""
         both = "#{done.text}\n#{opened.prompt}"
         return State.noted(
-          opened.with(prompt: both, cursor: both.length),
+          opened.with(prompt: both, cursor: both.length, goal_column: none),
           "went back before a message: it is in the prompt",
         )
       end
 
-      filled = opened.with(prompt: done.text, cursor: done.text.length, prefilled: true)
+      filled = opened.with(prompt: done.text, cursor: done.text.length, goal_column: none, prefilled: true)
       State.noted(filled, "went back before a message: it is in the prompt (typing replaces it, an arrow keeps it)")
     error(e) -> State.noted(app.with(moving: false), "error: #{e.message}")
   end

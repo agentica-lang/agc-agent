@@ -16,7 +16,8 @@ import Turn from "turn"
 import Commands from "commands"
 import Views from "views"
 
-def on_key(app: State.Model, event: TUI.Event) -> State.Model
+def on_key(model: State.Model, event: TUI.Event) -> State.Model
+  app = aimed(model, event)
   for name in State.option_list(app.key_for)
     return Logins.on_secret_key(app, name, event) if not State.ctrl_c?(event)
   end
@@ -36,7 +37,7 @@ def on_key(app: State.Model, event: TUI.Event) -> State.Model
     return Files.on_mention_key(app, found, event) if Files.mention_key?(app, found, event)
   end
 
-  on_prompt_key(unselected(aimed(app, event), event), event)
+  on_prompt_key(unselected(app, event), event)
 end
 
 private
@@ -60,8 +61,7 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(exit: some(0))
     TUI.Event.Key(TUI.Key.Enter, mods) if mods.alt -> follow_up(app)
     TUI.Event.Key(TUI.Key.Enter, _) -> send(app)
-    TUI.Event.Key(TUI.Key.Ctrl("d"), _) if app.prompt == "" and not State.busy?(app) and app.approvals.pending.empty? ->
-      app.with(exit: some(0))
+    TUI.Event.Key(TUI.Key.Ctrl("d"), _) if app.prompt == "" and idle?(app) -> app.with(exit: some(0))
     TUI.Event.Key(TUI.Key.Up, _) -> line_moved(app, -1)
     TUI.Event.Key(TUI.Key.Down, _) -> line_moved(app, 1)
     TUI.Event.Key(TUI.Key.Ctrl("t"), _) ->
@@ -72,7 +72,7 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
       State.noted(shown, "tool output: #{Views.shown_name(shown.tools)}")
     TUI.Event.Key(TUI.Key.Ctrl("j"), _) -> typed(app, "\n")
     TUI.Event.Key(TUI.Key.Backspace, mods) if mods.alt -> cut_to(app, Prompt.word_left(app.prompt, State.cursor(app)))
-    TUI.Event.Key(TUI.Key.Backspace, _) -> cut_to(app, State.cursor(app) - 1)
+    TUI.Event.Key(TUI.Key.Backspace, _) -> cut_to(app, Prompt.previous_char(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Delete, _), TUI.Event.Key(TUI.Key.Ctrl("d"), _) -> deleted(app)
     TUI.Event.Key(TUI.Key.Ctrl("w"), _) -> cut_to(app, Prompt.word_left(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Ctrl("u"), _) -> cut_to(app, line_back(app))
@@ -87,8 +87,8 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
       app.with(cursor: Prompt.word_left(app.prompt, State.cursor(app)))
     TUI.Event.Char(c, mods) if mods.alt and c.downcase == "f" ->
       app.with(cursor: Prompt.word_right(app.prompt, State.cursor(app)))
-    TUI.Event.Key(TUI.Key.Left, _) -> app.with(cursor: [State.cursor(app) - 1, 0].max.unwrap!)
-    TUI.Event.Key(TUI.Key.Right, _) -> app.with(cursor: Prompt.clamp(app.prompt, State.cursor(app) + 1))
+    TUI.Event.Key(TUI.Key.Left, _) -> app.with(cursor: Prompt.previous_char(app.prompt, State.cursor(app)))
+    TUI.Event.Key(TUI.Key.Right, _) -> app.with(cursor: Prompt.next_char(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Home, _) -> app.with(cursor: 0)
     TUI.Event.Key(TUI.Key.End, _) -> app.with(cursor: app.prompt.length)
     TUI.Event.Mouse(TUI.Mouse.Left, x, y, mods) if not mods.motion -> clicked(app, x, y)
@@ -146,6 +146,13 @@ def deleted(app: State.Model) -> State.Model
   return app if text == app.prompt
 
   app.with(prompt: text, recall: none)
+end
+
+# Ctrl+D quits only when nothing runs or waits: no turn or command, no approval, no message on its way.
+def idle?(app: State.Model) -> Bool
+  return false if State.busy?(app) or not app.approvals.pending.empty? or not app.outbox.empty?
+
+  not app.moving and not app.stopping
 end
 
 # Up and Down keep their column across shorter rows; any other key forgets it.

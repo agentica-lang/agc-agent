@@ -32,21 +32,30 @@ def insert(text: String, at: Int, piece: String) -> String
   text.slice(0, cut) + piece + text.slice(cut, text.length - cut)
 end
 
-## The text without the character before `at`.
-def backspace(text: String, at: Int) -> String
-  cut = clamp(text, at)
-  return text if cut == 0
+## The text without the character after `at`, with what joins it (see `next_char`).
+def delete(text: String, at: Int) -> String = cut(text, at, next_char(text, at))
 
-  text.slice(0, cut - 1) + text.slice(cut, text.length - cut)
+## The place after the character at `at`, with the code points that join it into one: zero-width ones, the one after a
+## ZWJ, a skin tone, and the second flag letter of a pair.
+def next_char(text: String, at: Int) -> Int
+  cut = clamp(text, at)
+  return cut if cut == text.length
+
+  grapheme_end(text.split(""), cut)
 end
 
-## The text without the character after `at`.
-def delete(text: String, at: Int) -> String
+## The place before the character that ends at `at`, with what joins it.
+def previous_char(text: String, at: Int) -> Int
   cut = clamp(text, at)
-  return text if cut == text.length
+  chars = text.split("")
+  start = 0
+  last = 0
+  while last < cut
+    start = last
+    last = grapheme_end(chars, last)
+  end
 
-  last = grapheme_end(text.split(""), cut)
-  text.slice(0, cut) + text.slice(last, text.length - last)
+  start
 end
 
 ## The text without the characters from `from` up to `to`.
@@ -160,6 +169,8 @@ end
 private
 
 ZWJ = 0x200D
+SKIN_TONES = 0x1F3FB..0x1F3FF
+FLAG_LETTERS = 0x1F1E6..0x1F1FF
 SPACE = 0
 # Characters of their own word class: a word move stops where letters and these meet.
 PUNCTUATION = Set.new("!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~".split(""))
@@ -256,14 +267,25 @@ def class_of(c: String) -> Int
   2
 end
 
-# The end of the character at `at` with the zero-width code points after it and a character joined by a ZWJ.
+# The end of the character at `at` with what joins it: two flag letters are one flag, and then the zero-width code
+# points, skin tones and characters after a ZWJ.
 def grapheme_end(chars: List[String], at: Int) -> Int
   last = at + 1
-  while last < chars.size and (Width.char(chars[last]) == 0 or chars[last - 1].code == ZWJ)
+  if FLAG_LETTERS.include?(chars[at].code) and last < chars.size and FLAG_LETTERS.include?(chars[last].code)
+    last = last + 1
+  end
+
+  while last < chars.size and joins?(chars[last - 1], chars[last])
     last = last + 1
   end
 
   last
+end
+
+def joins?(before: String, c: String) -> Bool
+  return false if c == "\n"
+
+  Width.char(c) == 0 or before.code == ZWJ or SKIN_TONES.include?(c.code)
 end
 
 # Every row the text draws in `width`, each line cut by the width.
