@@ -1,6 +1,8 @@
 ## What a tool is, and what it needs to run.
 
 MAX_OUTPUT_CHARS = 30000
+## The kind of the error of a call that an extension stopped (`Before`).
+BLOCKED = "tool.blocked"
 
 ## Whether a call runs, waits for an answer or is refused: the answer of the approval extension.
 enum Verdict
@@ -24,9 +26,15 @@ struct Context
   ## What the extensions put around the run of a tool (`Core.wrap_tools`), by the tool's name: never its target or
   ## `asks`, which the approval decides on.
   wrap: Optional[Fn[String, Run, Run]] = none
+  ## What the extensions make of the input of a call before anything else sees it (`Core.Event.ToolBefore`).
+  before: Optional[Before] = none
 end
 
 type Run = Fn[Context, JSON.Value, Result[String]]
+
+## Gets the context, the tool's name and the input of a call, and gives the input it runs on; an error of the kind
+## `BLOCKED` when an extension stops it.
+type Before = Fn[Context, String, JSON.Value, Result[JSON.Value]]
 
 struct Output
   text: String
