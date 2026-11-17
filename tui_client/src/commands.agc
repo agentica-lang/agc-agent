@@ -113,10 +113,10 @@ def switch_command(app: State.Model, choice: Optional[String]) -> State.Model
 end
 
 def picking(app: State.Model) -> Result[State.Model]
-  list = try app.backend.list_sessions.call()
-  return ok(State.noted(app, "no sessions")) if list.sessions.empty?
+  sessions = Client.resumable(try app.backend.list_sessions.call())
+  return ok(State.noted(app, "no sessions")) if sessions.empty?
 
-  ok(app.with(picker: some(Picker.Picker(sessions: list.sessions))))
+  ok(app.with(picker: some(Picker.Picker(sessions: sessions))))
 end
 
 def picked(app: State.Model, kind: Picker.Kind, key: String) -> State.Model

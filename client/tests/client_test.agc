@@ -86,12 +86,16 @@ def test_a_bang_line_is_a_shell_command() -> Result[Void]
   ok()
 end
 
+# The list to resume leaves out the empty sessions; their numbers go to the others, but an id still picks one.
 def test_resume_picks_by_number_or_id() -> Result[Void]
-  sessions = ["a1", "b2"].map { |id| Protocol.SessionSummary(id: id, cwd: "/w", model: "m", api: "openai") }
+  sessions = ["a1", "e0", "b2"].map { |id|
+    Protocol.SessionSummary(id: id, cwd: "/w", model: "m", api: "openai", empty: id == "e0")
+  }
+
   list = Protocol.SessionList(sessions: sessions)
   try Test.eq(Client.listing(list), ["1. a1  m  /w", "2. b2  m  /w"])
   try Test.eq(Client.pick(list, "2"), ok("b2"))
-  try Test.eq(Client.pick(list, "a1"), ok("a1"))
+  try Test.eq([Client.pick(list, "a1"), Client.pick(list, "e0")], [ok("a1"), ok("e0")])
   Test.error?(Client.pick(list, "3"))
 end
 

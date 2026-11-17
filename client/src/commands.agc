@@ -186,20 +186,24 @@ def model_change(list: Protocol.ProviderList, current: String, text: String) -> 
   Protocol.UpdateSession(model: some(text))
 end
 
-## The sessions of the server, one numbered line each, for `/resume N`.
+## The sessions a client offers to resume: those with something in them (the server marks the others `empty`).
+def resumable(list: Protocol.SessionList) -> List[Protocol.SessionSummary] = list.sessions.select { |s| not s.empty }
+
+## The sessions to resume, one numbered line each, for `/resume N`.
 def listing(list: Protocol.SessionList) -> List[String]
-  numbers = (1..list.sessions.size).to_a
+  sessions = resumable(list)
+  numbers = (1..sessions.size).to_a
   numbers.map do |n|
-    s = list.sessions[n - 1]
+    s = sessions[n - 1]
     "#{n}. #{s.id}  #{s.model}  #{s.cwd}"
   end
 end
 
-## The id `/resume` chose: the number of a line of `listing`, or an id of the list.
+## The id `/resume` chose: the number of a line of `listing`, or an id of the list (an empty session's too).
 def pick(list: Protocol.SessionList, choice: String) -> Result[String]
-  ids = list.sessions.map { |s| s.id }
-  return ok(choice) if ids.include?(choice)
+  return ok(choice) if (list.sessions.any? { |s| s.id == choice })
 
+  ids = resumable(list).map { |s| s.id }
   case choice.to_i
     ok(n) if n >= 1 and n <= ids.size -> ok(ids[n - 1])
     _ -> error("no session #{choice}: /resume lists them", kind: KIND_COMMAND)

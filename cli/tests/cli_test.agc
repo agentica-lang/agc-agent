@@ -664,12 +664,14 @@ def test_yolo_asks_an_approval_of_a_turn_it_did_not_start() -> Result[Void]
 end
 
 # The session commands: /model and /thinking change the session, a bad level is refused before any request,
-# /resume lists the sessions and switches to the one picked, /new makes another one, and /help lists them all with
+# /resume lists the sessions but the empty ones and switches to the one picked, /new makes another one, and /help lists
+# them all with
 # the session's slash commands.
 def test_session_commands() -> Result[Void]
   list = Protocol.SessionList(
     sessions: [
       Protocol.SessionSummary(id: "s1", cwd: "/work", model: "m", api: "openai"),
+      Protocol.SessionSummary(id: "s0", cwd: "/empty", model: "m", api: "openai", empty: true),
       Protocol.SessionSummary(id: "s2", cwd: "/other", model: "m2", api: "openai"),
     ],
   )

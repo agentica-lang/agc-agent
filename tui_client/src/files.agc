@@ -195,7 +195,7 @@ def listing(
 
       ok(Input.Arguments(command: command, choices: choices))
     "/resume" ->
-      sessions = (try backend.list_sessions.call()).sessions
+      sessions = Client.resumable(try backend.list_sessions.call())
       shown = Picker.shown(Picker.Picker(sessions: sessions), now_s)
       choices = shown.map { |c| Input.Choice(value: Client.printable(c.key), label: c.text) }
       ok(Input.Arguments(command: command, choices: choices))

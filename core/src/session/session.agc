@@ -455,6 +455,7 @@ def summary_now(found: Cached) -> Protocol.SessionSummary
     api: found.listing.api.unwrap_or(found.summary.api),
     updated_s: found.modified_s,
     title: cut.split("").map { |c| Folder.printable(c) }.join(""),
+    empty: found.listing.empty,
   )
 end
 
