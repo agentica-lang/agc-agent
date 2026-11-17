@@ -579,7 +579,7 @@ class PtyTest(unittest.TestCase):
         term.wait_for(" thinking high")
         term.type("/thinking max\r")
         rows = term.wait_for(" the thinking level is one of low, medium, high, default")
-        self.assertEqual(rows[-3], " /thinking max")
+        self.assertEqual(rows[-4], " /thinking max")
         term.type("\x7f" * len("/thinking max"))
         term.type("again\r")
         # The turn has finished once its answer is drawn twice and the status is back to ready, not before.
