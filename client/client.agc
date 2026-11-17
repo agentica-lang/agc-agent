@@ -23,6 +23,7 @@ export Http.send_message
 export Http.approve
 export Http.delete_session
 export Http.stop
+export Http.files
 export Http.list_sessions
 export Http.list_providers
 export Http.update_session

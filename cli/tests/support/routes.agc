@@ -34,8 +34,14 @@ def answering(approval_id: String, reply: Fake.Reply) -> Fake.Route
   Fake.Route(method: "POST", path: Protocol.approval_path("s1", approval_id), replies: [reply])
 end
 
+## A stop; a reply with no body answers that a turn was stopped.
 def stopping(reply: Fake.Reply) -> Fake.Route
-  Fake.Route(method: "POST", path: Protocol.stop_path("s1"), replies: [reply])
+  answer = reply
+  if reply.body == ""
+    answer = reply.with(body: Protocol.encode_stopped(Protocol.Stopped(stopped: true)))
+  end
+
+  Fake.Route(method: "POST", path: Protocol.stop_path("s1"), replies: [answer])
 end
 
 ## The reply that fails: the answer to an events request that is not a stream.

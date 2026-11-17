@@ -4,6 +4,7 @@
 import HTTP from "std/http"
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
+import Yolo from "pkg/client/yolo"
 import TUI from "pkg/tui/tui"
 import App from "../src/app"
 import Approvals from "../src/approvals"
@@ -280,6 +281,58 @@ def slash(rig: Rig) -> Result[Void]
   )
 
   Test.assert(rows.any? { |row| row == " /model" }, "the prompt holds the command: #{rows}")
+end
+
+# `@` asks the server for the files of the session's folder; Tab puts the selected one in place of the word.
+def test_at_lists_the_files_the_server_gives() -> Result[Void]
+  listed = Protocol.encode_file_list(Protocol.FileList(files: ["README.md", "notes/thinking.sse"]))
+  within(80, 24, &mention, {"GET #{Protocol.files_path("s1")}": listed})
+end
+
+def mention(rig: Rig) -> Result[Void]
+  try press(rig, TUI.Event.Char("@", TUI.Mods()))
+  try Test.eq(rig.requests.recv(2000), ok("GET #{Protocol.files_path("s1")}"))
+  try shows(rig, " notes/thinking.sse")
+  for char in ["t", "h", "k"]
+    try press(rig, TUI.Event.Char(char, TUI.Mods()))
+  end
+
+  try press(rig, TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))
+  rows = try shows(rig, "@notes/thinking.sse")
+  Test.assert(not rows.any? { |row| row.include?("README.md") }, "the list closed: #{rows}")
+end
+
+# Esc before the reply of a message that went into another client's turn stops that turn by its id, so a later turn
+# is not stopped.
+def test_an_early_stop_names_the_turn() -> Result[Void] = within(80, 24, &early_stop, {}, some(&queued_with_stop))
+
+def queued_with_stop(app: App.Model) -> App.Model
+  accepted = Protocol.MessageAccepted(turn_id: "t9", message_id: some("t9.1"))
+  opened = app.opened
+  reply = TUI.Cmd.Run(-> { App.Msg.Sent(opened, "hi", ok(accepted)) })
+  app.with(outbox: ["hi"], stop_wanted: true, effects: app.effects.push(reply))
+end
+
+# Esc while a turn runs stops it by the id its `turn_started` gave.
+def test_escape_stops_the_running_turn_by_its_id() -> Result[Void]
+  within(
+    80,
+    24,
+    &running_stop,
+    {},
+    some(->(app: App.Model) { app.with(turn: true, yolo: Yolo.running(app.yolo, some("t5"))) }),
+  )
+end
+
+def running_stop(rig: Rig) -> Result[Void]
+  try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
+  try Test.eq(rig.requests.recv(2000), ok("POST #{Protocol.stop_path("s1")}"))
+  Test.eq(rig.bodies.recv(2000), ok(Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: some("t5")))))
+end
+
+def early_stop(rig: Rig) -> Result[Void]
+  try Test.eq(rig.requests.recv(2000), ok("POST #{Protocol.stop_path("s1")}"))
+  Test.eq(rig.bodies.recv(2000), ok(Protocol.encode_stop_turn(Protocol.StopTurn(turn_id: some("t9")))))
 end
 
 # Runs `body` with the app on a fake terminal of `width` by `height` and a server that records its calls, then ends
