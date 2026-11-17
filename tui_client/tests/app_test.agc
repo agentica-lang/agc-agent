@@ -184,7 +184,8 @@ def test_a_turn_spins_in_the_rule() -> Result[Void]
 end
 
 # The model's todo list shows as a notice, one item a line, from its event and from the session read after a move.
-# `/profile NAME` changes the profile and the status line names it, with the server's warnings as notices.
+# `/profile NAME` changes the profile and the status line names it, with the server's warnings as notices; a refusal
+# while a turn runs is shown.
 def test_the_profile_command_changes_the_footer() -> Result[Void]
   warned = Protocol.Profile(name: "ro", source: "user", warnings: ["profile ro: no tool is named gerp"])
   session = Protocol.Session(
@@ -211,7 +212,16 @@ def test_the_profile_command_changes_the_footer() -> Result[Void]
   ).model
 
   drawn = rows(done).join("\n")
-  Test.assert(drawn.include?("ro · (local) m") and drawn.include?("no tool is named gerp"), drawn)
+  try Test.assert(drawn.include?("ro · (local) m") and drawn.include?("no tool is named gerp"), drawn)
+  busy = backend.with(
+    update_session: ->(_id: String, _change: Protocol.UpdateSession) {
+      error("a turn is running: change the profile after it", kind: Protocol.KIND_SESSION_BUSY)
+    },
+  )
+
+  typed = model_of(60, 12).with(backend: busy, id: "s1", prompt: "/profile ro", cursor: 11)
+  refused = rows(App.update(typed, enter()).model).join("\n")
+  Test.assert(refused.include?("change the profile after it"), refused)
 end
 
 # The status line names the session's profile, unless it is the built-in `build`.

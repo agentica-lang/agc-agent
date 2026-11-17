@@ -447,8 +447,9 @@ def new_session_in(
   api: Optional[String] = none,
   provider: Optional[String] = none,
   profile: Optional[String] = none,
+  model: Optional[String] = none,
 ) -> Result[String]
-  asked = Protocol.NewSession(cwd: cwd, model: none, api: api, provider: provider, profile: profile)
+  asked = Protocol.NewSession(cwd: cwd, model: model, api: api, provider: provider, profile: profile)
   answer = try post(h, Protocol.SESSIONS_PATH, Protocol.encode_new_session(asked))
 
   return error("POST /v1/sessions: #{answer.status} #{answer.text}") if answer.status != 201

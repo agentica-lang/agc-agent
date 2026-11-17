@@ -68,7 +68,7 @@ Type them in either client:
 | `/export [--force] [PATH]` | write the session to a Markdown file ([Sessions](sessions.md#export)) |
 | `/model [PROVIDER/]NAME` | change the model (and provider) from the next turn on; alone, pick or show it |
 | `/thinking [low\|medium\|high\|default]` | show or change the thinking level |
-| `/profile [NAME]` | change the [profile](tools.md#profiles) from the next turn on (Tab completes it in `finn`); alone, list them |
+| `/profile [NAME]` | change the [profile](tools.md#profiles) between turns (Tab completes it in `finn`); alone, list them |
 | `/compact` | fold the history into a summary now |
 | `/login [PROVIDER]` | set up a provider (`finn`) |
 | `/logout [PROVIDER]` | remove a stored key; alone, every one |

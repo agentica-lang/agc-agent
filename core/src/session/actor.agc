@@ -19,7 +19,6 @@ import Agent from "../agent/agent"
 import Compaction from "../agent/compaction"
 import Branch from "branch"
 import Export from "export"
-import Profile from "profile"
 import Profiles from "../config/profiles"
 import Session from "state"
 import Store from "store"
@@ -113,6 +112,34 @@ def switched(setup: Session.Setup, endpoint: Session.Endpoint) -> Session.Setup
     compact_model: endpoint.compact_model,
     catalog_provider: endpoint.catalog_provider,
   )
+end
+
+## `setup` with the profile `name` of `loaded`: its tools, the text after the system prompt and what clients see of it.
+## A profile that does not load shows no tool and refuses turns, also after a provider switch.
+def applied(setup: Session.Setup, loaded: Profiles.Loaded, name: String) -> Session.Setup
+  case Profiles.find(loaded, name)
+    ok(found) ->
+      seen = Protocol.Profile(
+        name: found.name,
+        source: found.source,
+        description: found.description,
+        warnings: Profiles.warnings_of(loaded, found, Profiles.known_tools()),
+      )
+
+      setup.with(
+        system: Profiles.system(setup.base_system, found),
+        shows: some(->(tool: String) { Profiles.exposes?(found, tool) }),
+        profile: some(seen),
+        profile_refused: "",
+      )
+    error(e) ->
+      setup.with(
+        system: setup.base_system,
+        shows: some(->(_tool: String) { false }),
+        profile: some(Protocol.Profile(name: name, source: "", warnings: [e.message])),
+        profile_refused: e.message,
+      )
+  end
 end
 
 ## Folds the history into a summary now, as a turn past the limit would; false when there is nothing to fold.
@@ -348,6 +375,12 @@ def update_setup(state: Session.State, change: Protocol.UpdateSession, reply: Ch
     return state
   end
 
+  if change.profile.some? and Session.busy?(state)
+    busy = "#{Session.busy_reason(state)}: change the profile after it"
+    Actor.reply(reply, error(busy, kind: Protocol.KIND_SESSION_BUSY))
+    return state
+  end
+
   setup = state.setup
   for name in option_list(change.profile)
     case profiled(setup, name)
@@ -393,14 +426,20 @@ def update_setup(state: Session.State, change: Protocol.UpdateSession, reply: Ch
 end
 
 # `setup` with the profile `name`, and its model and thinking level when it sets them: `PROVIDER/NAME` moves to that
-# provider when the session can, else the whole text is the model.
+# provider when the session can, else the whole text is the model. A project's profile never moves the session to
+# another provider: its model is a name on the session's.
 def profiled(setup: Session.Setup, name: String) -> Result[Session.Setup]
   loaded = setup.profiles.map { |read| read.call() }.unwrap_or(Profiles.Loaded(profiles: Profiles.builtins()))
   found = try Profiles.find(loaded, name)
-  done = Profile.applied(setup, loaded, name)
+  done = applied(setup, loaded, name)
   if not found.model.empty?
     done = done.with(model: found.model)
-    for at in option_list(found.model.index_of("/"))
+    at_provider = found.model.index_of("/")
+    if found.source == Profiles.PROJECT
+      at_provider = none
+    end
+
+    for at in option_list(at_provider)
       case resolve_endpoint(done, found.model.slice(0, at))
         ok(endpoint) ->
           done = switched(done, endpoint).with(model: found.model.slice(at + 1, found.model.length - at - 1))

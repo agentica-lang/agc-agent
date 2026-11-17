@@ -368,7 +368,8 @@ def profile_command(chat: Chat, name: Optional[String]) -> Result[Chat]
   for wanted in option_list(name)
     try Client.update_session(chat.server, chat.id, Protocol.UpdateSession(profile: some(wanted)))
     session = try Client.session(chat.server, chat.id)
-    done = note(chat, "[profile #{Client.printable(wanted)} from the next turn: #{Client.printable(session.model)}]")
+    serving = Client.printable("#{session.provider}/#{session.model}")
+    done = note(chat, "[profile #{Client.printable(wanted)} from the next turn: #{serving}]")
     for line in (Client.profile_lines(session.profile).select { |l| l.start_with?("warning: ") })
       done = note(done, "[#{line}]")
     end
