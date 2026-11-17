@@ -1,5 +1,4 @@
 import Approval from "../src/approval/approval"
-import Arity from "../src/approval/arity"
 import Extension from "../src/approval/extension"
 import Permissions from "../src/approval/permissions"
 import Shell from "../src/approval/shell"
@@ -84,33 +83,24 @@ def test_a_glob_matches_the_whole_text() -> Result[Void]
   ok()
 end
 
-# The arity table picks the words an "always" answer keeps. A command that runs another program, that does not start
-# with its name (an assignment or a redirection first), or whose words hold an option or a glob character keeps its
-# exact text.
-def test_always_keeps_the_words_of_the_arity_table() -> Result[Void]
-  rows = [
-    [["git", "checkout", "main"], ["git", "checkout"]],
-    [["npm", "install"], ["npm", "install"]],
-    [["npm", "run", "dev"], ["npm", "run", "dev"]],
-    [["python", "script.py"], ["python", "script.py"]],
-    [["touch", "foo.txt"], ["touch"]],
-    [["docker", "compose", "up", "-d"], ["docker", "compose", "up"]],
-    [["unknown", "a", "b"], ["unknown"]],
-    [[], []],
-  ]
-
-  for row in rows
-    try Test.eq(Arity.prefix(row[0]), row[1])
-  end
-
+# An "always" answer keeps `NAME *` only for a short list of plain programs. Any other program, a command that does
+# not start with its name, has a redirection, or has a word with `$` or a substitution keeps its exact text.
+def test_always_keeps_the_name_of_a_plain_program_only() -> Result[Void]
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
   always = ->(command: String) { Shell.scan(root, command).always.map { |r| shown(r) } }
-  try Test.eq(always.call("git status --short"), ["git status *"])
+  try Test.eq(always.call("ls -la"), ["ls *"])
+  try Test.eq(always.call("grep -r foo"), ["grep *"])
+  try Test.eq(always.call("grep 'foo' \"bar\""), ["grep *"])
+  try Test.eq(always.call("{ grep x; } > f"), ["exact grep x"])
+  try Test.eq(always.call("head ~/.ssh/x"), ["#{System.env("HOME").unwrap_or("")}/.ssh/*", "head *"])
   try Test.eq(always.call("LANG=C ls -la | wc -l"), ["exact LANG=C ls -la", "wc *"])
-  try Test.eq(always.call("cd sub && make test"), ["make test *"])
+  try Test.eq(always.call("cd sub && head x"), ["head *"])
+  try Test.eq(always.call("ls $(pwd)"), ["exact ls $(pwd)", "pwd *"])
   for command in [
-    "git -c a=b log", "sudo rm x", "env A=1 make", "xargs rm", "timeout 5 make", "export A=1", "FOO=1 rm x",
-    ">log rm x", "rm=1 rm x", "npm run t?st", "npm run t[a]st", "ls*",
+    "git", "make", "make all", "npm install", "docker run x", "git grep x", "poetry run x", "git status --short",
+    "echo hi > f", "cat <<EOF\nx\nEOF", "git $X", "echo \"$HOME\"", "sudo rm x", "env A=1 make", "xargs rm",
+    "export A=1", "FOO=1 rm x", ">log rm x", "rm=1 rm x", "ls*", "exec ls", ". x.sh", "find . -exec rm {} +",
+    "awk 1 x", "python x.py", "tree -o f", "ps eww", "unknown x",
   ]
     try Test.eq(always.call(command), ["exact #{command}"])
   end
@@ -127,16 +117,20 @@ def test_an_unclear_line_asks() -> Result[Void]
   Test.eq(Permissions.prefix(root, "bash", "a `b` `c`"), none)
 end
 
-# An "always" answer allows the command's prefix and nothing else of a later line; a rule that denies still wins.
+# An "always" answer allows the command's prefix and nothing else of a later line, nor a later command with a
+# redirection or a substitution; a rule that denies still wins.
 def test_an_always_answer_allows_the_prefix_of_each_command() -> Result[Void]
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
-  rules = try Approval.parse_rules(["ask bash(*)", "deny bash(git status --evil*)"])
-  allows = Permissions.answered(Permissions.Allows(), "allow_prefix", root, "bash", "git status --short | wc -l")
-  allowed = ["git status", "git status -s && wc", "git status; rm x", "git push", "git status --evil"].select do |c|
-    Permissions.allows?(allows, rules, root, "bash", c)
-  end
+  rules = try Approval.parse_rules(["ask bash(*)", "deny bash(grep --evil*)"])
+  allows = Permissions.answered(Permissions.Allows(), "allow_prefix", root, "bash", "grep -r foo | wc -l")
+  tried = [
+    "grep x", "grep -c x && wc", "grep \"x\" y", "grep x; rm x", "git push", "grep --evil", "echo hi",
+    "grep x >> ~/.bashrc", "wc $(rm x)", "grep `x`", "grep \"$x\"", "{ grep x; } >> f", "(grep x) > f",
+    "grep x | wc > f", "for i in 1; do grep x; done > f", "head ~/.ssh/x",
+  ]
 
-  try Test.eq(allowed, ["git status", "git status -s && wc"])
+  allowed = tried.select { |c| Permissions.allows?(allows, rules, root, "bash", c) }
+  try Test.eq(allowed, ["grep x", "grep -c x && wc", "grep \"x\" y"])
   # An exact command is kept as it is, not as a glob: its `*` matches only itself.
   exact = Permissions.answered(Permissions.Allows(), "allow_prefix", root, "bash", "sudo rm -rf ./build/*")
   tried = ["sudo rm -rf ./build/*", "sudo rm -rf ./build/ /", "sudo rm -rf ./build/x"]

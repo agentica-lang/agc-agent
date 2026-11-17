@@ -1028,7 +1028,8 @@ def finished(sub: H.Sub) -> Result[Protocol.ShellFinished]
 end
 
 # The registry lists the session files of its store, here in memory: a write moves the file's time of change (the
-# count of its writes in memory), so the next list reads the file again and shows its first message.
+# count of its writes in memory), so the next list reads the file again and shows its first message. With no
+# providers in the options the registry still lists it.
 def test_the_list_reads_a_file_again_once_a_write_changes_it() -> Result[Void]
   options = Config.Options(
     state_dir: "/memory/state",
@@ -1041,11 +1042,7 @@ def test_the_list_reads_a_file_again_once_a_write_changes_it() -> Result[Void]
 
   dir = Sessions.folder(options)
   port = Store.memory([dir])
-  file = try Store.create(
-    port,
-    dir,
-    Store.Header(id: "s1", cwd: "/", model: "m", created_ms: 0, api: some("openai"), provider: some("local")),
-  )
+  file = try Store.create(port, dir, Store.Header(id: "s1", cwd: "/", model: "m", created_ms: 0))
 
   sessions = Sessions.start(options, some(port))
   before = Sessions.list(sessions)

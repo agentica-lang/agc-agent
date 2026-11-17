@@ -1,5 +1,5 @@
 Finn translates parts of OpenCode (https://github.com/sst/opencode, v1.19.5): the wildcard match, the rule
-evaluation, the command arity table (core/src/approval/) and the shell scan of the bash tool.
+evaluation (core/src/approval/) and the shell scan of the bash tool.
 
 MIT License
 

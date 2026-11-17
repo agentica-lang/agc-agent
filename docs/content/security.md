@@ -46,7 +46,7 @@ Both clients show the call: the tool, its path or command, and what it would wri
 
 The [HTTP API](server.md#routes) takes two more answers:
 
-- `allow_prefix` ("always") allows, for each command of the line, the commands that start with the same words: those of OpenCode's table (`git log *`, `npm run dev *`, `docker compose up *`), else the first word (`ls *`). The request shows them. For a program that runs another one (`env`, `xargs`, `sudo`, `timeout`, a shell or an interpreter such as `python`), an option or a glob character among those words (`git -c x=y log`), or an assignment or a redirection before the name (`FOO=1 rm x`), it allows the same command only, and for a line that tree-sitter-bash cannot read clearly, the same call only.
+- `allow_prefix` ("always") allows, for each command of the line, its name and ` *` (`ls *`) when the program is one of `cat`, `echo`, `grep`, `ls`, `pwd`, `sleep`, `tail`, `head`, `wc`, `which`, `diff`, `du` and `df`. The request shows them. Any other program, a command with an assignment before its name (`FOO=1 rm x`), or a word with `$` or a substitution (`ls $(pwd)`), gets the same command only, and a later command of that kind is not allowed by a name and ` *`. A line with a `>` or `<` anywhere (`echo hi > f`, `{ echo hi; } > f`) is always asked exactly: each of its commands gets the same command only. For a line that tree-sitter-bash cannot read clearly, it allows the same call only.
 - `allow_tool` allows every call of the tool.
 
 The accept-edits mode (`PATCH /v1/sessions/ID` with `{"accept_edits": true}`) runs the calls of `write_file`, `edit_file` and `apply_patch` without asking.
@@ -85,7 +85,7 @@ Finn's rules are [OpenCode's](https://opencode.ai/docs/permissions/), with Finn'
 
 Finn reads a `bash` command with [tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash) and checks each command of the line by its text: the parts of `;`, `&&`, `||`, `|`, a line end, `( )` and `$( )`. `deny bash(rm *)` refuses `ls && rm x` and `echo $(rm x)`. If any command is denied the call is denied, else if any asks the call asks. A rule matches the command's text as written, so `deny bash(rm *)` does not match `FOO=1 rm x` or `>log rm x`.
 
-A command of `cd`, `rm`, `cp`, `mv`, `mkdir`, `touch`, `chmod`, `chown` or `cat` with a path outside the session folder also checks `external_directory(FOLDER/*)`, which runs unless a rule says otherwise: `"ask external_directory(*)"` asks for each such folder. A `cd` is checked only by its folder. OpenCode asks for such folders by default; Finn runs them. A path with `$` or a backtick is not followed, and a `cd` does not move the paths of the commands after it.
+A command of `cd`, `rm`, `cp`, `mv`, `mkdir`, `touch`, `chmod`, `chown`, `cat`, `head`, `tail`, `grep`, `wc`, `diff` or `du` with a path outside the session folder also checks `external_directory(FOLDER/*)`, which runs unless a rule says otherwise: `"ask external_directory(*)"` asks for each such folder. A `cd` is checked only by its folder. OpenCode asks for such folders by default; Finn runs them. A path with `$` or a backtick is not followed, and a `cd` does not move the paths of the commands after it.
 
 A line that tree-sitter-bash cannot read, or one it is known to misread (such as nested backticks), asks even when an allow rule matches; a deny rule that matches the line or one of its commands still denies it. Without a C compiler the parser cannot be built, and every line is unclear.
 

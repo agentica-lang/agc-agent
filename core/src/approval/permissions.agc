@@ -9,7 +9,7 @@
 ## the asking off too.
 ##
 ## A session allows more by its answers: the same call (`allow_session`), what an "always" answer allows for `bash`
-## (`allow_prefix`, `Shell.Scan.always`: `git log *`, `npm run dev *`), or the whole tool (`allow_tool`); and in the
+## (`allow_prefix`, `Shell.Scan.always`: `ls *`, else the exact command), or the whole tool (`allow_tool`); and in the
 ## accept-edits mode the edits of files run without asking. None of them reaches into `.git/` or allows a call a rule
 ## denies. They last as long as the server runs: a restart forgets them.
 
@@ -98,9 +98,9 @@ def allows?(allows: Allows, rules: Approval.Rules, root: String, tool: String, t
   return false if tool != "bash"
 
   scan = Shell.scan(root, target)
-  answered = Approval.Rules(all: allows.rules)
   allowed = ->(r: Shell.Resource) {
     by_rule = Approval.decide_one(rules, r.tool, r.pattern, r.tool == "bash") == Spec.Verdict.Allow
+    answered = Approval.Rules(all: allows.rules.select { |rule| rule.literal or not r.literal })
     by_rule or Approval.evaluate(answered, r.tool, r.pattern) == some(Spec.Verdict.Allow)
   }
 
