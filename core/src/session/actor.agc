@@ -161,8 +161,8 @@ def stop(address: Address[Session.Msg], turn_id: Optional[String]) -> Result[Boo
 end
 
 ## The folder of the session and what its rules hide, for reads outside the actor.
-def context(address: Address[Session.Msg]) -> Result[Tools.Context]
-  Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Context(reply) end
+def place(address: Address[Session.Msg]) -> Result[Session.Place]
+  Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Place(reply) end
 end
 
 ## The user messages of every branch of the session.
@@ -230,8 +230,8 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
     Session.Msg.Stop(turn_id, reply) if not stops?(state, turn_id) ->
       Actor.reply(reply, false)
       Actor.continue(state)
-    Session.Msg.Context(reply) ->
-      Actor.reply(reply, state.setup.ctx)
+    Session.Msg.Place(reply) ->
+      Actor.reply(reply, Session.Place(root: state.setup.ctx.root, hidden: state.setup.ctx.hidden))
       Actor.continue(state)
     Session.Msg.Stop(_, reply) ->
       Actor.reply(reply, state.turn.some? or state.shell.some?)

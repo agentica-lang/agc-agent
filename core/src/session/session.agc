@@ -159,8 +159,8 @@ end
 
 ## The files of the session's folder that its rules do not hide, read in the caller's task.
 def files(sessions: Sessions, id: String) -> Result[Protocol.FileList]
-  ctx = try SessionActor.context(try find(sessions, id))
-  ok(Protocol.FileList(files: Folder.files(ctx.root, ctx.hidden)))
+  place = try SessionActor.place(try find(sessions, id))
+  ok(Folder.files(place.root, place.hidden))
 end
 
 def answer(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
