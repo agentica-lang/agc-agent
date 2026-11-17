@@ -67,8 +67,8 @@ coupling:
 	@$(call none,core/src/session imports http,$(call core_imports,session,agent|tools|ext|approval|config|providers))
 	@$(call none,a session file outside the actor imports one of its parts,-g 'core/src/session/**' \
 	  $(foreach f,actor turn stream branch state,-g '!core/src/session/$(f).agc') '^import \w+ from "(turn|stream|branch|state)"' .)
-	@$(call none,a session file but storage.agc and prompt.agc reaches the files itself,-g 'core/src/session/**' \
-	  -g '!core/src/session/storage.agc' -g '!core/src/session/prompt.agc' '\b(File|Dir)\.|Path\.(remove|rename)\b' .)
+	@$(call none,a session file but storage.agc reaches the session files (prompt.agc and folder.agc read the session folder),-g 'core/src/session/**' \
+	  $(foreach f,storage prompt folder,-g '!core/src/session/$(f).agc') '\b(File|Dir)\.|Path\.(remove|rename)\b' .)
 	@$(call none,core/src/config imports a core folder but tools approval and providers,$(call core_imports,config,tools|approval|providers))
 	@$(call none,core/src/http imports a core folder but session config and providers,$(call core_imports,http,session|config|providers))
 	@$(call none,core/src/http imports a file of session but session.agc,-g 'core/src/http/**' '^import \w+ from "\.\./session/(?!session")' -P .)
