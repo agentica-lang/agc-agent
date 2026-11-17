@@ -30,9 +30,9 @@ def word_count() -> Core.Tool
 end
 
 ## The output of `next` with the time the call of the tool `name` took after it.
-def timed(name: String, call: Core.Call, next: Fn[Core.Call, Result[String]]) -> Result[String]
+def timed(name: String, _call: Core.Call, next: Fn[Result[String]]) -> Result[String]
   started = Time.monotonic_ms()
-  output = try next.call(call)
+  output = try next.call()
   ok("#{output}\n(#{name} took #{Time.monotonic_ms() - started} ms)")
 end
 

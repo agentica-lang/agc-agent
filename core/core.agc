@@ -40,8 +40,8 @@ end
 
 ## Puts `wrapper` around the run of every tool but `activate_skill` and `run_script` (the calls a script makes are
 ## wrapped): it gets the tool's name, the call and the next run, and gives the output. The first wrapper added is the
-## outermost. The approval decides before any wrapper runs, on the tool as it is. A wrapper runs on every call: keep it
-## free of state of its own.
+## outermost. The approval decides before any wrapper runs, on the tool as it is, and the next run takes no input: it
+## runs on the input the approval saw. A wrapper runs on every call: keep it free of state of its own.
 def wrap_tools(registry: Extensions.Registry, wrapper: Extensions.Wrapper) -> Extensions.Registry
   registry.with(wrappers: registry.wrappers.push(wrapper))
 end
@@ -57,14 +57,15 @@ def on(registry: Extensions.Registry, event: Extensions.Event) -> Extensions.Reg
 end
 
 ## A service that runs while the server holds its lock: started in order before it listens, stopped in the reverse
-## order after it stops listening.
+## order after it stops listening. Its `start` and `stop` run in one task of its own, so what `start` opens stays open
+## until `stop`; a start that fails, crashes or takes over `service_ms` (30 s) stops the server's start.
 def add_service(registry: Extensions.Registry, service: Extensions.Service) -> Extensions.Registry
   registry.with(services: registry.services.push(service))
 end
 
 ## `path` of a call resolved inside the session folder, through its links; an error outside it, or for a file a deny
 ## rule of `read_file` hides.
-def resolve(call: Extensions.Call, path: String) -> Result[String] = Extensions.resolve(call, path)
+def resolve(call: Extensions.Call, path: String) -> Result[String] = call.resolve.call(path)
 
 ## Runs the server with `registry` until a signal or `finn server stop` ends it; a failed start, or an extension tool
 ## whose name is taken, stops the process with status 2.

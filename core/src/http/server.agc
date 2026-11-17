@@ -44,7 +44,7 @@ struct Server
   state_dir: String
   control: Control
   ## The services of the extensions that started: they run while the server holds its lock.
-  services: List[Extensions.Service] = []
+  services: List[Extensions.Running] = []
 end
 
 ## Starts the server in the calling task, which owns it: call it from the task that keeps it.
@@ -59,8 +59,8 @@ def start(options: Config.Options) -> Result[Server]
     return error("a server already runs for #{options.state_dir}")
   end
 
-  services = options.registry.map { |r| r.services }.unwrap_or([])
-  begun = Extensions.start_services(services)
+  registry = options.registry.unwrap_or(Extensions.Registry())
+  begun = Extensions.start_services(registry.services, registry.service_ms)
   if not begun.ok?
     _ = File.close(lock)
     return error(begun.message)
