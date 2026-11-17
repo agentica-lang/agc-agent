@@ -1,9 +1,11 @@
-## The `@` list: the files of the session's folder, read from the server, and the keys that pick one.
+## The lists under the editor and the keys that pick from them: the files of the session's folder for `@`, the
+## commands for `/`, and the arguments of `/model`, `/resume`, `/tree`, `/fork` and `/thinking`, read from the server.
 
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Input from "input"
+import Picker from "picker"
 import Prompt from "prompt"
 import Screen from "screen"
 import State from "state"
@@ -30,14 +32,44 @@ def files_read(app: State.Model, result: Result[Protocol.FileList]) -> State.Mod
   end
 end
 
+## When the argument of a command starts, its choices are asked of the server once; they go when the command does.
+def asked(app: State.Model) -> State.Model
+  case Input.argument_word(app.prompt, State.cursor(app))
+    some(word) if word.command != "/thinking" and app.id != "" and not app.reading_arguments ->
+      return app if (app.arguments.map { |a| a.command } == some(word.command))
+
+      read_arguments(app, word.command)
+    some(_) -> app
+    none ->
+      for listed in State.option_list(app.arguments)
+        return app.with(arguments: none) if not app.prompt.start_with?("#{listed.command} ")
+      end
+
+      app
+  end
+end
+
+def arguments_read(app: State.Model, result: Result[Input.Arguments]) -> State.Model
+  case result
+    ok(listed) if listed.tree.some? -> app.with(arguments: some(listed), listed: listed.tree)
+    ok(listed) -> app.with(arguments: some(listed))
+    error(e) -> State.noted(app, "error: the choices were not listed: #{e.message}")
+  end
+end
+
 ## The list under the editor: the commands while the prompt is `/` and part of a name that some command starts with,
-## else the files while the cursor ends an `@` word and the files are read; none once Esc closed it.
+## else the choices of a command's argument, else the files while the cursor ends an `@` word and the files are read;
+## none once Esc closed it.
 def mention_list(app: State.Model) -> Optional[Input.Mention]
   # A prompt Up recalled shows none: Up and Down go on through the history. Nor does a list without room, or under an
   # approval, which takes the panel.
   return none if app.picker.some? or app.recall.some? or not app.approvals.pending.empty? or list_room(app) <= 0
 
   found = Input.command_word(app.prompt, State.cursor(app))
+  if found.none? or mention_choices(app, found.unwrap!).empty?
+    found = Input.argument_word(app.prompt, State.cursor(app))
+  end
+
   if found.none? or mention_choices(app, found.unwrap!).empty?
     found = none
     if app.files.some?
@@ -68,6 +100,7 @@ def mention_choices(app: State.Model, found: Input.Mention) -> List[Input.Choice
       Input.matches(app.files.unwrap_or([]), found.query).map { |p|
         Input.Choice(value: p, label: Client.printable(p))
       }
+    Input.Source.Arguments -> Input.argument_matches(argument_choices(app, found.command), found.query)
   end
 end
 
@@ -92,6 +125,54 @@ private
 
 # How long `@` waits to ask the server again after a read of the files timed out.
 FILES_AGAIN_MS = 10_000
+
+# The choices of the argument of `command`: the thinking levels, or what the server listed for it.
+def argument_choices(app: State.Model, command: String) -> List[Input.Choice]
+  if command == "/thinking"
+    return (Protocol.EFFORTS + [Protocol.EFFORT_DEFAULT]).map { |level| Input.Choice(value: level, label: level) }
+  end
+
+  for listed in State.option_list(app.arguments)
+    return listed.choices if listed.command == command
+  end
+
+  []
+end
+
+def read_arguments(app: State.Model, command: String) -> State.Model
+  backend = app.backend
+  id = app.id
+  opened = app.opened
+  now_s = app.clock_s
+  serving = app.serving
+  read = TUI.Cmd.Run(-> { State.Msg.Arguments(opened, listing(backend, id, command, now_s, serving)) })
+  State.effect(app.with(reading_arguments: true), read)
+end
+
+# The choices of a command's argument from the server: `provider/model` pairs, sessions by id, or the messages of
+# the tree by number.
+def listing(
+  backend: Client.Backend,
+  id: String,
+  command: String,
+  now_s: Int,
+  serving: String,
+) -> Result[Input.Arguments]
+  case command
+    "/model" ->
+      pairs = Picker.models(try backend.list_providers.call(), serving).models
+      ok(Input.Arguments(command: command, choices: pairs.map { |pair| Input.Choice(value: pair, label: pair) }))
+    "/resume" ->
+      sessions = (try backend.list_sessions.call()).sessions
+      shown = Picker.shown(Picker.Picker(sessions: sessions), now_s)
+      ok(Input.Arguments(command: command, choices: shown.map { |c| Input.Choice(value: c.key, label: c.text) }))
+    _ ->
+      tree = try backend.tree.call(id)
+      shown = Picker.shown(Picker.Picker(tree: Client.tree_rows(tree), kind: Picker.Kind.Fork))
+      numbered = (0...shown.size).to_a.map { |i| Input.Choice(value: "#{i + 1}", label: shown[i].text) }
+      ok(Input.Arguments(command: command, choices: numbered, tree: some(tree)))
+  end
+end
 
 # Enter on part of a command's name completes it as Tab does; on a whole name it runs the command, and after `/` alone
 # or under the file list it sends the prompt.

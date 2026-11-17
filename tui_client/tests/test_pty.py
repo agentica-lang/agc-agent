@@ -533,6 +533,16 @@ class PtyTest(unittest.TestCase):
         term.type("\x04")
         self.assertEqual(term.finish(), 0)
 
+    def test_the_model_argument_is_listed_from_the_server_and_tab_completes_it(self) -> None:
+        term = self.start([Reply("text.sse")])
+        term.type("/model ")
+        rows = term.wait_until(lambda rows: any(row.endswith("/test-model") for row in rows), "the models listed")
+        pair = next(row for row in rows if row.endswith("/test-model")).split()[-1]
+        term.type("\t")
+        term.wait_for(f" /model {pair}")
+        term.type("\r")
+        term.wait_for(f" model {pair} from the next turn")
+
     def test_escape_stops_the_turn(self) -> None:
         term = self.start([Reply("text.sse", hold=3), Reply("text.sse")])
         term.type("hi\r")

@@ -1,7 +1,8 @@
 ## What the editor keeps beside its text: the large pastes behind their tokens, and the lists under it of the files
-## that `@` completes and of the commands that `/` completes. Pure.
+## that `@` completes, of the commands that `/` completes and of their arguments. Pure.
 
 import Client from "pkg/client/client"
+import Protocol from "pkg/protocol/protocol"
 import Layout from "panel"
 import Width from "width"
 
@@ -10,18 +11,31 @@ PASTE_LINES = 10
 PASTE_CHARS = 1000
 ## The most files the `@` list shows.
 MAX_MATCHES = 8
+## The commands whose argument the list completes.
+ARGUMENT_COMMANDS = ["/model", "/resume", "/tree", "/fork", "/thinking"]
 
 ## What a list under the editor completes.
 enum Source
   Files
   Commands
+  Arguments
 end
 
-## The word that ends at the cursor, `@` and a path or `/` and a command: where it starts and what follows its mark.
+## The word that ends at the cursor, `@` and a path, `/` and a command, or a command's argument: where it starts and
+## what follows its mark (all of an argument).
 struct Mention
   start: Int
   query: String
   source: Source = Source.Files
+  ## The command of an argument.
+  command: String = ""
+end
+
+## The choices of a command's argument, as the server listed them; `tree` the session tree that `/tree N` numbers.
+struct Arguments
+  command: String
+  choices: List[Choice]
+  tree: Optional[Protocol.SessionTree] = none
 end
 
 ## One row of a list: what Tab puts in place of the word, and what the row shows.
@@ -89,6 +103,27 @@ def command_word(text: String, cursor: Int) -> Optional[Mention]
   some(Mention(start: 0, query: word.slice(1, word.length - 1), source: Source.Commands))
 end
 
+## The argument of `/model`, `/resume`, `/tree`, `/fork` or `/thinking` on the first line, while the cursor ends the
+## line.
+def argument_word(text: String, cursor: Int) -> Optional[Mention]
+  line = text.split("\n")[0]
+  return none if cursor != line.length
+
+  name = line.split(" ")[0]
+  return none if not ARGUMENT_COMMANDS.include?(name) or line.length <= name.length
+
+  argument = line.slice(name.length + 1, line.length - name.length - 1)
+  return none if argument.include?(" ")
+
+  some(Mention(start: name.length + 1, query: argument, source: Source.Arguments, command: name))
+end
+
+## The choices that start with `query`, or whose row holds it, in any case.
+def argument_matches(choices: List[Choice], query: String) -> List[Choice]
+  wanted = query.downcase
+  choices.select { |c| c.value.downcase.start_with?(wanted) or c.label.downcase.include?(wanted) }
+end
+
 ## The commands whose name starts with `/query`, each with its arguments and what it does, in a column. A command
 ## with arguments completes with a space after it.
 def commands(table: List[Client.Usage], query: String) -> List[Choice]
@@ -123,6 +158,7 @@ def completed(text: String, cursor: Int, mention: Mention, value: String) -> Str
     # The rest starts with its own space.
     Source.Commands if rest != "" -> text.slice(0, mention.start) + value.strip + rest
     Source.Commands -> text.slice(0, mention.start) + value + rest
+    Source.Arguments -> text.slice(0, mention.start) + value + rest
   end
 end
 

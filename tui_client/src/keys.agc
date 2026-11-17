@@ -16,8 +16,13 @@ import Turn from "turn"
 import Commands from "commands"
 import Views from "views"
 
-def on_key(model: State.Model, event: TUI.Event) -> State.Model
-  app = aimed(model, event)
+def on_key(model: State.Model, event: TUI.Event) -> State.Model = Files.asked(keyed(aimed(model, event), event))
+
+private
+
+SCROLL_STEP = 3
+
+def keyed(app: State.Model, event: TUI.Event) -> State.Model
   for name in State.option_list(app.key_for)
     return Logins.on_secret_key(app, name, event) if not State.ctrl_c?(event)
   end
@@ -39,10 +44,6 @@ def on_key(model: State.Model, event: TUI.Event) -> State.Model
 
   on_prompt_key(unselected(app, event), event)
 end
-
-private
-
-SCROLL_STEP = 3
 
 # A typed character, a paste or Backspace replaces a selected prompt; any other key keeps it as text. An Alt key
 # types nothing.
