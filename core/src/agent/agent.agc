@@ -7,6 +7,7 @@ import Protocol from "pkg/protocol/protocol"
 import Catalog from "../providers/catalog"
 import CodeMode from "../tools/code_mode"
 import Compaction from "compaction"
+import Spec from "../tools/spec"
 import Todos from "../tools/todos"
 import Tools from "../tools/tools"
 
@@ -17,6 +18,8 @@ SAME_ROUNDS = 3
 LATEST = "todos"
 DENIED_BY_RULE = "denied by a rule of the config"
 DENIED_BY_USER = "the user denied this call"
+BLOCKED_BY = "blocked by an extension: "
+CHANGED_BY = "an extension changed the input of this call to: "
 
 ## How a turn reaches its session. `approve` waits for the answer; `commit` gets the history after each finished
 ## round, so a stopped turn keeps no unfinished tool call, with the marks the round's tools of extensions made.
@@ -506,11 +509,22 @@ def turn_tool(turn: Turn, name: String) -> Optional[Tools.TurnTool]
 end
 
 # `marks` are the session's so far, which a tool of an extension reads.
+# The result of a call whose input an extension changed says what ran, so the history keeps it.
 def run_call(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Ran
-  ran = noticed_run(turn, with_input(call), marks)
+  given = with_input(call)
+  checked = before(turn, given)
+  ran = noticed_run(turn, given, checked, marks)
   output = ran.output
-  block = LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: output.text, is_error: output.is_error))
+  content = "#{changed_note(given, checked)}#{output.text}"
+  block = LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: content, is_error: output.is_error))
   Ran(block: block, mark: ran.mark)
+end
+
+def changed_note(call: LLM.ToolCall, checked: Result[JSON.Value]) -> String
+  case checked
+    ok(input) if JSON.encode(input) != JSON.encode(call.input) -> "#{CHANGED_BY}#{JSON.encode(input)}\n\n"
+    _ -> ""
+  end
 end
 
 # A custom tool's call has its text as `input`, the field its tool reads.
@@ -520,8 +534,9 @@ def with_input(call: LLM.ToolCall) -> LLM.ToolCall
   call.with(input: JSON.object({"input": JSON.from(call.arguments)}))
 end
 
-# Runs the call between its `tool_started` and `tool_finished` events.
-def noticed_run(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Tools.TurnOutput
+# Runs the call between its `tool_started` and `tool_finished` events, on the input the extensions gave (`checked`).
+def noticed_run(turn: Turn, given: LLM.ToolCall, checked: Result[JSON.Value], marks: List[String]) -> Tools.TurnOutput
+  call = given.with(input: checked.unwrap_or(given.input))
   summary = target(turn, call).unwrap_or(call.name)
   turn.link.emit.call(
     Protocol.Event.ToolStarted(Protocol.ToolStarted(call_id: call.id, name: call.name, summary: summary)),
@@ -529,7 +544,11 @@ def noticed_run(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Tools.Tu
 
   change = Tools.change(turn.ctx, call.name, call.input)
   started = Time.monotonic_ms
-  ran = checked_run(turn, call, marks)
+  ran = case checked
+    ok(_) -> checked_run(turn, call, marks)
+    error(e) -> Tools.TurnOutput(output: Tools.Output(text: stopped_text(e), is_error: true))
+  end
+
   output = ran.output
   diff = change
   if output.is_error
@@ -560,6 +579,22 @@ def noticed_run(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Tools.Tu
   end
 
   ran
+end
+
+# The input of the call after the extensions' `ToolBefore` handlers; a call with a broken input goes on as it is.
+def before(turn: Turn, call: LLM.ToolCall) -> Result[JSON.Value]
+  return ok(call.input) if call.input_error.some?
+
+  case turn.ctx.before
+    some(hook) -> hook.call(turn.ctx, call.name, call.input)
+    none -> ok(call.input)
+  end
+end
+
+def stopped_text(e: Error) -> String
+  return "#{BLOCKED_BY}#{e.message}" if e.kind == Spec.BLOCKED
+
+  e.message
 end
 
 def target(turn: Turn, call: LLM.ToolCall) -> Result[String]
@@ -632,9 +667,10 @@ end
 def nested(turn: Turn, script: LLM.ToolCall, name: String, input: JSON.Value) -> CodeMode.Reply
   id = "#{script.id}.#{Random.int(0, 999_999_999)}"
   call = LLM.ToolCall(id: id, name: name, arguments: JSON.encode(input), input: input)
-  output = noticed_run(turn, call, []).output
+  output = noticed_run(turn, call, before(turn, call), []).output
   return CodeMode.Reply.Done(output.text) if not output.is_error
   return CodeMode.Reply.Denied(output.text) if [DENIED_BY_RULE, DENIED_BY_USER].include?(output.text)
+  return CodeMode.Reply.Denied(output.text) if output.text.start_with?(BLOCKED_BY)
 
   CodeMode.Reply.Failed(output.text)
 end

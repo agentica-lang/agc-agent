@@ -672,6 +672,7 @@ def entry(
     base_system: system,
     ctx: context.with(
       read_roots: Extensions.read_roots(builtins),
+      before: before_of(options, header.id),
       session: header.id,
       host: some(host_of(opened.registry, options, header)),
     ),
@@ -911,6 +912,14 @@ end
 def system_of(options: Config.Options, root: String) -> String
   system = Prompt.system_prompt(root)
   options.registry.map { |served| Extensions.prompt(served.registry, system) }.unwrap_or(system)
+end
+
+def before_of(options: Config.Options, session: String) -> Optional[Spec.Before]
+  for served in option_list(options.registry)
+    return Extensions.before(served.registry, session)
+  end
+
+  none
 end
 
 def wrap_of(options: Config.Options) -> Optional[Fn[String, Spec.Run, Spec.Run]]

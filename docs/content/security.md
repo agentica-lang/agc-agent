@@ -57,6 +57,8 @@ Answers and the accept-edits mode last until the server restarts. With the appro
 
 Finn's rules are [OpenCode's](https://opencode.ai/docs/permissions/), with Finn's tool names. A rule is `ACTION TOOL(PATTERN)`: the action `allow`, `ask` or `deny`, and `TOOL` alone means `TOOL(*)`. In the pattern and the tool, `*` matches any text and `?` one character; a pattern that ends in ` *` also matches without it, so `git *` matches `git`. `~` or `$HOME` at the start of a pattern is your home folder. For the file tools the pattern matches the path, for `bash` each command, and for an MCP tool its JSON input.
 
+An [extension](extensions.md#prompts-and-events) that changes a call (`Core.Event.ToolBefore`) does so before the rules check it: the rules and the approval see the input that will run, and the call's result in the session file starts with the input that ran.
+
 **The last rule that matches wins**, so put the broad rules first:
 
 ```json

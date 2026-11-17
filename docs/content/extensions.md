@@ -109,6 +109,14 @@ The handlers of one event have 2 seconds together.
 
 Nothing waits for an observer. It gets its events in order, one at a time, with 2 seconds each. One that falls 256 events behind loses the next ones, and the server log counts them. A crash or a hang is logged, and the next event comes.
 
+`Core.on(registry, Core.Event.ToolBefore(fn))` gets each tool call before anything else sees it, as a `Core.Pending` with the session id, its folder, the tool's name and the input. `fn` gives a `Core.Check`:
+
+- `Core.Check.Go` runs the call as it is.
+- `Core.Check.Input(json)` runs it on another input. The approval, its rules and the tool all see the new input. The result starts with `an extension changed the input of this call to: JSON`, so the model and the session file keep what ran.
+- `Core.Check.Stop(reason)` fails the call, and the model gets `blocked by an extension: REASON`, with the first 1000 characters of the reason as they are.
+
+Each handler gets the input the one before gave, in the order they were added, and the first stop ends the chain. The handlers of one call have 10 seconds together, so a slow first handler leaves less for the next and can fail the call. A crash or a hang fails the call. The calls of several sessions run the handlers at the same time: keep a handler free of state of its own. The calls a `run_script` script makes pass the handlers too, and a stop counts as denied there.
+
 ## A service
 
 ```agentica

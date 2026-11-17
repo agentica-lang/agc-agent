@@ -13,6 +13,10 @@ export Spec.NewChild
 ## How long all the `Message` handlers, or all the `Fold` handlers, of one event may take together: well under the
 ## time a client waits for the session to answer.
 HANDLER_MS = 2000
+## How long all the `ToolBefore` handlers of one call may take together: they run in the turn, not in the session.
+TOOL_BEFORE_MS = 10_000
+## The most characters of the reason of a `Stop` that the model gets.
+STOP_MAX = 1000
 ## How long a service may take to start, or to stop.
 SERVICE_MS = 30_000
 ## How long the target of an extension tool may take: it runs before the approval asks.
@@ -50,16 +54,35 @@ struct Tool
   target: Fn[Call, Result[String]]
 end
 
+## A call of a tool as a `ToolBefore` handler sees it: the session, its folder, the tool's name and the input.
+struct Pending
+  session: String
+  root: String
+  name: String
+  input: JSON.Value
+end
+
+## What a `ToolBefore` handler decides on a call: it runs as it is (`Go`), on another input (`Input`), or not, with the
+## reason the model gets (`Stop`).
+enum Check
+  Go
+  Input(JSON.Value)
+  Stop(String)
+end
+
 ## A handler of an event of a session. `Message` gets the text of a user message after the skills it names are
 ## expanded, and gives the text the model gets (the session file keeps what was typed too); a crash or a hang refuses
 ## the message. `Fold` gets the texts of the messages that stay when the history folds, and gives text to add after the
 ## summary; a crash or a hang adds nothing. `Seen` gets the events of the names it lists, of every session, in order:
 ## nothing waits for it, and an observer that falls `OBSERVER_INBOX` events behind loses the next ones (counted in the
-## log). A crash or a hang of one event is logged, and the next event comes.
+## log). A crash or a hang of one event is logged, and the next event comes. `ToolBefore` gets each call of a tool
+## before its approval, and the input it gives is what the approval sees and the tool runs on; a crash or a hang fails
+## the call.
 enum Event
   Message(Fn[String, String])
   Fold(Fn[List[String], String])
   Seen(List[String], Fn[Spec.Seen, Void])
+  ToolBefore(Fn[Pending, Check])
 end
 
 ## Something that runs with the server: `start` once the server holds its lock, before it listens, and `stop` after it
@@ -86,6 +109,7 @@ struct Registry
   ## its task ends), and a call of a tool once an extension is in it.
   handler_ms: Int = HANDLER_MS
   observer_inbox: Int = OBSERVER_INBOX
+  tool_before_ms: Int = TOOL_BEFORE_MS
   service_ms: Int = SERVICE_MS
   tool_ms: Int = TOOL_MS
 end
@@ -220,6 +244,21 @@ def message(registry: Registry, text: String) -> Result[String]
   end
 
   ok(out)
+end
+
+## The input of a call after the `ToolBefore` handlers of `registry` in the session `session`, none without any: each
+## handler gets the input the one before gave, and the first `Stop` ends the chain with an error of the kind
+## `Spec.BLOCKED`. A crash, or a chain over `tool_before_ms`, is an error too.
+def before(registry: Registry, session: String) -> Optional[Spec.Before]
+  handlers = tool_before_handlers(registry)
+  return none if handlers.empty?
+
+  ms = registry.tool_before_ms
+  some(
+    ->(ctx: Spec.Context, name: String, input: JSON.Value) {
+      checked(handlers, ms, Pending(session: session, root: ctx.root, name: name, input: input))
+    },
+  )
 end
 
 ## The text the `Fold` handlers add after a summary, each on its own lines; a handler that crashes, or runs past
@@ -420,6 +459,39 @@ def cancelled(task: Task[Void], news: Channel[Note]) -> Void
   end
 end
 
+def checked(handlers: List[Fn[Pending, Check]], ms: Int, given: Pending) -> Result[JSON.Value]
+  deadline = Time.monotonic_ms() + ms
+  call = given
+  for handle in handlers
+    check = try bounded("a tool_before handler", deadline - Time.monotonic_ms(), -> { ok(handle.call(call)) })
+    case check
+      Check.Go -> nil
+      Check.Input(changed) -> call = call.with(input: changed)
+      Check.Stop(reason) -> return error(cut(reason, STOP_MAX), kind: Spec.BLOCKED)
+    end
+  end
+
+  ok(call.input)
+end
+
+def cut(text: String, max: Int) -> String
+  return text if text.length <= max
+
+  text.slice(0, max)
+end
+
+def tool_before_handlers(registry: Registry) -> List[Fn[Pending, Check]]
+  out: List[Fn[Pending, Check]] = []
+  for event in registry.events
+    case event
+      Event.ToolBefore(handle) -> out = out.push(handle)
+      _ -> nil
+    end
+  end
+
+  out
+end
+
 def message_handlers(registry: Registry) -> List[Fn[String, String]]
   out: List[Fn[String, String]] = []
   for event in registry.events
@@ -515,6 +587,7 @@ def observers_of(event: Event, registry: Registry) -> List[Observer]
     Event.Seen(names, handler) -> [observer(names, handler, registry)]
     Event.Message(_) -> []
     Event.Fold(_) -> []
+    Event.ToolBefore(_) -> []
   end
 end
 
