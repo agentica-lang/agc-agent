@@ -202,6 +202,7 @@ def test_a_refresh_keeps_the_tokens_out_of_errors_and_takes_a_newer_file() -> Re
 
     other = "#{h.base}/other.json"
     try File.write_text(other, "{}")
+    try Test.eq(try H.run("chmod", ["600", other]), 0)
     try Test.eq(try H.run("rm", [login.path]), 0)
     try Test.eq(try H.run("ln", ["-s", other, login.path]), 0)
     try Test.eq(Chatgpt.load(login).ok?, false)
@@ -226,6 +227,45 @@ def test_a_cancelled_refresh_does_not_keep_the_lock() -> Result[Void]
     H.release(h)
     try Test.eq(fresh.access, "at-secret-2")
     Test.assert(took < 2000, "the second refresh waited #{took} ms")
+  end
+end
+
+# Of many refreshes that find a stale lock (its holder was cancelled), one takes it over and calls; the others wait,
+# then take the tokens it saved. Done a few times, so a race shows.
+def test_a_stale_lock_is_taken_over_once() -> Result[Void]
+  rounds = 4
+  waiters = 8
+  replies = (0...rounds).to_a.map { |_| "codex_refreshed.json" }
+  setup = H.Setup(replies: replies, api: "openai_responses", chatgpt: true)
+  H.using(setup) do |h|
+    login = H.chatgpt_login(h.fake, h.base, call_ms: 300)
+    for round in 0...rounds
+      try Chatgpt.save(login, TOKENS)
+      login.lock.put(Chatgpt.LOCK, "gone #{round}")
+      tasks = (0...waiters).to_a.map { |_| Task.spawn(-> { Chatgpt.renewed(login, TOKENS.access) }) }
+      for task in tasks
+        try Test.eq((try Task.await(task)).access, "at-secret-2")
+      end
+
+      _ = try H.next_request(h)
+      try Test.eq(["round #{round}", h.fake.seen.empty?.to_s], ["round #{round}", "true"])
+    end
+
+    ok()
+  end
+end
+
+# A holder that is still within its time keeps the lock: a second refresh waits for it, then takes its tokens.
+def test_a_live_holder_keeps_the_lock() -> Result[Void]
+  setup = H.Setup(replies: ["codex_refreshed.json@400"], api: "openai_responses", chatgpt: true)
+  H.using(setup) do |h|
+    login = H.chatgpt_login(h.fake, h.base, call_ms: 1000)
+    try Chatgpt.save(login, TOKENS)
+    first = Task.spawn(-> { Chatgpt.renewed(login, TOKENS.access) })
+    _ = try H.next_request(h)
+    second = try Chatgpt.renewed(login, TOKENS.access)
+    try Test.eq([(try Task.await(first)).access, second.access], ["at-secret-2", "at-secret-2"])
+    Test.eq(h.fake.seen.empty?, true)
   end
 end
 

@@ -22,6 +22,8 @@ BASE_URL_ENV = "FINN_CHATGPT_URL"
 CALL_MS = 15_000
 ## A device login waits this long for the user at most.
 DEVICE_MS = 900_000
+## The key of the lock in `Login.lock`.
+LOCK = "refresh"
 
 ## Where the login and the API are, how a device login polls (the interval the server asks, at least `min_poll_ms`,
 ## plus `poll_margin_ms`) and waits for the user (`device_ms`), and how long a call of the login may take.
@@ -32,6 +34,8 @@ struct Endpoints
   poll_margin_ms: Int = 3000
   device_ms: Int = DEVICE_MS
   call_ms: Int = CALL_MS
+  ## A holder of the lock keeps it one call and this long at most.
+  lock_margin_ms: Int = 5000
 end
 
 ## What a login keeps: the tokens, the account they are of, and the models Codex listed at the login.
@@ -253,7 +257,6 @@ private
 LOOPBACK = ["http://127.0.0.1:", "http://127.0.0.1/", "http://localhost:", "http://localhost/", "http://[::1]:"]
 JSON_TYPE = "application/json"
 FORM_TYPE = "application/x-www-form-urlencoded"
-LOCK = "refresh"
 USED = "used"
 
 struct TokenFile
@@ -347,24 +350,26 @@ def renewed_locked(login: Login, used: String) -> Result[Tokens]
   ok(fresh)
 end
 
-# Takes the lock, and gives the holder's name. A holder keeps it one call and a second at most: one cancelled or
-# crashed in between never gives it back, so after that time it is taken over.
+# Takes the lock, and gives the holder's name. A holder keeps it one call and `lock_margin_ms` at most: one cancelled
+# or crashed in between never gives it back, so after that time it is taken over. Of the waiters that find it stale,
+# only the one that first marks that very entry as taken over (`put_new` of its own key) takes it.
 def locked(login: Login) -> Result[String]
   holder = OpenSSL.Random.hex(8)
-  hold_ms = login.endpoints.call_ms + 1000
+  hold_ms = login.endpoints.call_ms + login.endpoints.lock_margin_ms
   give_up = Time.monotonic_ms + hold_ms * 2
   while true
     now = Time.monotonic_ms
     return ok(holder) if login.lock.put_new(LOCK, "#{holder} #{now + hold_ms}")
 
-    if until_of(login.lock.get(LOCK).unwrap_or("")) < now
+    held = login.lock.get(LOCK).unwrap_or("")
+    if until_of(held) < now and login.lock.put_new("takeover #{held}", holder)
       login.lock.put(LOCK, "#{holder} #{now + hold_ms}")
       return ok(holder)
     end
 
     return error("another refresh of the ChatGPT login did not end") if now >= give_up
 
-    Task.sleep(20)
+    Task.sleep(10 + Random.int(0, 20))
   end
 
   error("unreachable")

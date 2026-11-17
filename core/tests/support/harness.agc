@@ -201,14 +201,15 @@ def providers(
   all
 end
 
-## The ChatGPT login of a test's folder, against the fake: a poll every `poll_ms`, a wait for the user of `device_ms`
-## and calls of `call_ms` at most.
+## The ChatGPT login of a test's folder, against the fake: a poll every `poll_ms`, a wait for the user of `device_ms`,
+## calls of `call_ms` at most and a lock held that and `lock_margin_ms` at most.
 def chatgpt_login(
   fake: Fake.Fake,
   base: String,
   poll_ms: Int = 10,
   device_ms: Int = 5000,
   call_ms: Int = 2000,
+  lock_margin_ms: Int = 200,
 ) -> Chatgpt.Login
   root = fake_root(fake)
   endpoints = Chatgpt.Endpoints(
@@ -218,6 +219,7 @@ def chatgpt_login(
     poll_margin_ms: 0,
     device_ms: device_ms,
     call_ms: call_ms,
+    lock_margin_ms: lock_margin_ms,
   )
 
   Chatgpt.Login(path: "#{base}/state/#{Chatgpt.FILE}", endpoints: endpoints, lock: ATS.new())
