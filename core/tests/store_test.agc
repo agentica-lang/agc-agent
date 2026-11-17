@@ -369,6 +369,22 @@ def test_the_history_of_many_tool_calls_is_built_fast_and_small() -> Result[Void
   Test.assert(bytes < SESSION_BYTES, "the session is #{bytes} bytes")
 end
 
+# In code mode the tool calls of a script have ids under its own (`c1.77`): the round's thinking still goes before all
+# of them, as it came live.
+def test_the_thinking_of_a_round_goes_before_the_calls_of_its_script() -> Result[Void]
+  shown = [Protocol.Message(role: Protocol.Role.User, text: "go")]
+  for call_id in ["c1", "c1.77", "c1.88"]
+    started = Protocol.ToolStarted(call_id: call_id, name: "run_script", summary: "")
+    shown = Store.shown_after(shown, Protocol.Event.ToolStarted(started))
+  end
+
+  script = LLM.ToolCall(id: "c1", name: "run_script", arguments: "{}", input: try JSON.parse("{}"))
+  blocks = [LLM.Block.Thinking(LLM.ThinkingPart(text: "thinking")), LLM.Block.ToolUse(script)]
+  thought = Store.with_thinking(shown, [LLM.Message(role: LLM.Role.Assistant, content: blocks)])
+  lines = thought.map { |m| m.tool.map { |t| t.call_id }.unwrap_or(m.text) }
+  Test.eq(lines, ["go", "thinking", "c1", "c1.77", "c1.88"])
+end
+
 def on_both(scenario: Fn[Store.Port, String, Result[Void]]) -> Result[Void]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/agc-store-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)
