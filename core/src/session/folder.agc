@@ -64,9 +64,10 @@ end
 
 ## The files of `command` (a program and its arguments, from the user's config) when it is not empty, else of the walk.
 ## The command runs in `root` as the bash tool runs a command: in its own process group, with a clean environment and
-## no input; its standard error is dropped. Its output is read for `command_ms` at most, up to MAX_LINES lines and MAX_BYTES bytes, and a path stays
-## only when it is a regular file inside `root`, reached through no link, with a printable name that `hidden` hides
-## no part of. A command that fails or runs out of time gives the walk, with a note that says why.
+## no input; its standard error is dropped. Its output is read for `command_ms` at most, up to MAX_LINES lines and
+## MAX_BYTES bytes, and a path stays only when it is a regular file inside `root`, reached through no link, with a
+## printable name that `hidden` hides no part of. Whatever the command started is killed at the end. A command that
+## fails or runs out of time gives the walk, with a note that says why.
 def listed(
   root: String,
   hidden: Optional[Fn[String, Bool]],
@@ -99,17 +100,40 @@ struct Output
 end
 
 def proposed(root: String, command: List[String], env: Fn[String, Result[String]], command_ms: Int) -> Result[Output]
+  deadline = Time.monotonic_ms + command_ms
   # Not captured: a full pipe holds the command until the lines are read, so a long list is cut, not lost.
   options = Process.Options(chdir: root, pgroup: true, timeout_ms: command_ms + STEP_MS, err: "/dev/null")
-  process = try Process.spawn("/usr/bin/env", ["-i"] + Shell.environment(env) + command, options)
+  # `sh` says its pid, which is the group's, then becomes the command: the group can be killed once the command ended.
+  words = ["-i", "--"] + Shell.environment(env) + ["sh", "-c", "echo $$; exec \"$@\"", "sh"] + command
+  process = try Process.spawn("/usr/bin/env", words, options)
   _ = Process.close_stdin(process, STEP_MS)
-  result = read_output(process, Time.monotonic_ms + command_ms)
-  if not result.ok? or result.unwrap!.cut
-    _ = Process.signal_group(process, System.Signal.Kill)
+  group = Process.poll_line(process, command_ms).unwrap_or("")
+  result: Result[Output] = error("it did not start")
+  if group.to_i.ok?
+    result = read_output(process, deadline)
   end
 
+  _ = Process.signal_group(process, System.Signal.Kill)
   Process.close(process)
+  if group.to_i.ok?
+    killed(group)
+  end
+
   result
+end
+
+# What the command started and left behind: the leader was waited for, so its group is signalled by number.
+def killed(group: String) -> Void
+  case Process.spawn(
+    "/bin/sh",
+    ["-c", "kill -9 \"-$1\" 2>/dev/null", "sh", group],
+    Process.Options(timeout_ms: STEP_MS),
+  )
+    ok(kill) ->
+      _ = Process.wait(kill, STEP_MS)
+      Process.close(kill)
+    error(_) -> nil
+  end
 end
 
 def read_output(process: Process, deadline: Int) -> Result[Output]
@@ -123,6 +147,8 @@ def read_output(process: Process, deadline: Int) -> Result[Output]
       ok(line) ->
         lines = lines.push(line)
         bytes += line.bytesize + 1
+      # A line that is not UTF-8 names no file the list can show.
+      error(e) if e.kind == "text.encoding" -> lines = lines.push("")
       error(e) if e.kind == "process.eof" -> return ended(process, lines, deadline)
       error(e) if e.kind == "process.timeout" -> return error("it did not end in time")
       error(e) -> return error(e.message)

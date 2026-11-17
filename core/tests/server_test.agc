@@ -212,25 +212,33 @@ def test_the_files_route_lists_the_session_folder() -> Result[Void]
 end
 
 # A files command only proposes paths: a file stays only when the walk could show it, so not a deny rule's, a link's,
-# one outside the folder, a folder or a name with a control character. Endless output is cut. A command that fails or
+# one outside the folder, a folder, or a name not in UTF-8 or with a control character. Endless output is cut. A
+# command that fails or
 # does not end in time gives the walk, with a note.
 def test_a_files_command_lists_only_what_the_walk_allows() -> Result[Void]
-  H.using(H.Setup(replies: [], deny: ["read_file(secrets/**)"], files_command: ["cat", "../list.txt"])) do |h|
+  setup = H.Setup(
+    replies: [],
+    deny: ["read_file(secrets/**)", "read_file(private)"],
+    files_command: ["sh", "-c", "printf 'x\\377\\n'; cat ../list.txt"],
+  )
+
+  H.using(setup) do |h|
     root = "#{h.work}/project"
     outside = "#{h.work}/outside"
-    for dir in [root, outside, "#{root}/src", "#{root}/secrets"]
+    for dir in [root, outside, "#{root}/src", "#{root}/secrets", "#{root}/private"]
       try Dir.mkdir(dir)
     end
 
     odd = "bad#{String.from_code(27)}.txt"
-    for file in ["a.txt", "b.txt", ".env", "src/main.agc", "secrets/key.txt", odd]
+    for file in ["a.txt", "b.txt", ".env", "src/main.agc", "secrets/key.txt", "private/key.txt", odd]
       try File.write_text("#{root}/#{file}", "x")
     end
 
     try File.write_text("#{outside}/secret.txt", "x")
     try link(outside, "#{root}/out_dir")
     try link("#{root}/a.txt", "#{root}/linked.txt")
-    proposed = ["a.txt", "./b.txt", ".env", "src/main.agc", "secrets/key.txt", odd, "linked.txt", "out_dir/secret.txt"]
+    proposed = ["a.txt", "./b.txt", ".env", "src/main.agc", "secrets/key.txt", "private/key.txt", odd, "linked.txt"]
+    proposed = proposed + ["out_dir/secret.txt"]
     proposed = proposed + ["../outside/secret.txt", "#{outside}/secret.txt", "missing.txt", "src", "a.txt"]
     proposed = proposed + ["src//main.agc", "src/../a.txt"]
     try File.write_text("#{h.work}/list.txt", proposed.join("\n") + "\n")
@@ -250,6 +258,43 @@ def test_a_files_command_lists_only_what_the_walk_allows() -> Result[Void]
         "files.command failed, so the built-in walk listed the files: it did not end in time",
       ],
     )
+  end
+end
+
+# What a files command starts is killed when the list is read, and when it is cut: nothing is left behind.
+def test_a_files_command_leaves_no_process_behind() -> Result[Void]
+  base = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-files-#{Random.int(0, 999_999_999)}"
+  root = "#{base}/project"
+  try Dir.mkdir(base)
+  try Dir.mkdir(root)
+  try File.write_text("#{root}/a.txt", "x")
+  left = ["sh", "-c", "trap '' TERM; sleep 60 >/dev/null & echo $! > ../left.pid; echo a.txt"]
+  done = Folder.listed(root, none, left, &unset)
+  cut = Folder.listed(root, none, ["sh", "-c", "echo $$ > ../cut.pid; yes a.txt | cat"], &unset)
+  pids = [(try File.read_text("#{base}/left.pid")).strip, "-#{(try File.read_text("#{base}/cut.pid")).strip}"]
+  gone = pids.map { |pid| gone?(pid) }
+  _ = Path.remove(base)
+  try Test.eq([done, cut], [Protocol.FileList(files: ["a.txt"]), Protocol.FileList(files: ["a.txt"], truncated: true)])
+  Test.eq(gone, [true, true])
+end
+
+# A killed process goes once its new parent has reaped it.
+def gone?(pid: String) -> Bool
+  deadline = Time.monotonic_ms + 5000
+  while Time.monotonic_ms < deadline
+    return true if try_kill(pid) != 0
+  end
+
+  false
+end
+
+def try_kill(pid: String) -> Int
+  case Process.spawn("/bin/sh", ["-c", "kill -0 \"$1\" 2>/dev/null", "sh", pid])
+    ok(check) ->
+      code = Process.wait(check, 1000).unwrap_or(1)
+      Process.close(check)
+      code
+    error(_) -> 1
   end
 end
 
