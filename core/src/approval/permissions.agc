@@ -115,7 +115,7 @@ end
 ## `rules`.
 def allows?(allows: Allows, rules: Approval.Rules, tool: String, target: String, root: String) -> Bool
   return false if Approval.protected?(tool, target)
-  return false if tool == "bash" and bash_denied?(rules, target)
+  return false if tool == "bash" and (bash_denied?(rules, target) or bash_reads_denied?(rules, target))
   return true if allows.exact.include?(key(tool, target))
   return false if (tool == "bash" and rules.deny.any? { |rule| rule.tool == "read_file" })
   return true if allows.tools.include?(tool)
@@ -144,6 +144,19 @@ def bash_reads_denied?(rules: Approval.Rules, target: String) -> Bool
   case Shell.parse(target)
     ok(script) -> script.pipelines.any? { |p| p.commands.any? { |c| names_denied?(rules, c) } }
     error(_) -> true
+  end
+end
+
+## Whether a deny rule surely matches a `bash` command: a tail of the words of one of its simple commands (as
+## `bash_denied?` matches them), or a word that names a file a `read_file` rule hides. False when the command does not
+## parse: `bash_denied?` and `bash_reads_denied?` say whether it can be cleared.
+def bash_matched?(rules: Approval.Rules, target: String) -> Bool
+  return false if rules.deny.empty?
+
+  case Shell.parse(target)
+    ok(script) ->
+      script.pipelines.any? { |p| p.commands.any? { |c| tail_denied?(rules, c) or names_denied?(rules, c) } }
+    error(_) -> false
   end
 end
 
@@ -268,6 +281,12 @@ def command_denied?(rules: Approval.Rules, command: Shell.Command) -> Bool
   words = Shell.argv(command)
   return true if (words.any? { |word| word.empty? or word.include?(" ") or not Approval.plain?(word) })
 
+  tail_denied?(rules, command)
+end
+
+# A tail of the words, also with one more argument (as `xargs` adds), matches a deny rule of `bash`.
+def tail_denied?(rules: Approval.Rules, command: Shell.Command) -> Bool
+  words = Shell.argv(command)
   (0...words.size).to_a.any? do |from|
     text = words.drop(from).join(" ")
     Approval.denied?(rules, "bash", text) or Approval.denied?(rules, "bash", "#{text} x")

@@ -105,6 +105,34 @@ def located(values: Map[String, String], name: String) -> Result[String]
   from_map(values, name)
 end
 
+# The config of before the rename is not read: an old config file or `auth.json` without the new one, or an old
+# variable without the new one, stops the start with an error that names where it goes, so its deny rules are not lost.
+def test_the_config_of_before_finn_stops_the_start() -> Result[Void]
+  home = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-old-#{Random.int(0, 999999999)}"
+  for dir in [home, "#{home}/.config", "#{home}/.config/agc-agent", "#{home}/.config/finn"]
+    try Dir.mkdir(dir)
+  end
+
+  at = {"HOME": home}
+  try Config.from_env(->(n) { located(at, n) })
+  results: List[String] = []
+  for file in ["config.json", "auth.json"]
+    try File.write_text("#{home}/.config/agc-agent/#{file}", "{}")
+    failed = Config.from_env(->(n) { located(at, n) })
+    results = results.push(failed.ok?.to_s)
+    try Test.assert(failed.message.include?("#{home}/.config/finn/#{file}"), failed.message)
+    try File.write_text("#{home}/.config/finn/#{file}", "{}")
+  end
+
+  try Config.from_env(->(n) { located(at, n) })
+  for name in ["CONFIG", "MCP_CONFIG"]
+    results = results.push(Config.from_env(->(n) { located(at.put("AGC_AGENT_#{name}", "/x.json"), n) }).ok?.to_s)
+  end
+
+  _ = Path.remove(home)
+  Test.eq(results, ["false", "false", "false", "false"])
+end
+
 # A preset is offered when its key is set; the config file adds providers (one with a key variable only when it is
 # set) and refuses a bad one; FINN_PROVIDER picks the default among those offered.
 def test_providers_come_from_presets_with_a_key_and_the_config_file() -> Result[Void]

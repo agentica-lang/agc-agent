@@ -1,7 +1,9 @@
 import Protocol from "pkg/protocol/protocol"
 import Approval from "../src/approval/approval"
 import Config from "../src/config/config"
+import Extension from "../src/approval/extension"
 import Permissions from "../src/approval/permissions"
+import Tools from "../src/tools/tools"
 import H from "support/harness"
 
 # `allow_prefix` allows the next `git add`, `allow_tool` every bash call after it; the request says the prefix, and
@@ -141,6 +143,53 @@ def test_with_the_approvals_off_a_command_the_deny_rules_cannot_clear_is_refused
   end
 end
 
+# A deny rule wins over an allow rule in both modes: `cat` is allowed, but not on a file a `read_file` rule hides.
+def test_an_allow_rule_does_not_run_a_command_a_read_rule_denies() -> Result[Void]
+  for asking in [false, true]
+    setup = H.Setup(
+      replies: ["bash_cat_secret.sse", "text.sse"],
+      approvals: asking,
+      allow: ["bash(cat *)"],
+      deny: ["read_file(secret*)"],
+    )
+
+    try H.using(setup) do |h|
+      try File.write_text("#{h.work}/secret.txt", "s3cr3t")
+      id = try H.new_session(h)
+      a = try H.subscribe(h, id)
+      _ = try H.send(h, id, "Show secret.txt.")
+      a = try H.until(a, Protocol.EventKind.TurnFinished)
+      H.close(a)
+      text = try File.read_text(H.session_file(h, id))
+      seen = [asking.to_s, text.include?("s3cr3t").to_s, H.kinds(a.seen).include?("approval_requested").to_s]
+      Test.eq(seen, [asking.to_s, "false", "false"])
+    end
+  end
+
+  ok()
+end
+
+# The verdict of a `bash` call under an allow rule: a deny rule that surely matches refuses it in both modes (a tail
+# of its words, as `sudo rm`, or a hidden file); one the deny rules cannot clear asks with the asking on.
+def test_a_deny_rule_wins_over_an_allow_rule_for_bash() -> Result[Void]
+  rules = try Approval.parse_rules(["bash(cat *)", "bash(sudo *)"], ["read_file(.env*)", "bash(rm *)"])
+  root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
+  ctx = try Tools.context(root, ->(_name: String) { error("unset") })
+  commands = ["cat .env", "sudo rm -rf x", "cat a.txt", "cat $F"]
+  shown = [false, true].map do |asking|
+    a = Extension.open(rules, root, false, asking).unwrap!
+    commands.map { |c| Extension.verdict(a, ctx, "bash", JSON.object({"command": JSON.from(c)})).to_s }
+  end
+
+  Test.eq(
+    shown,
+    [
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Deny"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Ask"],
+    ],
+  )
+end
+
 # With the approvals off a `read_file` rule refuses only the bash commands that name a file it hides: `ls` and
 # `git status` run.
 def test_with_the_approvals_off_a_read_rule_leaves_other_commands_running() -> Result[Void]
@@ -198,14 +247,21 @@ def test_session_allows_keep_the_bash_deny_rules() -> Result[Void]
   Test.eq(Permissions.allows?(whole, rules, "bash", "ls -la", "/tmp"), true)
 end
 
-# While a read_file deny rule exists any command may read the file: only the same call is allowed again for bash.
+# While a read_file deny rule exists any command may read the file: only the same call is allowed again for bash, and
+# not when it names the file.
 def test_a_read_deny_rule_leaves_bash_only_the_exact_allow() -> Result[Void]
   rules = try Approval.parse_rules([], ["read_file(.env)"])
   try Test.eq(Permissions.allows?(Permissions.Allows(prefixes: [["cat"]]), rules, "bash", "cat .env", "/tmp"), false)
   whole = Permissions.Allows(tools: ["bash"])
   try Test.eq(Permissions.allows?(whole, rules, "bash", "cat .env | wc -l", "/tmp"), false)
-  exact = Permissions.answered(Permissions.Allows(), "allow_session", "bash", "cat .env")
-  Test.eq(Permissions.allows?(exact, rules, "bash", "cat .env", "/tmp"), true)
+  exact = Permissions.answered(
+    Permissions.answered(Permissions.Allows(), "allow_session", "bash", "cat .env"),
+    "allow_session",
+    "bash",
+    "cat a.txt",
+  )
+
+  Test.eq(["cat .env", "cat a.txt"].map { |c| Permissions.allows?(exact, rules, "bash", c, "/tmp") }, [false, true])
 end
 
 # An edit of two files, one under .git/, is protected: neither accept edits nor allow_tool runs it.

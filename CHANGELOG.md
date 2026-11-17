@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- **Breaking:** a config of before the rename (`~/.config/agc-agent/config.json` or `auth.json` without the `finn` one, `AGC_AGENT_CONFIG`, `AGC_AGENT_MCP_CONFIG`) stops `finn serve` with an error that says where to move it, instead of being ignored with its deny rules.
+- Approvals: a deny rule wins over every allow rule and session answer: an allowed `bash` command (`sudo *`, `cat *`) that runs a denied command (`sudo rm -rf x`) or names a file a `read_file` rule hides (`cat .env`) is refused, with the approvals off or on.
 - MCP servers on streamable HTTP: an entry of `FINN_MCP_CONFIG` with `url` and `headers` (`"Authorization": "Bearer ${TOKEN}"` takes the token from the environment, and no error or log shows it). Answers come as JSON or SSE; the client keeps the session id, resumes a cut stream with `Last-Event-ID`, starts a session the server ended again for the same call, and ends the session with a DELETE. Its tools follow the approvals and deny rules as the stdio ones do.
 - Approvals: an approval request for `bash` offers no prefix while a `read_file` deny rule exists, since only the same call can be allowed then.
 - Approvals: `stdbuf`, `chrt`, `ionice`, `setsid`, `doas`, `flock`, `watch`, `script`, `dash`, `ksh` and `fish` run other programs, so an answer for one allows only the same call, not its first word.
