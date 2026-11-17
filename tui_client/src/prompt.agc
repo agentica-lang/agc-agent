@@ -40,6 +40,96 @@ def backspace(text: String, at: Int) -> String
   text.slice(0, cut - 1) + text.slice(cut, text.length - cut)
 end
 
+## The text without the character after `at`.
+def delete(text: String, at: Int) -> String
+  cut = clamp(text, at)
+  return text if cut == text.length
+
+  text.slice(0, cut) + text.slice(cut + 1, text.length - cut - 1)
+end
+
+## The text without the characters from `from` up to `to`.
+def cut(text: String, from: Int, to: Int) -> String
+  first = clamp(text, from)
+  last = [clamp(text, to), first].max.unwrap!
+  text.slice(0, first) + text.slice(last, text.length - last)
+end
+
+## The start of the word before `at`, past the spaces before it; letters and punctuation are words of their own.
+def word_left(text: String, at: Int) -> Int
+  chars = text.split("")
+  i = clamp(text, at)
+  while i > 0 and class_of(chars[i - 1]) == 0
+    i = i - 1
+  end
+
+  return i if i == 0
+
+  kind = class_of(chars[i - 1])
+  while i > 0 and class_of(chars[i - 1]) == kind
+    i = i - 1
+  end
+
+  i
+end
+
+## The end of the word after `at`, past the spaces before it.
+def word_right(text: String, at: Int) -> Int
+  chars = text.split("")
+  i = clamp(text, at)
+  while i < chars.size and class_of(chars[i]) == 0
+    i = i + 1
+  end
+
+  return i if i == chars.size
+
+  kind = class_of(chars[i])
+  while i < chars.size and class_of(chars[i]) == kind
+    i = i + 1
+  end
+
+  i
+end
+
+## The start of the line of `at`.
+def line_start(text: String, at: Int) -> Int
+  cut = clamp(text, at)
+  cut - text.slice(0, cut).split("\n").last.length
+end
+
+## The end of the line of `at`.
+def line_end(text: String, at: Int) -> Int
+  cut = clamp(text, at)
+  cut + text.slice(cut, text.length - cut).split("\n")[0].length
+end
+
+## The place in the row drawn `step` rows above (negative) or below `at`, at the same column or the end of a shorter
+## row; none past the first or the last row. `width` is the screen's.
+def vertical(text: String, at: Int, width: Int, step: Int) -> Optional[Int]
+  columns = [width - LEAD.length - 1, 1].max.unwrap!
+  all: List[Piece] = []
+  start = 0
+  for line in text.split("\n")
+    all = all + cut_line(line, start, columns)
+    start = start + line.length + 1
+  end
+
+  cut = clamp(text, at)
+  row = row_of(all, cut)
+  target = row + step
+  return none if target < 0 or target >= all.size
+
+  piece = all[row]
+  goal = all[target]
+  index = goal.start + Width.cut(goal.text, Width.text(text.slice(piece.start, cut - piece.start)))[0].length
+  goal_end = goal.start + goal.text.length
+  # The end of a row cut by the width is the start of the next one: the cursor stays on its row.
+  wrapped = target + 1 < all.size and all[target + 1].start == goal_end
+  return some(index - 1) if wrapped and index == goal_end and goal.text.length > 0
+
+  some(index)
+end
+
 ## Pasted text without its control characters, but for line ends and tabs.
 def pasted(text: String) -> String = text.split("").select { |c| kept?(c) }.join("")
 
@@ -64,6 +154,9 @@ def index_at(text: String, cursor: Int, width: Int, height: Int, x: Int, y: Int)
 end
 
 private
+
+# Characters of their own word class: a word move stops where letters and these meet.
+PUNCTUATION = Set.new("!\"#$%&'()*+,-./:;<=>?@[\\]^`{|}~".split(""))
 
 # The last rows that fit, or from the cursor's row when it is above them. Only the lines around the cursor are cut
 # into rows, so a long text costs little per key.
@@ -146,6 +239,14 @@ def row_of(all: List[Piece], cursor: Int) -> Int
   end
 
   found
+end
+
+# 0 for a space, 1 for punctuation, 2 for a letter of a word.
+def class_of(c: String) -> Int
+  return 0 if c == " " or c == "\t" or c == "\n"
+  return 1 if PUNCTUATION.include?(c)
+
+  2
 end
 
 def kept?(c: String) -> Bool

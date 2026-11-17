@@ -486,6 +486,81 @@ end
 
 # Up on an empty prompt goes back through the prompts sent, Down comes forward to an empty prompt; a large paste is
 # one token that the send puts back.
+# The editing keys of pi: by word (letters and punctuation are words of their own), to the line's ends, forward; Ctrl+D
+# quits on an empty prompt.
+def test_editing_keys_cut_and_move_by_word_and_line() -> Result[Void]
+  model = model_of(40, 8).with(id: "s1", prompt: "one two-three four", cursor: 18)
+  steps = [
+    key(TUI.Key.Left, TUI.Mods(alt: true)),
+    ctrl("w"),
+    key(TUI.Key.Backspace, TUI.Mods(alt: true)),
+    ctrl("a"),
+    key(TUI.Key.Delete, TUI.Mods()),
+    ctrl("e"),
+    key(TUI.Key.Left, TUI.Mods(ctrl: true)),
+    App.Msg.Key(TUI.Event.Char("f", TUI.Mods(alt: true))),
+    App.Msg.Key(TUI.Event.Char("b", TUI.Mods(alt: true))),
+    ctrl("k"),
+    ctrl("k"),
+    ctrl("u"),
+  ]
+
+  shown: List[String] = []
+  for step in steps
+    model = App.update(model, step).model
+    shown = shown.push("#{model.prompt}|#{model.cursor}")
+  end
+
+  try Test.eq(
+    shown,
+    [
+      "one two-three four|14",
+      "one two-four|8",
+      "one twofour|7",
+      "one twofour|0",
+      "ne twofour|0",
+      "ne twofour|10",
+      "ne twofour|3",
+      "ne twofour|10",
+      "ne twofour|3",
+      "ne |3",
+      "ne |3",
+      "|0",
+    ],
+  )
+
+  # At a line's start Ctrl+U joins it with the line before; at its end Ctrl+K with the line after.
+  joined = App.update(model_of(40, 8).with(prompt: "ab\ncd", cursor: 3), ctrl("u")).model
+  try Test.eq([joined.prompt, "#{joined.cursor}"], ["abcd", "2"])
+  try Test.eq(App.update(model_of(40, 8).with(prompt: "ab\ncd", cursor: 2), ctrl("k")).model.prompt, "abcd")
+  try Test.eq(App.update(model_of(40, 8).with(prompt: "ab", cursor: 0), ctrl("d")).model.prompt, "b")
+  quit = App.update(model_of(40, 8), ctrl("d"))
+  try Test.eq(quit.model.exit, some(0))
+  Test.assert(quit.cmds.any? { |cmd| quit?(cmd) }, "Ctrl+D quits")
+end
+
+# Up and Down move between the rows of the prompt, cut lines included; Up from the first row recalls a prompt only
+# while one is recalled or the prompt is empty, and Down from the last row goes on through the recalled ones.
+def test_up_and_down_move_between_rows_and_recall_from_the_edges() -> Result[Void]
+  model = model_of(40, 8).with(id: "s1", history: ["first", "second\nline"])
+  places: List[String] = []
+  for step in [up(), up(), up(), down(), down(), down()]
+    model = App.update(model, step).model
+    places = places.push("#{model.prompt}|#{model.cursor}")
+  end
+
+  try Test.eq(places, ["second\nline|11", "second\nline|4", "first|5", "second\nline|11", "|0", "|0"])
+
+  typed = model_of(40, 8).with(prompt: "ab\ncdef", cursor: 6)
+  higher = App.update(typed, up()).model
+  try Test.eq(["#{higher.cursor}", "#{App.update(higher, down()).model.cursor}"], ["2", "5"])
+  try Test.eq(App.update(higher, up()).model.cursor, 2)
+  # 8 columns leave 6 to the text: "abcdef" and "ghij" are two rows of one line.
+  long = model_of(8, 8).with(prompt: "abcdefghij", cursor: 9)
+  try Test.eq(App.update(long, up()).model.cursor, 3)
+  Test.eq(App.update(long.with(cursor: 5), down()).model.cursor, 10)
+end
+
 def test_up_recalls_prompts_and_a_large_paste_is_one_token() -> Result[Void]
   model = model_of(40, 8).with(id: "s1")
   for text in ["first", "/help"]
@@ -851,6 +926,10 @@ def backspace() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Backspace, TUI.Mo
 def down() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))
 
 def up() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Up, TUI.Mods()))
+
+def ctrl(c: String) -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Ctrl(c), TUI.Mods()))
+
+def key(k: TUI.Key, mods: TUI.Mods) -> App.Msg = App.Msg.Key(TUI.Event.Key(k, mods))
 
 def key_char(c: String) -> App.Msg = App.Msg.Key(TUI.Event.Char(c, TUI.Mods()))
 
