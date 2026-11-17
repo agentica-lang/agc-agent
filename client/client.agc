@@ -92,6 +92,7 @@ export Commands.todo_lines
 export Commands.listing
 export Commands.pick
 export Commands.model_warning
+export Commands.turn_warning
 export Commands.logged_out
 export Commands.model_change
 

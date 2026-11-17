@@ -40,6 +40,7 @@ def keyed(app: State.Model, event: TUI.Event) -> State.Model
   return app if Approvals.captures?(app.approvals, event)
 
   for found in State.option_list(Files.mention_list(app))
+    return send(Files.on_mention_key(app, found, event)) if Files.runs_choice?(app, found, event)
     return Files.on_mention_key(app, found, event) if Files.mention_key?(app, found, event)
   end
 

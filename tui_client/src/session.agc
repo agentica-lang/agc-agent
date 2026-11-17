@@ -316,9 +316,10 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
       read_branch(shown.with(shell: false, stopping: false, entries: entries))
     # An error (a write of `shell_finished` that failed) also ends a command: no other event of it comes.
     Protocol.Event.Error(failure) ->
-      failed = State.noted(shown.with(shell: false), "error: #{failure.kind}: #{failure.message}")
-      case shown.new_model
-        some(model) -> State.noted(failed.with(new_model: none), "warning: #{Client.model_warning(model)}")
+      failed = State.noted(shown.with(shell: false, new_model: none), "error: #{failure.kind}: #{failure.message}")
+      provider = shown.serving.split("/")[0]
+      case Client.turn_warning(failure.kind, provider, shown.new_model)
+        some(warning) -> State.noted(failed, "warning: #{warning}")
         none -> failed
       end
 

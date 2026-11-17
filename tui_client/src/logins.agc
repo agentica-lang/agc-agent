@@ -76,11 +76,10 @@ def logged_in(app: State.Model, name: String, result: Result[Protocol.LoginStatu
   done = case result
     ok(status) if status.asks == Protocol.ASKS_URL and status.from == "env" ->
       State.noted(app, "#{name}: the URL is stored, but #{status.key_env} is set and wins over it")
-    ok(status) if status.asks == Protocol.ASKS_URL ->
-      State.noted(app, "#{name} is set up at #{status.base_url}: /model lists its models")
+    ok(status) if status.asks == Protocol.ASKS_URL -> moved(app, name, "#{name} is set up at #{status.base_url}")
     ok(status) if status.from == "env" ->
       State.noted(app, "#{name}: the key is stored, but #{status.key_env} is set and wins over it")
-    ok(status) -> State.noted(app, "#{name} is set up (#{status.key_env} would also work): /model lists its models")
+    ok(status) -> moved(app, name, "#{name} is set up (#{status.key_env} would also work)")
     error(e) -> State.noted(app, "error: #{e.message}")
   end
 
@@ -105,6 +104,39 @@ def logout_command(app: State.Model, name: Optional[String]) -> Result[State.Mod
 end
 
 private
+
+LOCAL = "local"
+
+# A session on `local` (the fallback of a first start) moves to the provider just set up: on its only model, else the
+# picker shows its models (Esc stays). Another session stays where it is; `said` then tells how to pick a model.
+def moved(app: State.Model, name: String, said: String) -> State.Model
+  return State.noted(app, "#{said}: /model lists its models") if app.login_only or app.id == ""
+
+  case app.backend.list_providers.call()
+    ok(list) ->
+      own = list.providers.select { |p| p.name == name }
+      models = own.flat_map { |p| p.models }
+      return State.noted(app, "#{said}: /model #{name}/NAME picks one of its models") if models.empty?
+      return State.noted(app, "#{said}: /model lists its models") if name == LOCAL or provider_of(app) != LOCAL
+
+      if models.size > 1
+        shown = State.noted(app, "#{said}: pick a model of #{name}, or Esc to stay on #{LOCAL}")
+        return shown.with(picker: some(Picker.models(list.with(providers: own), "")))
+      end
+
+      State.tried(app, switched(app, name, models[0], said))
+    error(e) -> State.noted(State.noted(app, said), "error: #{e.message}")
+  end
+end
+
+def switched(app: State.Model, name: String, model: String, said: String) -> Result[State.Model]
+  try app.backend.update_session.call(app.id, Protocol.UpdateSession(provider: some(name), model: some(model)))
+  session = try app.backend.session.call(app.id)
+  shown = State.noted(app, "#{said}: #{name}/#{model} from the next turn")
+  ok(shown.with(serving: State.serving_of(session), new_model: some(model)))
+end
+
+def provider_of(app: State.Model) -> String = app.serving.split("/")[0]
 
 def named_from_server(app: State.Model, name: String) -> Result[State.Model]
   ok(named_login(app, (try app.backend.list_logins.call()).providers, name))

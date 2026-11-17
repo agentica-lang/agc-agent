@@ -116,6 +116,17 @@ def mention_key?(app: State.Model, found: Input.Mention, event: TUI.Event) -> Bo
   end
 end
 
+## Enter on the list of a command's argument runs the command with the selected choice when nothing is typed after the
+## command or a row was moved to, so a pick there is the one that counts and no picker opens after it. A typed argument
+## is sent as typed, and so is the line after Esc.
+def runs_choice?(app: State.Model, found: Input.Mention, event: TUI.Event) -> Bool
+  case event
+    TUI.Event.Key(TUI.Key.Enter, mods) if not mods.alt and found.source == Input.Source.Arguments ->
+      (found.query.strip == "" or app.mention_selected > 0) and not mention_choices(app, found).empty?
+    _ -> false
+  end
+end
+
 def mention_choices(app: State.Model, found: Input.Mention) -> List[Input.Choice]
   case found.source
     Input.Source.Commands -> Input.commands(Client.listed() + app.custom, found.query)

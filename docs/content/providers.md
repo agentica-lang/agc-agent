@@ -45,7 +45,7 @@ The login list also shows `Claude Pro/Max: coming` and `ChatGPT and Codex: comin
 - For a new session: `finn --provider NAME --model NAME` (or `finn chat` with the same options).
 - For the server: `FINN_PROVIDER` (`finn serve --provider`) is the provider of a session that names none, and `FINN_MODEL` (`--model`) its model.
 
-The server takes any model name. When the first turn after `/model` fails, the client says so; check the name.
+The server takes any model name. `/model NAME` with a name that the session's provider does not list but another provider does, whole or in part, changes nothing and names those models (`/model local/NAME` keeps the name on `local`). When the first turn after `/model` fails, the client says so; check the name. When the local server does not answer, the client says that `/model PROVIDER/NAME` picks another provider.
 
 ## Local: llama.cpp and other servers
 

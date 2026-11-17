@@ -1375,6 +1375,67 @@ def test_a_local_login_is_listed_with_its_url_and_asks_for_one() -> Result[Void]
   Test.eq(done.entries.last.text, "local is set up at http://127.0.0.1:9090/v1: /model lists its models")
 end
 
+# A login moves a session on `local` (the fallback of a first start) to the provider set up: on its only model, with
+# the footer showing it; with several models the picker shows them; with none, the note says how to name one. A session
+# on another provider stays.
+def test_a_login_moves_a_local_session_to_the_new_provider() -> Result[Void]
+  providers = Protocol.ProviderList(
+    provider: "local",
+    providers: [
+      Protocol.ProviderInfo(name: "local", api: "openai", models: ["qwen"]),
+      Protocol.ProviderInfo(name: "box", api: "openai", models: ["m1"]),
+      Protocol.ProviderInfo(name: "many", api: "openai", models: ["a", "b"]),
+      Protocol.ProviderInfo(name: "bare", api: "openai", models: []),
+    ],
+  )
+
+  session = Protocol.Session(
+    id: "s1",
+    cwd: ".",
+    model: "m1",
+    last_event_id: 0,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+    provider: "box",
+  )
+
+  changes: Channel[Protocol.UpdateSession] = Channel.new(4)
+  backend = Client.unreachable_backend().with(
+    session: ->(_id: String) { ok(session) },
+    update_session: ->(_id: String, change: Protocol.UpdateSession) {
+      _ = changes.send(change, 0)
+      ok()
+    },
+    list_providers: -> { ok(providers) },
+  )
+
+  local = model_of(100, 12).with(backend: backend, id: "s1", serving: "local/qwen")
+  status = ->(name: String) {
+    ok(Protocol.LoginStatus(name: name, label: "", key_env: "KEY", from: "stored", coming: false))
+  }
+
+  moved = App.update(local, App.Msg.LoggedIn("box", status.call("box"))).model
+  try Test.eq(changes.recv(0), ok(Protocol.UpdateSession(provider: some("box"), model: some("m1"))))
+  try Test.eq(moved.entries.last.text, "box is set up (KEY would also work): box/m1 from the next turn")
+  try Test.assert(rows(moved).last.end_with?("(box) m1"), rows(moved).last)
+  picking = App.update(local, App.Msg.LoggedIn("many", status.call("many"))).model
+  try Test.eq(
+    picking.entries.last.text,
+    "many is set up (KEY would also work): pick a model of many, or Esc to stay on local",
+  )
+
+  try Test.eq(picking.picker.map { |p| p.models }, some(["many/a", "many/b"]))
+  _ = App.update(picking, enter())
+  try Test.eq(changes.recv(0), ok(Protocol.UpdateSession(provider: some("many"), model: some("a"))))
+  bare = App.update(local, App.Msg.LoggedIn("bare", status.call("bare"))).model
+  try Test.eq(bare.entries.last.text, "bare is set up (KEY would also work): /model bare/NAME picks one of its models")
+  stays = App.update(local.with(serving: "box/m1"), App.Msg.LoggedIn("many", status.call("many"))).model
+  try Test.eq(stays.entries.last.text, "many is set up (KEY would also work): /model lists its models")
+  Test.eq(changes.recv(0).ok?, false)
+end
+
 # A coming login cannot be given a key; Esc in the key prompt drops what was typed; under `finn login` the answer to
 # the login ends the app. A `/login` or `/logout` line, which may hold a key typed by mistake, is not remembered and
 # drops its pastes.

@@ -134,18 +134,78 @@ def test_model_change_splits_a_known_provider() -> Result[Void]
 
   try Test.eq(
     Client.model_change(list, "local", "fw/m"),
-    Protocol.UpdateSession(provider: some("fw"), model: some("m")),
+    ok(Protocol.UpdateSession(provider: some("fw"), model: some("m"))),
   )
 
-  try Test.eq(Client.model_change(list, "or", "fw/m"), Protocol.UpdateSession(model: some("fw/m")))
+  try Test.eq(Client.model_change(list, "or", "fw/m"), ok(Protocol.UpdateSession(model: some("fw/m"))))
   try Test.eq(
     Client.model_change(list, "or", "or/fw/m"),
-    Protocol.UpdateSession(provider: some("or"), model: some("fw/m")),
+    ok(Protocol.UpdateSession(provider: some("or"), model: some("fw/m"))),
   )
 
-  try Test.eq(Client.model_change(list, "local", "org/m"), Protocol.UpdateSession(model: some("org/m")))
-  try Test.eq(Client.model_change(list, "local", "fw/"), Protocol.UpdateSession(model: some("fw/")))
-  Test.eq(Client.model_change(list, "local", "m"), Protocol.UpdateSession(model: some("m")))
+  Test.eq(Client.model_change(list, "local", "org/m"), ok(Protocol.UpdateSession(model: some("org/m"))))
+end
+
+# A name that only other providers list, whole or in part, never moves the session: the error names the models, exact
+# ones first, at most three, and how to keep the provider.
+def test_model_change_suggests_the_models_of_other_providers() -> Result[Void]
+  fireworks = ["accounts/fireworks/models/deepseek-v3", "accounts/fireworks/models/qwen3"]
+  list = Protocol.ProviderList(
+    provider: "local",
+    providers: [
+      Protocol.ProviderInfo(name: "local", api: "openai", models: ["test-model"]),
+      Protocol.ProviderInfo(name: "fireworks", api: "openai", models: fireworks),
+      Protocol.ProviderInfo(
+        name: "deep",
+        api: "openai",
+        models: ["deepseek", "deepseek-r1", "r2", "r3", "deepseek-x"],
+      ),
+    ],
+  )
+
+  keep = "(/model local/DeepSeek-V3 keeps local)"
+  try Test.eq(
+    message_of_change(Client.model_change(list, "local", "DeepSeek-V3")),
+    "DeepSeek-V3 is not a model of local: did you mean /model fireworks/accounts/fireworks/models/deepseek-v3? #{keep}",
+  )
+
+  try Test.eq(
+    message_of_change(Client.model_change(list, "local", "deepseek")),
+    "deepseek is not a model of local: did you mean /model deep/deepseek? (/model local/deepseek keeps local)",
+  )
+
+  many = "seek is not a model of local; other providers have /model fireworks/accounts/fireworks/models/deepseek-v3, "
+  try Test.eq(
+    message_of_change(Client.model_change(list, "local", "seek")),
+    "#{many}/model deep/deepseek, /model deep/deepseek-r1 and 1 more (/model local/seek keeps local)",
+  )
+
+  try Test.eq(Client.model_change(list, "local", "test-model"), ok(Protocol.UpdateSession(model: some("test-model"))))
+  try Test.eq(Client.model_change(list, "local", "llama"), ok(Protocol.UpdateSession(model: some("llama"))))
+  try Test.eq(
+    Client.model_change(list, "local", "local/deepseek"),
+    ok(Protocol.UpdateSession(provider: some("local"), model: some("deepseek"))),
+  )
+
+  Test.eq(
+    message_of_change(Client.model_change(list, "deep", "qwen3")).start_with?("qwen3 is not a model of deep"),
+    true,
+  )
+end
+
+# A call on `local` that reached no server says the local server does not answer, before any warning about a name.
+def test_the_warning_after_a_failed_turn() -> Result[Void]
+  down = "the local server does not answer: /model PROVIDER/NAME picks another provider, /login sets one up"
+  try Test.eq(Client.turn_warning("llm.network", "local", some("m")), some(down))
+  try Test.eq(Client.turn_warning("llm.network", "fireworks", some("m")), some(Client.model_warning("m")))
+  Test.eq([Client.turn_warning("llm.server", "local", none)], [none])
+end
+
+def message_of_change(result: Result[Protocol.UpdateSession]) -> String
+  case result
+    ok(_) -> "ok"
+    error(e) -> e.message
+  end
 end
 
 # A replay starts at the running turn unless the server lost that start; a new session without a folder takes the
