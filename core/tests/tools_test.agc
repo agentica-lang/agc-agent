@@ -1,5 +1,4 @@
 import Approval from "../src/approval/approval"
-import BashTool from "../src/tools/shell"
 import Diff from "../src/tools/diff"
 import Tools from "../src/tools/tools"
 
@@ -19,12 +18,6 @@ def fake_env(name: String) -> Result[String]
     "FINN_SERVER_JSON" -> ok("/state/server.json")
     _ -> error("not set")
   end
-end
-
-def dot_env(name: String) -> Result[String]
-  return ok(".:/usr/bin:/bin") if name == "PATH"
-
-  fake_env(name)
 end
 
 def link(target: String, path: String) -> Result[Void]
@@ -203,25 +196,6 @@ def test_bash_gets_only_the_kept_variables_of_the_real_environment() -> Result[V
   done(s)
 end
 
-# A read-only command, which may run without asking, finds its programs in the folders only root can change, never in
-# a `.` of the user's PATH or a folder of the user; another command keeps the user's PATH.
-def test_a_read_only_command_runs_with_a_fixed_path() -> Result[Void]
-  s = try setup()
-  try File.write_text("#{s.root}/cat", "#!/bin/sh\necho PWNED\n")
-  process = try Process.spawn("chmod", ["+x", "#{s.root}/cat"])
-  _ = try Process.wait(process, 5000)
-  ctx = s.ctx.with(env: &dot_env)
-  try Test.eq(Tools.run(ctx, "bash", JSON.from({"command": "cat a.txt"})).text, "one\ntwo\nthree\nfour\n")
-  try Test.eq(Tools.run(ctx, "bash", JSON.from({"command": "echo $PATH"})).text, ".:/usr/bin:/bin\n")
-  try Test.eq(BashTool.trusted_path(["/usr/bin", s.root]), "/usr/bin")
-  try Test.eq(
-    [BashTool.read_only?(s.root, "cat a.txt"), BashTool.read_only?(s.root, "which -a /etc/passwd")],
-    [true, false],
-  )
-
-  done(s)
-end
-
 def test_bash_timeout_kills_the_whole_process_group() -> Result[Void]
   s = try setup()
   started = Time.monotonic_ms()
@@ -322,23 +296,11 @@ def test_verdicts_follow_the_defaults_and_judge_the_real_path() -> Result[Void]
   try Test.eq(verdict(s, "grep", JSON.from({"pattern": "x"})), Tools.Verdict.Allow)
   try Test.eq(verdict(s, "write_file", write("a.txt")), Tools.Verdict.Ask)
   try Test.eq(verdict(s, "edit_file", edit("a.txt")), Tools.Verdict.Ask)
-  try Test.eq(verdict(s, "bash", JSON.from({"command": "ls"})), Tools.Verdict.Allow)
-  try Test.eq(verdict(s, "bash", JSON.from({"command": "ls > out"})), Tools.Verdict.Ask)
-  # Read-only commands resolve their paths: a symlink out of the folder asks; a deny rule of read_file turns it off.
-  for command in ["cat a.txt", "cat inside_link", "grep -n one a.txt sub/b.txt"]
-    try Test.eq([command, verdict(s, "bash", JSON.from({"command": command})).inspect], [command, "Verdict.Allow"])
-  end
-
-  for command in ["cat secret_link", "cat out_dir/secret.txt", "ls out_dir", "cat #{s.outside}/secret.txt"]
+  # Bash asks unless an allow rule matches: a command that only reads too.
+  for command in ["ls", "ls > out", "cat a.txt", "grep -n one a.txt sub/b.txt"]
     try Test.eq([command, verdict(s, "bash", JSON.from({"command": command})).inspect], [command, "Verdict.Ask"])
   end
 
-  guarded = try setup_with([], ["read_file(secret.txt)"])
-  for command in ["cat ./secret.txt", "head -n 99 secret.txt", "grep '' secret.txt", "cat -- secret.txt"]
-    try Test.eq(verdict(guarded, "bash", JSON.from({"command": command})), Tools.Verdict.Ask)
-  end
-
-  try done(guarded)
   try Test.eq(verdict(s, "nope", JSON.from({"path": "a.txt"})), Tools.Verdict.Deny)
 
   try Test.eq(verdict(s, "write_file", write("sub/x.txt")), Tools.Verdict.Allow)

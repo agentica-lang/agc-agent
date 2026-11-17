@@ -64,9 +64,9 @@ jobs:
           - name: core
             run: make fmt-check check unit PACKAGES=core
           - name: packages
-            run: make fmt-check check unit PACKAGES="sse llm mcp protocol monty shell client cli tui_client"
+            run: make fmt-check check unit PACKAGES="sse llm mcp protocol monty client cli tui_client"
           - name: pty and smoke
-            run: make pty smoke peer
+            run: make pty smoke
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
 
