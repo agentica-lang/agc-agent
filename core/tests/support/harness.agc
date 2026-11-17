@@ -89,6 +89,7 @@ struct Setup
   ## The approvals on (calls that no rule allows ask); the deny rules of the config, as `bash(rm *)`, count either way.
   approvals: Bool = true
   deny: List[String] = []
+  allow: List[String] = []
   ## When given, the rules and the mode come from this environment as the server reads them (`Config.from_env`), in
   ## place of `approvals` and `deny`.
   approvals_env: Optional[Fn[String, Result[String]]] = none
@@ -230,7 +231,7 @@ end
 def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   work = "#{base}/work"
   try Dir.mkdir(work)
-  user = Permissions.User(rules: try Approval.parse_rules([], setup.deny), asking: setup.approvals)
+  user = Permissions.User(rules: try Approval.parse_rules(setup.allow, setup.deny), asking: setup.approvals)
   for read in option_list(setup.approvals_env)
     user = try Permissions.user_rules(read, try Config.approvals_switch(read))
   end

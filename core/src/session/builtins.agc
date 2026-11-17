@@ -47,6 +47,7 @@ def approver(a: Extension.Approvals) -> Extensions.Approver
     asking: a.asking,
     accept_edits: Extension.accept_edits?(a),
     with_accept_edits: ->(on: Bool) { approver(Extension.with_accept_edits(a, on)) },
+    refuses: some(->(command: String) { Extension.refuses?(a, command) }),
   )
 end
 
