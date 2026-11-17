@@ -417,8 +417,14 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   )
 
   stream = try LLM.stream(turn.provider, request)
+  first: Optional[Int] = none
   while true
-    case stream.events.recv(60000)
+    event = stream.events.recv(60000)
+    if first.none? and output?(event)
+      first = some(Time.monotonic_ms)
+    end
+
+    case event
       ok(LLM.Event.TextDelta(piece)) ->
         turn.link.emit.call(Protocol.Event.TextDelta(Protocol.TextDelta(text: piece.text)))
       ok(LLM.Event.ThinkingDelta(piece)) ->
@@ -428,9 +434,22 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
     end
   end
 
+  ended = Time.monotonic_ms
   response = try LLM.response(stream)
-  turn.link.emit.call(Protocol.Event.Usage(usage(response.usage, turn.listed)))
+  used = usage(response.usage, turn.listed).with(output_ms: first.map { |at| ended - at })
+  turn.link.emit.call(Protocol.Event.Usage(used))
   ok(response)
+end
+
+# A piece of the answer: text, thinking or a tool call.
+def output?(event: Result[LLM.Event]) -> Bool
+  case event
+    ok(LLM.Event.TextDelta(_)) -> true
+    ok(LLM.Event.ThinkingDelta(_)) -> true
+    ok(LLM.Event.ToolUseStart(_)) -> true
+    ok(LLM.Event.ToolInputDelta(_)) -> true
+    _ -> false
+  end
 end
 
 def usage(u: LLM.Usage, listed: Optional[Catalog.Model]) -> Protocol.Usage

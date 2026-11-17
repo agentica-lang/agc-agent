@@ -129,6 +129,8 @@ struct Usage
   window: Optional[Int] = none
   ## The output tokens of this call alone (`output` is the session's).
   call_output: Optional[Int] = none
+  ## The milliseconds from the call's first output (text, thinking or a tool call) to its end; none when it gave none.
+  output_ms: Optional[Int] = none
 end
 
 ## `Usage` on the wire: an absent value is left out, not `null`.
@@ -143,6 +145,7 @@ struct UsageWire
   session_cost: JSON.Field[Float]
   window: JSON.Field[Int]
   call_output: JSON.Field[Int]
+  output_ms: JSON.Field[Int]
 end
 
 ## A message sent while the turn `turn_id` runs: the turn reads it before its next model call. `message_id` is the one
@@ -413,6 +416,7 @@ def usage_wire(usage: Usage) -> UsageWire
     session_cost: Wire.field(usage.session_cost),
     window: Wire.field(usage.window),
     call_output: Wire.field(usage.call_output),
+    output_ms: Wire.field(usage.output_ms),
   )
 end
 
@@ -429,10 +433,12 @@ def usage_of_wire(wire: UsageWire) -> Result[Usage]
     session_cost: Wire.optional(wire.session_cost),
     window: Wire.optional(wire.window),
     call_output: Wire.optional(wire.call_output),
+    output_ms: Wire.optional(wire.output_ms),
   )
 
   counts = [usage.input, usage.output, usage.cache_read, usage.cache_write, usage.context]
-  for value in counts + Wire.option_list(usage.window) + Wire.option_list(usage.call_output)
+  optional = Wire.option_list(usage.window) + Wire.option_list(usage.call_output) + Wire.option_list(usage.output_ms)
+  for value in counts + optional
     try Wire.non_negative("usage", value)
   end
 

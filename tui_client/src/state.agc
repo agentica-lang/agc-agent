@@ -8,6 +8,7 @@ import Args from "args"
 import Input from "input"
 import Picker from "picker"
 import Prompt from "prompt"
+import Rate from "rate"
 import Theme from "theme"
 import Transcript from "transcript"
 import Yolo from "pkg/client/yolo"
@@ -130,6 +131,9 @@ struct Model
   theme: Theme.Theme
   ## The `usage` of the session's last model call, the git branch of its folder and the home folder, for the footer.
   usage: Optional[Protocol.Usage] = none
+  ## The model's last output speed, and the text of the call that streams now.
+  rate: Optional[Rate.Rate] = none
+  streamed: Optional[Rate.Streamed] = none
   branch: String = ""
   home: String = ""
   ## The editor of Ctrl+G (`$VISUAL`, else `$EDITOR`), and whether it has the terminal now.

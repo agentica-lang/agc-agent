@@ -575,6 +575,14 @@ end
 
 def kinds(seen: List[Seen]) -> List[String] = seen.map { |s| Protocol.event_name(s.event) }
 
+## An event with no time of output, which changes from run to run.
+def untimed(event: Protocol.Event) -> Protocol.Event
+  case event
+    Protocol.Event.Usage(usage) -> Protocol.Event.Usage(usage.with(output_ms: none))
+    _ -> event
+  end
+end
+
 ## The last approval request a client saw.
 def approval(sub: Sub) -> Result[Protocol.ApprovalRequested]
   for seen in sub.seen.reverse
