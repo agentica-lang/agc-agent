@@ -223,7 +223,28 @@ def test_the_prefix_of_a_command() -> Result[Void]
   try Test.eq(Permissions.prefix("bash", "git -c a=b log"), none)
   try Test.eq(Permissions.prefix("bash", "ls -la"), some(["ls"]))
   try Test.eq([Permissions.prefix("bash", "env A=1 make"), Permissions.prefix("bash", "python3 x.py")], [none, none])
+  runners = [
+    "stdbuf -oL git push", "chrt -f 10 make", "ionice -c3 make", "setsid make", "doas git push", "flock x make",
+    "watch ls", "script -c ls", "dash -c ls", "ksh x.sh", "fish x.fish",
+  ]
+
+  try Test.eq(runners.map { |command| Permissions.prefix("bash", command) }.select { |p| p.some? }, [])
   Test.eq(Permissions.prefix("bash", "ls | wc"), none)
+end
+
+# With a deny rule of `read_file`, a session answer allows only the same `bash` call: the request offers no prefix.
+def test_a_read_deny_rule_takes_the_prefix_off_the_request() -> Result[Void]
+  H.using(H.Setup(replies: ["git_add_a.sse", "text.sse"], deny: ["read_file(secret*)"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Add it.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    add = try H.approval(a)
+    _ = try H.approve(h, id, add.approval_id, Protocol.Decision.Deny)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    Test.eq([add.preview, add.prefix.unwrap_or("none")], ["git add a.txt", "none"])
+  end
 end
 
 # The rules of the user's config file (FINN_CONFIG, else the default file when it is there) always load; the asking is

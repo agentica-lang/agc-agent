@@ -50,8 +50,13 @@ def allows?(a: Approvals, tool: String, target: String) -> Bool
   Permissions.allows?(a.allows, a.rules, tool, target, a.root)
 end
 
-## The words an `allow_prefix` answer would allow, joined by spaces.
-def prefix(tool: String, target: String) -> Optional[String] = Permissions.prefix(tool, target).map { |w| w.join(" ") }
+## The words an `allow_prefix` answer would allow, joined by spaces; none for `bash` while a deny rule of `read_file`
+## exists, since then only the same call can be allowed.
+def prefix(a: Approvals, tool: String, target: String) -> Optional[String]
+  return none if (tool == "bash" and a.rules.deny.any? { |rule| rule.tool == "read_file" })
+
+  Permissions.prefix(tool, target).map { |w| w.join(" ") }
+end
 
 def answered(a: Approvals, decision: String, tool: String, target: String) -> Approvals
   a.with(allows: Permissions.answered(a.allows, decision, tool, target))
