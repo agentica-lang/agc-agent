@@ -7,6 +7,7 @@ import Args from "../src/args"
 import Picker from "../src/picker"
 import Prompt from "../src/prompt"
 import Session from "../src/session"
+import State from "../src/state"
 import Transcript from "../src/transcript"
 
 def test_keys_edit_the_prompt_and_the_view_draws_it() -> Result[Void]
@@ -1005,6 +1006,45 @@ def test_a_step_back_undoes_a_step_forward() -> Result[Void]
   ok()
 end
 
+# Ctrl+G gives the prompt to the editor through a file only the user can read, in a folder removed afterwards, and
+# takes back what it saved; with no editor, a failed one or a Ctrl+C meanwhile the prompt and the client stay.
+def test_ctrl_g_edits_the_prompt_in_the_editor() -> Result[Void]
+  folder = "#{System.env("TMPDIR").unwrap_or("/tmp")}/tui-editor-#{Random.int(0, 999_999_999)}"
+  try Dir.mkdir_private(folder)
+  seen = "#{folder}/seen"
+  lines = [
+    "printf '%s %s %s\\n' \"$(stat -c %a \"$1\")\" \"$(stat -c %a \"$(dirname \"$1\")\")\" \"$1\" > #{seen}",
+    "cat \"$1\" >> #{seen}",
+    "printf 'from the editor\\n' > \"$1\"",
+  ]
+
+  try File.write_text("#{folder}/editor", lines.join("\n"))
+  draft = model_of(40, 8).with(prompt: "draft", cursor: 2, editor: "sh #{folder}/editor")
+  opening = App.update(draft, ctrl("g"))
+  try Test.eq([opening.model.editing, opening.cmds.size == 1], [true, true])
+  back = App.update(opening.model, run(opening.cmds[0])[0]).model
+  recorded = File.read_text(seen).unwrap_or("").split("\n")
+  _ = Path.remove(folder)
+  try Test.eq([back.prompt == "from the editor", back.cursor == 15, back.editing], [true, true, false])
+  modes = recorded[0].split(" ")
+  try Test.eq([modes[0], modes[1], recorded[1]], ["600", "700", "draft"])
+  try Test.eq([File.read_text(modes[2]).ok?, Dir.list(modes[2].slice(0, modes[2].length - 10)).ok?], [false, false])
+  unset = App.update(draft.with(editor: ""), ctrl("g"))
+  try Test.eq([unset.cmds.size == 0, unset.model.entries.last.text.include?("set $VISUAL or $EDITOR")], [true, true])
+
+  failing = App.update(draft.with(editor: "false"), ctrl("g"))
+  failed = App.update(failing.model, run(failing.cmds[0])[0]).model
+  try Test.eq(
+    [failed.prompt, failed.entries.last.text],
+    ["draft", "error: the prompt was not edited: the editor exited with 1"],
+  )
+
+  interrupted = App.update(opening.model, App.Msg.Signal(some(System.Signal.Int)))
+  try Test.eq([interrupted.model.exit.none?, interrupted.cmds.size == 1], [true, true])
+  try Test.eq(App.update(draft, App.Msg.Signal(some(System.Signal.Int))).model.exit, some(130))
+  Test.eq([State.editor_of(" ", " vi "), State.editor_of("code -w", "vi")], ["vi", "code -w"])
+end
+
 # Alt+y (or Escape and y read together) on a focused approval panel answers nothing and types nothing; y allows.
 def test_alt_y_does_not_answer_an_approval() -> Result[Void]
   request = Protocol.ApprovalRequested(
@@ -1215,6 +1255,7 @@ end
 def run(cmd: TUI.Cmd[App.Msg]) -> List[App.Msg]
   case cmd
     TUI.Cmd.Run(work) -> [work.call()]
+    TUI.Cmd.Suspend(work) -> [work.call()]
     _ -> []
   end
 end

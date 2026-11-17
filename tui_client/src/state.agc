@@ -121,6 +121,9 @@ struct Model
   usage: Optional[Protocol.Usage] = none
   branch: String = ""
   home: String = ""
+  ## The editor of Ctrl+G (`$VISUAL`, else `$EDITOR`), and whether it has the terminal now.
+  editor: String = ""
+  editing: Bool = false
   ## The monotonic ms and the wall clock s of the message being handled.
   now: Int = 0
   clock_s: Int = 0
@@ -159,6 +162,8 @@ enum Msg
   Files(Int, Result[Protocol.FileList])
   ## The choices of a command's argument, for the `opened` count when they were asked.
   Arguments(Int, String, Result[Input.Arguments])
+  ## The text the editor of Ctrl+G saved.
+  Edited(Result[String])
   ## The reply to a `!` command: the command, and whether it runs.
   ShellSent(String, Result[Protocol.ShellAccepted])
   ## The git branch of the session's folder, for the `opened` count when it was read.
@@ -185,6 +190,7 @@ def seed(
     yolo: Yolo.Yolo(on: options.yolo),
     theme: Theme.default(),
     home: System.env("HOME").unwrap_or(""),
+    editor: editor_of(System.env("VISUAL").unwrap_or(""), System.env("EDITOR").unwrap_or("")),
     now: Time.monotonic_ms,
     clock_s: Time.now_ms / 1000,
   )
@@ -255,3 +261,10 @@ end
 def level_name(level: Optional[String]) -> String = level.unwrap_or(Protocol.EFFORT_DEFAULT)
 
 def serving_of(session: Protocol.Session) -> String = "#{session.provider}/#{session.model}"
+
+## The editor of Ctrl+G: `$VISUAL`, else `$EDITOR`; "" when neither is set.
+def editor_of(visual: String, editor: String) -> String
+  return visual.strip if not visual.strip.empty?
+
+  editor.strip
+end

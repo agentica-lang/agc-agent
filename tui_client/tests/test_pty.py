@@ -316,7 +316,9 @@ class Proxy:
 class Terminal:
     """The client on a new pty of 80x24 with TERM=xterm."""
 
-    def __init__(self, base: Path, model: FakeModel, args: list[str], rows: int = ROWS, cols: int = COLS) -> None:
+    def __init__(
+        self, base: Path, model: FakeModel, args: list[str], rows: int = ROWS, cols: int = COLS, env: dict[str, str] = {}
+    ) -> None:
         self.base = base
         self.master, self.slave = os.openpty()
         self.rows, self.cols = rows, cols
@@ -329,7 +331,7 @@ class Terminal:
             stdin=self.slave,
             stdout=self.slave,
             stderr=self.slave,
-            env=env_for(base, model),
+            env=dict(env_for(base, model), **env),
             preexec_fn=self._own_terminal,
         )
 
@@ -358,6 +360,15 @@ class Terminal:
                 shown = "\n".join(rows)
                 raise AssertionError(f"no {text!r} on the screen:\n{shown}")
             self._read(0.05)
+
+    def wait_for_output(self, data: bytes, start: int) -> int:
+        """Reads until `data` comes after offset `start` of the output; gives the offset after it."""
+        deadline = time.monotonic() + TIMEOUT
+        while data not in self.output[start:]:
+            if time.monotonic() > deadline:
+                raise AssertionError(f"no {data!r} in {self.output[start:]!r}")
+            self._read(0.05)
+        return self.output.index(data, start) + len(data)
 
     def wait_until(self, check, what: str) -> list[str]:
         """Reads until `check` holds for the screen rows; gives the screen."""
@@ -443,13 +454,15 @@ class PtyTest(unittest.TestCase):
         self.fake = model
         return model
 
-    def start(self, replies: list[Reply], rows: int = ROWS, cols: int = COLS, extra: list[str] = []) -> Terminal:
+    def start(
+        self, replies: list[Reply], rows: int = ROWS, cols: int = COLS, extra: list[str] = [], env: dict[str, str] = {}
+    ) -> Terminal:
         """The client, which starts its own server."""
         base = self.folder()
         model = self.model(replies)
         self.addCleanup(stop_server, base / "state")
         args = [*extra, "--state-dir", str(base / "state"), "--", *program(CORE), "serve"]
-        terminal = Terminal(base, model, args, rows, cols)
+        terminal = Terminal(base, model, args, rows, cols, env)
         self.addCleanup(terminal.close)
         terminal.wait_for("ready")
         return terminal
@@ -532,6 +545,27 @@ class PtyTest(unittest.TestCase):
         term.wait_for("ready")
         term.type("\x04")
         self.assertEqual(term.finish(), 0)
+
+    def test_ctrl_g_edits_the_prompt_in_the_editor_and_ctrl_c_there_keeps_the_client(self) -> None:
+        editor = self.folder() / "editor"
+        # The editor reads two lines from the terminal, the first a Ctrl+C, and adds the second to the prompt.
+        editor.write_text("printf 'editor> '\nread skipped\nread line\nprintf '\\n%s\\n' \"$line\" >> \"$1\"\n")
+        term = self.start([Reply("text.sse")], env={"VISUAL": f"sh {editor}"})
+        term.type("draft")
+        term.wait_for(" draft")
+        start = len(term.output)
+        term.type("\x07")
+        term.wait_for_output(b"editor> ", start)
+        term.type("\x03\r")
+        term.type("more\r")
+        term.wait_for(" more")
+        term.type("\r")
+        term.wait_for(ANSWER)
+        self.assertEqual(self.fake.requests.get(timeout=5)["messages"][-1]["content"], "draft\nmore")
+        term.wait_for("ready")
+        term.type("\x04")
+        self.assertEqual(term.finish(), 0)
+        self.assertEqual(termios.tcgetattr(term.slave), term.modes_before)
 
     def test_the_model_argument_is_listed_from_the_server_and_tab_completes_it(self) -> None:
         term = self.start([Reply("text.sse")])

@@ -22,6 +22,7 @@
 
 ### Added
 
+- `finn`: Ctrl+G edits the prompt in `$VISUAL` or `$EDITOR`.
 - `finn` completes the argument of `/model`, `/resume`, `/tree`, `/fork` and `/thinking` from the server's lists, with Tab.
 - `finn`: Ctrl+Left/Right, Alt+B/F and Alt+Backspace work; Delete takes a whole character, word moves stop at line ends, and Up/Down keep their column; an Alt key types nothing.
 - `finn` has pi's editing keys: Ctrl+A/E, Ctrl+W, Ctrl+U/K, Delete, Alt+Left/Right by word, Up/Down between the rows of the prompt, and Ctrl+D on an empty prompt quits when nothing runs.

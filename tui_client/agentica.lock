@@ -24,6 +24,6 @@ workspace = true
 [[package]]
 name = "tui"
 git = "https://github.com/agentica-lang/agentica-tui"
-ref = "c08cb3bb48cd40f13e886d42354f5cc99d9d0569"
-commit = "c08cb3bb48cd40f13e886d42354f5cc99d9d0569"
-hash = "sha256:fb00bee62201831c95a83eb55b9dbc6fff096b40ff438250cd7097cbf2f39d0c"
+ref = "7e1693147aeaac2a5dd191b185b8253553fff662"
+commit = "7e1693147aeaac2a5dd191b185b8253553fff662"
+hash = "sha256:220b5b0412a2ce86df731ff097dfe5933daf3a1f68a187d5d07943c94ee465a4"
