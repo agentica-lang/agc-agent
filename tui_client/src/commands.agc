@@ -113,7 +113,7 @@ def switch_command(app: State.Model, choice: Optional[String]) -> State.Model
 end
 
 def picking(app: State.Model) -> Result[State.Model]
-  sessions = Client.resumable(try app.backend.list_sessions.call())
+  sessions = Client.resumable(try app.backend.list_sessions.call(), app.id)
   return ok(State.noted(app, "no sessions")) if sessions.empty?
 
   ok(app.with(picker: some(Picker.Picker(sessions: sessions))))
@@ -162,7 +162,7 @@ def move(app: State.Model, kind: Picker.Kind, entry: Optional[Int]) -> State.Mod
 end
 
 def switched(app: State.Model, choice: String) -> Result[State.Model]
-  Session.resume(Session.fresh(app), try Client.pick(try app.backend.list_sessions.call(), choice))
+  Session.resume(Session.fresh(app), try Client.pick(try app.backend.list_sessions.call(), choice, app.id))
 end
 
 # `/profile` lists the profiles, `*` before the session's; `/profile NAME` changes it, with the model and thinking

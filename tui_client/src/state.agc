@@ -77,8 +77,9 @@ struct Model
   files_again_at: Int = 0
   mention_selected: Int = 0
   mention_top: Int = 0
-  ## A row of the list was moved to: until then the selected row is the current value of the argument, if listed.
-  mention_moved: Bool = false
+  ## The command whose argument list a row was moved to in: until then, or once the command changes, the selected row
+  ## is the current value of the argument, if listed, and Enter sends the line as typed.
+  mention_moved: Optional[String] = none
   mention_closed: Optional[Int] = none
   ## Esc came before the turn of a message sent started: the turn stops once the reply says it did.
   stop_wanted: Bool = false

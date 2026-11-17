@@ -4,6 +4,7 @@
 
 ### Changed
 
+- `/resume` leaves out the session itself and the sessions with no message yet; `GET /v1/sessions` marks those `empty`.
 - **Breaking:** `finn` opens the full screen, as `finn tui` does; `finn chat` is the line chat.
 - **Breaking:** tools run without asking by default; turn approvals on with `finn serve --approvals`.
 - **Breaking:** `finn --yolo` allows only the tool calls of the turns it starts.

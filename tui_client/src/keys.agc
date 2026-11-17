@@ -117,7 +117,7 @@ def typed(app: State.Model, piece: String) -> State.Model
   edited = app.with(prompt: Prompt.insert(app.prompt, at, piece), cursor: at + piece.length, recall: none)
   # A list Esc closed opens again for a new prompt.
   if app.prompt == ""
-    edited = edited.with(mention_closed: none, mention_selected: 0, mention_top: 0, mention_moved: false)
+    edited = edited.with(mention_closed: none, mention_selected: 0, mention_top: 0, mention_moved: none)
   end
 
   return edited if piece != "@" or edited.reading_files or app.id == "" or app.now < app.files_again_at

@@ -206,12 +206,15 @@ def model_change(list: Protocol.ProviderList, current: String, text: String) -> 
   error(not_here(text, current, found), kind: KIND_COMMAND)
 end
 
-## The sessions a client offers to resume: those with something in them (the server marks the others `empty`).
-def resumable(list: Protocol.SessionList) -> List[Protocol.SessionSummary] = list.sessions.select { |s| not s.empty }
+## The sessions a client offers to resume: those with something in them (the server marks the others `empty`), but
+## the `current` one.
+def resumable(list: Protocol.SessionList, current: String = "") -> List[Protocol.SessionSummary]
+  list.sessions.select { |s| not s.empty and s.id != current }
+end
 
 ## The sessions to resume, one numbered line each, for `/resume N`.
-def listing(list: Protocol.SessionList) -> List[String]
-  sessions = resumable(list)
+def listing(list: Protocol.SessionList, current: String = "") -> List[String]
+  sessions = resumable(list, current)
   numbers = (1..sessions.size).to_a
   numbers.map do |n|
     s = sessions[n - 1]
@@ -220,10 +223,10 @@ def listing(list: Protocol.SessionList) -> List[String]
 end
 
 ## The id `/resume` chose: the number of a line of `listing`, or an id of the list (an empty session's too).
-def pick(list: Protocol.SessionList, choice: String) -> Result[String]
+def pick(list: Protocol.SessionList, choice: String, current: String = "") -> Result[String]
   return ok(choice) if (list.sessions.any? { |s| s.id == choice })
 
-  ids = resumable(list).map { |s| s.id }
+  ids = resumable(list, current).map { |s| s.id }
   case choice.to_i
     ok(n) if n >= 1 and n <= ids.size -> ok(ids[n - 1])
     _ -> error("no session #{choice}: /resume lists them", kind: KIND_COMMAND)
