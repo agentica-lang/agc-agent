@@ -1,25 +1,33 @@
-## A client of one MCP server on stdio: an actor that owns the server process and sends it one request at a time.
+## A client of one MCP server, on stdio or streamable HTTP: an actor that owns the server process or the HTTP session
+## and sends one request at a time.
 ##
-## The process starts on the first use, in its own process group, so a stop ends the programs it started too. When it exits, answers nothing in time or writes a line that is too long, the
-## request fails with `mcp.unavailable` and the process is stopped; the next use starts it again.
+## The process starts on the first use, in its own process group, so a stop ends the programs it started too. When it
+## exits, answers nothing in time or writes a line that is too long, the request fails with `mcp.unavailable` and the
+## process is stopped; the next use starts it again. Over HTTP the session is so ended (a DELETE) and started again,
+## and a session that the server ended is started again at once, for the same request.
 
 import Actor from "std/actor"
+import Http from "http"
 import Rpc from "rpc"
 
 CLIENT_NAME = "finn"
+UNAVAILABLE = "mcp.unavailable"
 CALL_MARGIN_MS = 5000
 ## The most pages of `tools/list` read; a cursor seen before ends the list too.
 MAX_PAGES = 100
 
-## How to start a server.
+## How to start a server: a `command` on stdio, or a `url` on streamable HTTP.
 struct Server
   name: String
-  command: String
+  command: String = ""
   args: List[String] = []
   ## Variables added to the environment the server inherits.
   env: Map[String, String] = {}
   ## The file that gets the server's stderr; `""` leaves it on ours.
   log: String = ""
+  url: String = ""
+  ## Headers sent with each HTTP request; their values never show in an error.
+  headers: Map[String, String] = {}
 end
 
 struct Options
@@ -27,6 +35,8 @@ struct Options
   start_ms: Int = 30_000
   ## The longest wait for the answer to one request (all the pages of `tools/list`).
   timeout_ms: Int = 60_000
+  ## The largest JSON answer or SSE event over HTTP.
+  max_message_bytes: Int = 4_194_304
 end
 
 struct Client
@@ -66,6 +76,7 @@ struct State
   options: Options
   version: String
   process: Optional[Process] = none
+  link: Optional[Http.Link] = none
   next_id: Int = 1
 end
 
@@ -116,7 +127,11 @@ def closed(state: State) -> State
     Process.close(process)
   end
 
-  state.with(process: none)
+  for link in option_list(state.link)
+    Http.close(link)
+  end
+
+  state.with(process: none, link: none)
 end
 
 def list_tools(state: State) -> Done[List[Rpc.Tool]]
@@ -150,15 +165,31 @@ def call_tool(state: State, name: String, arguments: JSON.Value) -> Done[Rpc.Out
   end
 end
 
-# A request on a started server. A failure that leaves the server in doubt stops it.
+# A request on a started server. A failure that leaves the server in doubt stops it; a session that the server ended
+# starts again, once.
 def request(state: State, method: String, params: JSON.Value, deadline: Int) -> Done[JSON.Value]
+  done = attempt(state, method, params, deadline)
+  case done.result
+    error(e) if e.kind == Http.EXPIRED ->
+      again = attempt(done.state, method, params, deadline)
+      case again.result
+        error(e2) if e2.kind == Http.EXPIRED -> Done(state: again.state, result: error(e2.message, kind: UNAVAILABLE))
+        _ -> again
+      end
+
+    _ -> done
+  end
+end
+
+def attempt(state: State, method: String, params: JSON.Value, deadline: Int) -> Done[JSON.Value]
   case started(state)
     ok(ready) ->
       id = ready.next_id
       next = ready.with(next_id: id + 1)
-      result = exchange(next.process.unwrap!, id, method, params, deadline)
+      result = send(next, id, method, params, deadline)
       case result
-        error(e) if e.kind == "mcp.unavailable" -> Done(state: closed(next), result: result)
+        error(e) if e.kind == UNAVAILABLE -> Done(state: closed(next), result: result)
+        error(e) if e.kind == Http.EXPIRED -> Done(state: next.with(link: none), result: result)
         _ -> Done(state: next, result: result)
       end
 
@@ -166,8 +197,16 @@ def request(state: State, method: String, params: JSON.Value, deadline: Int) -> 
   end
 end
 
+def send(state: State, id: Int, method: String, params: JSON.Value, deadline: Int) -> Result[JSON.Value]
+  case state.link
+    some(link) -> Http.exchange(link, id, method, params, deadline)
+    none -> exchange(state.process.unwrap!, id, method, params, deadline)
+  end
+end
+
 def started(state: State) -> Result[State]
-  return ok(state) if state.process.some?
+  return ok(state) if state.process.some? or state.link.some?
+  return connected(state) if not state.server.url.empty?
 
   server = state.server
   spawned = Process.spawn(server.command, server.args, Process.Options(env: server.env, err: server.log, pgroup: true))
@@ -187,6 +226,15 @@ def started(state: State) -> Result[State]
       Process.close(process)
       error(e)
   end
+end
+
+def connected(state: State) -> Result[State]
+  server = state.server
+  deadline = Time.monotonic_ms() + state.options.start_ms
+  params = Rpc.initialize_params(CLIENT_NAME, state.version)
+  opened = Http.open(server.url, server.headers, state.options.max_message_bytes, state.next_id, params, deadline)
+  link = try unavailable(server, opened)
+  ok(state.with(link: some(link), next_id: state.next_id + 1))
 end
 
 # Sends the request and reads lines up to its answer: a request of the server gets its answer on the way, and a
