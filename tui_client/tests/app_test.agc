@@ -1590,6 +1590,59 @@ def test_a_login_drops_a_coming_pick_and_a_cancelled_key() -> Result[Void]
   ok()
 end
 
+# ChatGPT is a device login: the code and its URL are shown while the app asks the server where the login is; Esc
+# stops waiting and drops the answers of that login. Under `finn login` the app ends with the login.
+def test_a_device_login_shows_its_code_polls_and_esc_cancels() -> Result[Void]
+  chatgpt = Protocol.LoginStatus(
+    name: "chatgpt",
+    label: "ChatGPT Plus or Pro (Codex)",
+    key_env: "",
+    from: "",
+    coming: false,
+    asks: Protocol.ASKS_DEVICE,
+  )
+
+  list = Protocol.LoginList(providers: [chatgpt], first: false)
+  device = Protocol.DeviceLogin(user_code: "ABCD-1234", url: "https://auth.example/device", expires_in: 900)
+  waiting = Protocol.DeviceState(state: Protocol.DEVICE_WAITING, message: "")
+  done = Protocol.DeviceState(state: Protocol.DEVICE_DONE, message: "")
+  picking = model_of(80, 12).with(picker: some(Picker.logins(list)))
+  try Test.assert(rows(picking).any? { |row| row.include?("sign in to ChatGPT Plus or Pro (Codex)") }, "the row")
+  started = App.update(picking, enter())
+  try Test.eq([started.model.picker.none?, started.model.key_for.none?, started.cmds.size == 1], [true, true, true])
+  serial = started.model.device_serial
+  shown = App.update(started.model, App.Msg.DeviceStarted("chatgpt", serial, ok(device)))
+  try Test.eq(shown.cmds.size, 1)
+  try Test.assert(
+    rows(shown.model).any? { |row| row.include?("enter ABCD-1234 at https://auth.example/device") },
+    "code",
+  )
+
+  polled = App.update(shown.model, App.Msg.DevicePolled("chatgpt", serial, ok(waiting)))
+  try Test.eq([polled.model.device.some?, polled.cmds.size == 1], [true, true])
+  typed = App.update(polled.model, App.Msg.Key(TUI.Event.Char("x", TUI.Mods()))).model
+  try Test.eq(typed.prompt, "")
+  cancelled = App.update(typed, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model
+  try Test.eq(cancelled.device.none?, true)
+  late = App.update(cancelled, App.Msg.DevicePolled("chatgpt", serial, ok(done)))
+  try Test.eq([late.model.device.none?, late.cmds.size == 0, late.model.exit.none?], [true, true, true])
+  only = App.update(picking.with(login_only: true), enter()).model
+  again = only.device_serial
+  shown_again = App.update(only, App.Msg.DeviceStarted("chatgpt", again, ok(device))).model
+  ended = App.update(shown_again, App.Msg.DevicePolled("chatgpt", again, ok(done))).model
+  try Test.eq(ended.exit, some(0))
+  failed = App.update(
+    shown_again,
+    App.Msg.DevicePolled("chatgpt", again, ok(Protocol.DeviceState(state: Protocol.DEVICE_FAILED, message: "denied"))),
+  ).model
+
+  try Test.eq(failed.exit, some(1))
+  Test.assert(
+    failed.entries.any? { |e| e.text.include?("the login of chatgpt failed: denied") },
+    "the failure is said",
+  )
+end
+
 def rows(model: App.Model) -> List[String]
   cells = TUI.layout(App.view(model), model.width, model.height)
   (0...model.height).to_a.map do |y| cells.select { |cell| cell.y == y }.map { |cell| cell.char }.join("").strip end

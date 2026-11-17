@@ -93,6 +93,10 @@ A line that tree-sitter-bash cannot read, or one it is known to misread (such as
 
 A `!` command in the clients follows the same rules as a call of `bash`; it never asks, since you typed it.
 
+## Credentials
+
+Keys are stored in `auth.json` and the ChatGPT tokens in `chatgpt.json` in the state folder, each with mode 0600. Finn does not read either file when others may read it or another user owns it, nor `chatgpt.json` when it is a link, and the server says why. Keys and tokens never go to the log, the events, the session files or an error message. The worker of [code mode](tools.md#code-mode) runs with an empty environment, so it never sees them.
+
 ## What rules cannot do
 
 Rules are a convenience, not a sandbox, and under `allow bash(*)` nothing stops a command from reading or writing any file you can. The file rules see only the files that a few `bash` programs name: `read_file(.env)` stops `cat .env` but not `sed -n p .env` or `cat .en*`. A `bash` deny rule matches the text, so it does not see a command written another way (`sudo rm x`, `/bin/rm x`, `"rm" x`, `sh -c 'rm x'`), and `bash(git *)` allows `git -c core.fsmonitor=./x.sh status`, which runs `x.sh`. Until the OS sandbox ([#213](https://github.com/agentica-lang/agc-agent/issues/213)) lands, run Finn in a sandbox or a container to keep the model in.

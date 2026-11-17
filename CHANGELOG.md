@@ -25,6 +25,7 @@
 
 ### Added
 
+- `finn login chatgpt` (`/login chatgpt`) signs in with a ChatGPT Plus or Pro plan: Finn shows a URL and a code, then runs the Codex models of the plan.
 - Code mode checks its cached Monty worker before each use, runs it once after the fetch, does not fetch again for 10 minutes after a failure, and starts it with an empty environment; `finn server status` shows code mode.
 - A reply may be as long as the model allows (its output limit from models.dev, else the provider's), not 4096 tokens; `FINN_MAX_TOKENS` sets a limit, and a cut reply says which.
 - `files.command` in the user's config names the program that lists the files for `@`, such as `rg --files`.

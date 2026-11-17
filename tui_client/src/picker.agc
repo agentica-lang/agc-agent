@@ -163,6 +163,8 @@ def login_state(login: Protocol.LoginStatus) -> String
   return "#{login.base_url} (#{login.key_env} is set)" if login.asks == Protocol.ASKS_URL and login.from == "env"
   return "#{login.base_url}" if login.asks == Protocol.ASKS_URL and login.from == "stored"
   return "base URL, now #{login.base_url}: #{login.label}" if login.asks == Protocol.ASKS_URL
+  return "set up: signed in to #{login.label}" if login.asks == Protocol.ASKS_DEVICE and login.from == "stored"
+  return "sign in to #{login.label} in a browser" if login.asks == Protocol.ASKS_DEVICE
   return "set up: #{login.key_env} is set" if login.from == "env"
   return "set up: key stored" if login.from == "stored"
 
