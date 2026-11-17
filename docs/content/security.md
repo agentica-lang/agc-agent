@@ -77,7 +77,7 @@ Finn's rules are [OpenCode's](https://opencode.ai/docs/permissions/), with Finn'
 - **Deny rules count with the approvals on or off**, and no answer or mode allows what a rule denies. `ask` and `allow` rules count with the approvals on.
 - With the approvals off, a call that would ask runs, an unclear `bash` line too: only the deny rules count.
 - The rules come from your config file, then from the project's `.finn/config.json` ([Configuration](config.md)), whose rules come after yours. The project's `deny` rules always count; its `allow` and `ask` rules count only under a [trusted folder](config.md#trusted-folders).
-- A deny rule of `read_file` also denies `edit_file`, and hides the file from `glob`, `grep` and the `@` completion of `finn`. The rules of `read_file`, `edit_file` and `write_file` apply to these file tools only: they do not stop a `bash` command from reading or writing the file (`cat .env` runs).
+- A deny rule of `read_file` also denies `edit_file`, and hides the file from `glob`, `grep` and the `@` completion of `finn`. The rules of `read_file` also check the files that `cat`, `head`, `tail`, `grep`, `wc`, `diff` and `cp` name in a `bash` command, even after "always" on `cat *`: `cat .env` asks like `read_file(.env)`. Other `bash` commands, and the rules of `edit_file` and `write_file`, do not check the files they read or write.
 - An old config with `"allow"` or `"deny"` stops the start, and the message lists its rules as `"allow X"` and `"deny X"` for `permission`.
 - A rule with a space in its tool (`allow bash (git *)`) or a pattern over 256 characters is refused.
 
@@ -93,4 +93,4 @@ A `!` command in the clients follows the same rules as a call of `bash`; it neve
 
 ## What rules cannot do
 
-Rules are a convenience, not a sandbox. The rules of `read_file`, `edit_file` and `write_file` do not cover `bash`: `read_file(.env)` does not stop `cat .env`. "Always" on `git diff` allows `git diff *`, which allows `git diff --output=../x`, which writes outside the folder. A `bash` deny rule matches the text, so it does not see a command written another way (`sudo rm x`, `/bin/rm x`, `"rm" x`, `sh -c 'rm x'`), and `bash(git *)` allows `git -c core.fsmonitor=./x.sh status`, which runs `x.sh`. Until the OS sandbox ([#213](https://github.com/agentica-lang/agc-agent/issues/213)) lands, run Finn in a sandbox or a container to keep the model in.
+Rules are a convenience, not a sandbox. The file rules see only the files that a few `bash` programs name: `read_file(.env)` stops `cat .env` but not `sed -n p .env`. A `bash` deny rule matches the text, so it does not see a command written another way (`sudo rm x`, `/bin/rm x`, `"rm" x`, `sh -c 'rm x'`), and `bash(git *)` allows `git -c core.fsmonitor=./x.sh status`, which runs `x.sh`. Until the OS sandbox ([#213](https://github.com/agentica-lang/agc-agent/issues/213)) lands, run Finn in a sandbox or a container to keep the model in.

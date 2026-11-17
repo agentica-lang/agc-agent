@@ -25,7 +25,7 @@ Finn reads environment variables when the server starts, and a few JSON files. A
 | Key | What it does |
 |---|---|
 | `approvals` | `true` makes a call of a [tool that asks](security.md#what-asks) wait for your answer, unless a rule allows it |
-| `permission` | the rules, in order: the last one that matches a call allows it, asks or denies it; a file rule covers the file tools only, not `bash` ([how they check bash](security.md#how-rules-check-bash)) |
+| `permission` | the rules, in order: the last one that matches a call allows it, asks or denies it; a file rule covers the file tools, and a `read_file` rule also the files that `cat`, `grep` and the like name in `bash` ([how they check bash](security.md#how-rules-check-bash)) |
 | `providers` | OpenAI-compatible APIs of your own ([Providers](providers.md#your-own-provider)) |
 
 Every key is optional, and so is the file. How the rules work is on [Approvals and security](security.md#rules), and where they fall short in [What rules cannot do](security.md#what-rules-cannot-do).

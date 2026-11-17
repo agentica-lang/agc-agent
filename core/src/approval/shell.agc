@@ -8,6 +8,9 @@ import Bash from "pkg/bash/bash"
 import Sandbox from "../tools/sandbox"
 
 EXTERNAL = "external_directory"
+READ = "read_file"
+# The programs whose files are checked as `read_file` targets too (a `.env` file asks), `cp` since its copy is read.
+READS = ["cat", "head", "tail", "grep", "wc", "diff", "cp"]
 
 struct Resource
   tool: String
@@ -40,6 +43,13 @@ def scan(root: String, command: String) -> Scan
     if FILES.include?(name)
       for folder in outside(root, name, tokens)
         found = added(found, Resource(tool: EXTERNAL, pattern: folder))
+      end
+
+      if READS.include?(name)
+        for path in paths(root, name, tokens)
+          read = Resource(tool: READ, pattern: read_target(root, path), literal: true)
+          found = found.with(asked: pushed(found.asked, read))
+        end
       end
     end
 
@@ -88,22 +98,37 @@ end
 
 # The `FOLDER/*` globs of the paths outside `root` that the arguments of `name` give.
 def outside(root: String, name: String, tokens: List[String]) -> List[String]
-  args = tokens.drop(1).select { |a| not a.start_with?("-") and not (name == "chmod" and a.start_with?("+")) }
   folders: List[String] = []
-  for arg in args
-    for path in resolved(root, arg)
-      if not Sandbox.inside?(root, path)
-        folder = path
-        if not CWD.include?(name) and not directory?(path)
-          folder = Sandbox.parent(path)
-        end
-
-        folders = folders.push(glob_of(folder))
+  for path in paths(root, name, tokens)
+    if not Sandbox.inside?(root, path)
+      folder = path
+      if not CWD.include?(name) and not directory?(path)
+        folder = Sandbox.parent(path)
       end
+
+      folders = folders.push(glob_of(folder))
     end
   end
 
   folders
+end
+
+# The target of `read_file` for a path: relative to `root` inside it.
+def read_target(root: String, path: String) -> String
+  return Sandbox.relative(root, path) if Sandbox.inside?(root, path)
+
+  path
+end
+
+# The paths that the arguments of `name` give, options left out.
+def paths(root: String, name: String, tokens: List[String]) -> List[String]
+  args = tokens.drop(1).select { |a| not a.start_with?("-") and not (name == "chmod" and a.start_with?("+")) }
+  found: List[String] = []
+  for arg in args
+    found = found + resolved(root, arg)
+  end
+
+  found
 end
 
 def directory?(path: String) -> Bool

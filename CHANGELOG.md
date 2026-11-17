@@ -16,6 +16,7 @@
 - **Breaking:** the state and data folders cannot be links; give the folder the link points to.
 - `external_directory` rules check the paths outside the session folder that `cd`, `rm`, `cp` and the like name.
 - **Breaking:** with approvals on, reads of `.env` files ask by default.
+- `read_file` rules also check the files `cat`, `head`, `tail`, `grep`, `wc`, `diff` and `cp` name in `bash`: `cat .env` asks even after "always" on `cat`.
 - The first start builds the bash parser; clients wait up to a minute and say so.
 - `finn chat` and `finn tui` refuse a server of another version and say how to stop it.
 

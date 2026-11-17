@@ -117,9 +117,9 @@ def test_the_deny_rules_count_with_the_approvals_on_or_off() -> Result[Void]
 end
 
 # With the approvals off nobody can be asked: a bash command a `bash` deny rule matches is refused from the model and
-# as a `!` command, and a `write_file` rule refuses a write. A `read_file` rule covers the file tools only:
-# `cat secret.txt` runs.
-def test_with_the_approvals_off_a_bash_deny_rule_refuses_and_a_read_rule_does_not() -> Result[Void]
+# as a `!` command, and a `write_file` rule refuses a write. A `read_file` rule covers the files `cat` names too:
+# `cat secret.txt` is refused.
+def test_with_the_approvals_off_a_bash_deny_rule_and_a_read_rule_refuse() -> Result[Void]
   replies = ["bash_rm_then_true.sse", "bash_rm_quoted.sse", "bash_cat_secret.sse", "write_open.sse", "text.sse"]
   deny = ["read_file(secret*)", "bash(rm *)", "write_file(open*)"]
   H.using(H.Setup(replies: replies, approvals: false, deny: deny)) do |h|
@@ -138,14 +138,14 @@ def test_with_the_approvals_off_a_bash_deny_rule_refuses_and_a_read_rule_does_no
     end
 
     try Test.eq(File.read_text("#{h.work}/open.txt"), ok("x"))
-    try Test.eq([text.include?("s3cr3t"), H.kinds(a.seen).include?("approval_requested")], [true, false])
-    Test.eq(statuses, [403, 403, 202])
+    try Test.eq([text.include?("s3cr3t"), H.kinds(a.seen).include?("approval_requested")], [false, false])
+    Test.eq(statuses, [403, 403, 403])
   end
 end
 
 # The verdict of a `bash` call, in both modes: each command of the line is checked, so `bash(rm *)` after
-# `bash(*)` denies `ls && rm x`. A `read_file` rule does not refuse `cat .env`. With the asking on, what no rule allows
-# asks.
+# `bash(*)` denies `ls && rm x`, and a `read_file` rule denies `cat .env`, the file it names. With the asking on, what
+# no rule allows asks.
 def test_a_deny_rule_after_an_allow_rule_wins_for_bash() -> Result[Void]
   deny = ["deny read_file(.env*)", "deny bash(rm *)"]
   allowed = try Approval.parse_rules(["allow bash(*)"] + deny)
@@ -163,10 +163,10 @@ def test_a_deny_rule_after_an_allow_rule_wins_for_bash() -> Result[Void]
   try Test.eq(
     shown,
     [
-      ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Allow"],
-      ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Allow"],
-      ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Allow"],
-      ["Verdict.Deny", "Verdict.Deny", "Verdict.Ask", "Verdict.Ask"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Deny", "Verdict.Allow"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Deny", "Verdict.Allow"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Deny", "Verdict.Allow"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Deny", "Verdict.Ask"],
     ],
   )
 
@@ -239,7 +239,8 @@ def test_by_default_tools_run_without_asking_and_a_project_cannot_ask() -> Resul
 end
 
 # A session allow keeps the deny rules: a command one matches is not allowed through an "always" answer or the whole
-# tool, nor a line with a command no answer allows. A `read_file` rule does not touch bash: `cat *` allows `cat .env`.
+# tool, nor a line with a command no answer allows. A `read_file` rule covers the files bash names: `cat *` does not
+# allow `cat .env`.
 def test_session_allows_keep_the_deny_rules() -> Result[Void]
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
   rules = try Approval.parse_rules(["deny bash(rm -rf *)", "deny bash(git push*)", "deny read_file(.env)"])
@@ -257,7 +258,7 @@ def test_session_allows_keep_the_deny_rules() -> Result[Void]
   refused = ["ls; git status", "ls $(id)", "ls && rm -rf x"]
   try Test.eq(refused.select { |c| Permissions.allows?(answers, rules, root, "bash", c) }, [])
   try Test.eq(Permissions.allows?(answers, rules, root, "bash", "ls -la | cat"), true)
-  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "cat .env"), true)
+  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "cat .env"), false)
   Test.eq(Permissions.allows?(whole, rules, root, "bash", "ls -la"), true)
 end
 

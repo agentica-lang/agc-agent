@@ -118,19 +118,20 @@ def test_an_unclear_line_asks() -> Result[Void]
 end
 
 # An "always" answer allows the command's prefix and nothing else of a later line, nor a later command with a
-# redirection or a substitution; a rule that denies still wins.
+# redirection or a substitution, nor a `.env` file it reads (`read_file`); a rule that denies still wins.
 def test_an_always_answer_allows_the_prefix_of_each_command() -> Result[Void]
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
-  rules = try Approval.parse_rules(["ask bash(*)", "deny bash(grep --evil*)"])
+  rules = try Approval.parse_rules(Approval.DEFAULTS + ["ask bash(*)", "deny bash(grep --evil*)"])
   allows = Permissions.answered(Permissions.Allows(), "allow_prefix", root, "bash", "grep -r foo | wc -l")
   tried = [
     "grep x", "grep -c x && wc", "grep \"x\" y", "grep x; rm x", "git push", "grep --evil", "echo hi",
     "grep x >> ~/.bashrc", "wc $(rm x)", "grep `x`", "grep \"$x\"", "{ grep x; } >> f", "(grep x) > f",
-    "grep x | wc > f", "for i in 1; do grep x; done > f", "head ~/.ssh/x",
+    "grep x | wc > f", "for i in 1; do grep x; done > f", "head ~/.ssh/x", "grep x .env", "grep x sub/.env.local",
+    "grep x .env.example",
   ]
 
   allowed = tried.select { |c| Permissions.allows?(allows, rules, root, "bash", c) }
-  try Test.eq(allowed, ["grep x", "grep -c x && wc", "grep \"x\" y"])
+  try Test.eq(allowed, ["grep x", "grep -c x && wc", "grep \"x\" y", "grep x .env.example"])
   # An exact command is kept as it is, not as a glob: its `*` matches only itself.
   exact = Permissions.answered(Permissions.Allows(), "allow_prefix", root, "bash", "sudo rm -rf ./build/*")
   tried = ["sudo rm -rf ./build/*", "sudo rm -rf ./build/ /", "sudo rm -rf ./build/x"]
