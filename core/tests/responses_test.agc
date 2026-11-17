@@ -120,5 +120,6 @@ def usage_of(input: Int, cached: Int) -> Protocol.Usage
     cache_write: 0,
     context: input,
     window: some(1_000_000),
+    call_output: some(20),
   )
 end

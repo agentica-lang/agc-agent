@@ -6,6 +6,7 @@ import App from "../src/app"
 import Approvals from "../src/approvals"
 import Args from "../src/args"
 import Picker from "../src/picker"
+import Transcript from "../src/transcript"
 
 def test_keys_edit_the_prompt_and_the_view_draws_it() -> Result[Void]
   model = model_of(30, 6)
@@ -623,16 +624,24 @@ def model_of(width: Int, height: Int) -> App.Model
   App.seed(Client.Server(url: "http://127.0.0.1:1", token: ""), options, Channel.new(1), width, height)
 end
 
-# The footer: the folder (home as ~), the branch and the first message; then the status, the counts of the last
-# model call (cache read, the part cached, the session's cost, the context in the window) and the model with its
-# level on the right. A `usage` event updates it, the end of a turn reads the branch again, and the branch of a
+# The footer: the folder (home as ~), the branch and the first line of the first user message (not a command the
+# prompt history has); then the status, the last model call (its prompt, its output, the cache read and the part
+# cached), the session's cost, the prompt in the window, and the model with its level on the right. A `usage` event
+# updates it, the end of a turn reads the branch again, and the branch of a
 # session opened since is dropped.
 def test_the_footer_shows_the_place_the_usage_and_the_model() -> Result[Void]
   model = model_of(100, 8).with(
     id: "s1",
     cwd: "/home/ana/app",
-    home: "/home/ana",
-    history: ["Fix the parser.\nIt fails on tabs."],
+    home: "/home/ana/",
+    history: ["/help", "Fix the parser."],
+    entries: [
+      Transcript.Entry(kind: Transcript.Kind.Notice, text: "session s1"),
+      Transcript.Entry(
+        kind: Transcript.Kind.User,
+        text: "\n  Fix the#{String.from_code(27)}parser.\nIt fails on tabs.",
+      ),
+    ],
     serving: "local/qwen3",
     effort: some("high"),
   )
@@ -653,6 +662,7 @@ def test_the_footer_shows_the_place_the_usage_and_the_model() -> Result[Void]
     context: 4800,
     session_cost: some(0.0125),
     window: some(32_000),
+    call_output: some(40),
   )
 
   counted = App.update(
@@ -662,7 +672,7 @@ def test_the_footer_shows_the_place_the_usage_and_the_model() -> Result[Void]
 
   try Test.eq(
     rows(counted).last,
-    "ready · ↑1.2k ↓340 R3.6k 75% cached $0.013 15.0%/32k · Enter send · Esc stop  (local) qwen3 · high",
+    "ready · ↑4.8k ↓40 R3.6k 75% cached $0.013 15.0%/32k · Enter send · Esc stop   (local) qwen3 · high",
   )
 
   finished = Protocol.Event.TurnFinished(

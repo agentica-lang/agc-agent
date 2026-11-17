@@ -22,7 +22,7 @@ struct Rig
   bodies: Channel[String]
 end
 
-def test_a_tiny_terminal_draws_the_panel_and_a_resize_redraws_it() -> Result[Void] = within(24, 7, &tiny)
+def test_a_tiny_terminal_draws_the_panel_and_a_resize_redraws_it() -> Result[Void] = within(24, 6, &tiny)
 
 def tiny(rig: Rig) -> Result[Void]
   try ask(rig, "write_file", "hi")

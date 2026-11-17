@@ -17,7 +17,11 @@ def test_usage_sums_the_output_of_the_session() -> Result[Void]
     H.close(a)
     try Test.eq(usages(a.seen), ["100 20 0 0 100", "22 31 0 0 22", "30 38 120 0 150"])
     last = (try H.session(h, id)).usage
-    try Test.eq(last.map { |u| "#{u.input} #{u.output} #{u.cache_read} #{u.window}" }, some("30 38 120 some(1000000)"))
+    try Test.eq(
+      last.map { |u| "#{u.input} #{u.output} #{u.call_output} #{u.cache_read} #{u.window}" },
+      some("30 38 some(7) 120 some(1000000)"),
+    )
+
     H.restarted(h, setup, "") do |r|
       try Test.eq((try H.session(r, id)).usage, last)
       b = try H.subscribe(r, id)

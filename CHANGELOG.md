@@ -15,7 +15,7 @@
 
 ### Added
 
-- `finn` shows a footer like pi: the folder, git branch and first message, then the tokens, cache, cost and context of the last model call, and the model with its thinking level.
+- `finn` shows a footer: the folder, git branch and first message, then the last model call's tokens, cache and context, the session's cost, and the model with its thinking level.
 - `finn login local` stores the base URL of a local server; `FINN_BASE_URL` wins.
 - Finn Agent, a coding agent: `finn` (full screen) and `finn chat` (lines) talk to a local server.
 - Tools: read, write and edit files, `glob`, `grep`, `bash`, and `apply_patch` for models that use it.

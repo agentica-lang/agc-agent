@@ -12,8 +12,9 @@ import Theme from "theme"
 import Transcript from "transcript"
 import Width from "width"
 
-## The rows around the transcript: the editor between two rules, the panel under it, then the place and the status.
-CHROME = 4
+## The rows around the transcript: the editor between two rules, the panel under it, then the status. The place row
+## above the status takes a row only when the editor and the panel leave one.
+CHROME = 3
 RULE = "─"
 LEAD = "── "
 
@@ -47,7 +48,8 @@ struct Frame
   picker: List[Layout.Row]
   prompt: Prompt.View
   panel: List[Layout.Row]
-  place: String
+  ## The place row, none on a screen too short for it.
+  place: List[String]
   status: String
 end
 
@@ -75,8 +77,13 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
   end
 
   asked = parts.panel.call(panel_room(height, editor))
-  queued = parts.queued.take([height - editor - asked.size - CHROME, 0].max.unwrap!)
-  area = [height - editor - asked.size - queued.size - CHROME, 0].max.unwrap!
+  place: List[String] = []
+  if height - editor - asked.size - CHROME > 0
+    place = [parts.place]
+  end
+
+  queued = parts.queued.take([height - editor - asked.size - place.size - CHROME, 0].max.unwrap!)
+  area = [height - editor - asked.size - place.size - queued.size - CHROME, 0].max.unwrap!
   hidden = [lines.size - area, 0].max.unwrap!
   top = [hidden - [scroll, hidden].min.unwrap!, 0].max.unwrap!
   Frame(
@@ -90,7 +97,7 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
     picker: picker,
     prompt: parts.prompt,
     panel: asked,
-    place: parts.place,
+    place: place,
     status: parts.status,
   )
 end
@@ -107,7 +114,7 @@ def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
   top = TUI.line([TUI.span(rule_text(frame.label, frame.width), rule)])
   bottom = TUI.line([TUI.span(rule_text("", frame.width), rule)])
   panel = frame.panel.map { |row| panel_row(row, theme.panel) }
-  footer = [frame.place, frame.status].map { |text| TUI.line([TUI.span(text, theme.footer.status)]) }
+  footer = (frame.place + [frame.status]).map { |text| TUI.line([TUI.span(text, theme.footer.status)]) }
   queued = frame.queued.map { |text| TUI.line([TUI.span(text, theme.transcript.notice)]) }
   TUI.col(rows + blank + queued + [top] + editor + [bottom] + panel + footer)
 end

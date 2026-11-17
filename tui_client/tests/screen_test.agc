@@ -42,11 +42,13 @@ def test_the_frame_draws_and_hits_the_same_regions() -> Result[Void]
   Test.eq((try cells.find { |cell| cell.y == 5 and cell.x == 0 }).style, Theme.default().rules.high)
 end
 
-# A picker takes the prompt's place between the rules.
+# A picker takes the prompt's place between the rules; on a screen too short for both, the place row goes first.
 def test_a_picker_replaces_the_prompt() -> Result[Void]
   picker = ->(_room: Int) { [Layout.Row(text: "› s1"), Layout.Row(text: "  s2")] }
   frame = Screen.frame(10, 7, [], 0, parts_of(Prompt.view("typed", 5, 10, 7)).with(picker: picker))
   try Test.eq(rows(frame), ["", "─" * 10, "› s1", "s2", "─" * 10, "", "ready"])
+  short = Screen.frame(10, 5, [], 0, parts_of(Prompt.view("typed", 5, 10, 5)).with(picker: picker, place: "~/x"))
+  try Test.eq(rows(short), ["─" * 10, "› s1", "s2", "─" * 10, "ready"])
   Test.eq(Screen.hit(frame, 1, 2), Screen.Hit.Nothing)
 end
 

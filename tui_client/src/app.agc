@@ -1430,6 +1430,17 @@ def reconnect(app: Model, reason: String) -> Model
   effect(app.with(reconnects: reconnects), back)
 end
 
+# The first non-empty line of the session's first user message, as the screen can show it.
+def session_name(app: Model) -> String
+  case (app.entries.find { |entry| entry.kind == Transcript.Kind.User })
+    ok(entry) ->
+      Client.printable(
+        entry.text.split("\n").map { |line| line.strip }.select { |line| not line.empty? }.take(1).join(""),
+      )
+    error(_) -> ""
+  end
+end
+
 def framed(app: Model) -> Screen.Frame
   prompt = Prompt.view(app.prompt, cursor(app), app.width, app.height)
   for name in option_list(app.key_for)
@@ -1448,7 +1459,7 @@ def framed(app: Model) -> Screen.Frame
     label: label(app),
     level: app.effort,
     status: status(app, app.width),
-    place: Footer.place(app.cwd, app.home, app.branch, app.history.take(1).join(""), app.width),
+    place: Footer.place(app.cwd, app.home, app.branch, session_name(app), app.width),
     queued: app.follow_ups.map { |text| "follow-up: #{Client.printable(text)}" },
   )
 

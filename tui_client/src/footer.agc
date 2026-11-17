@@ -1,21 +1,22 @@
-## The two rows under the editor, as pi draws them: where the session is (its folder, the git branch and its first
-## message), then the status (what the client waits for, the key hints that fit), the tokens and cost of the last
-## model call, and the model with its thinking level on the right. Pure.
+## The two rows under the editor: where the session is (its folder, the git branch and its first message), then the
+## status (what the client waits for, the key hints that fit), the tokens of the last model call and the session's
+## cost, and the model with its thinking level on the right. Pure.
 
 import Protocol from "pkg/protocol/protocol"
 import Width from "width"
 
 ## The characters of the first message that name the session.
 TITLE_CHARS = 40
+MAX_USD = 1_000_000.0
 
-## Where the session is: `cwd` with `home` as `~`, the branch in parentheses and the session's first message.
+## Where the session is: `cwd` with `home` as `~`, the branch in parentheses and `title`, one line.
 def place(cwd: String, home: String, branch: String, title: String, width: Int) -> String
   parts = [short_path(cwd, home)]
   if not branch.empty?
     parts = ["#{parts[0]} (#{branch})"]
   end
 
-  name = title.split("\n")[0].strip
+  name = title.strip
   if name.length > TITLE_CHARS
     name = "#{name.slice(0, TITLE_CHARS - 1)}…"
   end
@@ -59,10 +60,11 @@ def status(
   text + " " * (width - Width.text(text) - Width.text(right) - 1) + right + " "
 end
 
-## `↑input ↓output`, the cache read and the part of the prompt it was, the session's cost and the context as a part
-## of the window (or in tokens while the window is not known).
+## The last call: `↑` its whole prompt (cached included), `↓` its output, `R` the prompt read from the cache and the
+## part of the prompt it was; then the session's cost, and the prompt as a part of the window (in tokens while the
+## window is not known).
 def counts(usage: Protocol.Usage) -> String
-  parts = ["↑#{tokens(usage.input)}", "↓#{tokens(usage.output)}"]
+  parts = ["↑#{tokens(usage.context)}", "↓#{tokens(usage.call_output.unwrap_or(usage.output))}"]
   if usage.cache_read > 0
     parts = parts.push("R#{tokens(usage.cache_read)}")
     if usage.context > 0
@@ -83,15 +85,18 @@ end
 ## A count of tokens as `950`, `1.2k`, `12k` or `1.2M`.
 def tokens(count: Int) -> String
   return count.to_s if count < 1000
-  return "#{tenths(count / 100)}k" if count < 10_000
-  return "#{(count + 500) / 1000}k" if count < 1_000_000
+  return "#{tenths((count + 50) / 100)}k" if count < 9950
+  return "#{(count + 500) / 1000}k" if count < 999_500
 
-  "#{tenths(count / 100_000)}M"
+  "#{tenths((count + 50_000) / 100_000)}M"
 end
 
-## Dollars with three decimals: `$0.012`.
+## Dollars with three decimals (`$0.012`), `<$0.001` for less, and at most `$1000000.000`.
 def money(usd: Float) -> String
-  millis = (usd * 1000.0).round
+  return "$0.000" if not (usd > 0.0)
+  return "<$0.001" if usd < 0.0005
+
+  millis = ([usd, MAX_USD].min.unwrap! * 1000.0).round
   "$#{millis / 1000}.#{(millis % 1000 + 1000).to_s.slice(1, 3)}"
 end
 
@@ -111,9 +116,15 @@ end
 
 private
 
-def short_path(cwd: String, home: String) -> String
-  return "~" if not home.empty? and cwd == home
-  return "~#{cwd.slice(home.length, cwd.length - home.length)}" if not home.empty? and cwd.start_with?("#{home}/")
+def short_path(cwd: String, given: String) -> String
+  home = given
+  while home.end_with?("/")
+    home = home.slice(0, home.length - 1)
+  end
+
+  return cwd if home.empty?
+  return "~" if cwd == home or cwd == "#{home}/"
+  return "~#{cwd.slice(home.length, cwd.length - home.length)}" if cwd.start_with?("#{home}/")
 
   cwd
 end

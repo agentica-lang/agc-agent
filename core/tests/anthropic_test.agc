@@ -40,6 +40,7 @@ def test_a_session_on_anthropic_caches_and_keeps_its_thinking() -> Result[Void]
       cache_write: 300,
       context: 2312,
       window: some(1_000_000),
+      call_output: some(45),
     )
 
     Test.eq(usage.take(1), [Protocol.Event.Usage(cached)])
