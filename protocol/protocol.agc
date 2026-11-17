@@ -55,6 +55,7 @@ export Routes.approval_path
 export Routes.stop_path
 export Routes.compact_path
 export Routes.tree_path
+export Routes.export_path
 export Routes.branch_path
 export Routes.fork_path
 export Routes.shell_path
@@ -117,6 +118,8 @@ export Replies.Message
 export Replies.Session
 export Replies.TreeNode
 export Replies.SessionTree
+export Replies.ExportEntry
+export Replies.SessionExport
 export Replies.Branched
 export Replies.ServerStatus
 export Replies.ShellAccepted
@@ -141,6 +144,8 @@ export Replies.encode_session
 export Replies.decode_session
 export Replies.encode_session_tree
 export Replies.decode_session_tree
+export Replies.encode_session_export
+export Replies.decode_session_export
 export Replies.encode_branched
 export Replies.decode_branched
 export Replies.encode_server_status

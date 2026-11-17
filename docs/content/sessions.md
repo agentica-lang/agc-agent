@@ -41,6 +41,12 @@ Nothing is lost: the other branches stay in the file, and `/tree` shows them.
 
 The new session keeps the folder, the system prompt, the provider, the model and the thinking level.
 
+## Export
+
+`/export [PATH]` in either client, or `finn export SESSION [PATH]`, writes the branch the session is on to a Markdown file: the title and date, your messages and the answers in order, each tool call on one line (its name, what it was called on, and ok or error, without its output), and the todo list. The other branches of the tree are left out.
+
+The file is `ID.md` in the current folder unless you give a path. A file that exists is refused; `--force` replaces it. The file is made readable by you alone, and it holds what the session holds, with nothing hidden: the arguments of the tool calls too, so check it before you share it. A control or bidi character is written as its code (`\u001b`), so the file shows nothing a terminal would act on.
+
 ## Send while a turn runs
 
 A message you send while the model works waits in the turn's queue: the turn reads it before its next model call, so you can steer it. The queue holds 20 messages at most.

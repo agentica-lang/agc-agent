@@ -95,6 +95,7 @@ enum Msg
   Stripped(String)
   Renewed(LLM.Provider)
   Tree(Channel[Result[Protocol.SessionTree]])
+  Exported(Channel[Result[Protocol.SessionExport]])
   Branch(Int, Channel[Result[Protocol.Branched]])
   Copy(Optional[Int], Copying, Channel[Result[Copied]])
   Shell(Protocol.RunShell, Channel[Result[Protocol.ShellAccepted]])

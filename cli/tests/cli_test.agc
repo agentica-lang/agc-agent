@@ -459,6 +459,45 @@ def deletes(rig: Driver.Rig) -> Result[Void]
   Test.eq(Fake.strays(rig.fake), 0)
 end
 
+# `finn export ID PATH` and `/export PATH` write the session's branch to a Markdown file made 0600; a file that exists
+# is refused unless --force.
+def test_export_writes_the_session_to_a_markdown_file() -> Result[Void]
+  exported = Protocol.SessionExport(
+    id: "s1",
+    title: "Hi",
+    created_ms: 0,
+    entries: [Protocol.ExportEntry(kind: "user", text: "Hi")],
+    todos: [],
+  )
+
+  reply = Fake.Reply(body: Protocol.encode_session_export(exported))
+  routes = [
+    Fake.Route(method: "GET", path: Protocol.export_path("s1"), replies: [reply, reply, reply]),
+    Routes.created(),
+    Routes.held_events(),
+  ]
+
+  Driver.within(routes, &exports)
+end
+
+def exports(rig: Driver.Rig) -> Result[Void]
+  path = "#{rig.dir}/out.md"
+  done = try Driver.exited(try Driver.start(rig.dir, ["export", "s1", path]))
+  try Test.eq([done.lines, [done.code.to_s]], [["[session s1 exported to #{path}]"], ["0"]])
+  try Test.eq((try File.stat(path)).mode.to_s, "384")
+  refused = try Driver.exited(try Driver.start(rig.dir, ["export", "s1", path]))
+  try Test.eq([refused.code.to_s, refused.errors.include?("#{path} exists: add --force").to_s], ["1", "true"])
+  try File.write_text(path, "old")
+  cli = try Driver.start(rig.dir, PLAIN)
+  try Driver.read_until(cli, "[session s1]")
+  try Driver.say(cli, "/export --force #{path}")
+  try Driver.read_until(cli, "[exported to #{path}]")
+  try Driver.say(cli, "/quit")
+  try Test.eq((try Driver.finish(cli)).code, 0)
+  try Test.assert((try File.read_text(path)).start_with?("# Hi\n"), "the export replaced the file")
+  Test.eq(Fake.strays(rig.fake), 0)
+end
+
 # `-p` sends one task, reads no line, prints only the answer on stdout and exits with the status of the turn.
 def test_one_shot_prints_the_answer_on_stdout_and_the_rest_on_stderr() -> Result[Void]
   Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["turn.sse"])]) do |rig|

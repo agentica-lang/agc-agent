@@ -16,6 +16,12 @@ COMMANDS = [
   Usage(name: "/fork", args: "[N|N+]", about: "a new session from before message N (or after its answer)"),
   Usage(name: "/clone", about: "a new session with this one's history"),
   Usage(
+    name: "/export",
+    args: "[--force] [PATH]",
+    about: "write the session's branch to a Markdown file (default: ID.md here)",
+    more: "the file (0600) holds what the session holds; --force replaces a file that exists",
+  ),
+  Usage(
     name: "/model",
     args: "[PROVIDER/]NAME",
     about: "change the model (and provider) from the next turn on; alone: pick or show it",
@@ -56,6 +62,8 @@ enum Command
   ## Shows the tree without an argument; a new session from the message it names.
   Fork(Optional[String])
   Clone
+  ## Writes the session's branch to the file, `ID.md` here when none; the flag replaces a file that exists.
+  Export(Optional[String], Bool)
   ## Shows the model without an argument.
   Model(Optional[String])
   ## Shows the thinking level without an argument.
@@ -181,6 +189,9 @@ end
 ## The text on one line, each control character (bidi ones too) a space: what a client echoes of what another typed.
 def printable(text: String) -> String = text.split("").map { |c| shown(c) }.join("")
 
+## A control character (C0, C1) or a bidi control, which could reorder what a screen shows.
+def control?(code: Int) -> Bool = code < 0x20 or (code >= 0x7f and code < 0xa0) or Protocol.BIDI.include?(code)
+
 ## The model's todo list, one line an item: `[x]` completed, `[>]` in progress, `[ ]` pending, then its printable text.
 def todo_lines(todos: List[Protocol.Todo]) -> List[String]
   todos.map do |todo|
@@ -197,10 +208,8 @@ end
 
 private
 
-# A control character (C0, C1) or a bidi control, which could reorder what the screen shows, becomes a space.
 def shown(c: String) -> String
-  code = c.code
-  return " " if code < 0x20 or (code >= 0x7f and code < 0xa0) or Protocol.BIDI.include?(code)
+  return " " if control?(c.code)
 
   c
 end
@@ -212,6 +221,7 @@ def command(name: String, argument: String) -> Result[Command]
     "/tree" -> ok(Command.Tree(given(argument)))
     "/fork" -> ok(Command.Fork(given(argument)))
     "/clone" -> bare(Command.Clone, name, argument)
+    "/export" -> exporting(argument)
     "/model" -> model(argument)
     "/thinking" -> thinking(argument)
     "/compact" -> bare(Command.Compact, name, argument)
@@ -223,6 +233,13 @@ def command(name: String, argument: String) -> Result[Command]
     # Only `/quit` is left of COMMANDS.
     _ -> bare(Command.Quit, name, argument)
   end
+end
+
+# `--force` anywhere; the other words are the path.
+def exporting(argument: String) -> Result[Command]
+  words = argument.split(" ").select { |word| word != "" }
+  path = words.select { |word| word != "--force" }.join(" ")
+  ok(Command.Export(given(path), words.include?("--force")))
 end
 
 def bare(command: Command, name: String, argument: String) -> Result[Command]

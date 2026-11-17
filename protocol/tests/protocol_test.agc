@@ -322,6 +322,7 @@ def test_routes() -> Result[Void]
   try Test.eq(Protocol.events_path("s1"), "/v1/sessions/s1/events")
   try Test.eq(Protocol.compact_path("s1"), "/v1/sessions/s1/compact")
   try Test.eq(Protocol.tree_path("s1"), "/v1/sessions/s1/tree")
+  try Test.eq(Protocol.export_path("s1"), "/v1/sessions/s1/export")
   try Test.eq(Protocol.branch_path("s1"), "/v1/sessions/s1/branch")
   try Test.eq(Protocol.fork_path("s1"), "/v1/sessions/s1/fork")
   try Test.eq(Protocol.shell_path("s1"), "/v1/sessions/s1/shell")
@@ -336,6 +337,21 @@ def test_the_tree_and_its_branches_round_trip() -> Result[Void]
 
   tree = Protocol.SessionTree(nodes: nodes)
   try Test.eq(Protocol.decode_session_tree(Protocol.encode_session_tree(tree)), ok(tree))
+  entries = [
+    Protocol.ExportEntry(kind: "user", text: "hi"),
+    Protocol.ExportEntry(kind: "tool", text: "a.txt", tool: "read_file", ok: some(true)),
+    Protocol.ExportEntry(kind: "tool", text: "ls", tool: "bash"),
+  ]
+
+  exported = Protocol.SessionExport(
+    id: "s1",
+    title: "hi",
+    created_ms: 1000,
+    entries: entries,
+    todos: [Protocol.Todo(content: "one", status: "pending")],
+  )
+
+  try Test.eq(Protocol.decode_session_export(Protocol.encode_session_export(exported)), ok(exported))
   branched = Protocol.Branched(id: "s2-ab", text: "two")
   try Test.eq(Protocol.decode_branched(Protocol.encode_branched(branched)), ok(branched))
   branch = Protocol.Branch(entry: 7)

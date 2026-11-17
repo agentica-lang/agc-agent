@@ -151,6 +151,11 @@ def tree(server: Server, id: String) -> Result[Protocol.SessionTree]
   Protocol.decode_session_tree(try call(server, "GET", Protocol.tree_path(id), ""))
 end
 
+## The branch the session is on, for `/export`.
+def exported(server: Server, id: String) -> Result[Protocol.SessionExport]
+  Protocol.decode_session_export(try call(server, "GET", Protocol.export_path(id), ""))
+end
+
 ## Goes on from `entry` of the tree in the same session.
 def branch(server: Server, id: String, entry: Int) -> Result[Protocol.Branched]
   body = Protocol.encode_branch(Protocol.Branch(entry: entry))

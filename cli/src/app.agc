@@ -19,6 +19,15 @@ def delete(options: Args.Options, id: String) -> Result[Int]
   ok(0)
 end
 
+## Writes the branch of a session to a Markdown file, on the server of the state folder (starting it when none runs).
+def export_session(options: Args.Options, id: String, path: Optional[String], force: Bool) -> Result[Int]
+  launch = Args.launch(options)
+  server = try Client.connect(launch, try Client.state_dir(launch))
+  file = try Client.saved(try Client.exported(server, id), Client.export_path(id, path), force)
+  puts("[session #{id} exported to #{Client.printable(file)}]")
+  ok(0)
+end
+
 def logout(options: Args.Options, name: Optional[String]) -> Result[Int]
   launch = Args.launch(options)
   server = try Client.connect(launch, try Client.state_dir(launch))

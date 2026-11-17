@@ -343,9 +343,22 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Tree(choice) -> tree_command(chat, choice, &branched)
     Client.Command.Fork(choice) -> tree_command(chat, choice, &forked)
     Client.Command.Clone -> moved_command(chat, -> { Client.fork(chat.server, chat.id, none) })
+    Client.Command.Export(path, force) -> export_command(chat, path, force)
     Client.Command.Model(model) -> model_command(chat, model)
     Client.Command.Thinking(level) -> setting_command(chat, "thinking", level, Protocol.UpdateSession(effort: level))
     Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
+  end
+end
+
+def export_command(chat: Chat, path: Optional[String], force: Bool) -> Result[Step]
+  written = case Client.exported(chat.server, chat.id)
+    ok(exported) -> Client.saved(exported, Client.export_path(chat.id, path), force)
+    error(e) -> error(e)
+  end
+
+  case written
+    ok(file) -> said(chat, "[exported to #{Client.printable(file)}]")
+    error(e) -> said(chat, "[error] #{Client.printable(e.message)}")
   end
 end
 

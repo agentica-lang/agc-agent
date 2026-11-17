@@ -26,6 +26,8 @@ def compact_path(session_id: String) -> String = "#{session_path(session_id)}/co
 
 def tree_path(session_id: String) -> String = "#{session_path(session_id)}/tree"
 
+def export_path(session_id: String) -> String = "#{session_path(session_id)}/export"
+
 def branch_path(session_id: String) -> String = "#{session_path(session_id)}/branch"
 
 def fork_path(session_id: String) -> String = "#{session_path(session_id)}/fork"
@@ -55,6 +57,7 @@ def shape() -> List[String]
     stop_path("ID"),
     compact_path("ID"),
     tree_path("ID"),
+    export_path("ID"),
     branch_path("ID"),
     fork_path("ID"),
     shell_path("ID"),

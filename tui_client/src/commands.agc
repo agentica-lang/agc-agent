@@ -32,11 +32,41 @@ def on_command(app: State.Model, command: Client.Command) -> State.Model
     Client.Command.Tree(choice) -> State.tried(app, tree_command(app, Picker.Kind.Tree, choice))
     Client.Command.Fork(choice) -> State.tried(app, tree_command(app, Picker.Kind.Fork, choice))
     Client.Command.Clone -> move(app, Picker.Kind.Fork, none)
+    Client.Command.Export(path, force) -> export_command(app, path, force)
     Client.Command.Model(model) -> model_command(app, model)
     Client.Command.Thinking(level) -> thinking_command(app, level)
     Client.Command.Compact -> compact_command(app)
     Client.Command.Login(name) -> Logins.login_command(app, name)
     Client.Command.Logout(name) -> State.tried(app, Logins.logout_command(app, name))
+  end
+end
+
+## Writes the session's branch to a file in a task; `exported` says where.
+def export_command(app: State.Model, path: Optional[String], force: Bool) -> State.Model
+  return State.noted(app, "no session to export yet") if app.id == ""
+
+  backend = app.backend
+  id = app.id
+  State.effect(
+    app,
+    TUI.Cmd.Run(
+      -> {
+        written = case backend.exported.call(id)
+          ok(exported) -> Client.saved(exported, Client.export_path(id, path), force)
+          error(e) -> error(e)
+        end
+
+        State.Msg.Exported(written)
+      },
+    ),
+  )
+end
+
+## Where the export went, or why it did not.
+def exported(app: State.Model, result: Result[String]) -> State.Model
+  case result
+    ok(file) -> State.noted(app, "exported to #{Client.printable(file)}")
+    error(e) -> State.noted(app, "error: the session was not exported: #{Client.printable(e.message)}")
   end
 end
 

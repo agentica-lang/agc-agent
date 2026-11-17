@@ -5,6 +5,7 @@ import Backends from "src/backend"
 import Commands from "src/commands"
 import Control from "src/control"
 import Discovery from "src/discovery"
+import Export from "src/export"
 import Events from "src/feed"
 import Http from "src/http"
 import Sessions from "src/sessions"
@@ -43,6 +44,7 @@ export Http.logout
 export Http.skip_login
 export Http.compact
 export Http.tree
+export Http.exported
 export Http.branch
 export Http.fork
 export Http.shell
@@ -77,6 +79,10 @@ export Commands.KIND_COMMAND
 export Commands.parse_command
 export Commands.parse_shell
 export Commands.printable
+export Commands.control?
+export Export.markdown
+export Export.export_path
+export Export.saved
 export Commands.todo_lines
 export Commands.listing
 export Commands.pick

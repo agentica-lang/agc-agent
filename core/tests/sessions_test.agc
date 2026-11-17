@@ -97,6 +97,42 @@ def test_the_todo_list_is_sent_and_kept() -> Result[Void]
   end
 end
 
+# The export follows the branch the session is on: its messages in order, each tool call in short with its result,
+# and the todo list. A message of another branch is left out.
+def test_the_export_follows_the_branch() -> Result[Void]
+  H.using(H.Setup(replies: ["todo_write.sse", "todo_bad.sse", "text.sse", "text.sse", "text.sse"])) do |h|
+    id = try H.new_session(h)
+    try turn(h, id, "Plan it.")
+    try turn(h, id, "Two.")
+    nodes = try tree(h, id)
+    _ = try H.post(h, Protocol.branch_path(id), Protocol.encode_branch(Protocol.Branch(entry: nodes[1].id)))
+    try turn(h, id, "Three.")
+    exported = try Protocol.decode_session_export((try H.get(h, Protocol.export_path(id))).text)
+    shown = exported.entries.map { |e| "#{e.kind} #{e.tool} #{e.text.split("\n")[0]} #{e.ok}" }
+    try Test.eq([exported.id, exported.title, exported.todos.size.to_s], [id, "Plan it.", "3"])
+    answer = "assistant  Hello! It's a pleasure to meet you. none"
+    Test.eq(
+      shown,
+      [
+        "user  Plan it. none",
+        "tool todo_write 3 todos some(true)",
+        "tool todo_write todo_write some(false)",
+        answer,
+        "user  Three. none",
+        answer,
+      ],
+    )
+  end
+end
+
+def turn(h: H.Harness, id: String, text: String) -> Result[Void]
+  a = try H.subscribe(h, id, some((try H.session(h, id)).last_event_id))
+  _ = try H.send(h, id, text)
+  a = try H.until(a, Protocol.EventKind.TurnFinished)
+  H.close(a)
+  ok()
+end
+
 # A fold of the round that wrote the todo list gives the model the list again after the summary.
 def test_a_fold_gives_the_model_its_todo_list_again() -> Result[Void]
   replies = ["todo_write.sse", "bash_echo.sse", "summary.sse", "text.sse"]

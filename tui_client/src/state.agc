@@ -166,6 +166,8 @@ enum Msg
   Arguments(Int, String, Result[Input.Arguments])
   ## The text the editor of Ctrl+G saved.
   Edited(Result[String])
+  ## Where `/export` wrote the session.
+  Exported(Result[String])
   ## The reply to a `!` command: the command, and whether it runs.
   ShellSent(String, Result[Protocol.ShellAccepted])
   ## The git branch of the session's folder, for the `opened` count when it was read.

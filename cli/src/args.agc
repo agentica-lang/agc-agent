@@ -52,6 +52,8 @@ enum Command
   Server(ServerOptions)
   ## Deletes the session of that id, on the server of the options.
   Delete(Options, String)
+  ## Writes the branch of the session of that id to the file (`ID.md` here when none); the flag replaces a file.
+  Export(Options, String, Optional[String], Bool)
   ## Removes the stored key of that provider, or every one when none, on the server of the options.
   Logout(Options, Optional[String])
   Version
@@ -59,8 +61,11 @@ enum Command
 end
 
 def parse(args: List[String]) -> Result[Command]
-  at = server_word(args)
+  at = word_at(args, "server")
   return parse_server(args.take(at) + args.drop(at + 1)) if at >= 0
+
+  at = word_at(args, "export")
+  return parse_export(args.take(at) + args.drop(at + 1)) if at >= 0
 
   parser = OP.new(
     "finn chat",
@@ -133,6 +138,32 @@ def parse_server(args: List[String]) -> Result[Command]
   end
 end
 
+## `finn export SESSION [PATH] [options]`: the branch the session is on, as a Markdown file made 0600.
+def parse_export(args: List[String]) -> Result[Command]
+  parser = OP.new(
+    "finn export",
+    "finn export SESSION [PATH] writes the branch the session is on to a Markdown file (default: SESSION.md in the " +
+    "current folder), made 0600: " +
+    "its messages, each tool call in short, and its todo list. The file holds what the session holds.",
+    [],
+    [
+      Opt(name: "state-dir", help: "folder of server.json (default: FINN_STATE_DIR, else the user's state folder)"),
+      Opt(
+        name: "server-command",
+        help: "program and arguments that start a server, split on spaces (or put them after --)",
+      ),
+      Opt(name: "force", kind: Kind.Flag, help: "replace the file when it exists"),
+    ],
+    "SESSION_PATH",
+  )
+
+  case OP.parse(parser, args)
+    ok(parsed) -> export_of(parsed)
+    error(e) if OP.help?(e.message) -> ok(Command.Help(OP.usage(parser)))
+    error(e) -> error(OP.message(e.message), kind: "cli.usage")
+  end
+end
+
 ## How this client finds or starts its server.
 def launch(options: Options) -> Client.Launch
   Client.Launch(main: "cli/main.agc", state_dir: options.state_dir, server_command: options.server_command)
@@ -140,14 +171,14 @@ end
 
 private
 
-# Where the word `server` is, the first that is not an option or the value of one (so `finn --state-dir X server stop`
+# Where the word `name` is, the first that is not an option or the value of one (so `finn --state-dir X server stop`
 # works); -1 when there is none.
-def server_word(args: List[String]) -> Int
+def word_at(args: List[String], name: String) -> Int
   at = 0
   while at < args.size
     word = args[at]
     return -1 if word == "--"
-    return at if word == "server"
+    return at if word == name
     return -1 if not word.start_with?("-")
 
     takes_value = VALUE_OPTIONS.include?(word)
@@ -192,6 +223,27 @@ def logout_of(name: String) -> Optional[String]
   return none if name == "all"
 
   some(name)
+end
+
+def export_of(parsed: Parsed) -> Result[Command]
+  words = OP.rest(parsed).take(OP.rest(parsed).size - OP.after_dashes(parsed).size)
+  return error("give the session, then the path if you want one", kind: "cli.usage") if words.empty? or words.size > 2
+
+  options = Options(
+    state_dir: OP.optional_string(parsed, "state-dir"),
+    server_command: try given_server_command(parsed),
+    session: none,
+    cwd: none,
+    model: none,
+    thinking: false,
+  )
+
+  path: Optional[String] = none
+  if words.size == 2
+    path = some(words[1])
+  end
+
+  ok(Command.Export(options, words[0], path, OP.flag(parsed, "force")))
 end
 
 def server_command_of(parsed: Parsed) -> Result[Command]
@@ -241,6 +293,12 @@ def server_command(parsed: Parsed) -> Result[Optional[List[String]]]
     return error("unexpected argument: the server command goes after --", kind: "cli.usage")
   end
 
+  given_server_command(parsed)
+end
+
+# The words after --, or the `--server-command` text split on spaces; not both.
+def given_server_command(parsed: Parsed) -> Result[Optional[List[String]]]
+  after = OP.after_dashes(parsed)
   text = OP.optional_string(parsed, "server-command")
   return ok(some(after)) if text.none? and not after.empty?
   return ok(none) if text.none?

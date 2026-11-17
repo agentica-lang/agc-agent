@@ -39,6 +39,8 @@ def test_commands_parse_with_their_arguments() -> Result[Void]
   try Test.eq(Client.parse_command("hello /new"), none)
   try Test.eq(Client.parse_command("  /new "), some(ok(Client.Command.New)))
   try Test.eq(Client.parse_command("/resume"), some(ok(Client.Command.Resume(none))))
+  try Test.eq(Client.parse_command("/export"), some(ok(Client.Command.Export(none, false))))
+  try Test.eq(Client.parse_command("/export --force a b.md"), some(ok(Client.Command.Export(some("a b.md"), true))))
   try Test.eq(Client.parse_command("/resume 2"), some(ok(Client.Command.Resume(some("2")))))
   try Test.eq(Client.parse_command("/model qwen3:8b"), some(ok(Client.Command.Model(some("qwen3:8b")))))
   try Test.eq(Client.parse_command("/thinking high"), some(ok(Client.Command.Thinking(some("high")))))
@@ -184,4 +186,75 @@ def error_kind_of[T](result: Result[T]) -> String
     ok(_) -> "ok"
     error(e) -> e.kind
   end
+end
+
+# The Markdown of an export: the title and date, each message under its role, the tool calls of an answer as a list
+# with their result, and the todo list. An escape or bidi character is written as its code.
+def test_an_export_is_markdown_with_its_tools_and_todos() -> Result[Void]
+  text = Client.markdown(sample())
+  expected = [
+    "# Fix it",
+    "Session `s1`, started 2026-06-12T10:55:02Z.",
+    "## User",
+    "Fix it\nnow \\u001b[2J and \\u202eevil",
+    "- `read_file` a.txt (ok)\n- `bash` make (error)\n- `bash` sleep 9 (no result)",
+    "## Assistant",
+    "Done.",
+    "## Todos",
+    "- [x] Write the test\n- [ ] Fix the bug (in progress)\n- [ ] Ship",
+  ]
+
+  Test.eq(text, expected.join("\n\n") + "\n")
+end
+
+# The file is made 0600 at `ID.md` by default; one that exists is refused unless --force, which replaces only a file.
+def test_an_export_file_is_private_and_never_replaced_without_force() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/finn-export-#{Random.int(0, 999_999_999)}"
+  try Dir.mkdir_private(dir)
+  path = Client.export_path("s1", some("#{dir}/out.md"))
+  first = Client.saved(sample(), path, false)
+  mode = (try File.stat(path)).mode
+  again = Client.saved(sample().with(title: "Other"), path, false)
+  kept = try File.read_text(path)
+  forced = Client.saved(sample().with(title: "Other"), path, true)
+  replaced = try File.read_text(path)
+  folder = Client.saved(sample(), dir, true)
+  _ = Path.remove(dir)
+  try Test.eq([first, forced], [ok(path), ok(path)])
+  try Test.eq([mode.to_s, Client.export_path("s1", none)], ["384", "s1.md"])
+  try Test.eq([again.ok?, kept.start_with?("# Fix it"), replaced.start_with?("# Other")], [false, true, true])
+  Test.eq(
+    [message_of(again), message_of(folder)],
+    ["#{path} exists: add --force to replace it", "#{dir} is not a file"],
+  )
+end
+
+def message_of(result: Result[String]) -> String
+  case result
+    ok(_) -> "ok"
+    error(e) -> e.message
+  end
+end
+
+def sample() -> Protocol.SessionExport
+  Protocol.SessionExport(
+    id: "s1",
+    title: "Fix it",
+    created_ms: 1_781_261_702_345,
+    entries: [
+      Protocol.ExportEntry(
+        kind: "user",
+        text: "Fix it\nnow #{String.from_code(0x1B)}[2J and #{String.from_code(0x202E)}evil",
+      ),
+      Protocol.ExportEntry(kind: "tool", tool: "read_file", text: "a.txt", ok: some(true)),
+      Protocol.ExportEntry(kind: "tool", tool: "bash", text: "make", ok: some(false)),
+      Protocol.ExportEntry(kind: "tool", tool: "bash", text: "sleep 9"),
+      Protocol.ExportEntry(kind: "assistant", text: "Done."),
+    ],
+    todos: [
+      Protocol.Todo(content: "Write the test", status: "completed"),
+      Protocol.Todo(content: "Fix the bug", status: "in_progress"),
+      Protocol.Todo(content: "Ship", status: "pending"),
+    ],
+  )
 end

@@ -27,11 +27,13 @@ usage: finn [tui] [options]       talk to the agent in this folder on the full s
        finn logout [PROVIDER]     remove the stored key (or base URL) of a provider, or every stored key and URL
        finn server ACTION         status, start, stop, restart or logs of the server of the state folder
                                   (stop waits for the running turns, --now cancels them; finn server --help)
+       finn export SESSION [PATH] the branch a session is on as a Markdown file (0600; default SESSION.md here;
+                                  --force replaces a file; finn export --help)
        finn --version | --help
 
 options of finn and finn chat: --provider NAME, --api NAME, --model NAME (of a new session), --session ID, --thinking,
   --yolo, ... (finn tui --help and finn chat --help list them all)
-in chat and tui: /new, /resume, /model, /thinking, /compact, /login, /logout, /stop, /help, /quit
+in chat and tui: /new, /resume, /model, /thinking, /compact, /export, /login, /logout, /stop, /help, /quit
 one-shot: approvals (when on) are denied unless --yolo; exit 0 when the turn ends normally (also after a denied call),
   130 when it is cancelled, 1 otherwise (a failed or busy send, an empty task); the server keeps running after it
 serve options (each overrides its environment variable):
@@ -80,6 +82,7 @@ case ${1:-} in
   serve) shift; serve "$@" ;;
   chat) shift; exec "$agentica" "$root/cli/main.agc" "$@" ;;
   tui) shift; exec "$agentica" "$root/tui_client/main.agc" "$@" ;;
+  export) exec "$agentica" "$root/cli/main.agc" "$@" ;;
   login|logout)
     # A key is never an argument: it is asked for, hidden.
     [ $# -le 2 ] || { echo "finn $1: give the provider alone; the key is asked for next" >&2; exit 2; }

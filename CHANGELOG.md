@@ -23,6 +23,7 @@
 ### Added
 
 - `finn`: Ctrl+G edits the prompt in `$VISUAL` or `$EDITOR`.
+- `/export [PATH]` and `finn export SESSION [PATH]` write the branch a session is on to a Markdown file (0600).
 - Finn Agent, a coding agent: `finn` (full screen) and `finn chat` (lines) talk to a local server.
 - Tools: read, write and edit files, `glob`, `grep`, `bash`, and `apply_patch` for models that use it.
 - `todo_write`: the model keeps a todo list that `finn` and `finn chat` show and the session keeps.

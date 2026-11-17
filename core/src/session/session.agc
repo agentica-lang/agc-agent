@@ -175,6 +175,10 @@ end
 
 def tree(sessions: Sessions, id: String) -> Result[Protocol.SessionTree] = SessionActor.tree(try find(sessions, id))
 
+def exported(sessions: Sessions, id: String) -> Result[Protocol.SessionExport]
+  SessionActor.exported(try find(sessions, id))
+end
+
 def branch(sessions: Sessions, id: String, entry: Int) -> Result[Protocol.Branched]
   SessionActor.branch(try find(sessions, id), entry)
 end
