@@ -96,6 +96,9 @@ end
 # branch.
 def test_a_branch_replays_its_own_records() -> Result[Void] = on_both(&branches)
 
+# The session files of a folder are its own `.jsonl` files, not those of another folder or of another kind.
+def test_the_sessions_of_a_folder_are_its_session_files() -> Result[Void] = on_both(&listed)
+
 # A tree read while the last line has no newline yet leaves it out; the read after it is written whole has it, as a
 # whole read does. A node keeps the first line of its answer.
 def test_a_tree_read_leaves_a_line_still_being_written() -> Result[Void] = on_both(&partial_line)
@@ -236,6 +239,20 @@ def started(id: Int) -> Store.Logged
 end
 
 # The scenario on disk, in a folder of its own, and in memory.
+def listed(port: Store.Port, dir: String) -> Result[Void]
+  for name in ["a.jsonl", "b.jsonl", "notes.txt"]
+    try port.create.call("#{dir}/#{name}", "{}\n")
+  end
+
+  # A folder whose name starts with this one's: only the memory adapter can hold one without making it.
+  if dir == MEMORY
+    try port.create.call("#{dir}x/c.jsonl", "{}\n")
+  end
+
+  found = try Store.all(port, dir)
+  Test.eq(found.map { |r| r.path }.sort, ["#{dir}/a.jsonl", "#{dir}/b.jsonl"])
+end
+
 def on_both(scenario: Fn[Store.Port, String, Result[Void]]) -> Result[Void]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/agc-store-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)

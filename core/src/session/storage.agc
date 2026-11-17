@@ -182,6 +182,8 @@ end
 
 def listed(paths: List[String], dir: String) -> List[String]
   prefix = "#{dir}/"
-  names = paths.select { |path| path.start_with?(prefix) }.map { |path| path.slice(prefix.length, path.length) }
+  names = paths.select { |path| path.start_with?(prefix) }
+    .map { |path| path.slice(prefix.length, path.length - prefix.length) }
+
   names.select { |name| not name.include?("/") }
 end
