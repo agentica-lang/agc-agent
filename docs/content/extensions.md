@@ -105,6 +105,14 @@ end
 
 The handlers of one event have 2 seconds together.
 
+`Core.on(registry, Core.Event.ToolBefore(fn))` gets each tool call before anything else sees it, as a `Core.ToolCall` with the session id, its folder, the tool's name and the input. `fn` gives a `Core.Check`:
+
+- `Core.Check.Go` runs the call as it is.
+- `Core.Check.Input(json)` runs it on another input. The approval, its rules and the tool all see the new input.
+- `Core.Check.Stop(reason)` fails the call, and the model gets `blocked by an extension: REASON`.
+
+Each handler gets the input the one before gave, in the order they were added, and the first stop ends the chain. The handlers of one call have 10 seconds together. A crash or a hang fails the call. The calls a `run_script` script makes pass the handlers too, and a stop counts as denied there.
+
 ## A service
 
 ```agentica

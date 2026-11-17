@@ -9,6 +9,8 @@ import Tools from "../src/tools/tools"
 import Fake from "support/fake_llm"
 import H from "support/harness"
 
+HOOKED = "echo hooked | tee other.txt"
+
 # The model gets the prompt of the extension after the system prompt, and the message as the handler changed it; the
 # session keeps what the user typed. A handler that crashes refuses its message and the session goes on.
 def test_message_handlers_change_the_message_or_refuse_it() -> Result[Void]
@@ -32,6 +34,38 @@ def test_message_handlers_change_the_message_or_refuse_it() -> Result[Void]
     try Test.assert(body.include?("Hi. (asked in a test)"), "the message: #{body}")
     Test.assert(not body.include?("boom"), "the refused message: #{body}")
   end
+end
+
+# A `ToolBefore` handler changes a call before anything else sees it: the approval asks about the new input, and the
+# tool runs on it.
+def test_a_tool_before_handler_changes_what_the_approval_sees_and_what_runs() -> Result[Void]
+  calls: Channel[String] = Channel.new(4)
+  registry = Core.registry() |> Core.on(Core.Event.ToolBefore(->(call: Core.ToolCall) { hooked(calls, call) }))
+  H.using(H.Setup(replies: ["bash_echo.sse", "text.sse"], registry: some(registry))) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Echo.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    asked = try H.approval(a)
+    _ = try H.approve(h, id, asked.approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(calls.recv(0), ok("#{id} bash"))
+    try Test.eq(asked.preview, HOOKED)
+    Test.eq(File.read_text("#{h.work}/other.txt"), ok("hooked\n"))
+  end
+end
+
+# A `ToolBefore` handler that stops a call, or crashes, fails it before its approval: the model gets the reason.
+def test_a_tool_before_handler_that_stops_or_crashes_fails_the_call() -> Result[Void]
+  stop = (
+    Core.registry()
+    |> Core.on(Core.Event.ToolBefore(->(_call: Core.ToolCall) { Core.Check.Stop("no echo here") }))
+  )
+
+  crash = Core.registry() |> Core.on(Core.Event.ToolBefore(->(_call: Core.ToolCall) { crash_check() }))
+  try stopped_call(stop, "blocked by an extension: no echo here")
+  stopped_call(crash, "a tool_before handler failed: task crashed")
 end
 
 # A message handler that hangs refuses its message too.
@@ -385,6 +419,30 @@ def crashing_tool() -> Core.Tool
     run: ->(_call: Core.Call) { ok(crash_on_boom("boom")) },
     target: ->(_call: Core.Call) { ok("") },
   )
+end
+
+def hooked(calls: Channel[String], call: Core.ToolCall) -> Core.Check
+  _ = calls.send("#{call.session} #{call.name}", 0)
+  Core.Check.Input(JSON.object({"command": JSON.from(HOOKED)}))
+end
+
+def crash_check() -> Core.Check
+  none_yet: List[Core.Check] = []
+  none_yet[0]
+end
+
+def stopped_call(registry: Core.Registry, reason: String) -> Result[Void]
+  H.using(H.Setup(replies: ["bash_echo.sse", "text.sse"], registry: some(registry))) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Echo.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    _ = try Fake.next_request(h.fake)
+    body = (try Fake.next_request(h.fake)).body
+    try Test.assert(body.include?(reason), "the model gets #{reason.inspect}: #{body}")
+    Test.assert(not File.read_text("#{h.work}/other.txt").ok?, "the call ran")
+  end
 end
 
 def crash_on_boom(text: String) -> String
