@@ -182,8 +182,9 @@ struct State
   broken: Optional[String] = none
   ## The output tokens of every call of the session.
   output: Int = 0
-  ## The context of the last call.
+  ## The context of the last call, and its `usage` as the clients got it.
   context: Int = 0
+  usage: Optional[Protocol.Usage] = none
   ## What the calls cost in USD, from the catalog's prices: the session's and the running turn's.
   cost: Optional[Float] = none
   turn_cost: Float = 0.0

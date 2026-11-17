@@ -6,6 +6,7 @@ import App from "../src/app"
 import Approvals from "../src/approvals"
 import Args from "../src/args"
 import Picker from "../src/picker"
+import Transcript from "../src/transcript"
 
 def test_keys_edit_the_prompt_and_the_view_draws_it() -> Result[Void]
   model = model_of(30, 6)
@@ -14,7 +15,7 @@ def test_keys_edit_the_prompt_and_the_view_draws_it() -> Result[Void]
   end
 
   try Test.eq(model.prompt, "hi")
-  try Test.eq(rows(model).drop(2).take(3), ["─" * 30, "hi", "─" * 30])
+  try Test.eq(rows(model).drop(1).take(3), ["─" * 30, "hi", "─" * 30])
   resized = App.update(model, App.Msg.Key(TUI.Event.Resize(20, 4))).model
   try Test.eq([resized.width, resized.height], [20, 4])
   Test.eq(rows(resized).size, 4)
@@ -118,7 +119,7 @@ def test_a_turn_spins_in_the_rule() -> Result[Void]
   turn = model_of(30, 6).with(turn: true)
   try Test.eq(App.subscriptions(turn).size, 2)
   spun = App.update(turn, App.Msg.Spin).model
-  Test.eq(rows(spun)[2].slice(0, 12), "── ⠙ Working")
+  Test.eq(rows(spun)[1].slice(0, 12), "── ⠙ Working")
 end
 
 # `!cmd` goes to the shell route from a command and draws as a `$` line with its output, and a muted line when the
@@ -267,7 +268,7 @@ def test_the_tree_picker_moves_the_session_and_fills_the_prompt() -> Result[Void
 
   tree = Protocol.SessionTree(nodes: nodes)
   picker = Picker.Picker(tree: Client.tree_rows(tree), kind: Picker.Kind.Tree)
-  model = model_of(50, 12).with(id: "s1", picker: some(picker), listed: some(tree))
+  model = model_of(50, 13).with(id: "s1", picker: some(picker), listed: some(tree))
   drawn = rows(model)
   try Test.assert(drawn.include?("› 1. * One."), "the first message is selected: #{drawn}")
   try Test.assert(drawn.include?("2. ├   Two."), "a branch has a guide: #{drawn}")
@@ -306,7 +307,7 @@ end
 # Alt+Enter during a turn keeps the text for after it, listed above the editor; the turn's end sends the follow-ups
 # as one message, and Esc puts them back in the prompt instead.
 def test_follow_ups_wait_for_the_end_of_the_turn() -> Result[Void]
-  model = model_of(30, 8).with(id: "s1", turn: true, feed: some(Channel.new(4)), generation: 1)
+  model = model_of(30, 9).with(id: "s1", turn: true, feed: some(Channel.new(4)), generation: 1)
   for text in ["one", "two"]
     model = App.update(model.with(prompt: text), alt_enter()).model
   end
@@ -623,6 +624,72 @@ def model_of(width: Int, height: Int) -> App.Model
   App.seed(Client.Server(url: "http://127.0.0.1:1", token: ""), options, Channel.new(1), width, height)
 end
 
+# The footer: the folder (home as ~), the branch and the first line of the first user message (not a command the
+# prompt history has); then the status, the last model call (its prompt, its output, the cache read and the part
+# cached), the session's cost, the prompt in the window, and the model with its level on the right. A `usage` event
+# updates it, the end of a turn reads the branch again, and the branch of a
+# session opened since is dropped.
+def test_the_footer_shows_the_place_the_usage_and_the_model() -> Result[Void]
+  model = model_of(100, 8).with(
+    id: "s1",
+    cwd: "/home/ana/app",
+    home: "/home/ana/",
+    history: ["/help", "Fix the parser."],
+    entries: [
+      Transcript.Entry(kind: Transcript.Kind.Notice, text: "session s1"),
+      Transcript.Entry(
+        kind: Transcript.Kind.User,
+        text: "\n  Fix the#{String.from_code(27)}parser.\nIt fails on tabs.",
+      ),
+    ],
+    serving: "local/qwen3",
+    effort: some("high"),
+  )
+
+  try Test.eq(
+    rows(model).drop(6),
+    [
+      "~/app · Fix the parser.",
+      "ready · Enter send · Esc stop · ^C quit · ^J newline · Alt+Enter follow-up    (local) qwen3 · high",
+    ],
+  )
+
+  used = Protocol.Usage(
+    input: 1200,
+    output: 340,
+    cache_read: 3600,
+    cache_write: 0,
+    context: 4800,
+    session_cost: some(0.0125),
+    window: some(32_000),
+    call_output: some(40),
+  )
+
+  counted = App.update(
+    model,
+    App.Msg.Stream(model.generation, [Client.Item.Event(some(5), Protocol.Event.Usage(used))]),
+  ).model
+
+  try Test.eq(
+    rows(counted).last,
+    "ready · ↑4.8k ↓40 R3.6k 75% cached $0.013 15.0%/32k · Enter send · Esc stop   (local) qwen3 · high",
+  )
+
+  finished = Protocol.Event.TurnFinished(
+    Protocol.TurnFinished(turn_id: "t1", stop_reason: Protocol.StopReason.EndTurn),
+  )
+
+  ended = App.update(
+    counted.with(turn: true),
+    App.Msg.Stream(model.generation, [Client.Item.Event(some(6), finished)]),
+  )
+
+  try Test.eq(ended.cmds.flat_map { |cmd| run(cmd) }.select { |msg| branch?(msg) }.size, 1)
+  named = App.update(ended.model, App.Msg.Branch(model.opened, "main")).model
+  try Test.eq(rows(named)[6], "~/app (main) · Fix the parser.")
+  Test.eq(App.update(named, App.Msg.Branch(model.opened - 1, "old")).model.branch, "main")
+end
+
 # The login of a local server lists its base URL; picked, it asks for a new one (the prompt empty, the note says the
 # current one), and Esc cancels it.
 def test_a_local_login_is_listed_with_its_url_and_asks_for_one() -> Result[Void]
@@ -709,6 +776,13 @@ def key_char(c: String) -> App.Msg = App.Msg.Key(TUI.Event.Char(c, TUI.Mods()))
 def enter() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
 
 def alt_enter() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Enter, TUI.Mods(alt: true)))
+
+def branch?(msg: App.Msg) -> Bool
+  case msg
+    App.Msg.Branch(_, _) -> true
+    _ -> false
+  end
+end
 
 def run(cmd: TUI.Cmd[App.Msg]) -> List[App.Msg]
   case cmd

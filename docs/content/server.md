@@ -35,10 +35,10 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `GET /v1/auth` | the logins: each provider, where its key comes from, and what a login asks for (`asks`: `key`, or `url` with the `base_url` of `local`) |
 | `PUT /v1/auth` | make an empty key file when there is none, so the first-start login is not offered again |
 | `POST /v1/auth/PROVIDER` | log in: `{"key": "..."}`, checked at the provider, then stored; `local` takes `{"base_url": "..."}`, checked with its `GET /models` |
-| `DELETE /v1/auth/PROVIDER` | remove the stored key of a provider; `DELETE /v1/auth` removes all |
+| `DELETE /v1/auth/PROVIDER` | remove the stored key of a provider (the base URL of `local`); `DELETE /v1/auth` removes all |
 | `POST /v1/sessions` | a new session: `{"cwd": "/path", "model": null}`, plus `provider` and `api` |
 | `GET /v1/sessions` | the sessions, the last changed first |
-| `GET /v1/sessions/ID` | one session: its settings and history |
+| `GET /v1/sessions/ID` | one session: its settings, history and the `usage` of its last model call |
 | `PATCH /v1/sessions/ID` | change `provider`, `model`, `effort` (the thinking level) or `accept_edits` |
 | `DELETE /v1/sessions/ID` | delete a session and its file |
 | `POST /v1/sessions/ID/messages` | send `{"text": "..."}`; it starts a turn, or joins the running one |
@@ -68,7 +68,7 @@ A failed request answers with `{"kind": "...", "message": "..."}`. Branch on `ki
 | `approval_requested`, `approval_resolved` | a call waits for an answer, and gets one |
 | `message_queued` | a message sent while the turn runs |
 | `shell_started`, `shell_finished` | a command that a client ran in the session folder (`!CMD`) |
-| `usage` | the tokens of a model call: `input`, `cache_read`, `cache_write` and `context` of that call, `output` summed over the session, and `cost`, `turn_cost` and `session_cost` when the catalog has prices |
+| `usage` | the tokens of a model call: `input`, `cache_read`, `cache_write` and `context` of that call, `output` summed over the session, `cost`, `turn_cost` and `session_cost` when the catalog has prices, `window`, the model's window in tokens, when it is known, and `call_output`, the output of that call alone |
 | `turn_finished` | the turn ended, with its stop reason |
 | `error` | a failure, as `{"kind", "message"}` |
 | `resync` | the stream cannot go on from where you asked: read the session again |

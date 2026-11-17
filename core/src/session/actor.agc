@@ -319,6 +319,7 @@ def session(state: Session.State) -> Protocol.Session
     provider: state.setup.provider_name,
     api: state.setup.api,
     shell_id: state.shell.map { |run| run.id },
+    usage: state.usage,
   )
 end
 
@@ -501,6 +502,7 @@ def restore(setup: Session.Setup, saved: Store.Saved) -> Session.State
     resolved: resolved_ids(events),
     output: saved.usage.map { |u| u.output }.unwrap_or(0),
     context: Session.last_usage(events).context,
+    usage: saved.usage,
     cost: saved.usage.map { |u| u.session_cost }.unwrap_or(none),
     window: setup.window,
   )

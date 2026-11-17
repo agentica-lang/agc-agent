@@ -57,7 +57,7 @@ end
 ## Writes `keys` to `path`, readable only by its user from the start. A new file is made private under another name in
 ## the same folder, then renamed; an existing one is checked again (its mode may have changed since it was read) and
 ## replaced in one step, keeping its mode.
-def save(path: String, keys: Map[String, String], owner: Optional[Int], urls: Map[String, String]) -> Result[Void]
+def save(path: String, keys: Map[String, String], urls: Map[String, String], owner: Optional[Int]) -> Result[Void]
   if File.stat(path).ok?
     for why in option_list(refusal(path, owner))
       return error(why)

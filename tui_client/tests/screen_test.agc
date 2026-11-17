@@ -6,7 +6,8 @@ import Theme from "../src/theme"
 import Transcript from "../src/transcript"
 
 # The regions stack from the top: the end of the transcript, the prompt between two rules (the top one with the
-# label, both in the color of the level), the panel and the status line; a click lands on what the same frame drew.
+# label, both in the color of the level), the panel, the place and the status line; a click lands on what the same
+# frame drew.
 def test_the_frame_draws_and_hits_the_same_regions() -> Result[Void]
   entries = Transcript.note(Transcript.note(Transcript.note([], "one"), "two"), "three")
   tab = TUI.Event.Key(TUI.Key.Tab, TUI.Mods())
@@ -15,11 +16,12 @@ def test_the_frame_draws_and_hits_the_same_regions() -> Result[Void]
     panel: ->(_room: Int) { [Layout.Row(text: "Tab", buttons: [button])] },
     label: "⠋ Working",
     level: some("high"),
+    place: "~/x (main)",
   )
 
-  frame = Screen.frame(20, 8, Transcript.lines(entries, 20, Transcript.Folds()), 0, parts)
-  try Test.eq(rows(frame), ["two", "", "three", "── ⠋ Working ───────", "hi", "─" * 20, "Tab", "ready"])
-  hits = (0...8).to_a.map { |y| Screen.hit(frame, 1, y) }
+  frame = Screen.frame(20, 9, Transcript.lines(entries, 20, Transcript.Folds()), 0, parts)
+  try Test.eq(rows(frame), ["two", "", "three", "── ⠋ Working ───────", "hi", "─" * 20, "Tab", "~/x (main)", "ready"])
+  hits = (0...9).to_a.map { |y| Screen.hit(frame, 1, y) }
   try Test.eq(
     hits,
     [
@@ -31,19 +33,22 @@ def test_the_frame_draws_and_hits_the_same_regions() -> Result[Void]
       Screen.Hit.Nothing,
       Screen.Hit.Key(tab),
       Screen.Hit.Nothing,
+      Screen.Hit.Nothing,
     ],
   )
 
-  cells = TUI.layout(Screen.view(frame, Theme.default()), 20, 8)
+  cells = TUI.layout(Screen.view(frame, Theme.default()), 20, 9)
   try Test.eq((try cells.find { |cell| cell.y == 4 and cell.x == 2 }).style, TUI.Style(reverse: true))
   Test.eq((try cells.find { |cell| cell.y == 5 and cell.x == 0 }).style, Theme.default().rules.high)
 end
 
-# A picker takes the prompt's place between the rules.
+# A picker takes the prompt's place between the rules; on a screen too short for both, the place row goes first.
 def test_a_picker_replaces_the_prompt() -> Result[Void]
   picker = ->(_room: Int) { [Layout.Row(text: "› s1"), Layout.Row(text: "  s2")] }
-  frame = Screen.frame(10, 6, [], 0, parts_of(Prompt.view("typed", 5, 10, 6)).with(picker: picker))
-  try Test.eq(rows(frame), ["", "─" * 10, "› s1", "s2", "─" * 10, "ready"])
+  frame = Screen.frame(10, 7, [], 0, parts_of(Prompt.view("typed", 5, 10, 7)).with(picker: picker))
+  try Test.eq(rows(frame), ["", "─" * 10, "› s1", "s2", "─" * 10, "", "ready"])
+  short = Screen.frame(10, 5, [], 0, parts_of(Prompt.view("typed", 5, 10, 5)).with(picker: picker, place: "~/x"))
+  try Test.eq(rows(short), ["─" * 10, "› s1", "s2", "─" * 10, "ready"])
   Test.eq(Screen.hit(frame, 1, 2), Screen.Hit.Nothing)
 end
 

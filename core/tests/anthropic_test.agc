@@ -33,7 +33,16 @@ def test_a_session_on_anthropic_caches_and_keeps_its_thinking() -> Result[Void]
     try Test.eq(blocks.map { |b| text(b, "type") }, ["thinking", "redacted_thinking", "text", "tool_use"])
     try Test.eq(text(blocks[0], "signature"), "EqQBCkYIBxgCKkBhandMadeSignature==")
     try Test.eq(text(blocks[1], "data"), "EmwKAhandMadeRedacted==")
-    cached = Protocol.Usage(input: 12, output: 45, cache_read: 2000, cache_write: 300, context: 2312)
+    cached = Protocol.Usage(
+      input: 12,
+      output: 45,
+      cache_read: 2000,
+      cache_write: 300,
+      context: 2312,
+      window: some(1_000_000),
+      call_output: some(45),
+    )
+
     Test.eq(usage.take(1), [Protocol.Event.Usage(cached)])
   end
 end

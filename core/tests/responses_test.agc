@@ -113,5 +113,13 @@ def types(request: JSON.Value, key: String) -> List[String]
 end
 
 def usage_of(input: Int, cached: Int) -> Protocol.Usage
-  Protocol.Usage(input: input - cached, output: 20, cache_read: cached, cache_write: 0, context: input)
+  Protocol.Usage(
+    input: input - cached,
+    output: 20,
+    cache_read: cached,
+    cache_write: 0,
+    context: input,
+    window: some(1_000_000),
+    call_output: some(20),
+  )
 end

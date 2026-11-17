@@ -11,6 +11,8 @@ import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
 import Calls from "calls"
 import Args from "args"
+import Footer from "footer"
+import Git from "git"
 import Input from "input"
 import Picker from "picker"
 import Layout from "panel"
@@ -18,7 +20,6 @@ import Prompt from "prompt"
 import Screen from "screen"
 import Theme from "theme"
 import Transcript from "transcript"
-import Width from "width"
 import Yolo from "pkg/client/yolo"
 
 FEED_CAPACITY = 1024
@@ -145,6 +146,10 @@ struct Model
   approvals: Approvals.Panel
   ## The colors of the screen.
   theme: Theme.Theme
+  ## The `usage` of the session's last model call, the git branch of its folder and the home folder, for the footer.
+  usage: Optional[Protocol.Usage] = none
+  branch: String = ""
+  home: String = ""
   ## The monotonic ms and the wall clock s of the message being handled.
   now: Int = 0
   clock_s: Int = 0
@@ -183,6 +188,8 @@ enum Msg
   Files(Int, Result[Protocol.FileList])
   ## The reply to a `!` command: the command, and whether it runs.
   ShellSent(String, Result[Protocol.ShellAccepted])
+  ## The git branch of the session's folder, for the `opened` count when it was read.
+  Branch(Int, String)
 end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it: the exit code.
@@ -258,6 +265,7 @@ def seed(
     approvals: Approvals.Panel(),
     yolo: Yolo.Yolo(on: options.yolo),
     theme: Theme.default(),
+    home: System.env("HOME").unwrap_or(""),
     now: Time.monotonic_ms,
     clock_s: Time.now_ms / 1000,
   )
@@ -360,7 +368,24 @@ def handled(app: Model, msg: Msg) -> Model
     Msg.Files(opened, result) if opened == app.opened -> files_read(app.with(reading_files: false), result)
     Msg.Files(_, _) -> app
     Msg.ShellSent(command, result) -> shell_reply(app, command, result)
+    Msg.Branch(opened, name) if opened == app.opened -> app.with(branch: name)
+    Msg.Branch(_, _) -> app
   end
+end
+
+def same_folder(app: Model, cwd: String) -> String
+  return app.branch if cwd == app.cwd
+
+  ""
+end
+
+# The branch may change with a turn or a `!` command (`git switch`): it is read again after each.
+def read_branch(app: Model) -> Model
+  return app if app.cwd.empty?
+
+  opened = app.opened
+  cwd = app.cwd
+  effect(app, TUI.Cmd.Run(-> { Msg.Branch(opened, Git.branch(cwd)) }))
 end
 
 # A signal ends the client; a wait that ended without one waits again.
@@ -449,7 +474,8 @@ def create(app: Model) -> Result[Model]
   request = Protocol.NewSession(cwd: cwd, model: options.model, api: options.api, provider: options.provider)
   id = try Client.create_session(app.server, request)
   serving = serving_of(try Client.session(app.server, id))
-  ok(subscribe(noted(app.with(id: id, cwd: cwd, opened: app.opened + 1, serving: serving), "session #{id}"), 0))
+  made = app.with(id: id, cwd: cwd, opened: app.opened + 1, serving: serving, usage: none, branch: "")
+  ok(read_branch(subscribe(noted(made, "session #{id}"), 0)))
 end
 
 def resume(app: Model, id: String) -> Result[Model]
@@ -469,6 +495,8 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
     serving: serving_of(session),
     opened: app.opened + 1,
     cwd: session.cwd,
+    usage: session.usage,
+    branch: same_folder(app, session.cwd),
     entries: entries,
     history: entries.select { |entry| entry.kind == Transcript.Kind.User }.map { |entry| entry.text },
     files: none,
@@ -483,7 +511,7 @@ def attach(app: Model, session: Protocol.Session, skip_replay: Bool) -> Model
     yolo: Yolo.attached(app.yolo, session.turn_id, not skip_replay),
   )
 
-  subscribed = subscribe(fresh, from)
+  subscribed = read_branch(subscribe(fresh, from))
   return subscribed if session.turn_id.some?
 
   # The end of the turn they waited for was not seen.
@@ -1309,7 +1337,8 @@ def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
       shown.with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)))
     Protocol.Event.TurnFinished(done) ->
       ended = shown.with(turn: false, stopping: false, new_model: none, yolo: Yolo.running(shown.yolo, none))
-      after_turn(finished(ended, done.stop_reason), done.stop_reason)
+      read_branch(after_turn(finished(ended, done.stop_reason), done.stop_reason))
+    Protocol.Event.Usage(usage) -> shown.with(usage: some(usage))
     Protocol.Event.ApprovalRequested(request) if Yolo.allows?(shown.yolo) -> allowed(shown, request)
     Protocol.Event.ApprovalRequested(request) ->
       shown.with(approvals: Approvals.requested(shown.approvals, request, app.now))
@@ -1340,7 +1369,7 @@ def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
       # A command that a restart cut has no duration.
       timed = done.duration_ms > 0
       entries = Transcript.tool_finished(Transcript.tool_started(shown.entries, start), tool, aside, timed)
-      shown.with(shell: false, stopping: false, entries: entries)
+      read_branch(shown.with(shell: false, stopping: false, entries: entries))
     # An error (a write of `shell_finished` that failed) also ends a command: no other event of it comes.
     Protocol.Event.Error(failure) ->
       failed = noted(shown.with(shell: false), "error: #{failure.kind}: #{failure.message}")
@@ -1401,6 +1430,17 @@ def reconnect(app: Model, reason: String) -> Model
   effect(app.with(reconnects: reconnects), back)
 end
 
+# The first non-empty line of the session's first user message, as the screen can show it.
+def session_name(app: Model) -> String
+  case (app.entries.find { |entry| entry.kind == Transcript.Kind.User })
+    ok(entry) ->
+      Client.printable(
+        entry.text.split("\n").map { |line| line.strip }.select { |line| not line.empty? }.take(1).join(""),
+      )
+    error(_) -> ""
+  end
+end
+
 def framed(app: Model) -> Screen.Frame
   prompt = Prompt.view(app.prompt, cursor(app), app.width, app.height)
   for name in option_list(app.key_for)
@@ -1419,6 +1459,7 @@ def framed(app: Model) -> Screen.Frame
     label: label(app),
     level: app.effort,
     status: status(app, app.width),
+    place: Footer.place(app.cwd, app.home, app.branch, session_name(app), app.width),
     queued: app.follow_ups.map { |text| "follow-up: #{Client.printable(text)}" },
   )
 
@@ -1526,44 +1567,25 @@ def level_name(level: Optional[String]) -> String = level.unwrap_or(Protocol.EFF
 
 def serving_of(session: Protocol.Session) -> String = "#{session.provider}/#{session.model}"
 
-# `provider/model` as `(provider) model`.
-def footer_model(serving: String) -> String
-  case serving.index_of("/")
-    some(at) -> "(#{serving.slice(0, at)}) #{serving.slice(at + 1, serving.length - at - 1)}"
-    none -> serving
-  end
-end
-
 # What the turn does is in the top rule; the status line says when the client is ready.
 def status(app: Model, width: Int) -> String
-  parts: List[String] = []
+  state: List[String] = []
   if app.options.yolo
-    parts = parts.push("YOLO")
+    state = state.push("YOLO")
   end
 
   if not busy?(app)
-    parts = parts.push("ready")
+    state = state.push("ready")
   end
 
   if not app.approvals.pending.empty?
-    parts = parts.push("approval waiting")
+    state = state.push("approval waiting")
   end
 
+  model = ""
   if not app.serving.empty?
-    parts = parts.push(footer_model(app.serving))
+    model = Footer.model(app.serving, app.effort)
   end
 
-  text = " #{parts.join(" · ")}"
-  for hint in HINTS
-    more = "#{text} · #{hint}"
-    if text == " "
-      more = " #{hint}"
-    end
-
-    break if Width.text(more) > width
-
-    text = more
-  end
-
-  text + " " * [width - Width.text(text), 0].max.unwrap!
+  Footer.status(state, app.usage, HINTS, model, width)
 end

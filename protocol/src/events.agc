@@ -121,6 +121,24 @@ struct Usage
   cost: Optional[Float] = none
   turn_cost: Optional[Float] = none
   session_cost: Optional[Float] = none
+  ## The model's window in tokens, none while it is not known.
+  window: Optional[Int] = none
+  ## The output tokens of this call alone (`output` is the session's).
+  call_output: Optional[Int] = none
+end
+
+## `Usage` on the wire: an absent value is left out, not `null`.
+struct UsageWire
+  input: Int
+  output: Int
+  cache_read: Int
+  cache_write: Int
+  context: Int
+  cost: JSON.Field[Float]
+  turn_cost: JSON.Field[Float]
+  session_cost: JSON.Field[Float]
+  window: JSON.Field[Int]
+  call_output: JSON.Field[Int]
 end
 
 ## A message sent while the turn `turn_id` runs: the turn reads it before its next model call. `message_id` is the one
@@ -277,19 +295,7 @@ def encode_event(event: Event) -> String
           source: source_name(data.source),
         ),
       )
-    Event.Usage(data) ->
-      wire = UsageWire(
-        input: data.input,
-        output: data.output,
-        cache_read: data.cache_read,
-        cache_write: data.cache_write,
-        context: data.context,
-        cost: Wire.field(data.cost),
-        turn_cost: Wire.field(data.turn_cost),
-        session_cost: Wire.field(data.session_cost),
-      )
-
-      JSON.encode(wire)
+    Event.Usage(data) -> JSON.encode(usage_wire(data))
     Event.TurnFinished(data) ->
       wire = TurnFinishedWire(
         turn_id: data.turn_id,
@@ -369,23 +375,57 @@ def shape() -> List[String]
   records + values
 end
 
+def usage_wire(usage: Usage) -> UsageWire
+  UsageWire(
+    input: usage.input,
+    output: usage.output,
+    cache_read: usage.cache_read,
+    cache_write: usage.cache_write,
+    context: usage.context,
+    cost: Wire.field(usage.cost),
+    turn_cost: Wire.field(usage.turn_cost),
+    session_cost: Wire.field(usage.session_cost),
+    window: Wire.field(usage.window),
+    call_output: Wire.field(usage.call_output),
+  )
+end
+
+## The `Usage` of `wire`; no count or cost is negative, and every cost is finite.
+def usage_of_wire(wire: UsageWire) -> Result[Usage]
+  usage = Usage(
+    input: wire.input,
+    output: wire.output,
+    cache_read: wire.cache_read,
+    cache_write: wire.cache_write,
+    context: wire.context,
+    cost: Wire.optional(wire.cost),
+    turn_cost: Wire.optional(wire.turn_cost),
+    session_cost: Wire.optional(wire.session_cost),
+    window: Wire.optional(wire.window),
+    call_output: Wire.optional(wire.call_output),
+  )
+
+  counts = [usage.input, usage.output, usage.cache_read, usage.cache_write, usage.context]
+  for value in counts + Wire.option_list(usage.window) + Wire.option_list(usage.call_output)
+    try Wire.non_negative("usage", value)
+  end
+
+  for cost in Wire.option_list(usage.cost) + Wire.option_list(usage.turn_cost) + Wire.option_list(usage.session_cost)
+    # Infinity and NaN are not equal to themselves minus themselves.
+    if cost < 0.0 or cost - cost != 0.0
+      return error("a cost of usage is negative or not finite", kind: Kinds.KIND_INVALID)
+    end
+  end
+
+  ok(usage)
+end
+
 private
 
 struct ResolvedWire
   approval_id: String
   decision: String
   source: String
-end
-
-struct UsageWire
-  input: Int
-  output: Int
-  cache_read: Int
-  cache_write: Int
-  context: Int
-  cost: JSON.Field[Float]
-  turn_cost: JSON.Field[Float]
-  session_cost: JSON.Field[Float]
 end
 
 struct TurnStartedWire
@@ -451,24 +491,7 @@ def decode_shell_finished(data: String) -> Result[Event]
 end
 
 def decode_usage(data: String) -> Result[Event]
-  wire = try Wire.decode(data, UsageWire.codec)
-  usage = Usage(
-    input: wire.input,
-    output: wire.output,
-    cache_read: wire.cache_read,
-    cache_write: wire.cache_write,
-    context: wire.context,
-    cost: Wire.optional(wire.cost),
-    turn_cost: Wire.optional(wire.turn_cost),
-    session_cost: Wire.optional(wire.session_cost),
-  )
-
-  try Wire.non_negative("input", usage.input)
-  try Wire.non_negative("output", usage.output)
-  try Wire.non_negative("cache_read", usage.cache_read)
-  try Wire.non_negative("cache_write", usage.cache_write)
-  try Wire.non_negative("context", usage.context)
-  ok(Event.Usage(usage))
+  ok(Event.Usage(try usage_of_wire(try Wire.decode(data, UsageWire.codec))))
 end
 
 def decode_resolved(data: String) -> Result[Event]

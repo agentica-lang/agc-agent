@@ -51,9 +51,8 @@ def frame(id: String, event: Protocol.Event) -> String
   SSE.encode(sse).unwrap_or("")
 end
 
-## A `usage` of one call goes out with the session's output and cost so far, which count it once it is saved. A
-## call that
-## a stop cut is not counted: its `usage` comes after the turn ended, if at all.
+## A `usage` of one call goes out with the session's output and cost so far, which count it once it is saved, and
+## the model's window when it is known; `call_output` keeps the call's own output. A call that a stop cut is not counted: its `usage` comes after the turn ended, if at all.
 def emit_counted(state: Session.State, event: Protocol.Event) -> Session.State
   case event
     Protocol.Event.Usage(usage) ->
@@ -65,11 +64,23 @@ def emit_counted(state: Session.State, event: Protocol.Event) -> Session.State
         turn_cost = turn_cost + call
       end
 
-      counted = usage.with(output: output, turn_cost: cost.map { |_| turn_cost }, session_cost: cost)
+      window: Optional[Int] = none
+      if state.window > 0
+        window = some(state.window)
+      end
+
+      counted = usage.with(
+        output: output,
+        turn_cost: cost.map { |_| turn_cost },
+        session_cost: cost,
+        window: window,
+        call_output: some(usage.output),
+      )
+
       emitted = emit(state, Protocol.Event.Usage(counted))
       return emitted if emitted.counter == state.counter
 
-      emitted.with(output: output, context: usage.context, cost: cost, turn_cost: turn_cost)
+      emitted.with(output: output, context: usage.context, usage: some(counted), cost: cost, turn_cost: turn_cost)
     _ -> emit(state, event)
   end
 end

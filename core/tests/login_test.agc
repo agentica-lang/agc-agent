@@ -74,8 +74,18 @@ def test_a_local_login_stores_the_base_url_and_moves_local_there() -> Result[Voi
     local = listed.providers[0]
     try Test.eq([local.name, local.asks, local.base_url, local.from], ["local", Protocol.ASKS_URL, h.fake.url, ""])
     bad = [
-      "ftp://box/v1", "http://user:pw-9@box/v1", "http://box/v1?pw-9", "http://box/v1#pw-9", "http://box/pw 9",
-      "http://box/v1\npw-9", "http:///v1", "http://:80/v1", "box/v1",
+      "ftp://box/v1",
+      "http://user:pw-9@box/v1",
+      "http://box/v1?pw-9",
+      "http://box/v1#pw-9",
+      "http://box/pw 9",
+      "http://box/v1\npw-9",
+      "http:///v1",
+      "http://:80/v1",
+      "box/v1",
+      "http://box/v1#{String.from_code(0x85)}pw-9",
+      "http://box/#{String.from_code(0x202E)}pw-9",
+      "http://box/#{String.from_code(0x2067)}pw-9",
     ]
 
     for url in bad
@@ -139,7 +149,7 @@ def stored_url(dir: String) -> Result[Void]
   try Auth.create(file, {}, {"local": "http://127.0.0.1:9/v1"})
   try Test.eq(Auth.load(file, none), Auth.Stored(urls: {"local": "http://127.0.0.1:9/v1"}, found: true))
   both = Auth.Stored(keys: {"groq": "sk-1"}, urls: {"local": "http://127.0.0.1:9/v1"}, found: true)
-  try Auth.save(file, both.keys, none, both.urls)
+  try Auth.save(file, both.keys, both.urls, none)
   try Test.eq(Auth.load(file, none), both)
   no_ant = -> {
     failed: Result[String] = error("no ant")
@@ -149,13 +159,16 @@ def stored_url(dir: String) -> Result[Void]
   env = {"XDG_CONFIG_HOME": dir}
   options = try Config.from_env_with(->(n) { from(env, n) }, no_ant)
   try Test.eq(options.props_url, "http://127.0.0.1:9/props")
-  try Test.eq(local_of(options), ["stored", "http://127.0.0.1:9/v1"])
+  try Test.eq(local_of(options), ["stored", "http://127.0.0.1:9/v1", "FINN_BASE_URL"])
   set = env.put("FINN_BASE_URL", "http://127.0.0.1:7/v1")
   chosen = try Config.from_env_with(->(n) { from(set, n) }, no_ant)
   try Test.eq(chosen.props_url, "http://127.0.0.1:7/props")
-  try Test.eq(local_of(chosen), ["env", "http://127.0.0.1:7/v1"])
+  try Test.eq(local_of(chosen), ["env", "http://127.0.0.1:7/v1", "FINN_BASE_URL"])
   old = env.put("AGC_AGENT_BASE_URL", "http://127.0.0.1:6/v1")
-  Test.eq(local_of(try Config.from_env_with(->(n) { from(old, n) }, no_ant)), ["env", "http://127.0.0.1:6/v1"])
+  Test.eq(
+    local_of(try Config.from_env_with(->(n) { from(old, n) }, no_ant)),
+    ["env", "http://127.0.0.1:6/v1", "AGC_AGENT_BASE_URL"],
+  )
 end
 
 def local_of(options: Config.Options) -> List[String]
@@ -163,7 +176,7 @@ def local_of(options: Config.Options) -> List[String]
   listed = Logins.list(holder)
   Logins.stop(holder)
   found = listed.unwrap_or(Logins.Listing(providers: [], first: false)).providers.select { |p| p.name == "local" }
-  found.flat_map { |p| [p.from, p.base_url] }
+  found.flat_map { |p| [p.from, p.base_url, p.key_env] }
 end
 
 # A key file that others may read is not used, and a login does not write to it; a key in the environment wins.
@@ -247,12 +260,12 @@ def on_real_setup(fake: Fake.Fake, dir: String, env: Map[String, String]) -> Res
   holder = Logins.start(options.providers, options.login)
   file = "#{dir}/finn/#{Auth.FILE}"
   try Logins.login(holder, "openrouter", "sk-box")
-  try Test.eq((try Logins.providers(holder)).has_key?("openrouter"), true)
+  try Test.eq((try Logins.current(holder)).providers.has_key?("openrouter"), true)
   try File.write_text(file, "{\"keys\": {\"openrouter\": \"sk-box\", \"else\": \"sk-else\"}}")
   try Logins.login(holder, "anthropic", "sk-claude")
   try Test.eq((try File.read_text(file)).include?("sk-else"), true)
   try Logins.logout(holder, some("openrouter"))
-  try Test.eq((try Logins.providers(holder)).has_key?("openrouter"), false)
+  try Test.eq((try Logins.current(holder)).providers.has_key?("openrouter"), false)
   try chmod("644", file)
   try Test.eq(error_kind(Logins.logout(holder, some("anthropic"))), Protocol.KIND_LOGIN_STORAGE)
   try Test.eq((try File.read_text(file)).include?("sk-claude"), true)
