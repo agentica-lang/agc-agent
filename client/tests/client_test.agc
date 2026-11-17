@@ -366,9 +366,10 @@ end
 def test_a_quiet_event_stream_is_not_cut() -> Result[Void]
   options = Http.events_options()
   try Test.eq([options.read_timeout_ms, options.timeout_ms], [0, Http.EVENTS_HEAD_MS])
+  producers: Channel[Task[Void]] = Channel.new(4)
   handler = ->(_request: HTTP.Request, _body: HTTP.RequestBody) {
     pieces: Channel[Bytes] = Channel.new(4)
-    Task.spawn(-> { quiet_events(pieces) })
+    _ = producers.send(Task.spawn(-> { quiet_events(pieces) }), 0)
     headers = [HTTP.Header(name: "Content-Type", value: "text/event-stream")]
     ok(HTTP.Answer.Stream(HTTP.StreamResponse(status: 200, headers: headers, body: pieces)))
   }
@@ -380,6 +381,13 @@ def test_a_quiet_event_stream_is_not_cut() -> Result[Void]
   url = "#{server.url}#{Protocol.events_path("s1")}"
   short = try HTTP.open("GET", url, "".bytes, [], options.with(read_timeout_ms: 500))
   cut = Task.await(short.done)
+  for _ in 1..2
+    case producers.recv(5000)
+      ok(task) -> _ = Task.await(task, 5000)
+      error(_) -> nil
+    end
+  end
+
   HTTP.close_server(listening)
   try Test.eq(cut.ok?, false)
   Test.eq(try read, "id: 1\ndata: {}\n\nid: 2\ndata: {}\n\n")
