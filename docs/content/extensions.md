@@ -38,8 +38,6 @@ The program depends on the `core` package of the agc-agent repository by its tag
 2. Remove its `agentica.lock`: it lists `core` as a member of the repository's workspace, so `agentica install` refuses it there.
 3. Run `agentica update` in the folder. It fetches `core` and the packages it depends on, by their tags, and writes a new lock.
 
-While the repository is private, git needs your credentials for github.com (a credential helper or SSH) to fetch them.
-
 Then start the program in place of the server:
 
 ```sh

@@ -1,12 +1,13 @@
 # The user guide of Finn. The look, the layouts, the outputs (llms.txt and llms-full.txt too) and the highlighter come
 # from the docs theme (themes/docs-theme, a submodule); `_merge = "deep"` takes its [outputs], [markup] and [minify].
-# The repo is private and the guide is not published: noindex keeps search engines out wherever it is served.
 _merge = "deep"
-baseURL = "http://localhost:1313/"
+baseURL = "https://www.agentica-lang.com/agc-agent/"
 locale = "en"
 title = "Finn"
 theme = "docs-theme"
 disableKinds = ["taxonomy", "term", "rss"]
+# The sitemap dates each page by its last commit (pages.yml checks out the whole history).
+enableGitInfo = true
 
 [module.hugoVersion]
   min = "0.167.0"
@@ -15,7 +16,6 @@ disableKinds = ["taxonomy", "term", "rss"]
   description = "Finn is a coding agent for the terminal, written in Agentica: a local server, a line-mode client and a full-screen TUI."
   tagline = "a coding agent for the terminal"
   repo = "https://github.com/agentica-lang/agc-agent"
-  noindex = true
 
 # Plain quotes and dashes, as written in the Markdown.
 [markup.goldmark.extensions]
