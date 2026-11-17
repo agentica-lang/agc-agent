@@ -113,6 +113,58 @@ def test_shift_tab_sends_one_level_at_a_time() -> Result[Void]
   Test.eq([failed.model.effort, failed.model.level_sending], [some("high"), none])
 end
 
+# `/thinking LEVEL` and `/model NAME` change the session on the server, `/thinking` says its level, and `/compact`
+# gives the outcome of the server's summary as a note.
+def test_the_session_commands_change_the_session() -> Result[Void]
+  session = Protocol.Session(
+    id: "s1",
+    cwd: ".",
+    model: "other-model",
+    last_event_id: 0,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+    effort: some("high"),
+    provider: "p",
+  )
+
+  changes: Channel[Protocol.UpdateSession] = Channel.new(4)
+  backend = Client.unreachable_backend().with(
+    session: ->(_id: String) { ok(session) },
+    update_session: ->(_id: String, change: Protocol.UpdateSession) {
+      _ = changes.send(change, 0)
+      ok()
+    },
+    list_providers: -> { ok(Protocol.ProviderList(provider: "p", providers: [])) },
+    compact: ->(_id: String) { ok(true) },
+  )
+
+  model = model_of(80, 20).with(backend: backend, id: "s1")
+  notes: List[String] = []
+  for line in ["/thinking high", "/thinking", "/model other-model", "/thinking max"]
+    model = App.update(model.with(prompt: line, cursor: line.size), enter()).model
+    notes = notes.push(model.entries.last.text)
+  end
+
+  try Test.eq(
+    notes,
+    [
+      "thinking high from the next turn",
+      "thinking high",
+      "model other-model from the next turn",
+      "the thinking level is one of low, medium, high, default",
+    ],
+  )
+
+  try Test.eq([model.prompt, "#{model.effort}", model.serving], ["/thinking max", "some(\"high\")", "p/other-model"])
+  try Test.eq([(try changes.recv(0)).effort, (try changes.recv(0)).model], [some("high"), some("other-model")])
+  compacting = App.update(model.with(prompt: "/compact", cursor: 8), enter())
+  try Test.eq(compacting.model.entries.last.text, "compacting the history")
+  done = App.update(compacting.model, run(compacting.cmds[0])[0]).model
+  Test.eq(done.entries.last.text, "compacted")
+end
+
 # A running turn spins in the top rule.
 def test_a_turn_spins_in_the_rule() -> Result[Void]
   turn = model_of(30, 6).with(turn: true)
@@ -358,6 +410,45 @@ def test_a_resync_with_no_turn_sends_the_follow_ups() -> Result[Void]
   Test.eq([moved.prompt, moved.follow_ups.size.to_s, moved.outbox.size.to_s], ["Two.\nlater", "0", "0"])
 end
 
+# The first resync replays the running turn from its start, the next reads only what comes after; one more in a row
+# ends the client.
+def test_resyncs_in_a_row_end_the_client() -> Result[Void]
+  session = Protocol.Session(
+    id: "s1",
+    cwd: ".",
+    model: "m",
+    last_event_id: 9,
+    turn_id: some("t1"),
+    turn_from_event_id: some(2),
+    pending_approvals: [],
+    history: [],
+  )
+
+  froms: Channel[Int] = Channel.new(4)
+  backend = Client.unreachable_backend().with(
+    session: ->(_id: String) { ok(session) },
+    subscribe: ->(_id: String, from: Int, _sink: Fn[Client.Item, Result[Void]]) {
+      _ = froms.send(from, 0)
+      Task.spawn(
+        -> {
+        },
+      )
+    },
+  )
+
+  model = model_of(30, 8).with(backend: backend, id: "s1", turn: true, generation: 1)
+  quits: List[Bool] = []
+  for _ in 0...3
+    step = App.update(model, App.Msg.Stream(model.generation, [Client.Item.Event(some(5), Protocol.Event.Resync)]))
+    model = step.model
+    quits = quits.push(step.cmds.any? { |cmd| quit?(cmd) })
+  end
+
+  try Test.eq([try froms.recv(0), try froms.recv(0)], [2, 9])
+  try Test.eq(quits, [false, false, true])
+  Test.eq(model.failure, some("the server keeps asking to read the session again"))
+end
+
 # A resync into a session whose snapshot names a running command waits for it; its end, a cut one with no duration,
 # clears it.
 def test_a_command_running_on_attach_waits_for_its_end() -> Result[Void]
@@ -540,6 +631,12 @@ def test_slash_lists_the_commands_and_tab_completes_one() -> Result[Void]
   try Test.eq(recalled.prompt, "/he")
   try Test.assert(not rows(recalled).any? { |row| row.start_with?("/help") }, "a recalled prompt shows no list")
   try Test.eq(App.update(model_of(80, 20).with(id: "s1", prompt: "/", cursor: 1), enter()).model.outbox, ["/"])
+  path = "/etc/hosts has a bad entry"
+  try Test.eq(
+    App.update(model_of(80, 20).with(id: "s1", prompt: path, cursor: path.size), enter()).model.outbox,
+    [path],
+  )
+
   unknown = model_of(80, 20).with(id: "s1", prompt: "/zz", cursor: 3)
   try Test.assert(not rows(unknown).any? { |row| row.include?("no file matches") }, "no list")
   Test.eq(App.update(unknown, enter()).model.outbox, ["/zz"])

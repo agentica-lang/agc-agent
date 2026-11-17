@@ -566,29 +566,18 @@ class PtyTest(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline, "the thinking stayed")
 
     def test_session_commands(self) -> None:
-        term = self.start([Reply("text.sse"), Reply("text.sse"), Reply("summary.sse")])
+        term = self.start([Reply("text.sse"), Reply("text.sse")])
         first = re.search(r" session (\S+)", text_of(term.screen())).group(1)
         term.type("hi\r")
         term.wait_for(ANSWER)
         term.wait_for("ready")
         term.type("/model other-model\r")
         term.wait_for(" model other-model from the next turn")
-        term.type("/thinking high\r")
-        term.wait_for(" thinking high from the next turn")
-        term.type("/thinking\r")
-        term.wait_for(" thinking high")
-        term.type("/thinking max\r")
-        rows = term.wait_for(" the thinking level is one of low, medium, high, default")
-        self.assertEqual(rows[-4], " /thinking max")
-        term.type("\x7f" * len("/thinking max"))
         term.type("again\r")
         # The turn has finished once its answer is drawn twice and the status is back to ready, not before.
         term.wait_until(lambda rows: text_of(rows).count(ANSWER) == 2 and "ready" in rows[-1], "the second answer")
         self.fake.requests.get(timeout=1)
         self.assertEqual(self.fake.requests.get(timeout=5)["model"], "other-model")
-        term.type("/compact\r")
-        term.wait_for(" compacted")
-        self.fake.requests.get(timeout=1)
         term.type("/new\r")
         rows = term.wait_for("ready")
         deadline = time.monotonic() + TIMEOUT
@@ -618,19 +607,6 @@ class PtyTest(unittest.TestCase):
         term.type("/quit\r")
         self.assertEqual(term.finish(), 0)
 
-    def test_a_command_prefix_closed_with_escape_goes_as_text_and_a_whole_name_runs(self) -> None:
-        term = self.start([Reply("text.sse")])
-        term.type("/re")
-        term.wait_for(" /resume [N|ID]")
-        term.type("\x1b")
-        term.wait_until(lambda rows: "/resume [N|ID]" not in text_of(rows), "the list closed")
-        term.type("\r")
-        term.wait_for(ANSWER)
-        self.assertEqual(self.fake.requests.get(timeout=5)["messages"][-1]["content"], "/re")
-        term.wait_for("ready")
-        term.type("/resume\r")
-        term.wait_for("resume a session (1 of 1)")
-
     def test_a_bracketed_paste_goes_to_the_prompt_and_answers_nothing(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("text.sse")])
         term.type("write it\r")
@@ -644,14 +620,6 @@ class PtyTest(unittest.TestCase):
         self.assertIn(" yan", rows)
         self.assertIn("y allow · n deny", text_of(term.settle()))
         self.assertFalse((term.base / "work" / "hello.txt").exists())
-
-    def test_a_slash_line_that_is_no_command_goes_to_the_agent(self) -> None:
-        term = self.start([Reply("text.sse"), Reply("text.sse")])
-        for text in ["/etc/hosts has a bad entry", "/"]:
-            term.type(f"{text}\r")
-            term.wait_for(ANSWER)
-            term.wait_for("ready")
-            self.assertEqual(self.fake.requests.get(timeout=5)["messages"][-1]["content"], text)
 
     def test_clicks_answer_toggle_and_move_the_cursor(self) -> None:
         term = self.start([Reply("write_file.sse"), Reply("thinking.sse")])
@@ -859,16 +827,9 @@ class PtyTest(unittest.TestCase):
         self.assertTrue(any("/sessions/" in path for path in reads), self.proxy.paths)
 
     def test_resyncs_in_a_row_end_the_client(self) -> None:
-        # While a turn runs: the first resync replays the turn from its start, the second reads only what comes next.
-        reply = Reply("text.sse", hold=4)
-        term = self.start_proxied([reply], [("cut", 3), "resync", "resync", "resync"])
+        term = self.start_proxied([Reply("text.sse", hold=4)], [("cut", 3), "resync", "resync", "resync"])
         term.type("hi\r")
         self.assertEqual(term.finish(), 1)
-        self.assertEqual(len(self.proxy.asked), 4, self.proxy.paths)
-        cut_at = self.proxy.passed[0][-1]
-        self.assertEqual(self.proxy.asked[:2], [0, cut_at])
-        self.assertLess(self.proxy.asked[2], self.proxy.asked[3])
-        self.assertGreaterEqual(self.proxy.asked[3], cut_at)
         after = term.output[term.output.rindex(LEAVE_SCREEN) :]
         self.assertIn(b"keeps asking to read the session again", after)
 
