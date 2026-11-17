@@ -220,7 +220,7 @@ end
 
 def model_changed(app: State.Model, text: String) -> Result[State.Model]
   current = app.serving.split("/")[0]
-  change = Client.model_change(try app.backend.list_providers.call(), current, text)
+  change = try Client.model_change(try app.backend.list_providers.call(), current, text)
   done = try changed(app, change, "model #{text} from the next turn")
   ok(done.with(serving: State.serving_of(try app.backend.session.call(app.id))))
 end

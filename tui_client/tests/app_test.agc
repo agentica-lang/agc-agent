@@ -1380,6 +1380,138 @@ def test_a_local_login_is_listed_with_its_url_and_asks_for_one() -> Result[Void]
   Test.eq(done.entries.last.text, "local is set up at http://127.0.0.1:9090/v1: /model lists its models")
 end
 
+# A login offers a session on `local` (the fallback of a first start) the models of the provider set up, in the
+# picker: Enter moves it, also while a turn runs (from the next turn on), and the footer shows it; Esc keeps it on
+# `local`. With no model the note says how to name one; a session on another provider stays.
+def test_a_login_offers_a_local_session_the_new_provider() -> Result[Void]
+  providers = Protocol.ProviderList(
+    provider: "local",
+    providers: [
+      Protocol.ProviderInfo(name: "local", api: "openai", models: ["qwen"]),
+      Protocol.ProviderInfo(name: "box", api: "openai", models: ["m1"]),
+      Protocol.ProviderInfo(name: "many", api: "openai", models: ["a", "b"]),
+      Protocol.ProviderInfo(name: "bare", api: "openai", models: []),
+    ],
+  )
+
+  session = Protocol.Session(
+    id: "s1",
+    cwd: ".",
+    model: "m1",
+    last_event_id: 0,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+    provider: "box",
+  )
+
+  changes: Channel[Protocol.UpdateSession] = Channel.new(4)
+  backend = Client.unreachable_backend().with(
+    session: ->(_id: String) { ok(session) },
+    update_session: ->(_id: String, change: Protocol.UpdateSession) {
+      _ = changes.send(change, 0)
+      ok()
+    },
+    list_providers: -> { ok(providers) },
+  )
+
+  local = model_of(100, 12).with(backend: backend, id: "s1", serving: "local/qwen")
+  status = ->(name: String) {
+    ok(Protocol.LoginStatus(name: name, label: "", key_env: "KEY", from: "stored", coming: false))
+  }
+
+  offered = App.update(local.with(turn: true), App.Msg.LoggedIn("box", status.call("box"))).model
+  try Test.eq(
+    offered.entries.last.text,
+    "box is set up (KEY would also work): pick a model of box, or Esc to stay on local",
+  )
+
+  try Test.eq(offered.picker.map { |p| p.models }, some(["box/m1"]))
+  moved = App.update(offered, enter()).model
+  try Test.eq(changes.recv(0), ok(Protocol.UpdateSession(provider: some("box"), model: some("m1"))))
+  try Test.eq([moved.entries.last.text, moved.turn.to_s], ["model box/m1 from the next turn", "true"])
+  try Test.assert(rows(moved.with(turn: false)).last.end_with?("(box) m1"), rows(moved).last)
+  kept = App.update(offered, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model
+  try Test.eq([kept.picker.none?.to_s, kept.serving], ["true", "local/qwen"])
+  many = App.update(local, App.Msg.LoggedIn("many", status.call("many"))).model
+  try Test.eq(many.picker.map { |p| p.models }, some(["many/a", "many/b"]))
+  bare = App.update(local, App.Msg.LoggedIn("bare", status.call("bare"))).model
+  try Test.eq(bare.entries.last.text, "bare is set up (KEY would also work): /model bare/NAME picks one of its models")
+  stays = App.update(local.with(serving: "box/m1"), App.Msg.LoggedIn("many", status.call("many"))).model
+  try Test.eq(stays.entries.last.text, "many is set up (KEY would also work): /model lists its models")
+  Test.eq(changes.recv(0).ok?, false)
+end
+
+# Enter on the untouched list of a command's argument sends the command alone: `/model`, `/resume`, `/tree` and `/fork`
+# open their one picker, `/thinking` says the level; nothing changes. The list starts on the session's model and level.
+def test_enter_on_an_untouched_argument_list_runs_nothing() -> Result[Void]
+  providers = Protocol.ProviderList(
+    provider: "p",
+    providers: [Protocol.ProviderInfo(name: "p", api: "chat", models: ["small", "large"])],
+  )
+
+  summary = Protocol.SessionSummary(id: "s9", cwd: "/w", model: "m", api: "chat", title: "fix the tests")
+  tree = Protocol.SessionTree(nodes: [Protocol.TreeNode(id: 1, text: "hello", last: 2)])
+  changed: Channel[String] = Channel.new(8)
+  backend = Client.unreachable_backend().with(
+    list_providers: -> { ok(providers) },
+    list_sessions: -> { ok(Protocol.SessionList(sessions: [summary])) },
+    tree: ->(_id: String) { ok(tree) },
+    update_session: ->(_id: String, _change: Protocol.UpdateSession) {
+      _ = changed.send("update", 0)
+      ok()
+    },
+    branch: ->(_id: String, _entry: Int) {
+      _ = changed.send("branch", 0)
+      error("no branch here")
+    },
+    fork: ->(_id: String, _entry: Optional[Int]) {
+      _ = changed.send("fork", 0)
+      error("no fork here")
+    },
+  )
+
+  model = model_of(80, 20).with(backend: backend, id: "s1", serving: "p/large", effort: some("high"))
+  kinds: List[String] = []
+  for command in ["/model", "/resume", "/tree", "/fork", "/thinking"]
+    asking = App.update(model.with(prompt: command, cursor: command.length), key_char(" "))
+    listed = asking.model
+    for cmd in asking.cmds
+      listed = App.update(listed, run(cmd)[0]).model
+    end
+
+    if command == "/model" or command == "/thinking"
+      tabbed = App.update(listed, App.Msg.Key(TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))).model
+      kinds = kinds.push(tabbed.prompt)
+    end
+
+    sent = App.update(listed, enter())
+    after = sent.model
+    for cmd in sent.cmds
+      for msg in run(cmd)
+        after = App.update(after, msg).model
+      end
+    end
+
+    kinds = kinds.push("#{command} #{after.picker.map { |p| p.kind.to_s }.unwrap_or("none")} #{after.id}")
+  end
+
+  try Test.eq(changed.recv(0).ok?, false)
+  Test.eq(
+    kinds,
+    [
+      "/model p/large",
+      "/model Kind.Models s1",
+      "/resume Kind.Sessions s1",
+      "/tree Kind.Tree s1",
+      "/fork Kind.Fork s1",
+      "/thinking high",
+      "/thinking none s1",
+    ],
+  )
+end
+
 # A coming login cannot be given a key; Esc in the key prompt drops what was typed; under `finn login` the answer to
 # the login ends the app. A `/login` or `/logout` line, which may hold a key typed by mistake, is not remembered and
 # drops its pastes.
