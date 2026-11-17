@@ -59,10 +59,12 @@ end
 
 ## `history_size` in `turn_started` and `turn_finished` is the size of the session's `history` once the event happened
 ## (the user message is in it at the start, the answer, if any, at the end); none in an event of an older server. A
-## client that reads the session again after a `resync` prints the history from there.
+## client that reads the session again after a `resync` prints the history from there. `source` is who sent the
+## message when the user did not (see `MessageQueued`).
 struct TurnStarted
   turn_id: String
   history_size: Optional[Int] = none
+  source: Optional[String] = none
 end
 
 struct TextDelta
@@ -149,11 +151,14 @@ struct UsageWire
 end
 
 ## A message sent while the turn `turn_id` runs: the turn reads it before its next model call. `message_id` is the one
-## the `202` of its sender has (none in the events a server older than it saved).
+## the `202` of its sender has (none in the events a server older than it saved). `source` is who sent it when the user
+## did not: `child:ID` (a child session's answer) or `extension`. An empty `turn_id` is a message that waits for the
+## next user message, which takes it to the model.
 struct MessageQueued
   turn_id: String
   text: String
   message_id: Optional[String] = none
+  source: Optional[String] = none
 end
 
 ## A command a client ran with `POST /v1/sessions/ID/shell`. With `context`, its output goes to the model before the
@@ -304,7 +309,13 @@ def event_name(event: Event) -> String = kind_name(event_kind(event))
 def encode_event(event: Event) -> String
   case event
     Event.TurnStarted(data) ->
-      JSON.encode(TurnStartedWire(turn_id: data.turn_id, history_size: field(data.history_size)))
+      wire = TurnStartedWire(
+        turn_id: data.turn_id,
+        history_size: field(data.history_size),
+        source: text_field(data.source),
+      )
+
+      JSON.encode(wire)
     Event.TextDelta(data) -> JSON.encode(data)
     Event.ThinkingDelta(data) -> JSON.encode(data)
     Event.ToolStarted(data) -> JSON.encode(data)
@@ -330,7 +341,7 @@ def encode_event(event: Event) -> String
       JSON.encode(wire)
     Event.Error(data) -> Errors.encode_failure(data)
     Event.Resync -> "{}"
-    Event.MessageQueued(data) -> JSON.encode(data)
+    Event.MessageQueued(data) -> encode_queued(data)
     Event.ShellStarted(data) -> JSON.encode(data)
     Event.ShellFinished(data) -> JSON.encode(data)
     Event.Todos(data) -> JSON.encode(data)
@@ -352,7 +363,7 @@ def decode_event(name: String, data: String) -> Result[Event]
     EventKind.TurnFinished -> decode_turn_finished(data)
     EventKind.Error -> ok(Event.Error(try Errors.decode_failure(data)))
     EventKind.Resync -> decode_resync(data)
-    EventKind.MessageQueued -> ok(Event.MessageQueued(try Wire.decode(data, MessageQueued.codec)))
+    EventKind.MessageQueued -> decode_queued(data)
     EventKind.ShellStarted -> ok(Event.ShellStarted(try Wire.decode(data, ShellStarted.codec)))
     EventKind.ShellFinished -> decode_shell_finished(data)
     EventKind.Todos -> decode_todos(data)
@@ -383,6 +394,7 @@ def shape() -> List[String]
     Wire.record("Usage", Usage.members),
     Wire.record("UsageWire", UsageWire.members),
     Wire.record("MessageQueued", MessageQueued.members),
+    Wire.record("MessageQueuedWire", MessageQueuedWire.members),
     Wire.record("ShellStarted", ShellStarted.members),
     Wire.record("ShellFinished", ShellFinished.members),
     Wire.record("Todo", Todo.members),
@@ -469,9 +481,17 @@ struct ResolvedWire
   source: String
 end
 
+struct MessageQueuedWire
+  turn_id: String
+  text: String
+  message_id: Optional[String] = none
+  source: JSON.Field[String]
+end
+
 struct TurnStartedWire
   turn_id: String
   history_size: JSON.Field[Int]
+  source: JSON.Field[String]
 end
 
 struct TurnFinishedWire
@@ -552,7 +572,13 @@ end
 
 def decode_turn_started(data: String) -> Result[Event]
   wire = try Wire.decode(data, TurnStartedWire.codec)
-  ok(Event.TurnStarted(TurnStarted(turn_id: wire.turn_id, history_size: try history_size(wire.history_size))))
+  source = case wire.source
+    JSON.Field.Value(text) -> some(text)
+    _ -> none
+  end
+
+  started = TurnStarted(turn_id: wire.turn_id, history_size: try history_size(wire.history_size), source: source)
+  ok(Event.TurnStarted(started))
 end
 
 def decode_turn_finished(data: String) -> Result[Event]
@@ -571,6 +597,39 @@ end
 def field(size: Optional[Int]) -> JSON.Field[Int]
   case size
     some(n) -> JSON.Field.Value(n)
+    none -> JSON.Field.Absent
+  end
+end
+
+# A message without a source has no `source` key, as an older server sent it.
+def encode_queued(queued: MessageQueued) -> String
+  wire = MessageQueuedWire(
+    turn_id: queued.turn_id,
+    text: queued.text,
+    message_id: queued.message_id,
+    source: text_field(queued.source),
+  )
+
+  JSON.encode(wire)
+end
+
+def decode_queued(data: String) -> Result[Event]
+  wire = try Wire.decode(data, MessageQueuedWire.codec)
+  source = case wire.source
+    JSON.Field.Value(text) -> some(text)
+    _ -> none
+  end
+
+  ok(
+    Event.MessageQueued(
+      MessageQueued(turn_id: wire.turn_id, text: wire.text, message_id: wire.message_id, source: source),
+    ),
+  )
+end
+
+def text_field(text: Optional[String]) -> JSON.Field[String]
+  case text
+    some(t) -> JSON.Field.Value(t)
     none -> JSON.Field.Absent
   end
 end
