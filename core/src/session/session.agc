@@ -260,13 +260,13 @@ struct Chosen
   api: String
 end
 
-# The context of a session and its approval.
 # What a session's handle reaches: the registry, and the session itself.
 struct Reach
   at: Address[Msg]
   session: String
 end
 
+# The context of a session and its approval, and the registry its handle reaches.
 struct Opened
   context: Tools.Context
   approver: Optional[Extensions.Approver]
