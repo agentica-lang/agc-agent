@@ -38,7 +38,8 @@ USAGE = <<~TEXT
   project file cannot change them. The deny rules always count; the asks, the answers and accept_edits only with the
   approvals on. The rules {"permission": ["ask bash(*)", "allow bash(git *)", "deny read_file(*.pem)"]} come from
   FINN_CONFIG, else $XDG_CONFIG_HOME/finn/config.json, else ~/.config/finn/config.json, then from .finn/config.json of
-  the session folder (its allow rules only under a folder of FINN_TRUSTED_DIRS); the last rule that matches wins, and
+  the session folder (all of them under a folder of FINN_TRUSTED_DIRS, else only its deny rules); the last rule that
+  matches wins, and
   reads of .env files ask by default. An answer may allow the same call (allow_session), what "always" allows (the
   first words of each bash command, allow_prefix) or the whole tool (allow_tool) for the session, until the server
   restarts; PATCH {"accept_edits": true} runs the edits of files without asking. None of them reaches into .git/ or

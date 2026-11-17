@@ -847,7 +847,8 @@ def place_of(options: Config.Options, root: String) -> Extensions.Place
   Extensions.Place(root: root, home: options.home, trusted: trusted?(options, root))
 end
 
-# A session folder under a folder of `FINN_TRUSTED_DIRS`, whose own skills and allow rules count.
+# A session folder under a folder of `FINN_TRUSTED_DIRS`, whose own skills and all of whose rules count (elsewhere
+# only the project's deny rules).
 def trusted?(options: Config.Options, root: String) -> Bool
   options.trusted.any? { |dir| Sandbox.inside?(Path.real(dir).unwrap_or(dir), root) }
 end

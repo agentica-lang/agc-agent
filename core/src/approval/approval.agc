@@ -6,12 +6,12 @@
 ##
 ## A `bash` command is checked by its parts (`Shell`): each command of the line by its text, and each folder outside
 ## the session folder that `cd`, `rm`, `cp` and the like name, as `external_directory(FOLDER/*)`. Any deny denies, else
-## any ask asks. A line that tree-sitter-bash cannot read or misreads asks, unless a deny rule matches it whole or one of
-## its commands. The rules of `read_file`, `edit_file` and `write_file` apply to the file tools only, not to what `bash`
-## reads or writes. A rule is a convenience and not a sandbox: see the security model of `Tools`.
+## any ask asks. A line that tree-sitter-bash cannot read or misreads asks, unless a deny rule matches it whole or one
+## of its commands. The rules of `read_file`, `edit_file` and `write_file` apply to the file tools only, not to what
+## `bash` reads or writes. A rule is a convenience and not a sandbox: see the security model of `Tools`.
 ##
-## A change to a path under `.git/` (`write_file`, `edit_file`, `apply_patch`) always asks, because `.git/config` and the
-## hooks run programs (`core.fsmonitor`, aliases) the next time git runs; the name is compared without case and
+## A change to a path under `.git/` (`write_file`, `edit_file`, `apply_patch`) always asks, because `.git/config` and
+## the hooks run programs (`core.fsmonitor`, aliases) the next time git runs; the name is compared without case and
 ## trailing dots. Only a deny rule can change that. `edit_file` reads the file, so a deny rule of `read_file` denies it
 ## too.
 

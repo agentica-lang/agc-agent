@@ -5,7 +5,8 @@
 ## `{"approvals": true, "permission": [...]}` in the syntax of `Approval`, whose `approvals` turns the asking on
 ## (`FINN_APPROVALS` wins over it); and the project file `.finn/config.json` of the session folder, whose rules count
 ## in a folder of `FINN_TRUSTED_DIRS` (`:` between folders) and elsewhere only its deny rules, since anyone who writes
-## the project can write them. Its `approvals` is not read: a project cannot change the mode. The deny rules count with the asking off too.
+## the project can write them. Its `approvals` is not read: a project cannot change the mode. The deny rules count with
+## the asking off too.
 ##
 ## A session allows more by its answers: the same call (`allow_session`), what an "always" answer allows for `bash`
 ## (`allow_prefix`, `Shell.Scan.always`: `git log *`, `npm run dev *`), or the whole tool (`allow_tool`); and in the
@@ -56,9 +57,9 @@ def user_rules(read: Fn[String, Result[String]], switch: Optional[Bool]) -> Resu
   ok(User(rules: rules, asking: switch.unwrap_or(file.file.approvals.unwrap_or(false))))
 end
 
-## `rules` with those of the project file of `root` after them: all of them when `root` is `trusted`, else only its deny
-## rules, which cannot weaken the user's (an `ask` after a deny would win). A broken file in a folder that is not trusted
-## is ignored with a warning, so a repository cannot stop its sessions.
+## `rules` with those of the project file of `root` after them: all of them when `root` is `trusted`, else only its
+## deny rules, which cannot weaken the user's (an `ask` after a deny would win). A broken file in a folder that is not
+## trusted is ignored with a warning, so a repository cannot stop its sessions.
 def with_project(rules: Approval.Rules, root: String, trusted: Bool) -> Result[Approval.Rules]
   path = "#{root}/#{PROJECT_FILE}"
   return ok(rules) if not File.stat(path).ok?
