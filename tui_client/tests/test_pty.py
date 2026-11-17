@@ -518,6 +518,20 @@ class PtyTest(unittest.TestCase):
         request = self.fake.requests.get(timeout=1)
         self.assertEqual(request["messages"][-1]["content"], "one\ntwo")
 
+    def test_editing_keys_cut_by_word_and_line_and_ctrl_d_quits(self) -> None:
+        term = self.start([Reply("text.sse")])
+        term.type("one two three")
+        term.wait_for(" one two three")
+        for key in ["\x1b[1;3D", "\x17", "\x01", "\x1b[3~"]:
+            term.type(key)
+        term.wait_for(" ne three")
+        term.type("\r")
+        term.wait_for(ANSWER)
+        self.assertEqual(self.fake.requests.get(timeout=5)["messages"][-1]["content"], "ne three")
+        term.wait_for("ready")
+        term.type("\x04")
+        self.assertEqual(term.finish(), 0)
+
     def test_escape_stops_the_turn(self) -> None:
         term = self.start([Reply("text.sse", hold=3), Reply("text.sse")])
         term.type("hi\r")

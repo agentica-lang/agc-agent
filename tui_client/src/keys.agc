@@ -59,8 +59,9 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     TUI.Event.Key(TUI.Key.Ctrl("c"), _) -> app.with(exit: some(0))
     TUI.Event.Key(TUI.Key.Enter, mods) if mods.alt -> follow_up(app)
     TUI.Event.Key(TUI.Key.Enter, _) -> send(app)
-    TUI.Event.Key(TUI.Key.Up, _) if app.prompt == "" or app.recall.some? -> recalled(app, -1)
-    TUI.Event.Key(TUI.Key.Down, _) if app.recall.some? -> recalled(app, 1)
+    TUI.Event.Key(TUI.Key.Ctrl("d"), _) if app.prompt == "" -> app.with(exit: some(0))
+    TUI.Event.Key(TUI.Key.Up, _) -> line_moved(app, -1)
+    TUI.Event.Key(TUI.Key.Down, _) -> line_moved(app, 1)
     TUI.Event.Key(TUI.Key.Ctrl("t"), _) ->
       shown = app.with(thinking: not app.thinking, entries: Transcript.unfold_thinking(app.entries))
       State.noted(shown, "thinking blocks: #{Views.shown_name(shown.thinking)}")
@@ -68,9 +69,23 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
       shown = app.with(tools: not app.tools, entries: Transcript.unfold_tools(app.entries))
       State.noted(shown, "tool output: #{Views.shown_name(shown.tools)}")
     TUI.Event.Key(TUI.Key.Ctrl("j"), _) -> typed(app, "\n")
+    TUI.Event.Key(TUI.Key.Backspace, mods) if mods.alt -> cut_to(app, Prompt.word_left(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Backspace, _) ->
       at = State.cursor(app)
       app.with(prompt: Prompt.backspace(app.prompt, at), cursor: [at - 1, 0].max.unwrap!, recall: none)
+    TUI.Event.Key(TUI.Key.Delete, _), TUI.Event.Key(TUI.Key.Ctrl("d"), _) ->
+      app.with(prompt: Prompt.delete(app.prompt, State.cursor(app)), recall: none)
+    TUI.Event.Key(TUI.Key.Ctrl("w"), _) -> cut_to(app, Prompt.word_left(app.prompt, State.cursor(app)))
+    TUI.Event.Key(TUI.Key.Ctrl("u"), _) -> cut_to(app, line_back(app))
+    TUI.Event.Key(TUI.Key.Ctrl("k"), _) -> cut_to(app, line_forward(app))
+    TUI.Event.Key(TUI.Key.Ctrl("a"), _) -> app.with(cursor: Prompt.line_start(app.prompt, State.cursor(app)))
+    TUI.Event.Key(TUI.Key.Ctrl("e"), _) -> app.with(cursor: Prompt.line_end(app.prompt, State.cursor(app)))
+    TUI.Event.Key(TUI.Key.Left, mods) if mods.ctrl or mods.alt ->
+      app.with(cursor: Prompt.word_left(app.prompt, State.cursor(app)))
+    TUI.Event.Key(TUI.Key.Right, mods) if mods.ctrl or mods.alt ->
+      app.with(cursor: Prompt.word_right(app.prompt, State.cursor(app)))
+    TUI.Event.Char("b", mods) if mods.alt -> app.with(cursor: Prompt.word_left(app.prompt, State.cursor(app)))
+    TUI.Event.Char("f", mods) if mods.alt -> app.with(cursor: Prompt.word_right(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Left, _) -> app.with(cursor: [State.cursor(app) - 1, 0].max.unwrap!)
     TUI.Event.Key(TUI.Key.Right, _) -> app.with(cursor: Prompt.clamp(app.prompt, State.cursor(app) + 1))
     TUI.Event.Key(TUI.Key.Home, _) -> app.with(cursor: 0)
@@ -111,6 +126,43 @@ def pasted(app: State.Model, text: String) -> State.Model
 
   pastes = app.pastes.push(text)
   typed(app.with(pastes: pastes), Input.token(pastes.size, text))
+end
+
+# The text from the cursor to `to`, either side of it, is cut, and the cursor goes to the start of the cut.
+def cut_to(app: State.Model, to: Int) -> State.Model
+  at = State.cursor(app)
+  from = [at, to].min.unwrap!
+  app.with(prompt: Prompt.cut(app.prompt, from, [at, to].max.unwrap!), cursor: from, recall: none)
+end
+
+# Ctrl+U cuts to the start of the line; at its start, the line end before it.
+def line_back(app: State.Model) -> Int
+  at = State.cursor(app)
+  start = Prompt.line_start(app.prompt, at)
+  return at - 1 if start == at and at > 0
+
+  start
+end
+
+# Ctrl+K cuts to the end of the line; at its end, the line end after it.
+def line_forward(app: State.Model) -> Int
+  at = State.cursor(app)
+  stop = Prompt.line_end(app.prompt, at)
+  return at + 1 if stop == at and at < app.prompt.length
+
+  stop
+end
+
+# Up and Down move between the rows of the prompt; from the first row (or an empty prompt) Up recalls the prompt sent
+# before, and while one is recalled Down from the last row the one after.
+def line_moved(app: State.Model, step: Int) -> State.Model
+  return recalled(app, step) if app.prompt == "" and step < 0
+
+  case Prompt.vertical(app.prompt, State.cursor(app), app.width, step)
+    some(at) -> app.with(cursor: at)
+    none if app.recall.some? -> recalled(app, step)
+    none -> app
+  end
 end
 
 # Up shows the prompt sent before the one shown, Down the one after; past the newest the prompt is empty again.
