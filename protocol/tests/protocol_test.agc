@@ -216,6 +216,13 @@ def test_invalid_input_is_a_typed_error() -> Result[Void]
     "protocol.invalid",
   )
 
+  bad_todo = session_json(0, "[]").replace(
+    "\"history\"",
+    "\"todos\": [{\"content\": \"x\", \"status\": \"done\"}], \"history\"",
+  )
+
+  try Test.eq(error_kind(Protocol.decode_session(bad_todo)), "protocol.invalid")
+
   try Test.eq(error_kind(Protocol.decode_send_message("not json")), "protocol.invalid")
   try Test.eq(error_kind(Protocol.decode_event("typing", "{}")), "protocol.unknown")
   try Test.eq(error_kind(Protocol.decode_approve("{\"decision\": \"maybe\"}")), "protocol.unknown")

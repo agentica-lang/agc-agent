@@ -179,10 +179,7 @@ def test_a_turn_spins_in_the_rule() -> Result[Void]
   Test.eq(rows(spun)[1].slice(0, 12), "── ⠙ Working")
 end
 
-# `!cmd` goes to the shell route from a command and draws as a `$` line with its output, and a muted line when the
-# model does not get it; Esc stops it. A refused command goes back to the prompt, one that may have run does not, and
-# none goes while the session moves or as a follow-up.
-# The model's todo list shows as a notice, one item a line.
+# The model's todo list shows as a notice, one item a line, from its event and from the session read after a move.
 def test_a_todo_list_is_drawn() -> Result[Void]
   model = model_of(40, 10).with(id: "s1", generation: 1)
   list = [
@@ -193,13 +190,33 @@ def test_a_todo_list_is_drawn() -> Result[Void]
 
   event = Protocol.Event.Todos(Protocol.Todos(todos: list))
   shown = rows(App.update(model, App.Msg.Stream(1, [Client.Item.Event(some(1), event)])).model)
+  session = Protocol.Session(
+    id: "s1",
+    cwd: ".",
+    model: "m",
+    last_event_id: 9,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+    todos: list,
+  )
+
+  backend = Client.unreachable_backend().with(session: ->(_id: String) { ok(session) })
+  moving = model_of(40, 10).with(backend: backend, id: "s1", generation: 1, moving: true)
+  moved = App.update(moving, App.Msg.Moved(ok(Protocol.Branched(id: "s1", text: "")))).model
+  Task.await(moved.stream.unwrap!)
   for row in ["[x] Write the test", "[>] Fix the bug", "[ ] Docs"]
     try Test.assert(shown.include?(row), "#{row} is drawn: #{shown}")
+    try Test.assert(rows(moved).include?(row), "#{row} is drawn after a move: #{rows(moved)}")
   end
 
   ok()
 end
 
+# `!cmd` goes to the shell route from a command and draws as a `$` line with its output, and a muted line when the
+# model does not get it; Esc stops it. A refused command goes back to the prompt, one that may have run does not, and
+# none goes while the session moves or as a follow-up.
 def test_a_bang_line_runs_a_shell_command() -> Result[Void]
   model = model_of(40, 10).with(id: "s1", generation: 1, prompt: "!echo one")
   sending = App.update(model, enter())

@@ -11,6 +11,7 @@ import Spec from "../tools/spec"
 import Session from "state"
 import Store from "store"
 import Stream from "stream"
+import Todos from "../tools/todos"
 import Tools from "../tools/tools"
 
 ## A message sent while a turn runs waits in the queue, which the turn reads before its next model call. The user's
@@ -107,6 +108,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
     turn_tools: Extensions.turn_tools(setup.builtins),
     marks: state.marks,
     on_fold: some(on_fold(setup)),
+    todos: todos_of(state),
     effort: setup.effort,
     gate: gate(setup.approver),
   )
@@ -275,7 +277,9 @@ def end_fold(
 ) -> Session.State
   done = state.with(compacting: false)
   for summary in option_list(found)
-    extra = on_fold(done.setup).call(done.marks, Compaction.staying(done.history, summary))
+    staying = Compaction.staying(done.history, summary)
+    extra = on_fold(done.setup).call(done.marks, staying)
+    extra = "#{extra}#{Agent.folded_todos(done.history, staying, todos_of(done))}"
     folded = compact(done, summary.with(summary: "#{summary.summary}#{extra}"))
     if folded.broken.some?
       Actor.reply(reply, error("the session file cannot be written", kind: Protocol.KIND_SESSION_STORAGE))
@@ -429,6 +433,11 @@ def on_message(setup: Session.Setup, typed: String, marks: List[String]) -> Resu
     some(registry) -> ok(expanded.with(text: try Extensions.message(registry, expanded.text)))
     none -> ok(expanded)
   end
+end
+
+# The session's todo list, as the tools read it.
+def todos_of(state: Session.State) -> List[Todos.Todo]
+  state.todos.map { |t| Todos.Todo(content: t.content, status: t.status) }
 end
 
 # What a fold adds after the summary: the skills in use, then the `fold` handlers of the extensions.

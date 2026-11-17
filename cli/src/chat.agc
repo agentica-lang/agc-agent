@@ -139,7 +139,10 @@ end
 
 def resume(chat: Chat, id: String) -> Result[Chat]
   session = try Client.session(chat.server, id)
-  ok(attach(note(chat, "[session #{id}]"), session, false))
+  opened = attach(note(chat, "[session #{id}]"), session, false)
+  return ok(opened) if session.todos.empty?
+
+  ok(note(opened, Render.todos(session.todos)))
 end
 
 # Prints the history the client has not shown yet, then subscribes to what the snapshot of the session says. While a

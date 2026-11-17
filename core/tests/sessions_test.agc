@@ -63,9 +63,10 @@ def test_a_restarted_server_resumes_a_session_with_its_event_ids() -> Result[Voi
 end
 
 # `todo_write` replaces the model's todo list: the clients get it in a `todos` event and in the session. A list with
-# two items in progress is an error for the model and changes nothing, and the list stays after a restart.
+# two items in progress is an error for the model and changes nothing. A fork after the call keeps the list; a fork or
+# a branch from before it has none, and all of that stays after a restart.
 def test_the_todo_list_is_sent_and_kept() -> Result[Void]
-  setup = H.Setup(replies: ["todo_write.sse", "todo_bad.sse", "text.sse"])
+  setup = H.Setup(replies: ["todo_write.sse", "todo_bad.sse", "text.sse", "text.sse"])
   H.using(setup) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
@@ -82,8 +83,56 @@ def test_the_todo_list_is_sent_and_kept() -> Result[Void]
     failed = a.seen.select { |s| failed_call?(s.event) }
     try Test.eq(failed.size, 1)
     try Test.eq((try H.session(h, id)).todos, expected)
-    H.restarted(h, setup, "") do |r| Test.eq((try H.session(r, id)).todos, expected) end
+    b = try H.subscribe(h, id, some((try H.session(h, id)).last_event_id))
+    _ = try H.send(h, id, "Two.")
+    b = try H.until(b, Protocol.EventKind.TurnFinished)
+    H.close(b)
+    nodes = try tree(h, id)
+    kept = try fork_at(h, id, nodes[1].id)
+    none_yet = try fork_at(h, id, nodes[0].id)
+    _ = try H.post(h, Protocol.branch_path(id), Protocol.encode_branch(Protocol.Branch(entry: nodes[0].id)))
+    ids = [id, kept, none_yet]
+    try Test.eq(try list_sizes(h, ids), [0, 3, 0])
+    H.restarted(h, setup, "") do |r| Test.eq(list_sizes(r, ids), ok([0, 3, 0])) end
   end
+end
+
+# A fold of the round that wrote the todo list gives the model the list again after the summary.
+def test_a_fold_gives_the_model_its_todo_list_again() -> Result[Void]
+  replies = ["todo_write.sse", "bash_echo.sse", "summary.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, context_window: 120)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Plan, then echo.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    for _i in 1..3
+      _ = try H.next_request(h)
+    end
+
+    after = try JSON.list(try JSON.get(try JSON.parse((try H.next_request(h)).body), "messages"))
+    summary = try JSON.string(try JSON.get(after[2], "content"))
+    Test.assert(
+      summary.include?("todo list (`todo_write`) when the history was summarized:\n1 of 3 todos completed\n[x] Write"),
+      summary,
+    )
+  end
+end
+
+def list_sizes(h: H.Harness, ids: List[String]) -> Result[List[Int]]
+  sizes: List[Int] = []
+  for id in ids
+    sizes = sizes.push((try H.session(h, id)).todos.size)
+  end
+
+  ok(sizes)
+end
+
+def fork_at(h: H.Harness, id: String, entry: Int) -> Result[String]
+  fork = try H.post(h, Protocol.fork_path(id), Protocol.encode_fork(Protocol.Fork(entry: some(entry))))
+  ok((try Protocol.decode_branched(fork.text)).id)
 end
 
 def todo_lists(seen: List[H.Seen]) -> List[List[Protocol.Todo]]

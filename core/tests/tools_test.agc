@@ -505,3 +505,32 @@ def lines(text: String) -> List[String]
 
   text.split("\n")
 end
+
+# `todo_write` refuses each bad list: over 100 items, an item over 500 characters, one whose text shows
+# nothing (spaces,
+# NBSP, a zero-width space, an ideographic space) or has a control character, an unknown status, two in progress.
+def test_todo_write_refuses_a_bad_list() -> Result[Void]
+  ctx = try Tools.context(System.env("TMPDIR").unwrap_or("/tmp"), &fake_env)
+  item = ->(content: String, status: String) {
+    JSON.object({"content": JSON.from(content), "status": JSON.from(status)})
+  }
+
+  run = ->(items: List[JSON.Value]) { Tools.run(ctx, "todo_write", JSON.object({"todos": JSON.from(items)})) }
+  blank = [" ", " ", "​", "　"].join("")
+  rows = [
+    (1..101).to_a.map { |i| item.call("step #{i}", "pending") },
+    [item.call("x" * 501, "pending")],
+    [item.call(blank, "pending")],
+    [item.call("ring #{String.from_code(7)} bell", "pending")],
+    [item.call("one", "done")],
+    [item.call("one", "in_progress"), item.call("two", "in_progress")],
+  ]
+
+  for items in rows
+    try refused(run.call(items))
+  end
+
+  good = run.call([item.call("x" * 500, "completed"), item.call("step", "in_progress")])
+  try Test.eq(good.is_error, false)
+  Test.assert(not run.call([item.call("one", "done")]).text.include?("done"), "the status is not echoed")
+end

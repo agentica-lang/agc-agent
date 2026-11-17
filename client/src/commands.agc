@@ -181,6 +181,20 @@ end
 ## The text on one line, each control character (bidi ones too) a space: what a client echoes of what another typed.
 def printable(text: String) -> String = text.split("").map { |c| shown(c) }.join("")
 
+## The model's todo list, one line an item: `[x]` completed, `[>]` in progress, `[ ]` pending, then its printable text.
+def todo_lines(todos: List[Protocol.Todo]) -> List[String]
+  todos.map do |todo|
+    box = "[ ]"
+    case todo.status
+      "completed" -> box = "[x]"
+      "in_progress" -> box = "[>]"
+      _ -> nil
+    end
+
+    "#{box} #{printable(todo.content)}"
+  end
+end
+
 private
 
 # A control character (C0, C1) or a bidi control, which could reorder what the screen shows, becomes a space.

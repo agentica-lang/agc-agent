@@ -443,6 +443,15 @@ def usage_of_wire(wire: UsageWire) -> Result[Usage]
   ok(usage)
 end
 
+## A list with an item whose status is out of `TODO_STATUSES` is invalid.
+def check_todos(todos: List[Todo]) -> Result[Void]
+  for todo in todos
+    return error("invalid todo status", kind: Kinds.KIND_INVALID) if not TODO_STATUSES.include?(todo.status)
+  end
+
+  ok()
+end
+
 private
 
 struct ResolvedWire
@@ -514,15 +523,9 @@ def decode_shell_finished(data: String) -> Result[Event]
   ok(Event.ShellFinished(finished))
 end
 
-## A list whose items have a status out of `TODO_STATUSES` is invalid.
 def decode_todos(data: String) -> Result[Event]
   todos = try Wire.decode(data, Todos.codec)
-  for todo in todos.todos
-    if not TODO_STATUSES.include?(todo.status)
-      return error("invalid todo status: #{todo.status}", kind: Kinds.KIND_INVALID)
-    end
-  end
-
+  try check_todos(todos.todos)
   ok(Event.Todos(todos))
 end
 

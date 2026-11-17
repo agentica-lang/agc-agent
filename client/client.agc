@@ -77,6 +77,7 @@ export Commands.KIND_COMMAND
 export Commands.parse_command
 export Commands.parse_shell
 export Commands.printable
+export Commands.todo_lines
 export Commands.listing
 export Commands.pick
 export Commands.model_warning

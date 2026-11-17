@@ -274,6 +274,20 @@ def test_a_command_running_on_attach_is_stopped_and_ends() -> Result[Void]
   end
 end
 
+# The model's todo list prints one item a line, without the escape sequence or the bidi control of its text.
+def test_a_todo_list_prints_without_control_characters() -> Result[Void]
+  Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["todos.sse"])], &todo_list)
+end
+
+def todo_list(rig: Driver.Rig) -> Result[Void]
+  cli = try Driver.start(rig.dir, PLAIN)
+  try Driver.say(cli, "plan")
+  rest = try Driver.read_until(cli, "[turn finished]")
+  shown = ["[todos]", "  [x] Fix the bug", "  [>] red  [31m alert", "  [ ]  evil", "[turn finished] end_turn"]
+  try Test.eq(rest.drop(rest.size - 5), shown)
+  Test.eq((try Driver.finish(cli)).code, 0)
+end
+
 # A line typed while a turn runs is sent, and shown as queued.
 def test_a_line_sent_during_a_turn_is_queued() -> Result[Void]
   replies = [
