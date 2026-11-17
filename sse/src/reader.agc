@@ -153,3 +153,4 @@ def if_named(event: Event, name: String) -> Event
 
   event.with(name: name)
 end
+# proof
