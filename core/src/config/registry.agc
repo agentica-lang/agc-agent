@@ -17,6 +17,8 @@ TARGET_MS = 5000
 END_MS = 1000
 ## How long a call of a tool may take once an extension is in it: the longest `bash` call, and some.
 TOOL_MS = 660_000
+## The events an observer may be behind by: past them, the next ones are dropped and counted.
+OBSERVER_INBOX = 256
 ## Names an extension tool cannot take: those of the tools of the core that `Tools.all` does not list, and the prefix
 ## of the MCP tools.
 RESERVED = ["apply_patch", "run_script", "activate_skill"]
@@ -41,13 +43,28 @@ struct Tool
   target: Fn[Call, Result[String]]
 end
 
+## An event of a session as an observer sees it: `name` is the event's name and `data` its JSON, as `GET
+## /v1/sessions/ID/events` sends them, and `root` is the session folder. Two more names have no SSE event:
+## `session_started` (`{"id", "new"}`: created, or loaded from its file), before any event of the session, and
+## `session_ended` (`{"id", "reason"}`: `deleted` or `stopping`), alone for a session deleted before it was loaded.
+## More fields may come.
+struct Seen
+  session: String
+  root: String
+  name: String
+  data: JSON.Value
+end
+
 ## A handler of an event of a session. `Message` gets the text of a user message after the skills it names are
 ## expanded, and gives the text the model gets (the session file keeps what was typed too); a crash or a hang refuses
 ## the message. `Fold` gets the texts of the messages that stay when the history folds, and gives text to add after the
-## summary; a crash or a hang adds nothing.
+## summary; a crash or a hang adds nothing. `Seen` gets the events of the names it lists, of every session, in order:
+## nothing waits for it, and an observer that falls `OBSERVER_INBOX` events behind loses the next ones (counted in the
+## log). A crash or a hang of one event is logged, and the next event comes.
 enum Event
   Message(Fn[String, String])
   Fold(Fn[List[String], String])
+  Seen(List[String], Fn[Seen, Void])
 end
 
 ## Something that runs with the server: `start` once the server holds its lock, before it listens, and `stop` after it
@@ -73,8 +90,17 @@ struct Registry
   ## How long the handlers of one event may take together, a service to start or stop (and up to END_MS more while
   ## its task ends), and a call of a tool once an extension is in it.
   handler_ms: Int = HANDLER_MS
+  observer_inbox: Int = OBSERVER_INBOX
   service_ms: Int = SERVICE_MS
   tool_ms: Int = TOOL_MS
+end
+
+## An observer that runs: its inbox, which its task reads, and the events it lost. Not part of `Core`.
+struct Observer
+  names: List[String]
+  inbox: Channel[Seen]
+  dropped: ATS[String, Int]
+  task: Task[Void]
 end
 
 ## What a server runs with: the registry of the program (`Core.serve`) and the core's own extensions, which need more
@@ -218,6 +244,36 @@ def fold(registry: Registry, staying: List[LLM.Message]) -> String
   out
 end
 
+## Starts a task for each `Seen` handler of `registry`, which gets its events one at a time.
+def observe(registry: Registry) -> List[Observer] = registry.events.flat_map { |event| observers_of(event, registry) }
+
+## Whether an observer wants the events of `name`: publishing an event that none wants costs nothing more.
+def wanted?(observers: List[Observer], name: String) -> Bool = observers.any? { |o| o.names.include?(name) }
+
+## Gives `seen` to the observers that want it, without waiting: a full inbox drops it and counts the drop.
+def publish(observers: List[Observer], seen: Seen) -> Void
+  for observer in (observers.select { |o| o.names.include?(seen.name) })
+    if not observer.inbox.send(seen, 0).ok?
+      _ = observer.dropped.add(DROPPED, 1)
+    end
+  end
+end
+
+## Ends the observers: each gets the events already in its inbox, for at most `END_MS` together.
+def stop_observers(observers: List[Observer]) -> Void
+  for observer in observers
+    observer.inbox.close
+  end
+
+  deadline = Time.monotonic_ms + END_MS
+  for observer in observers
+    case Task.await(observer.task, [deadline - Time.monotonic_ms, 0].max.unwrap!)
+      Await.Done(_) -> nil
+      _ -> Task.cancel(observer.task)
+    end
+  end
+end
+
 ## `system` with the prompts of the extensions after it.
 def prompt(registry: Registry, system: String) -> String = ([system] + registry.prompts).join("\n\n")
 
@@ -317,6 +373,8 @@ def stop_services(services: List[Running]) -> Void
 end
 
 private
+
+DROPPED = "dropped"
 
 # The task of a service: it starts it, waits for the stop, and stops it.
 def owned(service: Service, news: Channel[Note], stopping: Channel[Bool], ms: Int) -> Void
@@ -446,6 +504,46 @@ def bounded[T](what: String, ms: Int, body: Fn[Result[T]]) -> Result[T]
       _ = Task.await(task, END_MS)
       error("#{what} took over #{ms} ms")
   end
+end
+
+def observers_of(event: Event, registry: Registry) -> List[Observer]
+  case event
+    Event.Seen(names, handler) -> [observer(names, handler, registry)]
+    Event.Message(_) -> []
+    Event.Fold(_) -> []
+  end
+end
+
+def observer(names: List[String], handler: Fn[Seen, Void], registry: Registry) -> Observer
+  inbox: Channel[Seen] = Channel.new(registry.observer_inbox)
+  dropped: ATS[String, Int] = ATS.new()
+  task = Task.spawn(-> { observed(inbox, dropped, handler, registry.handler_ms) })
+  Observer(names: names, inbox: inbox, dropped: dropped, task: task)
+end
+
+def observed(inbox: Channel[Seen], dropped: ATS[String, Int], handler: Fn[Seen, Void], ms: Int) -> Void
+  while true
+    case inbox.recv(60_000)
+      ok(seen) ->
+        lost = dropped.add(DROPPED, 0)
+        if lost > 0
+          _ = dropped.add(DROPPED, -lost)
+          IO.warn("an observer of extensions: #{lost} events dropped (behind)")
+        end
+
+        case bounded("an observer of #{seen.name}", ms, -> { handled(handler, seen) })
+          ok(_) -> nil
+          error(e) -> IO.warn(e.message)
+        end
+
+      error(_) -> return if inbox.closed? and inbox.empty?
+    end
+  end
+end
+
+def handled(handler: Fn[Seen, Void], seen: Seen) -> Result[Void]
+  handler.call(seen)
+  ok()
 end
 
 def text_of(message: LLM.Message) -> String

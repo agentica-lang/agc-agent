@@ -77,6 +77,8 @@ struct Options
   tools: List[Tools.Tool] = []
   ## What the extensions add (`Core.serve`), with the core's own (the skills, MCP and the approval).
   registry: Optional[Extensions.Served] = none
+  ## The observers of the extensions' `Seen` handlers, which the sessions start (`Sessions.start`).
+  observers: List[Extensions.Observer] = []
   ## A test seam: makes the diff of each tool call (see `Tools.Context.diff`).
   diff: Optional[Fn[String, JSON.Value, String]] = none
   port: Int = 0

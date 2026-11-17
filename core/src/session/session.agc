@@ -54,7 +54,8 @@ def folder(options: Config.Options) -> String = "#{options.data_dir}/#{SESSIONS_
 ## Starts the registry, which lists the session files of `options` in `store` (on disk when none), and the holder of
 ## the providers.
 def start(given: Config.Options, store: Optional[Store.Port] = none) -> Sessions
-  options = given.with(logins: some(Logins.start(given.providers, given.login)))
+  observers = given.registry.map { |served| Extensions.observe(served.registry) }.unwrap_or([])
+  options = given.with(logins: some(Logins.start(given.providers, given.login)), observers: observers)
   warn_profiles(options)
   port = store.unwrap_or(Store.disk())
   init = -> {
@@ -69,6 +70,7 @@ end
 ## Stops the registry and the sessions it runs.
 def stop(sessions: Sessions) -> Void
   _ = Actor.stop(sessions.registry, CALL_MS)
+  Extensions.stop_observers(sessions.options.observers)
   for holder in option_list(sessions.options.logins)
     Logins.stop(holder)
   end
@@ -329,8 +331,18 @@ def terminate(registry: Registry) -> Void
   for entry in registry.sessions
     for session in option_list(entry.session)
       _ = Actor.stop(session, CALL_MS)
+      Extensions.publish(registry.options.observers, ended_seen(entry, "stopping"))
     end
   end
+end
+
+# `session_started` and `session_ended` reach only the observers: no session stream exists before or after them.
+def lifecycle(id: String, root: String, name: String, data: Map[String, JSON.Value]) -> Extensions.Seen
+  Extensions.Seen(session: id, root: root, name: name, data: JSON.object(data.put("id", JSON.from(id))))
+end
+
+def ended_seen(entry: Entry, reason: String) -> Extensions.Seen
+  lifecycle(entry.summary.id, entry.summary.cwd, "session_ended", {"reason": JSON.from(reason)})
 end
 
 def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
@@ -395,6 +407,7 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
             end
 
             sessions = sessions.select { |e| e.summary.id != id }
+            Extensions.publish(registry.options.observers, ended_seen(entry, "deleted"))
           end
 
           Actor.continue(registry.with(sessions: sessions))
@@ -640,6 +653,7 @@ def entry(
     catalog_wait_ms: options.catalog_wait_ms,
     approver: opened.approver,
     registry: options.registry.map { |served| served.registry },
+    observers: options.observers,
     origin: "#{chosen.provider}/#{chosen.api}",
     endpoint: some(->(name: String, now: String) { switched_endpoint(Config.now(options), name, now) }),
     profiles: some(-> { profiles_of(options, context.root) }),
@@ -647,6 +661,9 @@ def entry(
 
   setup = SessionActor.switched(base, endpoint).with(model: header.model, refused: refusal(options, provider))
   setup = SessionActor.applied(setup, profiles_of(options, context.root), profile)
+  # Before the actor starts: a restore can end a cut turn with events of its own.
+  started = lifecycle(header.id, context.root, "session_started", {"new": JSON.from(saved.none?)})
+  Extensions.publish(options.observers, started)
 
   ok(
     Entry(
