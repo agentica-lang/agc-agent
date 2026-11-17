@@ -33,7 +33,7 @@ With the approvals on, a call of these tools waits for your answer unless a rule
 
 `read_file`, `glob`, `grep`, `activate_skill` and `run_script` never ask. The calls that a `run_script` script makes are checked one by one, as direct calls.
 
-Every `bash` call asks unless an allow rule or an earlier answer allows it, even one that only reads.
+Every `bash` call asks unless an allow rule or an earlier answer allows each of its commands, even one that only reads. A read of a `.env` or `.env.*` file asks too, but `.env.example`; an `allow read_file(*)` rule turns that off.
 
 When no client is attached for 90 seconds, a call that waits is denied. `finn -p` denies such calls unless you add `--yolo`, which allows the calls of its own turns.
 
@@ -46,7 +46,7 @@ Both clients show the call: the tool, its path or command, and what it would wri
 
 The [HTTP API](server.md#routes) takes two more answers:
 
-- `allow_prefix` allows the plain `bash` commands that start with the same words: the first word, or the first two for programs such as `git`, `npm`, `cargo`, `make` or `docker` (`git log`). A plain command has no quotes, `$`, `;`, `|`, `&`, `>` or other character special to bash. For a command that is not plain, or a program that runs another one (`env`, `xargs`, `sudo`, `timeout`, a shell or an interpreter such as `python`), it allows only the same call.
+- `allow_prefix` ("always") allows, for each command of the line, the commands that start with the same words: those of OpenCode's table (`git log *`, `npm run dev *`, `docker compose up *`), else the first word (`ls *`). The request shows them. For a program that runs another one (`env`, `xargs`, `sudo`, `timeout`, a shell or an interpreter such as `python`) or an option among those words (`git -c x=y log`), it allows the same command only, and for a line that tree-sitter-bash cannot read clearly, the same call only.
 - `allow_tool` allows every call of the tool.
 
 The accept-edits mode (`PATCH /v1/sessions/ID` with `{"accept_edits": true}`) runs the calls of `write_file`, `edit_file` and `apply_patch` without asking.
@@ -55,24 +55,40 @@ Answers and the accept-edits mode last until the server restarts. With the appro
 
 ## Rules
 
-A rule is `tool(pattern)`, where `*` matches any text. In a `bash` rule, a `*` right after a letter matches only the end or a space and more: `git status*` matches `git status --short`, not `git statusx`. For the file tools the pattern matches the path, for `bash` the command, and for an MCP tool its JSON input.
+Finn's rules are [OpenCode's](https://opencode.ai/docs/permissions/), with Finn's tool names. A rule is `ACTION TOOL(PATTERN)`: the action `allow`, `ask` or `deny`, and `TOOL` alone means `TOOL(*)`. In the pattern and the tool, `*` matches any text and `?` one character; a pattern that ends in ` *` also matches without it, so `git *` matches `git`. `~` or `$HOME` at the start of a pattern is your home folder. For the file tools the pattern matches the path, for `bash` each command, and for an MCP tool its JSON input.
+
+**The last rule that matches wins**, so put the broad rules first:
 
 ```json
 {
-  "allow": ["bash(npm test*)", "bash(git status*)", "mcp__fs__read_file(*)"],
-  "deny": ["read_file(.env*)", "read_file(*.pem)", "bash(rm -rf *)"]
+  "permission": [
+    "ask bash(*)",
+    "allow bash(git *)",
+    "allow bash(npm test *)",
+    "deny bash(git push *)",
+    "deny read_file(*.pem)",
+    "allow mcp__fs__read_file(*)"
+  ]
 }
 ```
 
-- **Deny rules count with the approvals on or off.** They win over every allow rule and answer ([How rules check bash](#how-rules-check-bash)).
-- **Allow rules** let a call run without asking, with the approvals on.
-- The rules come from your config file and from the project's `.finn/config.json` ([Configuration](config.md)). The project's deny rules always count; its allow rules count only under a [trusted folder](config.md#trusted-folders).
+- Before your rules come the defaults: `ask read_file(*.env)`, `ask read_file(*.env.*)` and `allow read_file(*.env.example)`.
+- When no rule matches, the tool's default holds: with the approvals on, the tools of [What asks](#what-asks) ask and the others run.
+- **Deny rules count with the approvals on or off**, and no answer or mode allows what a rule denies. `ask` and `allow` rules count with the approvals on.
+- The rules come from your config file, then from the project's `.finn/config.json` ([Configuration](config.md)), whose rules come after yours. The project's `ask` and `deny` rules always count; its `allow` rules count only under a [trusted folder](config.md#trusted-folders).
 - A deny rule of `read_file` also denies `edit_file`, and hides the file from `glob`, `grep` and the `@` completion of `finn`. The rules of `read_file`, `edit_file` and `write_file` apply to these file tools only: they do not stop a `bash` command from reading or writing the file (`cat .env` runs).
+- An old config with `"allow"` or `"deny"` stops the start: move its rules into `permission`, as `allow X` and `deny X`.
 
 ### How rules check bash
 
-A `bash` rule matches the whole command text, best effort. `bash(rm *)` refuses `rm -rf x` but not `ls && rm x`, `sudo rm x` or `/bin/rm x`. An allow rule matches only a plain command, so `bash(git status*)` does not allow `git status; rm x`. A `!` command in the clients follows the same rules as a call of `bash`; it never asks, since you typed it.
+Finn reads a `bash` command with [tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash) and checks each command of the line by its text: the parts of `;`, `&&`, `||`, `|`, a line end, `( )` and `$( )`. `deny bash(rm *)` refuses `ls && rm x` and `echo $(rm x)`. If any command is denied the call is denied, else if any asks the call asks.
+
+A command of `cd`, `rm`, `cp`, `mv`, `mkdir`, `touch`, `chmod`, `chown` or `cat` with a path outside the session folder also checks `external_directory(FOLDER/*)`, which runs unless a rule says otherwise: `"ask external_directory(*)"` asks for each such folder. A `cd` is checked only by its folder. A path with `$` or a backtick is not followed, and a `cd` does not move the paths of the commands after it.
+
+A line that tree-sitter-bash cannot read, or one it is known to misread (such as nested backticks), asks even when an allow rule matches; a deny rule that matches the line or one of its commands still denies it.
+
+A `!` command in the clients follows the same rules as a call of `bash`; it never asks, since you typed it.
 
 ## What rules cannot do
 
-Rules are a convenience, not a sandbox. The rules of `read_file`, `edit_file` and `write_file` do not cover `bash`: `read_file(.env)` does not stop `cat .env`. A `bash` deny rule does not see a command written another way, and `bash(git *)` allows `git -c core.fsmonitor=./x.sh status`, which runs `x.sh`. Until the OS sandbox ([#213](https://github.com/agentica-lang/agc-agent/issues/213)) lands, run Finn in a sandbox or a container to keep the model in.
+Rules are a convenience, not a sandbox. The rules of `read_file`, `edit_file` and `write_file` do not cover `bash`: `read_file(.env)` does not stop `cat .env`. A `bash` deny rule does not see a command written another way (`sudo rm x`, `/bin/rm x`, `sh -c 'rm x'`), and `bash(git *)` allows `git -c core.fsmonitor=./x.sh status`, which runs `x.sh`. Until the OS sandbox ([#213](https://github.com/agentica-lang/agc-agent/issues/213)) lands, run Finn in a sandbox or a container to keep the model in.

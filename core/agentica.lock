@@ -1,6 +1,13 @@
 version = 1
 
 [[package]]
+name = "bash"
+git = "https://github.com/agentica-lang/agc-agent"
+subdir = "bash"
+tag = "bash-0.0.1"
+workspace = true
+
+[[package]]
 name = "bond"
 git = "https://github.com/agentica-lang/bond"
 tag = "0.14.0"

@@ -3,11 +3,11 @@
 ## Security model. The tools keep a call inside the session folder and the approval rules (when the approval extension
 ## is on) decide what asks, but neither is a sandbox:
 ## - An allow pattern is a convenience. Allowing a program allows every option it takes and every config file it reads:
-##   `bash(git diff*)` allows `git diff --output=../x`, which writes outside the folder, `bash(git *)` allows
+##   `bash(git diff *)` allows `git diff --output=../x`, which writes outside the folder, `bash(git *)` allows
 ##   `git -c alias.x=!cmd x`, which runs `cmd`, and `bash(cat src/*)` allows `cat src/../../outside/secret`. Allow only
 ##   what is harmless with every option and argument.
-## - A bash rule matches the whole command text, so a deny rule of `bash` is best effort: `bash(rm *)` refuses
-##   `rm x; true` but not `true; rm x`. An allow rule matches only a plain command.
+## - A bash rule matches each command of the line as tree-sitter-bash reads it, so a deny rule of `bash` is best
+##   effort: `bash(rm *)` refuses `true; rm x` but not `sudo rm x`, `/bin/rm x` or `sh -c 'rm x'`.
 ## - A deny rule of `read_file` also denies `edit_file` and hides the file from `glob` and `grep`, but not from `bash`.
 ## - Bash runs as the user of the server and can read what the server reads (see `Shell`). A path is checked before it
 ##   is used, and bash is the only way to run something in parallel, so the check can race with a swapped link.

@@ -6,8 +6,8 @@ import Permissions from "../src/approval/permissions"
 import Tools from "../src/tools/tools"
 import H from "support/harness"
 
-# `allow_prefix` allows the next `git add`, `allow_tool` every bash call after it; the request says the prefix, and
-# after the first answer only the `cat | tee`, which writes, asks.
+# `allow_prefix` allows the next `git add`, `allow_tool` every bash call after it; the request says what each
+# command's "always" allows, and after the first answer only the `cat | tee` asks.
 def test_session_answers_allow_a_prefix_or_the_whole_tool() -> Result[Void]
   replies = ["git_add_a.sse", "git_add_b.sse", "bash.sse", "bash_echo.sse", "text.sse"]
   H.using(H.Setup(replies: replies)) do |h|
@@ -16,11 +16,11 @@ def test_session_answers_allow_a_prefix_or_the_whole_tool() -> Result[Void]
     _ = try H.send(h, id, "Add both, then show and echo.")
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
     add = try H.approval(a)
-    try Test.eq([add.preview, add.prefix.unwrap_or("")], ["git add a.txt", "git add"])
+    try Test.eq([add.preview, add.prefix.unwrap_or("")], ["git add a.txt", "git add *"])
     _ = try H.approve(h, id, add.approval_id, Protocol.Decision.AllowPrefix)
     a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
     cat = try H.approval(a)
-    try Test.eq([cat.preview, cat.prefix.unwrap_or("none")], ["cat hello.txt | tee copy.txt", "none"])
+    try Test.eq([cat.preview, cat.prefix.unwrap_or("none")], ["cat hello.txt | tee copy.txt", "cat *, tee *"])
     _ = try H.approve(h, id, cat.approval_id, Protocol.Decision.AllowTool)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
@@ -57,11 +57,11 @@ def test_accept_edits_is_refused_without_the_extension() -> Result[Void]
   end
 end
 
-# A project file adds its deny rules; its allow rules count only in a trusted folder.
+# A project file adds its rules after the user's; its allow rules count only in a trusted folder.
 def test_a_project_file_denies_anywhere_and_allows_only_when_trusted() -> Result[Void]
   H.using(H.Setup(replies: ["bash_read.sse", "text.sse"])) do |h|
     try Dir.mkdir("#{h.work}/.finn")
-    rules = "{\"allow\": [\"write_file(*)\"], \"deny\": [\"bash(cat *)\"]}"
+    rules = "{\"permission\": [\"allow write_file(*)\", \"deny bash(cat *)\"]}"
     try File.write_text("#{h.work}/.finn/config.json", rules)
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
@@ -71,12 +71,11 @@ def test_a_project_file_denies_anywhere_and_allows_only_when_trusted() -> Result
     try Test.assert(H.kinds(a.seen).include?("tool_finished"), "no tool ran")
     try Test.eq(H.kinds(a.seen).select { |k| k == "approval_requested" }.size, 0)
 
-    base = Approval.Rules(allow: [], deny: [])
+    base = Approval.Rules(all: [])
     untrusted = try Permissions.with_project(base, h.work, false)
     trusted = try Permissions.with_project(base, h.work, true)
-    try Test.eq([untrusted.allow.size, untrusted.deny.size], [0, 1])
-    try Test.eq([trusted.allow.size, trusted.deny.size], [1, 1])
-    try File.write_text("#{h.work}/.finn/config.json", "{\"allow\": [\"npm test\"]}")
+    try Test.eq([untrusted.all.size, trusted.all.size], [1, 2])
+    try File.write_text("#{h.work}/.finn/config.json", "{\"permission\": [\"npm test\"]}")
     try Test.eq(Permissions.with_project(base, h.work, false), ok(base))
     Test.eq(Permissions.with_project(base, h.work, true).ok?, false)
   end
@@ -144,13 +143,13 @@ def test_with_the_approvals_off_a_bash_deny_rule_refuses_and_a_read_rule_does_no
   end
 end
 
-# The verdict of a `bash` call: a deny rule that matches the command text wins over every allow rule, in both modes.
-# Rules match the whole text, best effort: `bash(rm *)` does not match `ls && rm x`, and an allow rule matches only a
-# plain command. A `read_file` rule does not refuse `cat .env`. With the asking on, what no allow rule matches asks.
-def test_a_deny_rule_wins_over_an_allow_rule_for_bash() -> Result[Void]
-  deny = ["read_file(.env*)", "bash(rm *)"]
-  allowed = try Approval.parse_rules(["bash(*)"], deny)
-  bare = try Approval.parse_rules([], deny)
+# The verdict of a `bash` call, in both modes: each command of the line is checked, so `bash(rm *)` after
+# `bash(*)` denies `ls && rm x`. A `read_file` rule does not refuse `cat .env`. With the asking on, what no rule allows
+# asks.
+def test_a_deny_rule_after_an_allow_rule_wins_for_bash() -> Result[Void]
+  deny = ["deny read_file(.env*)", "deny bash(rm *)"]
+  allowed = try Approval.parse_rules(["allow bash(*)"] + deny)
+  bare = try Approval.parse_rules(deny)
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
   ctx = try Tools.context(root, ->(_name: String) { error("unset") })
   commands = ["rm -rf x", "ls && rm x", "cat .env", "git status"]
@@ -164,15 +163,15 @@ def test_a_deny_rule_wins_over_an_allow_rule_for_bash() -> Result[Void]
   try Test.eq(
     shown,
     [
-      ["Verdict.Deny", "Verdict.Allow", "Verdict.Allow", "Verdict.Allow"],
-      ["Verdict.Deny", "Verdict.Ask", "Verdict.Allow", "Verdict.Allow"],
-      ["Verdict.Deny", "Verdict.Allow", "Verdict.Allow", "Verdict.Allow"],
-      ["Verdict.Deny", "Verdict.Ask", "Verdict.Ask", "Verdict.Ask"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Allow"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Allow"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Allow", "Verdict.Allow"],
+      ["Verdict.Deny", "Verdict.Deny", "Verdict.Ask", "Verdict.Ask"],
     ],
   )
 
   # A `*` matches across a line end: a command of two lines is refused in both modes.
-  everything = try Approval.parse_rules([], ["bash(*)"])
+  everything = try Approval.parse_rules(["deny bash(*)"])
   for asking in [false, true]
     a = Extension.open(everything, root, false, asking).unwrap!
     b = Extension.open(bare, root, false, asking).unwrap!
@@ -239,23 +238,27 @@ def test_by_default_tools_run_without_asking_and_a_project_cannot_ask() -> Resul
   end
 end
 
-# A session allow keeps the deny rules: a command one matches is not allowed through a prefix or the whole tool. A
-# prefix allows only a plain command; git's --output writes. A `read_file` rule does not touch bash: a prefix of `cat`
-# allows `cat .env`.
+# A session allow keeps the deny rules: a command one matches is not allowed through an "always" answer or the whole
+# tool, nor a line with a command no answer allows. A `read_file` rule does not touch bash: `cat *` allows `cat .env`.
 def test_session_allows_keep_the_deny_rules() -> Result[Void]
-  rules = try Approval.parse_rules([], ["bash(rm -rf *)", "bash(git push*)", "read_file(.env)"])
-  prefixes = Permissions.Allows(prefixes: [["rm"], ["git", "push"], ["git", "status"], ["git", "log"], ["cat"]])
+  root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
+  rules = try Approval.parse_rules(["deny bash(rm -rf *)", "deny bash(git push*)", "deny read_file(.env)"])
+  always = ["rm *", "git push *", "git status *", "cat *"].map { |p|
+    Approval.Rule(action: Tools.Verdict.Allow, tool: "bash", pattern: p)
+  }
+
+  answers = Permissions.Allows(rules: always)
   whole = Permissions.Allows(tools: ["bash"])
   for command in ["rm -rf 'x'", "git push '--force' origin", "git push"]
-    try Test.eq([command, Permissions.allows?(prefixes, rules, "bash", command).to_s], [command, "false"])
-    try Test.eq([command, Permissions.allows?(whole, rules, "bash", command).to_s], [command, "false"])
+    try Test.eq([command, Permissions.allows?(answers, rules, root, "bash", command).to_s], [command, "false"])
+    try Test.eq([command, Permissions.allows?(whole, rules, root, "bash", command).to_s], [command, "false"])
   end
 
-  refused = ["git status; rm x", "git status $(rm x)", "git log --output=x"]
-  try Test.eq(refused.select { |c| Permissions.allows?(prefixes, rules, "bash", c) }, [])
-  try Test.eq(Permissions.allows?(prefixes, rules, "bash", "git status --short"), true)
-  try Test.eq(Permissions.allows?(prefixes, rules, "bash", "cat .env"), true)
-  Test.eq(Permissions.allows?(whole, rules, "bash", "ls -la"), true)
+  refused = ["git status; ls", "git status $(id)", "git status && rm -rf x"]
+  try Test.eq(refused.select { |c| Permissions.allows?(answers, rules, root, "bash", c) }, [])
+  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "git status --short | cat"), true)
+  try Test.eq(Permissions.allows?(answers, rules, root, "bash", "cat .env"), true)
+  Test.eq(Permissions.allows?(whole, rules, root, "bash", "ls -la"), true)
 end
 
 # An edit of two files, one under .git/, is protected: neither accept edits nor allow_tool runs it.
@@ -264,23 +267,7 @@ def test_a_patch_that_touches_git_is_never_allowed_by_the_session() -> Result[Vo
   edits = Permissions.Allows(accept_edits: true, tools: ["apply_patch"])
   try Test.eq(Approval.protected?("apply_patch", target), true)
   try Test.eq(Approval.protected?("apply_patch", "a.txt, b/.gitignore"), false)
-  Test.eq(Permissions.allows?(edits, Approval.Rules(allow: [], deny: []), "apply_patch", target), false)
-end
-
-# The prefix of a program of two words is its first two; with an option second, an answer allows the same call only.
-def test_the_prefix_of_a_command() -> Result[Void]
-  try Test.eq(Permissions.prefix("bash", "git log -n 3"), some(["git", "log"]))
-  try Test.eq(Permissions.prefix("bash", "git -c a=b log"), none)
-  try Test.eq(Permissions.prefix("bash", "ls -la"), some(["ls"]))
-  try Test.eq([Permissions.prefix("bash", "env A=1 make"), Permissions.prefix("bash", "python3 x.py")], [none, none])
-  runners = [
-    "stdbuf -oL git push", "chrt -f 10 make", "ionice -c3 make", "setsid make", "doas git push", "flock x make",
-    "watch ls", "script -c ls", "dash -c ls", "ksh x.sh", "fish x.fish",
-  ]
-
-  try Test.eq(runners.map { |command| Permissions.prefix("bash", command) }.select { |p| p.some? }, [])
-  try Test.eq(Permissions.prefix("bash", "LANG=C ls"), none)
-  Test.eq(Permissions.prefix("bash", "ls | wc"), none)
+  Test.eq(Permissions.allows?(edits, Approval.Rules(all: []), "/", "apply_patch", target), false)
 end
 
 # A deny rule of `read_file` does not touch bash: the request still offers a prefix.
@@ -294,7 +281,7 @@ def test_a_read_deny_rule_keeps_the_prefix_of_the_request() -> Result[Void]
     _ = try H.approve(h, id, add.approval_id, Protocol.Decision.Deny)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
-    Test.eq([add.preview, add.prefix.unwrap_or("none")], ["git add a.txt", "git add"])
+    Test.eq([add.preview, add.prefix.unwrap_or("none")], ["git add a.txt", "git add *"])
   end
 end
 
@@ -303,10 +290,11 @@ end
 def test_the_user_config_turns_approvals_on_with_its_rules() -> Result[Void]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-perm-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)
-  rules = "\"allow\": [\"bash(npm test*)\"], \"deny\": [\"read_file(.env)\"]"
+  rules = "\"permission\": [\"allow bash(npm test *)\", \"deny read_file(.env)\"]"
   try File.write_text("#{dir}/on.json", "{\"approvals\": true, #{rules}}")
   try File.write_text("#{dir}/off.json", "{#{rules}}")
-  try File.write_text("#{dir}/bad.json", "{\"allow\": [\"npm test\"]}")
+  try File.write_text("#{dir}/bad.json", "{\"permission\": [\"npm test\"]}")
+  try File.write_text("#{dir}/old.json", "{\"allow\": [\"bash(npm test*)\"]}")
   sizes = ->(config: String, switch: String) { rule_sizes(dir, config, switch) }
   results = [
     sizes.call("#{dir}/on.json", ""),
@@ -317,15 +305,15 @@ def test_the_user_config_turns_approvals_on_with_its_rules() -> Result[Void]
     sizes.call("", "1"),
   ]
 
-  failed = [sizes.call("#{dir}/bad.json", "0").ok?, sizes.call("#{dir}/none.json", "").ok?, sizes.call("", "2").ok?]
+  failed = ["bad", "old", "none"].map { |name| sizes.call("#{dir}/#{name}.json", "0").ok? } + [sizes.call("", "2").ok?]
   _ = Path.remove(dir)
-  try Test.eq(results, [ok([1, 1, 1]), ok([1, 1, 0]), ok([1, 1, 1]), ok([1, 1, 0]), ok([0, 0, 0]), ok([0, 0, 1])])
-  Test.eq(failed, [false, false, false])
+  try Test.eq(results, [ok([2, 1]), ok([2, 0]), ok([2, 1]), ok([2, 0]), ok([0, 0]), ok([0, 1])])
+  Test.eq(failed, [false, false, false, false])
 end
 
 private
 
-# The sizes of the allow and deny rules, and 1 when calls ask.
+# How many rules, and 1 when calls ask.
 def rule_sizes(dir: String, config: String, switch: String) -> Result[List[Int]]
   options = try Config.from_env(->(n) { env(dir, n, config, switch) })
   rules = try options.approvals.to_result("no rules")
@@ -334,7 +322,7 @@ def rule_sizes(dir: String, config: String, switch: String) -> Result[List[Int]]
     asking = 1
   end
 
-  ok([rules.allow.size, rules.deny.size, asking])
+  ok([rules.all.size, asking])
 end
 
 def env(dir: String, name: String, config: String, switch: String) -> Result[String]

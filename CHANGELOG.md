@@ -10,7 +10,11 @@
 - **Breaking:** the command is `finn` and variables are `FINN_*`; most `AGC_AGENT_*` names still work.
 - **Breaking:** an old `agc-agent` `config.json`, `AGC_AGENT_CONFIG` or `AGC_AGENT_MCP_CONFIG` stops `finn serve` and says where to move it; an old `auth.json` warns.
 - **Breaking:** with approvals on, a `bash` command that only reads asks too; only an allow rule or an answer runs it.
-- `bash` rules match the whole command text, best effort, and deny rules win over allow rules; file rules cover the file tools only.
+- **Breaking:** rules are OpenCode's: one `permission` list (`"allow bash(git *)"`, `"ask read_file(*.env)"`), the last match wins; `allow` and `deny` keys stop the start.
+- `bash` rules check each command of the line (tree-sitter-bash); a line it cannot read clearly asks. File rules cover the file tools only.
+- "Always" (`allow_prefix`) allows each command's first words from OpenCode's arity table (`npm run dev *`).
+- `external_directory` rules check the paths outside the session folder that `cd`, `rm`, `cp` and the like name.
+- With approvals on, reads of `.env` files ask by default.
 - `finn chat` and `finn tui` refuse a server of another version and say how to stop it.
 
 ### Added
