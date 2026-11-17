@@ -107,8 +107,9 @@ private
 
 LOCAL = "local"
 
-# A session on `local` (the fallback of a first start) moves to the provider just set up: on its only model, else the
-# picker shows its models (Esc stays). Another session stays where it is; `said` then tells how to pick a model.
+# A session on `local` (the fallback of a first start) is offered the models of the provider just set up, in the
+# picker: Enter moves it there from the next turn, Esc keeps it on `local`, which may be on purpose. Another session
+# stays where it is; `said` then tells how to pick a model.
 def moved(app: State.Model, name: String, said: String) -> State.Model
   return State.noted(app, "#{said}: /model lists its models") if app.login_only or app.id == ""
 
@@ -119,21 +120,10 @@ def moved(app: State.Model, name: String, said: String) -> State.Model
       return State.noted(app, "#{said}: /model #{name}/NAME picks one of its models") if models.empty?
       return State.noted(app, "#{said}: /model lists its models") if name == LOCAL or provider_of(app) != LOCAL
 
-      if models.size > 1
-        shown = State.noted(app, "#{said}: pick a model of #{name}, or Esc to stay on #{LOCAL}")
-        return shown.with(picker: some(Picker.models(list.with(providers: own), "")))
-      end
-
-      State.tried(app, switched(app, name, models[0], said))
+      shown = State.noted(app, "#{said}: pick a model of #{name}, or Esc to stay on #{LOCAL}")
+      shown.with(picker: some(Picker.models(list.with(providers: own), "")))
     error(e) -> State.noted(State.noted(app, said), "error: #{e.message}")
   end
-end
-
-def switched(app: State.Model, name: String, model: String, said: String) -> Result[State.Model]
-  try app.backend.update_session.call(app.id, Protocol.UpdateSession(provider: some(name), model: some(model)))
-  session = try app.backend.session.call(app.id)
-  shown = State.noted(app, "#{said}: #{name}/#{model} from the next turn")
-  ok(shown.with(serving: State.serving_of(session), new_model: some(model)))
 end
 
 def provider_of(app: State.Model) -> String = app.serving.split("/")[0]

@@ -480,9 +480,9 @@ class PtyTest(unittest.TestCase):
         return terminal
 
     def test_a_first_start_login_moves_the_session_to_the_new_provider(self) -> None:
-        """A first start with no provider set up offers a login. A key for a provider of the config file moves the
-        session from the local fallback, where no server answers, to that provider: the footer names it and the next
-        turn goes to it."""
+        """A first start with no provider set up offers a login. A key for a provider of the config file offers its
+        models in the picker, and the pick moves the session from the local fallback, where no server answers, to that
+        provider: the footer names it and the next turn goes to it."""
         base = self.folder()
         model = self.model([Reply("text.sse")])
         config = base / "home" / ".config" / "finn"
@@ -499,6 +499,8 @@ class PtyTest(unittest.TestCase):
         terminal.type("\r")
         terminal.wait_for("the key of box")
         terminal.type("sk-test\r")
+        terminal.wait_for("pick a model of box")
+        terminal.type("\r")
         rows = terminal.wait_for("box/test-model from the next turn")
         self.assertTrue(any("(box) test-model" in row for row in rows), text_of(rows))
         terminal.type("hello\r")
@@ -506,8 +508,9 @@ class PtyTest(unittest.TestCase):
         self.assertEqual(model.requests.get(timeout=TIMEOUT)["model"], "test-model")
 
     def test_a_pick_in_a_list_or_a_picker_is_the_one_applied(self) -> None:
-        """Enter on the list of a command's argument runs the command with the selected row, and no picker opens after
-        it; `/model` alone opens one picker, whose pick closes it. Each pick is the one applied."""
+        """Enter on the list of a command's argument runs the command with the row moved to, from the session's model or
+        level, and no picker opens after it; `/model` alone opens one picker, whose pick closes it. Each pick is the
+        one applied."""
         base = self.folder()
         model = self.model([])
         config = base / "home" / ".config" / "finn"
@@ -520,10 +523,11 @@ class PtyTest(unittest.TestCase):
         self.addCleanup(terminal.close)
         terminal.wait_for("ready")
         down = "\x1b[B"
+        up = "\x1b[A"
         for typed, listed, keys, applied, footer in [
-            ("/mo\r", "box/m2", down, "model box/m2 from the next turn", "(box) m2"),
+            ("/mo\r", "box/m2", up * 20 + down, "model box/m2 from the next turn", "(box) m2"),
             ("/model\r", "pick a model", "m1", "model box/m1 from the next turn", "(box) m1"),
-            ("/thinking ", "medium", down * 2, "thinking high from the next turn", "(box) m1 · high"),
+            ("/thinking ", "medium", up, "thinking high from the next turn", "(box) m1 · high"),
         ]:
             terminal.type(typed)
             terminal.wait_for(listed)

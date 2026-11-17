@@ -120,7 +120,7 @@ The command runs as the `bash` tool would, with a timeout of 10 minutes. It neve
 | Ctrl+T | show or hide the thinking |
 | Ctrl+O | show or hide the tool output |
 | `@` | complete a file path of the session folder; the paths come from the server, which walks the folder or runs the command of your config ([The files command](config.md#the-files-command)) |
-| `/` | complete a command; Esc then Enter sends the text as typed. After `/model `, `/resume `, `/tree `, `/fork ` or `/thinking ` the list holds the models, sessions, messages or levels the server gives: Tab puts the selected one in. Enter runs the command with the row you moved to, or with the first when nothing is typed after the command; a typed argument, or the line after Esc, is sent as typed |
+| `/` | complete a command; Esc then Enter sends the text as typed. After `/model `, `/resume `, `/tree `, `/fork ` or `/thinking ` the list holds the models, sessions, messages or levels the server gives, starting on the session's model or level: Tab puts the selected one in. Enter runs the command with the row you moved to; otherwise the line is sent as typed, and the command alone opens its picker |
 | Up, Down | move between the rows of the prompt, keeping the column; Up on an empty prompt shows the earlier messages you sent, and while one is shown, Up from its first row and Down from its last row go through them |
 | Ctrl+A, Ctrl+E | the start or the end of the line |
 | Ctrl+Left, Ctrl+Right, Alt+Left, Alt+Right, Alt+B, Alt+F | the word before or after; a word move stops at the end of a line |
