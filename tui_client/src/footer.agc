@@ -8,6 +8,8 @@ import Width from "width"
 ## The characters of the first message that name the session.
 TITLE_CHARS = 40
 MAX_USD = 1_000_000.0
+## The most parts `counts` drops.
+LEAST = 3
 
 ## Where the session is: `cwd` with `home` as `~`, the branch in parentheses and `title`, one line.
 def place(cwd: String, home: String, branch: String, title: String, width: Int) -> String
@@ -28,8 +30,9 @@ def place(cwd: String, home: String, branch: String, title: String, width: Int) 
   padded(" #{parts.join(" · ")}", width)
 end
 
-## The status row: `state` (as `ready`), then the counts of `usage`, then the `hints` that fit before `right`, which
-## ends the row.
+## The status row: `state` (as `ready`), the counts of `usage`, the `hints` that fit, and `right` (the model) at its
+## end, at least two cells after them. When the row is too narrow, the counts lose the part cached, then the window,
+## then the cache read, and then `right` is cut.
 def status(
   state: List[String],
   usage: Optional[Protocol.Usage],
@@ -37,13 +40,20 @@ def status(
   right: String,
   width: Int,
 ) -> String
-  parts = state
-  for used in option_list(usage)
-    parts = parts.push(counts(used))
+  room = width - Width.text(right) - 3
+  text = left(state, usage, 0)
+  for detail in 1..LEAST
+    break if Width.text(text) <= room
+
+    text = left(state, usage, detail)
   end
 
-  text = " #{parts.join(" · ")}"
-  room = width - Width.text(right) - 2
+  model = right
+  if Width.text(text) > room
+    model = cut(right, width - Width.text(text) - 3)
+  end
+
+  room = width - Width.text(model) - 3
   for hint in hints
     more = "#{text} · #{hint}"
     if text == " "
@@ -55,19 +65,19 @@ def status(
     text = more
   end
 
-  return padded(text, width) if right.empty? or Width.text(text) + Width.text(right) + 2 > width
+  return padded(text, width) if model.empty?
 
-  text + " " * (width - Width.text(text) - Width.text(right) - 1) + right + " "
+  text + " " * (width - Width.text(text) - Width.text(model) - 1) + model + " "
 end
 
 ## The last call: `↑` its whole prompt (cached included), `↓` its output, `R` the prompt read from the cache and the
 ## part of the prompt it was; then the session's cost, and the prompt as a part of the window (in tokens while the
-## window is not known).
-def counts(usage: Protocol.Usage) -> String
+## window is not known). Each `detail` drops one more part: the part cached, then the window, then the cache read.
+def counts(usage: Protocol.Usage, detail: Int = 0) -> String
   parts = ["↑#{tokens(usage.context)}", "↓#{tokens(usage.call_output.unwrap_or(usage.output))}"]
-  if usage.cache_read > 0
+  if usage.cache_read > 0 and detail < 3
     parts = parts.push("R#{tokens(usage.cache_read)}")
-    if usage.context > 0
+    if usage.context > 0 and detail < 1
       parts = parts.push("#{usage.cache_read * 100 / usage.context}% cached")
     end
   end
@@ -75,6 +85,8 @@ def counts(usage: Protocol.Usage) -> String
   for cost in option_list(usage.session_cost)
     parts = parts.push(money(cost))
   end
+
+  return parts.join(" ") if detail >= 2
 
   case usage.window
     some(window) if window > 0 -> parts.push("#{tenths(usage.context * 1000 / window)}%/#{tokens(window)}").join(" ")
@@ -115,6 +127,18 @@ def model(serving: String, level: Optional[String]) -> String
 end
 
 private
+
+def left(state: List[String], usage: Optional[Protocol.Usage], detail: Int) -> String
+  " #{(state + option_list(usage).map { |u| counts(u, detail) }).join(" · ")}"
+end
+
+# `text` in `cells` cells at most, its end replaced by `…` when cut; "" when there is no room.
+def cut(text: String, cells: Int) -> String
+  return text if Width.text(text) <= cells
+  return "" if cells < 2
+
+  "#{Width.cut(text, cells - 1)[0]}…"
+end
 
 def short_path(cwd: String, given: String) -> String
   home = given

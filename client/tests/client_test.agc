@@ -109,9 +109,11 @@ def test_the_tree_is_listed_depth_first_and_picked_by_number() -> Result[Void]
   Test.error?(Client.tree_entry(tree, "x+"))
 end
 
-# What a client echoes of another's text stays on one line, with no terminal escapes.
+# What a client echoes of another's text stays on one line, with no terminal escapes or bidi controls.
 def test_printable_turns_control_characters_into_spaces() -> Result[Void]
-  Test.eq(Client.printable("a#{String.from_code(27)}[2Jb\nc\td"), "a [2Jb c d")
+  try Test.eq(Client.printable("a#{String.from_code(27)}[2Jb\nc\td"), "a [2Jb c d")
+  bidi = [0x202E, 0x2067, 0x200F, 0x061C].map { |code| String.from_code(code) }.join("")
+  Test.eq(Client.printable("main#{bidi}live#{String.from_code(0x85)}"), "main    live ")
 end
 
 # `/model provider/model` moves to a provider of the list, unless the session's provider lists that name; any other

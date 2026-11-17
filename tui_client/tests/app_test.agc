@@ -624,11 +624,10 @@ def model_of(width: Int, height: Int) -> App.Model
   App.seed(Client.Server(url: "http://127.0.0.1:1", token: ""), options, Channel.new(1), width, height)
 end
 
-# The footer: the folder (home as ~), the branch and the first line of the first user message (not a command the
-# prompt history has); then the status, the last model call (its prompt, its output, the cache read and the part
-# cached), the session's cost, the prompt in the window, and the model with its level on the right. A `usage` event
-# updates it, the end of a turn reads the branch again, and the branch of a
-# session opened since is dropped.
+# The footer: the folder (home as ~), the branch and the first line of the first user message (not a command the prompt
+# history has); then the status, the last model call (its prompt, its output, the cache read and the part cached), the
+# session's cost, the prompt in the window, and the model with its level on the right. A `usage` event updates it, the
+# end of a turn reads the branch again, and the branch of a session opened since is dropped.
 def test_the_footer_shows_the_place_the_usage_and_the_model() -> Result[Void]
   model = model_of(100, 8).with(
     id: "s1",

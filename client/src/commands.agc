@@ -178,14 +178,16 @@ def pick(list: Protocol.SessionList, choice: String) -> Result[String]
   end
 end
 
-## The text on one line, each control character a space: what a client echoes of what another typed.
+## The text on one line, each control character (bidi ones too) a space: what a client echoes of what another typed.
 def printable(text: String) -> String = text.split("").map { |c| shown(c) }.join("")
 
 private
 
+# A control character (C0, C1) or a bidi control, which could reorder what the screen shows, becomes a space.
 def shown(c: String) -> String
   code = c.code
-  return " " if code < 0x20 or (code >= 0x7f and code < 0xa0)
+  return " " if code < 0x20 or (code >= 0x7f and code < 0xa0) or [0x061C, 0x200E, 0x200F].include?(code)
+  return " " if (code >= 0x202A and code <= 0x202E) or (code >= 0x2066 and code <= 0x2069)
 
   c
 end
