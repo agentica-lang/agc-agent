@@ -54,6 +54,7 @@ def steps(dir: String, command: List[String]) -> Result[Void]
 
   logs = try run(dir, ["logs"])
   try Test.assert(logs.lines.any? { |line| line.include?("listening on 127.0.0.1") }, "the log: #{logs.lines}")
+  try Test.assert(logs.lines.any? { |line| line.start_with?("approvals are off") }, "the log: #{logs.lines}")
 
   restarted = try run(dir, ["restart"], command)
   try Test.assert(restarted.code == 0, "restart: #{restarted.errors}")
@@ -61,6 +62,7 @@ def steps(dir: String, command: List[String]) -> Result[Void]
   status = try run(dir, ["status"])
   try Test.assert(status.lines.include?("  sessions 0"), "status: #{status.lines}")
   try Test.assert(status.lines.include?("  running turns 0"), "status: #{status.lines}")
+  try Test.assert(status.lines.include?("  approvals off (tools run without asking)"), "status: #{status.lines}")
   try Test.assert(try pid_of(status) != first, "restart started another process")
 
   stopped = try run(dir, ["stop"])

@@ -65,7 +65,7 @@ def parse(args: List[String]) -> Result[Command]
   parser = OP.new(
     "finn",
     "The line-mode client of Finn Agent: it starts the server when none runs, and leaves it running. With -p it " +
-    "runs one task: the answer on stdout, the rest on stderr, approvals denied unless --yolo; the exit code is 0 " +
+    "runs one task: the answer on stdout, the rest on stderr, approvals (when on) denied unless --yolo; exit 0 " +
     "when the turn ends normally (even after a denied call), 130 when it is cancelled, 1 otherwise.",
     [],
     [
@@ -88,7 +88,7 @@ def parse(args: List[String]) -> Result[Command]
       Opt(
         name: "yolo",
         kind: Kind.Flag,
-        help: "allow the tool calls of the turns this client starts without asking (also in one-shot)",
+        help: "with approvals on (FINN_APPROVALS=1), allow the tool calls of the turns this client starts (also -p)",
       ),
       Opt(name: "delete", help: "id of a session to delete (with its file), then exit"),
       Opt(name: "logout", help: "remove the stored key of this provider (all: every stored key), then exit"),

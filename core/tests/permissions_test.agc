@@ -45,6 +45,16 @@ def test_accept_edits_runs_writes_without_asking() -> Result[Void]
   end
 end
 
+# Without the approval extension there is no mode to turn on: the update is refused.
+def test_accept_edits_is_refused_without_the_extension() -> Result[Void]
+  H.using(H.Setup(replies: [], approvals: false)) do |h|
+    id = try H.new_session(h)
+    patched = try H.call(h, "PATCH", Protocol.session_path(id), "{\"accept_edits\": true}", H.auth(h))
+    try Test.eq(patched.status, 400)
+    Test.eq((try H.session(h, id)).accept_edits, false)
+  end
+end
+
 # A project file adds its deny rules; its allow rules count only in a trusted folder.
 def test_a_project_file_denies_anywhere_and_allows_only_when_trusted() -> Result[Void]
   H.using(H.Setup(replies: ["bash_read.sse", "text.sse"])) do |h|
@@ -67,6 +77,102 @@ def test_a_project_file_denies_anywhere_and_allows_only_when_trusted() -> Result
     try File.write_text("#{h.work}/.finn/config.json", "{\"allow\": [\"npm test\"]}")
     try Test.eq(Permissions.with_project(base, h.work, false), ok(base))
     Test.eq(Permissions.with_project(base, h.work, true).ok?, false)
+  end
+end
+
+# The deny rules count with the approvals on and off: a `read_file` rule hides its files from `glob` and `grep`, and a
+# `bash` rule refuses a command of the model and a `!` command, without asking.
+def test_the_deny_rules_count_with_the_approvals_on_or_off() -> Result[Void]
+  for on in [true, false]
+    replies = ["glob.sse", "grep.sse", "bash_rm.sse", "text.sse"]
+    try H.using(H.Setup(replies: replies, approvals: on, deny: ["read_file(secret*)", "bash(rm *)"])) do |h|
+      try File.write_text("#{h.work}/secret.txt", "x")
+      try File.write_text("#{h.work}/open.txt", "x")
+      id = try H.new_session(h)
+      a = try H.subscribe(h, id)
+      _ = try H.send(h, id, "List the files, find x, then remove one.")
+      a = try H.until(a, Protocol.EventKind.TurnFinished)
+      H.close(a)
+      text = try File.read_text(H.session_file(h, id))
+      shell = try H.post(
+        h,
+        Protocol.shell_path(id),
+        Protocol.encode_run_shell(Protocol.RunShell(command: "rm open.txt", context: true)),
+      )
+
+      seen = [
+        text.include?("open.txt:1:x"),
+        text.include?("secret.txt"),
+        File.stat("#{h.work}/open.txt").ok?,
+        H.kinds(a.seen).include?("approval_requested"),
+        shell.status == 403,
+      ]
+
+      Test.eq([on] + seen, [on, true, false, true, false, true])
+    end
+  end
+
+  ok()
+end
+
+# With the approvals off nobody can be asked: a bash command that the deny rules cannot clear (not plain, or any while
+# a `read_file` rule exists) is refused from the model and as a `!` command, and a `write_file` rule refuses a write.
+def test_with_the_approvals_off_a_command_the_deny_rules_cannot_clear_is_refused() -> Result[Void]
+  replies = ["bash_rm_then_true.sse", "bash_rm_quoted.sse", "bash_cat_secret.sse", "write_open.sse", "text.sse"]
+  deny = ["read_file(secret*)", "bash(rm *)", "write_file(open*)"]
+  H.using(H.Setup(replies: replies, approvals: false, deny: deny)) do |h|
+    try File.write_text("#{h.work}/secret.txt", "s3cr3t")
+    try File.write_text("#{h.work}/open.txt", "x")
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Remove open.txt, show secret.txt, then change open.txt.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    text = try File.read_text(H.session_file(h, id))
+    statuses: List[Int] = []
+    for command in ["rm open.txt; true", "rm \"open.txt\"", "cat secret.txt"]
+      run = Protocol.RunShell(command: command, context: true)
+      statuses = statuses.push((try H.post(h, Protocol.shell_path(id), Protocol.encode_run_shell(run))).status)
+    end
+
+    try Test.eq(File.read_text("#{h.work}/open.txt"), ok("x"))
+    try Test.eq([text.include?("s3cr3t"), H.kinds(a.seen).include?("approval_requested")], [false, false])
+    Test.eq(statuses, [403, 403, 403])
+  end
+end
+
+# With the approvals off a `read_file` rule refuses only the bash commands that name a file it hides: `ls` and
+# `git status` run.
+def test_with_the_approvals_off_a_read_rule_leaves_other_commands_running() -> Result[Void]
+  replies = ["bash_ls.sse", "bash_git_status.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, approvals: false, deny: ["read_file(secret*)"])) do |h|
+    try File.write_text("#{h.work}/secret.txt", "s3cr3t")
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "List the files, then show the git status.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    text = try File.read_text(H.session_file(h, id))
+    try Test.eq(H.kinds(a.seen).select { |k| k == "tool_finished" }.size, 2)
+    Test.eq([text.include?("denied by a rule"), text.include?("secret.txt")], [false, true])
+  end
+end
+
+# The default, from an environment with no switch and no config file: a call runs without asking, and a project file
+# cannot turn the approvals on.
+def test_by_default_tools_run_without_asking_and_a_project_cannot_ask() -> Result[Void]
+  read = ->(name: String) { env("/nonexistent-finn-home", name, "", "") }
+  H.using(H.Setup(replies: ["write_file.sse", "text.sse"], approvals_env: some(read))) do |h|
+    try Dir.mkdir("#{h.work}/.finn")
+    try File.write_text("#{h.work}/.finn/config.json", "{\"approvals\": true}")
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.kinds(a.seen).include?("approval_requested"), false)
+    try Test.eq(File.read_text("#{h.work}/hello.txt"), ok("hi\n"))
+    Test.eq((try H.session(h, id)).accept_edits, false)
   end
 end
 
@@ -120,28 +226,49 @@ def test_the_prefix_of_a_command() -> Result[Void]
   Test.eq(Permissions.prefix("bash", "ls | wc"), none)
 end
 
-# The user's rules come from FINN_CONFIG, else the default file when it is there; a broken file stops the start.
-def test_the_user_config_gives_the_rules() -> Result[Void]
+# The rules of the user's config file (FINN_CONFIG, else the default file when it is there) always load; the asking is
+# off unless the file or FINN_APPROVALS turns it on, and FINN_APPROVALS wins. A broken file stops the start either way.
+def test_the_user_config_turns_approvals_on_with_its_rules() -> Result[Void]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-perm-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)
-  try File.write_text("#{dir}/ok.json", "{\"allow\": [\"bash(npm test*)\"], \"deny\": [\"read_file(.env)\"]}")
+  rules = "\"allow\": [\"bash(npm test*)\"], \"deny\": [\"read_file(.env)\"]"
+  try File.write_text("#{dir}/on.json", "{\"approvals\": true, #{rules}}")
+  try File.write_text("#{dir}/off.json", "{#{rules}}")
   try File.write_text("#{dir}/bad.json", "{\"allow\": [\"npm test\"]}")
-  given = Config.from_env(->(n) { env(dir, n, "#{dir}/ok.json") })
-  broken = Config.from_env(->(n) { env(dir, n, "#{dir}/bad.json") })
-  missing = Config.from_env(->(n) { env(dir, n, "#{dir}/none.json") })
-  none_set = Config.from_env(->(n) { env(dir, n, "") })
+  sizes = ->(config: String, switch: String) { rule_sizes(dir, config, switch) }
+  results = [
+    sizes.call("#{dir}/on.json", ""),
+    sizes.call("#{dir}/off.json", ""),
+    sizes.call("#{dir}/off.json", "1"),
+    sizes.call("#{dir}/on.json", "0"),
+    sizes.call("", ""),
+    sizes.call("", "1"),
+  ]
+
+  failed = [sizes.call("#{dir}/bad.json", "0").ok?, sizes.call("#{dir}/none.json", "").ok?, sizes.call("", "2").ok?]
   _ = Path.remove(dir)
-  rules = (try given).approvals.unwrap!
-  try Test.eq([rules.allow.size, rules.deny.size], [1, 1])
-  try Test.eq([broken.ok?, missing.ok?], [false, false])
-  Test.eq((try none_set).approvals.map { |r| r.allow.size }, some(0))
+  try Test.eq(results, [ok([1, 1, 1]), ok([1, 1, 0]), ok([1, 1, 1]), ok([1, 1, 0]), ok([0, 0, 0]), ok([0, 0, 1])])
+  Test.eq(failed, [false, false, false])
 end
 
 private
 
-def env(dir: String, name: String, config: String) -> Result[String]
+# The sizes of the allow and deny rules, and 1 when calls ask.
+def rule_sizes(dir: String, config: String, switch: String) -> Result[List[Int]]
+  options = try Config.from_env(->(n) { env(dir, n, config, switch) })
+  rules = try options.approvals.to_result("no rules")
+  asking = 0
+  if options.asking
+    asking = 1
+  end
+
+  ok([rules.allow.size, rules.deny.size, asking])
+end
+
+def env(dir: String, name: String, config: String, switch: String) -> Result[String]
   case name
     "FINN_CONFIG" -> ok(config)
+    "FINN_APPROVALS" -> ok(switch)
     "HOME" -> ok(dir)
     _ -> error("not set")
   end

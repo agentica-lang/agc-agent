@@ -30,7 +30,6 @@ RECONNECT_MS = 300
 MAX_RECONNECTS = 3
 MAX_RESYNCS = 2
 SCROLL_STEP = 3
-YOLO_WARNING = "--yolo: the tool calls of turns sent from here run without asking"
 ## The key hints of the status line, most needed first: those that do not fit are left out.
 HINTS = [
   "Enter send",
@@ -263,7 +262,7 @@ end
 def opened(model: Model) -> Result[Model]
   app = try open(model, model.options)
   if model.options.yolo
-    app = noted(app, YOLO_WARNING)
+    app = noted(app, Client.yolo_warning(app.server))
   end
 
   ok(effect(welcomed(app), listen(app.signals)))

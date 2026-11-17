@@ -31,6 +31,7 @@ struct Control
   started_s: Int
   flags: ATS[String, Bool]
   drain_ms: Int
+  approvals: Bool = false
 end
 
 struct Server
@@ -148,7 +149,7 @@ private
 
 def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handle) -> Result[Server]
   token = OpenSSL.Random.hex(32)
-  control = new_control(options.drain_ms)
+  control = new_control(options.drain_ms).with(approvals: options.asking)
   http = try Bond.start_with(
     app(token, sessions, control),
     "127.0.0.1",
@@ -237,6 +238,7 @@ def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
         sessions: activity.sessions,
         running_turns: activity.running,
         stopping: flag?(control, "draining"),
+        approvals: some(control.approvals),
       ),
     ),
   )

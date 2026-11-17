@@ -814,7 +814,7 @@ end
 # folder join the server's; a broken file is an invalid request.
 def approvals_of(options: Config.Options, root: String) -> Result[Optional[Extension.Approvals]]
   for rules in option_list(options.approvals)
-    case Extension.open(rules, root, trusted?(options, root))
+    case Extension.open(rules, root, trusted?(options, root), options.asking)
       ok(approvals) -> return ok(some(approvals))
       error(e) -> return error(e.message, kind: Protocol.KIND_INVALID)
     end

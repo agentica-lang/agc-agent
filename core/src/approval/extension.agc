@@ -1,26 +1,48 @@
-## The approval extension of one session: the rules, and what the session's answers and mode allowed. A session
-## without it runs every tool call without asking.
+## The approval extension of one session: the rules, and what the session's answers and mode allowed. With `asking`
+## off, a call that would ask runs, and only the deny rules count (they hide files from `glob` and `grep` too). A
+## session without it runs every tool call.
 
 import Approval from "approval"
 import Permissions from "permissions"
 import Spec from "../tools/spec"
+
+BASH = "bash"
 
 struct Approvals
   rules: Approval.Rules
   ## The session folder.
   root: String
   allows: Permissions.Allows
+  asking: Bool = true
 end
 
 ## The extension of a session in `root`: the server's `rules` with those of the project file (its allow rules only when
 ## `trusted`).
-def open(rules: Approval.Rules, root: String, trusted: Bool) -> Result[Approvals]
-  ok(Approvals(rules: try Permissions.with_project(rules, root, trusted), root: root, allows: Permissions.Allows()))
+def open(rules: Approval.Rules, root: String, trusted: Bool, asking: Bool) -> Result[Approvals]
+  all = try Permissions.with_project(rules, root, trusted)
+  ok(Approvals(rules: all, root: root, allows: Permissions.Allows(), asking: asking))
 end
 
-## The hook a tool call passes before it runs.
+## Whether tool calls pass the hook: when it asks, or when a deny rule may refuse one.
+def gated?(a: Approvals) -> Bool = a.asking or not a.rules.deny.empty?
+
+## The hook a tool call passes before it runs. With the asking off, a call that would ask runs, but for a `bash`
+## command that the deny rules cannot clear: one a `bash` rule may match (checked as `Permissions.allows?` does), or
+## one that names a file a `read_file` rule hides; either is refused when it cannot be parsed.
 def verdict(a: Approvals, ctx: Spec.Context, name: String, input: JSON.Value) -> Spec.Verdict
-  Approval.verdict(a.rules, ctx, name, input)
+  found = Approval.verdict(a.rules, ctx, name, input)
+  return found if a.asking or found != Spec.Verdict.Ask
+  return Spec.Verdict.Allow if name != BASH
+
+  command = case JSON.get(input, "command")
+    ok(value) -> JSON.string(value).unwrap_or("")
+    error(_) -> ""
+  end
+
+  return Spec.Verdict.Deny if Permissions.bash_denied?(a.rules, command)
+  return Spec.Verdict.Deny if Permissions.bash_reads_denied?(a.rules, command)
+
+  Spec.Verdict.Allow
 end
 
 ## Whether the session's answers or mode allow a call that asks.
@@ -35,7 +57,7 @@ def answered(a: Approvals, decision: String, tool: String, target: String) -> Ap
   a.with(allows: Permissions.answered(a.allows, decision, tool, target))
 end
 
-def accept_edits?(a: Approvals) -> Bool = a.allows.accept_edits
+def accept_edits?(a: Approvals) -> Bool = a.asking and a.allows.accept_edits
 
 def with_accept_edits(a: Approvals, on: Bool) -> Approvals = a.with(allows: a.allows.with(accept_edits: on))
 

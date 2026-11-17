@@ -42,7 +42,7 @@ def parse(args: List[String]) -> Result[Command]
       Opt(
         name: "yolo",
         kind: Kind.Flag,
-        help: "allow the tool calls of the turns sent from this client (other turns are still asked)",
+        help: "with approvals on, allow the tool calls of the turns sent from here (other turns are still asked)",
       ),
       Opt(
         name: "login",

@@ -18,7 +18,8 @@ struct Health
 end
 
 ## `GET /v1/server`: `started_s` is when the process started (Unix seconds); `running_turns` counts the sessions that
-## have a turn or a shell command running now; `stopping` says a stop waits for them.
+## have a turn or a shell command running now; `stopping` says a stop waits for them; `approvals` says whether a tool
+## call that no rule allows asks (none from a server before it).
 struct ServerStatus
   pid: Int
   version: String
@@ -26,6 +27,7 @@ struct ServerStatus
   sessions: Int
   running_turns: Int
   stopping: Bool
+  approvals: Optional[Bool] = none
 end
 
 ## The answer of `POST /v1/sessions`.

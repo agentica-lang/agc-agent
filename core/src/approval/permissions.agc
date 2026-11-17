@@ -1,9 +1,11 @@
 ## Where the approval rules come from, and what a session allowed while it runs.
 ##
 ## Rules: the user's config file (`FINN_CONFIG`, else `$XDG_CONFIG_HOME/finn/config.json`, else
-## `~/.config/finn/config.json`), `{"allow": [...], "deny": [...]}` in the syntax of `Approval`; and the project file
-## `.finn/config.json` of the session folder, whose deny rules always count and whose allow rules count only in a
-## folder of `FINN_TRUSTED_DIRS` (`:` between folders), since anyone who writes the project can write them.
+## `~/.config/finn/config.json`), `{"approvals": true, "allow": [...], "deny": [...]}` in the syntax of `Approval`,
+## whose `approvals` turns the asking on (`FINN_APPROVALS` wins over it); and the project file `.finn/config.json` of
+## the session folder, whose deny rules always count and whose allow rules count only in a folder of
+## `FINN_TRUSTED_DIRS` (`:` between folders), since anyone who writes the project can write them. Its `approvals` is
+## not read: a project cannot change the mode. The deny rules count with the asking off too.
 ##
 ## A session allows more by its answers: the same call (`allow_session`), the same command prefix for `bash`
 ## (`allow_prefix`: `git log`, `npm test`), or the whole tool (`allow_tool`); and in the accept-edits mode the edits of
@@ -42,12 +44,9 @@ struct Allows
   accept_edits: Bool = false
 end
 
-## The rules of the user's config file; none when the default file is not there.
-def user_rules(read: Fn[String, Result[String]]) -> Result[Approval.Rules]
-  case config_path(read)
-    some(path) -> rules_of(path)
-    none -> ok(no_rules())
-  end
+struct User
+  rules: Approval.Rules
+  asking: Bool
 end
 
 ## The user's config file: `FINN_CONFIG`, else the default file when it is there.
@@ -61,6 +60,14 @@ def config_path(read: Fn[String, Result[String]]) -> Optional[String]
     some(found) if File.stat(found).ok? -> some(found)
     _ -> none
   end
+end
+
+## The rules of the user's config file, none when the default file is not there; and whether calls that no rule
+## allows ask: `switch` when given (`FINN_APPROVALS`), else the file's `approvals`, else not.
+def user_rules(read: Fn[String, Result[String]], switch: Optional[Bool]) -> Result[User]
+  file = try user_file(read)
+  rules = try parsed_rules(file.path, file.file)
+  ok(User(rules: rules, asking: switch.unwrap_or(file.file.approvals.unwrap_or(false))))
 end
 
 ## `rules` with those of the project file of `root`: its deny rules, and its allow rules when `root` is `trusted`. A
@@ -127,6 +134,18 @@ def bash_denied?(rules: Approval.Rules, target: String) -> Bool
   end
 end
 
+## Whether a word of `target` names a file that a deny rule of `read_file` hides: the word, after a `=` (`--file=x`),
+## without `./`, or its last name; or the command does not parse. Best effort: a name that bash builds as it runs
+## (`cat $(printf .env)`) is not seen.
+def bash_reads_denied?(rules: Approval.Rules, target: String) -> Bool
+  return false if (not rules.deny.any? { |rule| rule.tool == "read_file" })
+
+  case Shell.parse(target)
+    ok(script) -> script.pipelines.any? { |p| p.commands.any? { |c| names_denied?(rules, c) } }
+    error(_) -> true
+  end
+end
+
 ## What an answer adds; `allow_prefix` without a prefix allows the same call.
 def answered(allows: Allows, decision: String, tool: String, target: String) -> Allows
   case decision
@@ -146,13 +165,17 @@ private
 
 # Optional, so a file without rules (only `providers`) reads.
 struct RulesFile
+  approvals: Optional[Bool] = none
   allow: Optional[List[String]] = none
   deny: Optional[List[String]] = none
 end
 
-def key(tool: String, target: String) -> String = "#{tool}\n#{target}"
+struct UserFile
+  path: String
+  file: RulesFile
+end
 
-def no_rules() -> Approval.Rules = Approval.Rules(allow: [], deny: [])
+def key(tool: String, target: String) -> String = "#{tool}\n#{target}"
 
 # None without a home folder.
 def default_config(read: Fn[String, Result[String]]) -> Optional[String]
@@ -166,14 +189,24 @@ def default_config(read: Fn[String, Result[String]]) -> Optional[String]
   end
 end
 
-def rules_of(path: String) -> Result[Approval.Rules]
+def user_file(read: Fn[String, Result[String]]) -> Result[UserFile]
+  case config_path(read)
+    some(found) -> ok(UserFile(path: found, file: try file_of(found)))
+    none -> ok(UserFile(path: "", file: RulesFile()))
+  end
+end
+
+def rules_of(path: String) -> Result[Approval.Rules] = parsed_rules(path, try file_of(path))
+
+def file_of(path: String) -> Result[RulesFile]
   text = try File.read_text(path)
-  file = case JSON.decode(text, RulesFile)
+  case JSON.decode(text, RulesFile)
     ok(found) -> ok(found)
     error(e) -> error("#{path}: #{e.message}")
   end
+end
 
-  parsed = try file
+def parsed_rules(path: String, parsed: RulesFile) -> Result[Approval.Rules]
   case Approval.parse_rules(parsed.allow.unwrap_or([]), parsed.deny.unwrap_or([]))
     ok(rules) -> ok(rules)
     error(e) -> error("#{path}: #{e.message}")
@@ -212,6 +245,22 @@ def command_allowed?(prefixes: List[List[String]], command: Shell.Command, root:
   words = Shell.argv(command)
   output = words.take(1) == ["git"] and words.any? { |w| w.start_with?("--output") }
   not writes and not output and prefixes.any? { |p| words.take(p.size) == p }
+end
+
+def names_denied?(rules: Approval.Rules, command: Shell.Command) -> Bool
+  paths = command.redirects.map do |r|
+    case r
+      Shell.Redirect.Out(_, path, _) -> path
+      Shell.Redirect.In(path) -> path
+      _ -> ""
+    end
+  end
+
+  (Shell.argv(command) + paths).any? do |word|
+    value = word.split("=").last
+    names = [word, value, value.replace("./", ""), value.split("/").last]
+    names.any? { |name| not name.empty? and Approval.read_denied?(rules, name) }
+  end
 end
 
 def command_denied?(rules: Approval.Rules, command: Shell.Command) -> Bool

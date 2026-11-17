@@ -7,6 +7,7 @@ import Monty from "pkg/monty/monty"
 import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
 import Approval from "../../src/approval/approval"
+import Permissions from "../../src/approval/permissions"
 import Catalog from "../../src/agent/catalog"
 import CodeMode from "../../src/tools/code_mode"
 import Auth from "../../src/config/auth"
@@ -80,9 +81,12 @@ struct Setup
   ## Providers a login sets up, each at `/NAME` of the fake with the key variable `NAME_KEY` (`NAME=VAR` for another),
   ## and their keys in `config/finn/auth.json` of the test's folder.
   logins: List[String] = []
-  ## The approval extension, with the deny rules of the config, as `bash(rm *)`.
+  ## The approvals on (calls that no rule allows ask); the deny rules of the config, as `bash(rm *)`, count either way.
   approvals: Bool = true
   deny: List[String] = []
+  ## When given, the rules and the mode come from this environment as the server reads them (`Config.from_env`), in
+  ## place of `approvals` and `deny`.
+  approvals_env: Optional[Fn[String, Result[String]]] = none
   model: String = "qwen2.5-0.5b-instruct"
   catalog: Optional[Catalog.Catalog] = none
   ## The token that Anthropic fetches again after a 401; none when empty.
@@ -205,6 +209,11 @@ end
 def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   work = "#{base}/work"
   try Dir.mkdir(work)
+  user = Permissions.User(rules: try Approval.parse_rules([], setup.deny), asking: setup.approvals)
+  for read in option_list(setup.approvals_env)
+    user = try Permissions.user_rules(read, try Config.approvals_switch(read))
+  end
+
   options = Config.Options(
     state_dir: "#{base}/state",
     data_dir: "#{base}/data",
@@ -214,7 +223,8 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     key_envs: setup.key_envs,
     model: setup.model,
     env: &fake_env,
-    approvals: try approval_rules(setup),
+    approvals: some(user.rules),
+    asking: user.asking,
     keep_events: setup.keep_events,
     approval_timeout_ms: setup.approval_timeout_ms,
     drain_ms: setup.drain_ms,
@@ -271,12 +281,6 @@ def server_provider(setup: Setup) -> String
   return Config.default_provider(setup.api) if setup.provider.empty?
 
   setup.provider
-end
-
-def approval_rules(setup: Setup) -> Result[Optional[Approval.Rules]]
-  return ok(none) if not setup.approvals
-
-  ok(some(try Approval.parse_rules([], setup.deny)))
 end
 
 def sessions(h: Harness) -> String = "#{h.data_dir}/sessions"

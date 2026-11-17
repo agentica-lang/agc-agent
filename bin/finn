@@ -30,7 +30,7 @@ usage: finn [chat] [options]      talk to the agent in this folder (starts the s
 chat options: --provider NAME, --api NAME, --model NAME (of a new session), --session ID, --thinking, --yolo, ...
   (finn chat --help lists them all)
 in chat and tui: /new, /resume, /model, /thinking, /compact, /login, /logout, /stop, /help, /quit
-one-shot: approvals are denied unless --yolo; exit 0 when the turn ends normally (also after a denied call),
+one-shot: approvals (when on) are denied unless --yolo; exit 0 when the turn ends normally (also after a denied call),
   130 when it is cancelled, 1 otherwise (a failed or busy send, an empty task); the server keeps running after it
 serve options (each overrides its environment variable):
   --api NAME       model API: openai (chat completions) or openai_responses (default: FINN_API, else openai)
@@ -38,6 +38,9 @@ serve options (each overrides its environment variable):
                    (default: FINN_PROVIDER)
   --model NAME     default model of new sessions (default: FINN_MODEL)
   --base-url URL   where the model API is (default: FINN_BASE_URL, else http://127.0.0.1:8080/v1)
+  --approvals      ask before a tool call that no rule allows (default: FINN_APPROVALS, else "approvals" in the
+                   config file; FINN_APPROVALS=0 wins over the file). Off, the model runs any command that no deny
+                   rule refuses, without asking: use a sandbox or a container
   (finn serve --help tells the rest: folders, keys, compaction)
 TEXT
 }
@@ -58,6 +61,7 @@ serve() {
       --api=*) export FINN_API="${1#*=}"; shift ;;
       --model=*) export FINN_MODEL="${1#*=}"; shift ;;
       --base-url=*) export FINN_BASE_URL="${1#*=}"; shift ;;
+      --approvals) export FINN_APPROVALS=1; shift ;;
       -h|--help) exec "$agentica" "$root/core/main.agc" --help ;;
       *) echo "finn serve: unknown option $1" >&2; usage >&2; exit 2 ;;
     esac
