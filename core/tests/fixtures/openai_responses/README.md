@@ -7,3 +7,6 @@
 - `summary.sse`: written by hand, the summary a compaction asks for (the text of `openai_chat/summary.sse`).
 - `apply_patch.sse`: written by hand in the shape of `custom_tool_call.sse` of `llm`: an `apply_patch` custom tool
   call, its input in two pieces, that updates `notes.txt` and adds `hello.txt`.
+- `codex_*.json`: written by hand in the shapes of OpenAI's device login and Codex, for `chatgpt_test`: the user code,
+  a poll still pending (403), the grant, the tokens (an `id_token` whose claims name the account `acct-1`, signature
+  not checked), Codex's model list, a 401 of a turn, the refreshed tokens, and a refused refresh that quotes the token.
