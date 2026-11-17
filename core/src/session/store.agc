@@ -372,7 +372,8 @@ def shown_after(shown: List[Protocol.Message], event: Protocol.Event) -> List[Pr
 
       shown.take(at[0]) + [shown[at[0]].with(done: some(done))] + shown.drop(at[0] + 1)
     Protocol.Event.TurnFinished(finished) if finished.stop_reason != Protocol.StopReason.EndTurn ->
-      shown.push(Protocol.Message(role: Protocol.Role.Assistant, text: "", stop: some(finished.stop_reason)))
+      stop = finished.with(history_size: none)
+      shown.push(Protocol.Message(role: Protocol.Role.Assistant, text: "", stop: some(stop)))
     _ -> shown
   end
 end

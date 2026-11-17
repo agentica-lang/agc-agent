@@ -352,13 +352,7 @@ def todos(list: List[Protocol.Todo]) -> String
 end
 
 def finished(app: State.Model, done: Protocol.TurnFinished) -> State.Model
-  note = Client.stop_note(done)
-  case done.stop_reason
-    Protocol.StopReason.EndTurn -> app
-    Protocol.StopReason.Cancelled -> State.noted(app, "stopped")
-    _ if not note.empty? -> State.noted(app, note)
-    _ -> State.noted(app, "the turn ended: #{Protocol.stop_reason_name(done.stop_reason)}")
-  end
+  Transcript.stop_note(done).map { |text| State.noted(app, text) }.unwrap_or(app)
 end
 
 def resync(app: State.Model) -> State.Model

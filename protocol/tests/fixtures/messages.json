@@ -26,7 +26,7 @@
       {"role": "user", "text": "Write hello.txt."},
       {"role": "assistant", "text": "I should write it.", "thinking": true},
       {"role": "assistant", "text": "", "tool": {"call_id": "c1", "name": "write_file", "summary": "hello.txt"}, "done": {"call_id": "c1", "ok": true, "summary": "wrote 1 line", "duration_ms": 3, "output": null, "diff": null}},
-      {"role": "assistant", "text": "", "stop": "max_tokens"},
+      {"role": "assistant", "text": "", "stop": "max_tokens", "turn_id": "t1", "max_tokens": 8192},
       {"role": "assistant", "text": "Done."}
     ],
     "accept_edits": false,

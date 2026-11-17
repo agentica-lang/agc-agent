@@ -147,15 +147,15 @@ struct LoginList
 end
 
 ## A finished message, as the text to draw. An item of the assistant may instead be what its turn did, with `text` "":
-## a thinking block (its text in `text`, with `thinking`), a tool call (`tool`, and `done` once it finished), or how
-## the turn ended when not as asked (`stop`).
+## a thinking block (its text in `text`, with `thinking`), a tool call (`tool`, and `done` once it finished), or the
+## `turn_finished` of a turn that did not end as asked (`stop`, without its `history_size`).
 struct Message
   role: Role
   text: String
   thinking: Bool = false
   tool: Optional[Events.ToolStarted] = none
   done: Optional[Events.ToolFinished] = none
-  stop: Optional[Events.StopReason] = none
+  stop: Optional[Events.TurnFinished] = none
 end
 
 ## The answer of `GET /v1/sessions/ID`. Subscribe with `Last-Event-ID` set to `last_event_id` to miss and repeat no
@@ -466,6 +466,8 @@ struct MessageWire
   tool: JSON.Field[Events.ToolStarted]
   done: JSON.Field[Events.ToolFinished]
   stop: JSON.Field[String]
+  turn_id: JSON.Field[String]
+  max_tokens: JSON.Field[Int]
 end
 
 struct SessionWire
@@ -519,7 +521,9 @@ def message_wire(m: Message) -> MessageWire
     thinking: Wire.field(thinking),
     tool: Wire.field(m.tool),
     done: Wire.field(m.done),
-    stop: Wire.field(m.stop.map { |r| Events.stop_reason_name(r) }),
+    stop: Wire.field(m.stop.map { |f| Events.stop_reason_name(f.stop_reason) }),
+    turn_id: Wire.field(m.stop.map { |f| f.turn_id }),
+    max_tokens: Wire.field(m.stop.map { |f| f.max_tokens }.unwrap_or(none)),
   )
 end
 
@@ -535,7 +539,13 @@ def message_of_wire(wire: MessageWire) -> Result[Message]
       thinking: Wire.optional(wire.thinking).unwrap_or(false),
       tool: Wire.optional(wire.tool),
       done: Wire.optional(wire.done),
-      stop: Wire.optional(wire.stop).map { |name| Events.parse_stop_reason(name) },
+      stop: Wire.optional(wire.stop).map { |name|
+        Events.TurnFinished(
+          turn_id: Wire.optional(wire.turn_id).unwrap_or(""),
+          stop_reason: Events.parse_stop_reason(name),
+          max_tokens: Wire.optional(wire.max_tokens),
+        )
+      },
     ),
   )
 end

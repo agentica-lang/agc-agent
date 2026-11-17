@@ -1,5 +1,6 @@
 ## What the transcript holds and the lines it draws in a given width. Pure.
 
+import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import Calls from "calls"
 import Markdown from "markdown"
@@ -61,11 +62,15 @@ def from_history(messages: List[Protocol.Message]) -> List[Entry]
   entries
 end
 
-## How a turn that did not end as asked is noted.
-def stop_note(reason: Protocol.StopReason) -> String
-  return "stopped" if reason == Protocol.StopReason.Cancelled
-
-  "the turn ended: #{Protocol.stop_reason_name(reason)}"
+## How a turn that did not end as asked is noted, live or in the history; none for one that did.
+def stop_note(done: Protocol.TurnFinished) -> Optional[String]
+  note = Client.stop_note(done)
+  case done.stop_reason
+    Protocol.StopReason.EndTurn -> none
+    Protocol.StopReason.Cancelled -> some("stopped")
+    _ if not note.empty? -> some(note)
+    _ -> some("the turn ended: #{Protocol.stop_reason_name(done.stop_reason)}")
+  end
 end
 
 ## Adds `text`: a streamed kind (the answer, the thinking) goes on the end of the last entry when it is of that kind.
@@ -236,7 +241,7 @@ def from_message(entries: List[Entry], message: Protocol.Message) -> List[Entry]
   end
 
   case message.stop
-    some(reason) -> return note(entries, stop_note(reason))
+    some(done) -> return stop_note(done).map { |text| note(entries, text) }.unwrap_or(entries)
     none -> nil
   end
 

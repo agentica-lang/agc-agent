@@ -128,10 +128,11 @@ def env_for(base: Path, model: "FakeModel") -> dict[str, str]:
 
 
 def transcript(rows: list[str]) -> str:
-    """The rows above the editor, from the session line to how the last turn ended."""
+    """The rows above the editor, from the session line to the note of a turn cut at the output limit."""
     text = text_of(rows)
     start = text.index(" session ")
-    return text[start : text.index("max_tokens", start) + len("max_tokens")]
+    end = text.index("\n", text.index("output limit", start))
+    return text[start:end]
 
 
 class Reply:
@@ -715,7 +716,7 @@ class PtyTest(unittest.TestCase):
         term = self.start([Reply("think_read.sse"), Reply("text_length.sse")])
         first = re.search(r" session (\S+)", text_of(term.screen())).group(1)
         term.type("Read missing.txt.\r")
-        term.wait_for("the turn ended: max_tokens")
+        term.wait_for("output limit")
         live = transcript(term.wait_for("ready"))
         self.assertIn("read missing.txt", live)
         term.type("/new\r")
@@ -723,7 +724,7 @@ class PtyTest(unittest.TestCase):
         term.type("/resume\r")
         term.wait_for("resume a session (1 of 1)")
         term.type("\r")
-        replayed = transcript(term.wait_for("the turn ended: max_tokens"))
+        replayed = transcript(term.wait_for("output limit"))
         self.assertEqual(replayed, live)
         self.assertTrue(replayed.startswith(f" session {first}"), replayed)
         term.type("\x14")

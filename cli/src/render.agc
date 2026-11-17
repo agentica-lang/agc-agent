@@ -96,7 +96,7 @@ def history_lines(message: Protocol.Message, style: Style) -> List[String]
   end
 
   case message.stop
-    some(reason) -> return ["[turn finished] #{Protocol.stop_reason_name(reason)}"]
+    some(done) -> return [turn_finished(done)]
     none -> nil
   end
 

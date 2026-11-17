@@ -19,7 +19,11 @@ end
 def test_a_resumed_session_prints_what_its_turns_did() -> Result[Void]
   Driver.within([Routes.session([Fake.Reply(session: "session_worked.json")]), Routes.held_events()]) do |rig|
     cli = try Driver.start(rig.dir, PLAIN + ["--session", "s1"])
-    lines = try Driver.read_until(cli, "[turn finished] max_tokens")
+    lines = try Driver.read_until(
+      cli,
+      "[turn finished] max_tokens: the reply hit the model's output limit (8192 tokens)",
+    )
+
     done = try Driver.finish(cli)
     expected = [
       "[session s1]",
@@ -27,7 +31,7 @@ def test_a_resumed_session_prints_what_its_turns_did() -> Result[Void]
       "[tool] read_file missing.txt",
       "[tool failed] path does not exist (2 ms)",
       "assistant: Hello!",
-      "[turn finished] max_tokens",
+      "[turn finished] max_tokens: the reply hit the model's output limit (8192 tokens)",
     ]
 
     try Test.eq(lines, expected)

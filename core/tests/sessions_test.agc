@@ -1309,7 +1309,7 @@ def item(m: Protocol.Message) -> String
   end
 
   case m.stop
-    some(reason) -> return "stop #{Protocol.stop_reason_name(reason)}"
+    some(finished) -> return "stop #{Protocol.stop_reason_name(finished.stop_reason)}"
     none -> nil
   end
 
