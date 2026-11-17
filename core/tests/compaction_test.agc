@@ -1,7 +1,9 @@
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Agent from "../src/agent/agent"
 import Compaction from "../src/agent/compaction"
 import Store from "../src/session/store"
+import Todos from "../src/tools/todos"
 import H from "support/harness"
 
 # The window comes from llama-server's `/props` (120 tokens). The tool round of the second turn reaches 100 tokens,
@@ -408,3 +410,14 @@ def result(text: String) -> LLM.Message
 end
 
 def summary() -> String = "Summary of the session so far:\n\nThe user said hello and the agent greeted back."
+
+# A fold gives the todo list again, unless a `todo_write` call that stays gave that same list.
+def test_a_fold_does_not_repeat_a_list_a_staying_call_gave() -> Result[Void]
+  text = "{\"todos\": [{\"content\": \"Plan\", \"status\": \"pending\"}]}"
+  call = LLM.ToolCall(id: "call_1", name: Todos.NAME, arguments: text, input: try JSON.parse(text))
+  staying = [LLM.Message(role: LLM.Role.Assistant, content: [LLM.Block.ToolUse(call)])]
+  list = [Todos.Todo(content: "Plan", status: "pending")]
+  later = list.push(Todos.Todo(content: "Test", status: "pending"))
+  shown = [Agent.folded_todos(staying, list), Agent.folded_todos([], list), Agent.folded_todos(staying, later)]
+  Test.eq(shown.map { |added| added.include?("[ ] Plan") }, [false, true, true])
+end

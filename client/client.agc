@@ -70,6 +70,7 @@ export Events.start
 
 export Commands.Command
 export Commands.help
+export Commands.profile_lines
 export Commands.listed
 export Commands.Usage
 export Commands.COMMANDS

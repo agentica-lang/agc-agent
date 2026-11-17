@@ -11,6 +11,7 @@ import Protocol from "pkg/protocol/protocol"
 import Catalog from "../providers/catalog"
 import Config from "../config/config"
 import Profiles from "../config/profiles"
+import Profile from "profile"
 import Logins from "../providers/logins"
 import Providers from "../providers/providers"
 import Extensions from "../config/registry"
@@ -53,6 +54,7 @@ def folder(options: Config.Options) -> String = "#{options.data_dir}/#{SESSIONS_
 ## the providers.
 def start(given: Config.Options, store: Optional[Store.Port] = none) -> Sessions
   options = given.with(logins: some(Logins.start(given.providers, given.login)))
+  warn_profiles(options)
   port = store.unwrap_or(Store.disk())
   init = -> {
     inbox: Channel[Msg] = Actor.inbox()
@@ -429,7 +431,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   context = try ctx
   approver = try approver_of(options, context.root)
   profile = request.profile.unwrap_or(Profiles.DEFAULT)
-  case profile_of(options, context.root, profile)
+  case Profiles.find(profiles_of(options, context.root), profile)
     error(e) -> return error(e.message, kind: Protocol.KIND_INVALID)
     ok(_) -> nil
   end
@@ -578,14 +580,13 @@ def entry(
     IO.warn(warning)
   end
 
-  profile = profile_of(options, context.root, header.profile.unwrap_or(Profiles.DEFAULT))
-
   base = SessionActor.Setup(
     id: header.id,
     cwd: context.root,
     model: header.model,
     provider: endpoint.provider,
-    system: Profiles.system(system, profile.unwrap_or(Profiles.Profile(name: ""))),
+    system: system,
+    base_system: system,
     ctx: context.with(read_roots: Extensions.read_roots(builtins)),
     builtins: builtins,
     keep_events: options.keep_events,
@@ -600,18 +601,12 @@ def entry(
     registry: options.registry.map { |served| served.registry },
     origin: "#{chosen.provider}/#{chosen.api}",
     endpoint: some(->(name: String, now: String) { switched_endpoint(Config.now(options), name, now) }),
-    shows: some(shows_of(profile)),
+    profiles: some(-> { profiles_of(options, context.root) }),
   )
 
   setup = SessionActor.switched(base, endpoint).with(model: header.model, refused: refusal(options, provider))
-  case profile
-    ok(found) ->
-      for name in Profiles.unknown(found, known_tools())
-        IO.warn("profile #{found.name}: unknown tool #{name}")
-      end
-
-    error(e) -> setup = setup.with(refused: e.message)
-  end
+  name = header.profile.unwrap_or(Profiles.DEFAULT)
+  setup = Profile.applied(setup, profiles_of(options, context.root), name)
 
   ok(
     Entry(
@@ -824,23 +819,24 @@ def wrap_of(options: Config.Options) -> Optional[Fn[String, Spec.Run, Spec.Run]]
   none
 end
 
-# The system prompt of a new session in `root`, with what the extensions add.
-# The profile of that name for a session in `root`: the built-in ones, the user's, and a trusted project's.
-def profile_of(options: Config.Options, root: String, name: String) -> Result[Profiles.Profile]
-  trusted = trusted?(options, root)
-  Profiles.find(try Profiles.load(Profiles.user_folder(options.env), root, trusted), name)
+# The profiles of a session in `root`: the built-in ones, the user's, and a trusted project's.
+def profiles_of(options: Config.Options, root: String) -> Profiles.Loaded
+  Profiles.load(Profiles.user_folder(options.env), root, trusted?(options, root))
 end
 
-# A profile that does not load shows no tool.
-def shows_of(profile: Result[Profiles.Profile]) -> Fn[String, Bool]
-  case profile
-    ok(found) -> ->(tool: String) { Profiles.exposes?(found, tool) }
-    error(_) -> ->(_tool: String) { false }
+# The problems of the user's profiles, once at the start: the files skipped and those that do not load.
+def warn_profiles(options: Config.Options) -> Void
+  loaded = Profiles.load(Profiles.user_folder(options.env), "", false)
+  for warning in loaded.warnings
+    IO.warn(warning.text)
+  end
+
+  for name in loaded.broken.keys.sort
+    IO.warn(loaded.broken[name])
   end
 end
 
-def known_tools() -> List[String] = Tools.all().map { |tool| tool.name } + Extensions.RESERVED
-
+# The system prompt of a new session in `root`, with what the extensions add.
 def new_system(options: Config.Options, root: String) -> String
   system = system_of(options, root)
   options.registry.map { |r| Extensions.new_system(r, place_of(options, root), system) }.unwrap_or(system)

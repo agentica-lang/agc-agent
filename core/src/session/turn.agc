@@ -27,6 +27,11 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
     return state
   end
 
+  if not state.setup.profile_refused.empty?
+    Actor.reply(reply, error(state.setup.profile_refused, kind: Protocol.KIND_SESSION_UNAVAILABLE))
+    return state
+  end
+
   for running in option_list(state.turn)
     if state.queued.size >= MAX_QUEUED or (state.queued + [typed]).join("\n\n").bytesize > MAX_QUEUED_BYTES
       message = "a turn is running and its queue is full (#{MAX_QUEUED} messages, #{MAX_QUEUED_BYTES} bytes)"

@@ -185,3 +185,12 @@ def error_kind_of[T](result: Result[T]) -> String
     error(e) -> e.kind
   end
 end
+
+# A client names a profile other than the built-in `build`, then the server's warnings about it, printable.
+def test_the_lines_of_a_profile() -> Result[Void]
+  plan = Protocol.Profile(name: "plan", source: "built-in")
+  broken = Protocol.Profile(name: "x", source: "", warnings: ["x.md: bad#{String.from_code(27)}[2J"])
+  try Test.eq(Client.profile_lines(some(Protocol.Profile(name: "build", source: "built-in"))), [])
+  try Test.eq(Client.profile_lines(some(plan)), ["profile plan (built-in)"])
+  Test.eq(Client.profile_lines(some(broken)), ["profile x (does not load)", "warning: x.md: bad [2J"])
+end

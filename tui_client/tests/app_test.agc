@@ -184,6 +184,36 @@ def test_a_turn_spins_in_the_rule() -> Result[Void]
 end
 
 # The model's todo list shows as a notice, one item a line, from its event and from the session read after a move.
+# The status line names the session's profile, unless it is the built-in `build`.
+def test_the_footer_names_the_profile() -> Result[Void]
+  for profile in [
+    Protocol.Profile(name: "plan", source: "built-in"),
+    Protocol.Profile(name: "build", source: "built-in"),
+  ]
+    session = Protocol.Session(
+      id: "s1",
+      cwd: ".",
+      model: "m",
+      last_event_id: 9,
+      turn_id: none,
+      turn_from_event_id: none,
+      pending_approvals: [],
+      history: [],
+      provider: "local",
+      profile: some(profile),
+    )
+
+    backend = Client.unreachable_backend().with(session: ->(_id: String) { ok(session) })
+    moving = model_of(60, 10).with(backend: backend, id: "s1", generation: 1, moving: true)
+    moved = App.update(moving, App.Msg.Moved(ok(Protocol.Branched(id: "s1", text: "")))).model
+    Task.await(moved.stream.unwrap!)
+    drawn = rows(moved).join("\n")
+    try Test.assert(drawn.include?("plan · (local) m") == (profile.name == "plan"), drawn)
+  end
+
+  ok()
+end
+
 def test_a_todo_list_is_drawn() -> Result[Void]
   model = model_of(40, 10).with(id: "s1", generation: 1)
   list = [

@@ -38,7 +38,7 @@ end
 ## The calls on `server` over HTTP.
 def http_backend(server: Http.Server) -> Backend
   Backend(
-    create_session: ->(request) { Http.create_session(server, request) },
+    create_session: ->(request) { created_id(Http.create_session(server, request)) },
     session: ->(id) { Http.session(server, id) },
     send_message: ->(id, text) { Http.send_message(server, id, text) },
     approve: ->(id, approval_id, decision) { Http.approve(server, id, approval_id, decision) },
@@ -97,3 +97,10 @@ end
 private
 
 def failed[T]() -> Result[T] = error("no server in this test", kind: Http.KIND_UNREACHABLE)
+
+def created_id(created: Result[Protocol.SessionCreated]) -> Result[String]
+  case created
+    ok(c) -> ok(c.id)
+    error(e) -> error(e)
+  end
+end

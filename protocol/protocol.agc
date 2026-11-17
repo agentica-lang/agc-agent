@@ -113,6 +113,7 @@ export Replies.SessionSummary
 export Replies.SessionList
 export Replies.ProviderInfo
 export Replies.ProviderList
+export Replies.Profile
 export Replies.Message
 export Replies.Session
 export Replies.TreeNode

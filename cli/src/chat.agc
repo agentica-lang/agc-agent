@@ -132,14 +132,14 @@ end
 
 def create(chat: Chat, options: Args.Options) -> Result[Chat]
   request = try Client.new_session(options.cwd, options.model, options.api, options.provider, options.profile)
-  id = try Client.create_session(chat.server, request)
-
-  ok(subscribe(note(chat, "[session #{id}]").with(id: id), 0))
+  created = try Client.create_session(chat.server, request)
+  id = created.id
+  ok(subscribe(profile_notes(note(chat, "[session #{id}]"), created.profile).with(id: id), 0))
 end
 
 def resume(chat: Chat, id: String) -> Result[Chat]
   session = try Client.session(chat.server, id)
-  opened = attach(note(chat, "[session #{id}]"), session, false)
+  opened = attach(profile_notes(note(chat, "[session #{id}]"), session.profile), session, false)
   return ok(opened) if session.todos.empty?
 
   ok(note(opened, Render.todos(session.todos)))
@@ -626,6 +626,15 @@ def decided(chat: Chat, decision: Protocol.Decision) -> Chat
 end
 
 def note(chat: Chat, text: String) -> Chat = show(chat, some(Render.line(text)))
+
+def profile_notes(chat: Chat, profile: Optional[Protocol.Profile]) -> Chat
+  shown = chat
+  for line in Client.profile_lines(profile)
+    shown = note(shown, "[#{line}]")
+  end
+
+  shown
+end
 
 # A one-shot run prints only the answer on stdout; its other lines go to stderr, and so does its thinking.
 def show(chat: Chat, out: Optional[Render.Out]) -> Chat

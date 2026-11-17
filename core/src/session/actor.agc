@@ -321,6 +321,7 @@ def session(state: Session.State) -> Protocol.Session
     shell_id: state.shell.map { |run| run.id },
     usage: state.usage,
     todos: state.todos,
+    profile: state.setup.profile,
   )
 end
 

@@ -84,6 +84,8 @@ struct Model
   picker: Optional[Picker.Picker] = none
   ## The provider and model of the session, as `provider/model`, for the status line and the `/model` picker.
   serving: String = ""
+  ## The session's profile for the status line; empty for the built-in `build`.
+  profile: String = ""
   ## The tree the picker of `/tree` or `/fork` showed last, whose numbers `/tree N` and `/fork N` name.
   listed: Optional[Protocol.SessionTree] = none
   ## A branch, a fork or a copy is on its way: nothing is sent until its reply.

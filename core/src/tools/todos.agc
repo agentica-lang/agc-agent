@@ -47,7 +47,7 @@ def todos(input: JSON.Value) -> Result[List[Todo]]
   args = try Spec.args(input, TodoWriteArgs.codec)
   return error("at most #{MAX_TODOS} todos") if args.todos.size > MAX_TODOS
 
-  list = args.todos.map { |t| t.with(content: t.content.strip.replace("\n", " ").replace("\t", " ")) }
+  list = args.todos.map { |t| t.with(content: one_line(t.content)) }
   for todo in list
     chars = todo.content.split("")
     if (chars.any? { |c| c.code < 0x20 or (c.code >= 0x7f and c.code < 0xa0) })
@@ -82,6 +82,8 @@ def target(_ctx: Spec.Context, input: JSON.Value) -> Result[String]
   list = try todos(input)
   ok("#{list.size} todos")
 end
+
+def one_line(text: String) -> String = text.strip.replace("\r", " ").replace("\n", " ").replace("\t", " ")
 
 def invisible?(code: Int) -> Bool
   INVISIBLE.include?(code) or (code >= 0xFE00 and code <= 0xFE0F) or (code >= 0xE0000 and code <= 0xE007F)

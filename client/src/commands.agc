@@ -3,6 +3,8 @@
 import Protocol from "pkg/protocol/protocol"
 
 KIND_COMMAND = "client.command"
+DEFAULT_PROFILE = "build"
+BUILT_IN = "built-in"
 ## The commands of both clients, in the order `/help` lists them: the one table that the parser, the help and the
 ## suggestions of the full screen read.
 COMMANDS = [
@@ -180,6 +182,24 @@ end
 
 ## The text on one line, each control character (bidi ones too) a space: what a client echoes of what another typed.
 def printable(text: String) -> String = text.split("").map { |c| shown(c) }.join("")
+
+## What a client says of a session's profile: its name and where it comes from, unless it is the built-in `build`,
+## then each warning of the server about it, printable.
+def profile_lines(profile: Optional[Protocol.Profile]) -> List[String]
+  case profile
+    some(p) ->
+      lines = p.warnings.map { |w| "warning: #{printable(w)}" }
+      return lines if p.name == DEFAULT_PROFILE and p.source == BUILT_IN
+
+      source = p.source
+      if source.empty?
+        source = "does not load"
+      end
+
+      ["profile #{printable(p.name)} (#{source})"] + lines
+    none -> []
+  end
+end
 
 ## The model's todo list, one line an item: `[x]` completed, `[>]` in progress, `[ ]` pending, then its printable text.
 def todo_lines(todos: List[Protocol.Todo]) -> List[String]

@@ -22,7 +22,7 @@
 
 ### Added
 
-- Profiles: `--profile NAME` picks the tools the model sees; `build` (every tool) and `plan` (reads only) are built in, and `NAME.md` files add more.
+- Profiles: `--profile NAME` picks the tools the model sees; `build` (every tool) and `plan` (reads only) are built in, `NAME.md` files add more, and the clients name the profile and show its warnings.
 - `finn`: Ctrl+G edits the prompt in `$VISUAL` or `$EDITOR`.
 - Finn Agent, a coding agent: `finn` (full screen) and `finn chat` (lines) talk to a local server.
 - Tools: read, write and edit files, `glob`, `grep`, `bash`, and `apply_patch` for models that use it.

@@ -284,7 +284,12 @@ end
 def create(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   request = try Protocol.decode_new_session(try String.from_bytes(conn.body))
   id = try Sessions.create(sessions, request)
-  ok(Protocol.encode_session_created(Protocol.SessionCreated(id: id)))
+  profile = case Sessions.snapshot(sessions, id)
+    ok(session) -> session.profile
+    error(_) -> none
+  end
+
+  ok(Protocol.encode_session_created(Protocol.SessionCreated(id: id, profile: profile)))
 end
 
 def list(sessions: Sessions.Sessions) -> Result[String]
