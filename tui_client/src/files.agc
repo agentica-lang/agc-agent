@@ -111,7 +111,7 @@ end
 
 def mention_choices(app: State.Model, found: Input.Mention) -> List[Input.Choice]
   case found.source
-    Input.Source.Commands -> Input.commands(Client.listed(), found.query)
+    Input.Source.Commands -> Input.commands(Client.listed() + app.custom, found.query)
     Input.Source.Files ->
       Input.matches(app.files.unwrap_or([]), found.query).map { |p|
         Input.Choice(value: p, label: Client.printable(p))

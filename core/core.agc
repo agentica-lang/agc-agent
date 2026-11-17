@@ -128,6 +128,7 @@ def start(registry: Extensions.Registry) -> Result[Server.Server]
   # The core's own extensions: the skills, and the MCP servers, which start now.
   own = (
     Extensions.Served(registry: registry)
+    |> Builtins.commands(read)
     |> Builtins.skills()
     |> Builtins.approvals(options.approvals, options.asking)
   )

@@ -109,7 +109,7 @@ struct Setup
   ## the test's folder itself when none) are trusted.
   skills: Bool = false
   trust: Optional[List[String]] = none
-  ## The user's profiles are in `config/finn/profiles` of the test's folder (`XDG_CONFIG_HOME`).
+  ## The user's config folder is `config/finn` of the test's folder (`XDG_CONFIG_HOME`), with its profiles and commands.
   profiles: Bool = false
 end
 
@@ -259,7 +259,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     env: env_of(setup, base),
     approvals: some(user.rules),
     asking: user.asking,
-    registry: some(served_of(setup, user)),
+    registry: some(served_of(setup, user, env_of(setup, base))),
     keep_events: setup.keep_events,
     approval_timeout_ms: setup.approval_timeout_ms,
     drain_ms: setup.drain_ms,
@@ -345,9 +345,9 @@ def code_mode(fixture: String) -> Optional[CodeMode.Settings]
 end
 
 # The extensions of the setup with the core's own, as `Core.serve` adds them.
-def served_of(setup: Setup, user: Permissions.User) -> Extensions.Served
+def served_of(setup: Setup, user: Permissions.User, env: Fn[String, Result[String]]) -> Extensions.Served
   served = Extensions.Served(registry: setup.registry.unwrap_or(Extensions.Registry()))
-  served = Builtins.approvals(Builtins.skills(served), some(user.rules), user.asking)
+  served = Builtins.approvals(Builtins.skills(Builtins.commands(served, env)), some(user.rules), user.asking)
   for late in option_list(setup.late_tools)
     served = Extensions.add_late_tools(served, late)
   end

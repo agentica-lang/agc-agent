@@ -36,10 +36,11 @@ Every key is optional, and so is the file. How the rules work is on [Approvals a
 
 ## Trusted folders
 
-`FINN_TRUSTED_DIRS` lists folders, separated by `:`. A session in one of them, or below, reads two things that anyone who can write its repository could plant:
+`FINN_TRUSTED_DIRS` lists folders, separated by `:`. A session in one of them, or below, reads what anyone who can write its repository could plant:
 
 - the `allow` and `ask` rules of its `.finn/config.json`;
 - its skills ([Skills](skills.md));
+- its slash commands, in `.finn/commands/` ([Slash commands](cli.md#slash-commands));
 - its profiles, in `.finn/profiles/`, which choose the tools, the model (on the session's provider) and the thinking level ([Profiles](tools.md#profiles)).
 
 The deny rules of a project count everywhere.

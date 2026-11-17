@@ -86,6 +86,10 @@ struct Model
   serving: String = ""
   ## The session's profile for the status line; empty for the built-in `build`.
   profile: String = ""
+  ## The slash commands of the session's folder `custom_dir`, for the suggestions after `/` and `/help`; read again
+  ## when a session of another folder opens.
+  custom: List[Client.Usage] = []
+  custom_dir: Optional[String] = none
   ## The tree the picker of `/tree` or `/fork` showed last, whose numbers `/tree N` and `/fork N` name.
   listed: Optional[Protocol.SessionTree] = none
   ## A branch, a fork or a copy is on its way: nothing is sent until its reply.

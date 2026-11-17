@@ -10,7 +10,9 @@ import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Catalog from "../providers/catalog"
 import Config from "../config/config"
+import Commands from "../ext/commands"
 import Profiles from "../config/profiles"
+import Skills from "../ext/skills"
 import Logins from "../providers/logins"
 import Providers from "../providers/providers"
 import Extensions from "../config/registry"
@@ -99,6 +101,24 @@ def create(sessions: Sessions, request: Protocol.NewSession) -> Result[String]
   end
 
   ok(id)
+end
+
+## The slash commands of a session: the user's and a trusted project's, and those that do not load.
+def commands(sessions: Sessions, id: String) -> Result[Protocol.CommandList]
+  place = place_of(sessions.options, (try snapshot(sessions, id)).cwd)
+  loaded = Commands.load(Commands.user_folder(sessions.options.env), place.root, place.trusted)
+  skills = Skills.discover(place.root, place.home, place.trusted).skills.map { |s| s.name }
+  notes = loaded.warnings + Commands.clashes(loaded, skills)
+  listed = loaded.commands.map do |c|
+    warnings = notes.select { |n| n.name == c.name }.map { |n| n.text }
+    Protocol.CommandInfo(name: c.name, source: c.source, description: c.description, warnings: warnings)
+  end
+
+  broken = loaded.broken.keys.map { |name|
+    Protocol.CommandInfo(name: name, source: "", warnings: [loaded.broken[name]])
+  }
+
+  ok(Protocol.CommandList(commands: (listed + broken).sort_by { |c| c.name }))
 end
 
 ## The profiles a session may take: the built-in ones, the user's and a trusted project's, and those that do not load.

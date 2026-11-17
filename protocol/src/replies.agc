@@ -94,6 +94,20 @@ struct ProfileList
   profiles: List[Profile]
 end
 
+## A slash command of the session's folders, as `/NAME`: `source` is `user` or `project`, or empty for a file that does
+## not load (`warnings` says why); `warnings` also names a skill or a command of the user it wins over.
+struct CommandInfo
+  name: String
+  source: String
+  description: String = ""
+  warnings: List[String] = []
+end
+
+## The answer of `GET /v1/sessions/ID/commands`.
+struct CommandList
+  commands: List[CommandInfo]
+end
+
 ## A provider a login can set up. `asks` is what a login gives: `key`, or `url` (a local server: its base URL, no
 ## key; `base_url` is the one it uses now). `from` is where it comes from: `env` (its variable, which wins), `stored`
 ## (a login) or empty; `coming` is a login with no flow yet, which cannot be picked.
@@ -252,6 +266,10 @@ def encode_provider_list(reply: ProviderList) -> String = JSON.encode(reply)
 
 def decode_provider_list(text: String) -> Result[ProviderList] = Wire.decode(text, ProviderList.codec)
 
+def encode_command_list(reply: CommandList) -> String = JSON.encode(reply)
+
+def decode_command_list(text: String) -> Result[CommandList] = Wire.decode(text, CommandList.codec)
+
 def encode_profile_list(reply: ProfileList) -> String = JSON.encode(reply)
 
 def decode_profile_list(text: String) -> Result[ProfileList] = Wire.decode(text, ProfileList.codec)
@@ -354,6 +372,8 @@ def shape() -> List[String]
     Wire.record("ProviderList", ProviderList.members),
     Wire.record("Profile", Profile.members),
     Wire.record("ProfileList", ProfileList.members),
+    Wire.record("CommandInfo", CommandInfo.members),
+    Wire.record("CommandList", CommandList.members),
     Wire.record("Message", Message.members),
     Wire.record("Session", Session.members),
     Wire.record("ServerInfo", ServerInfo.members),
