@@ -31,7 +31,7 @@ finn logout openrouter  # remove its stored key
 finn logout             # remove every stored key
 ```
 
-In `finn tui`, `/login` and `/logout` do the same. The key is asked for and hidden; it is never an argument.
+In `finn` (the full screen), `/login` and `/logout` do the same. The key is asked for and hidden; it is never an argument.
 
 A login checks the key with one call to the provider (`GET /models`, or `/key` for OpenRouter) and stores it in `~/.config/finn/auth.json` (`$XDG_CONFIG_HOME/finn/auth.json` when that is set), with mode 0600. Finn does not read the file when others may read it or another user owns it, and the server says why. A key is never logged.
 
@@ -42,7 +42,7 @@ The login list also shows `Claude Pro/Max: coming` and `ChatGPT and Codex: comin
 ## Pick a provider and a model
 
 - In a session: `/model` alone lists the models or shows the current one. `/model NAME` changes the model on the session's provider, and `/model PROVIDER/NAME` changes both, from the next turn on. On OpenRouter, `/model openrouter/anthropic/NAME` keeps the session on OpenRouter.
-- For a new session: `finn --provider NAME --model NAME` (or `finn tui` with the same options).
+- For a new session: `finn --provider NAME --model NAME` (or `finn chat` with the same options).
 - For the server: `FINN_PROVIDER` (`finn serve --provider`) is the provider of a session that names none, and `FINN_MODEL` (`--model`) its model.
 
 The server takes any model name. When the first turn after `/model` fails, the client says so; check the name.

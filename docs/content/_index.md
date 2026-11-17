@@ -10,14 +10,14 @@ Finn is a coding agent for the terminal, like Claude Code or OpenCode, written i
 ```sh
 make install          # in a clone of agc-agent
 bin/finn login        # set up a provider with its key
-bin/finn tui          # chat on the full screen in this folder
+bin/finn              # chat on the full screen in this folder
 ```
 
 [Quickstart](quickstart.md) · [Providers](providers.md) · [CLI and TUI](cli.md) · [Approvals and security](security.md)
 
 ## What Finn does
 
-- **One server, several clients.** The agent runs as a server on localhost. The line-mode client (`finn`) and the full-screen client (`finn tui`) talk to it over HTTP and Server-Sent Events. A session goes on when a client closes.
+- **One server, several clients.** The agent runs as a server on localhost. The full-screen client (`finn`) and the line-mode client (`finn chat`) talk to it over HTTP and Server-Sent Events. A session goes on when a client closes.
 - **Many model providers.** Anthropic, OpenAI, OpenRouter, Fireworks, Groq, DeepSeek, a local llama.cpp server, and any OpenAI-compatible API of your config file.
 - **Tools.** Read, write and edit files, search them, and run bash commands. Code mode lets the model call the tools from a Python script in a sandbox.
 - **Sessions you can go back in.** Resume a session, go back to an earlier message, fork or clone it. Long histories fold into a summary.

@@ -1,19 +1,19 @@
 ---
 title: CLI and TUI
-description: The finn commands, the slash commands of a session, the keys of finn tui, and the ! and @ shortcuts.
+description: The finn commands, the slash commands of a session, the keys of the full screen, and the ! and @ shortcuts.
 weight: 40
 ---
 
 # CLI and TUI
 
-Finn has two clients for a session: `finn`, a line-mode client, and `finn tui`, a full-screen one. Both start the server when none runs and leave it running when they quit.
+Finn has two clients for a session: `finn`, a full-screen one, and `finn chat`, a line-mode one. Both start the server when none runs and leave it running when they quit.
 
 ## Commands
 
 | Command | What it does |
 |---|---|
-| `finn` (or `finn chat`) | chat in this folder, line by line |
-| `finn tui` | chat in this folder on the full screen |
+| `finn` (or `finn tui`) | chat in this folder on the full screen; it needs a terminal |
+| `finn chat` | chat in this folder, line by line |
 | `finn -p TASK` | run one task and exit; `-p -` reads it from stdin |
 | `finn serve` | run the server in the foreground |
 | `finn login [PROVIDER]` | set up a provider with its key ([Providers](providers.md)) |
@@ -25,7 +25,7 @@ Finn has two clients for a session: `finn`, a line-mode client, and `finn tui`, 
 
 ### Options of a session
 
-These work for `finn` and `finn tui`:
+These work for `finn` and `finn chat`:
 
 | Option | What it does |
 |---|---|
@@ -38,7 +38,7 @@ These work for `finn` and `finn tui`:
 | `--yolo` | with the approvals on, allow the tool calls of the turns this client starts |
 | `--state-dir DIR` | the folder of `server.json` (default: `FINN_STATE_DIR`) |
 
-`finn` also takes `--delete ID` ([Sessions](sessions.md#resume)) and `--server-command` (the program that starts a server).
+`finn chat` also takes `--delete ID` ([Sessions](sessions.md#resume)) and `--server-command` (the program that starts a server); `finn` with one of them runs `finn chat`.
 
 ### One task
 
@@ -66,7 +66,7 @@ Type them in either client:
 | `/model [PROVIDER/]NAME` | change the model (and provider) from the next turn on; alone, pick or show it |
 | `/thinking [low\|medium\|high\|default]` | show or change the thinking level |
 | `/compact` | fold the history into a summary now |
-| `/login [PROVIDER]` | set up a provider (`finn tui`) |
+| `/login [PROVIDER]` | set up a provider (`finn`) |
 | `/logout [PROVIDER]` | remove a stored key; alone, every one |
 | `/stop` | stop the running turn |
 | `/help` | the list |
@@ -83,9 +83,9 @@ The command runs as the `bash` tool would, with a timeout of 10 minutes. It neve
 
 ## Stop
 
-`/stop`, Esc (`finn tui`) or Ctrl+C (`finn`) stops the running turn or shell command. In `finn`, a second Ctrl+C leaves, and so does Ctrl+C when nothing runs.
+`/stop`, Esc (`finn`) or Ctrl+C (`finn chat`) stops the running turn or shell command. In `finn chat`, a second Ctrl+C leaves, and so does Ctrl+C when nothing runs.
 
-## Keys of finn tui
+## Keys of the full screen
 
 | Key | What it does |
 |---|---|
@@ -106,4 +106,4 @@ The command runs as the `bash` tool would, with a timeout of 10 minutes. It neve
 
 The mouse answers the keys of a panel, opens a tool call or the thinking, and moves the cursor in the prompt.
 
-In `finn`, answer an approval with `y`, `n` or `a` and Enter. The answers are on [Approvals and security](security.md#answer).
+In `finn chat`, answer an approval with `y`, `n` or `a` and Enter. The answers are on [Approvals and security](security.md#answer).

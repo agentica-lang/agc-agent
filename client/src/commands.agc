@@ -4,7 +4,7 @@ import Protocol from "pkg/protocol/protocol"
 
 KIND_COMMAND = "client.command"
 ## The commands of both clients, in the order `/help` lists them: the one table that the parser, the help and the
-## suggestions of `finn tui` read.
+## suggestions of the full screen read.
 COMMANDS = [
   Usage(name: "/new", about: "a new session in this folder"),
   Usage(name: "/resume", args: "[N|ID]", about: "list the sessions; /resume N or /resume ID switches to one"),
@@ -23,7 +23,11 @@ COMMANDS = [
   ),
   Usage(name: "/thinking", args: "[low|medium|high|default]", about: "the thinking level, or change it"),
   Usage(name: "/compact", about: "fold the history into a summary now"),
-  Usage(name: "/login", args: "[PROVIDER]", about: "set up a provider with its key (finn tui); alone: pick one"),
+  Usage(
+    name: "/login",
+    args: "[PROVIDER]",
+    about: "set up a provider with its key (the full screen); alone: pick one",
+  ),
   Usage(name: "/logout", args: "[PROVIDER]", about: "remove a stored key; alone: every one"),
   Usage(name: "/stop", about: "stop the running turn"),
   Usage(name: "/cost", about: "what the session cost", listed: false),

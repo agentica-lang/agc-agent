@@ -63,7 +63,7 @@ def parse(args: List[String]) -> Result[Command]
   return parse_server(args.take(at) + args.drop(at + 1)) if at >= 0
 
   parser = OP.new(
-    "finn",
+    "finn chat",
     "The line-mode client of Finn Agent: it starts the server when none runs, and leaves it running. With -p it " +
     "runs one task: the answer on stdout, the rest on stderr, approvals (when on) denied unless --yolo; exit 0 " +
     "when the turn ends normally (even after a denied call), 130 when it is cancelled, 1 otherwise.",
