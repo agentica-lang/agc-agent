@@ -1,6 +1,7 @@
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Compaction from "../src/agent/compaction"
+import Storage from "../src/session/storage"
 import Store from "../src/session/store"
 
 LINEAR = "tests/fixtures/sessions/linear.jsonl"
@@ -95,6 +96,23 @@ end
 # settings and the cost stay those of the whole file, the end of a turn stays where it was, and a copy keeps one
 # branch.
 def test_a_branch_replays_its_own_records() -> Result[Void] = on_both(&branches)
+
+# The memory adapter answers as the disk one: the same error kinds, a line limit that counts the newline, CRLF read as
+# a line end, a folder with a trailing `/`, and no file in a folder that is not there.
+def test_the_memory_store_answers_as_the_disk_one() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/agc-store-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  on_disk = answers(Storage.disk(1024, 1_048_576), dir)
+  _ = Path.remove(dir)
+  in_memory = answers(Storage.memory(1024, [dir]), dir)
+  expected = [
+    "ok", "io.exists", "io.not_found", "io.not_found", "a b e long", "io.too_large", "ok", "x|y\r", "x", "io.eof",
+    "io.not_found", "io.not_found", "io.not_found",
+  ]
+
+  try Test.eq(on_disk, expected)
+  Test.eq(in_memory, expected)
+end
 
 # The session files of a folder are its own `.jsonl` files, not those of another folder or of another kind.
 def test_the_sessions_of_a_folder_are_its_session_files() -> Result[Void] = on_both(&listed)
@@ -253,13 +271,55 @@ def listed(port: Store.Port, dir: String) -> Result[Void]
   Test.eq(found.map { |r| r.path }.sort, ["#{dir}/a.jsonl", "#{dir}/b.jsonl"])
 end
 
+def answers(port: Storage.Port, dir: String) -> List[String]
+  first = [
+    kind(port.create.call("#{dir}/a", "#{"x" * 1023}\n")),
+    kind(port.create.call("#{dir}/a", "")),
+    kind(port.create.call("#{dir}/missing/c", "")),
+    kind(port.names.call("#{dir}/missing")),
+  ]
+
+  _ = port.create.call("#{dir}/b", "x\r\ny\r")
+  _ = port.create.call("#{dir}/long", "#{"x" * 1024}\n")
+  _ = port.create.call("#{dir}/e", "")
+  no_names: List[String] = []
+  names = port.names.call("#{dir}/").unwrap_or(no_names).sort.join(" ")
+  lines = "?"
+  case port.read.call("#{dir}/b")
+    ok(content) -> lines = content.lines.join("|")
+    error(_) -> nil
+  end
+
+  (
+    first +
+    [
+      names,
+      kind(port.read.call("#{dir}/long")),
+      kind(port.read.call("#{dir}/a")),
+      lines,
+      port.first_line.call("#{dir}/b").unwrap_or("?"),
+      kind(port.first_line.call("#{dir}/e")),
+      kind(port.read.call("#{dir}/none")),
+      kind(port.remove.call("#{dir}/none")),
+      kind(port.read_text.call("#{dir}/none")),
+    ]
+  )
+end
+
+def kind[T](result: Result[T]) -> String
+  case result
+    ok(_) -> "ok"
+    error(e) -> e.kind
+  end
+end
+
 def on_both(scenario: Fn[Store.Port, String, Result[Void]]) -> Result[Void]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/agc-store-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)
   on_disk = scenario.call(Store.disk(), dir)
   _ = Path.remove(dir)
   try on_disk
-  scenario.call(Store.memory(), MEMORY)
+  scenario.call(Store.memory([MEMORY, "#{MEMORY}x"]), MEMORY)
 end
 
 def linear_in(port: Store.Port, dir: String) -> Result[Store.Ref]

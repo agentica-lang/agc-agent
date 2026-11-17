@@ -145,7 +145,7 @@ end
 
 def disk() -> Storage.Port = Storage.disk(MAX_LINE_BYTES, MAX_WRITE_BYTES)
 
-def memory() -> Storage.Port = Storage.memory(MAX_LINE_BYTES)
+def memory(folders: List[String]) -> Storage.Port = Storage.memory(MAX_LINE_BYTES, folders)
 
 def file_of(dir: String, id: String) -> String = "#{dir}/#{id}#{EXTENSION}"
 

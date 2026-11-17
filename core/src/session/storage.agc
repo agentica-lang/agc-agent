@@ -1,6 +1,7 @@
 ## Where the session files live: a record of the functions `Store` reads and writes them with, by path. `disk` keeps
-## them in the data folder; `memory` keeps them in a table, for tests that need no folder. A path is a name to the
-## record: `memory` makes no folder, and `names` lists the files whose path is the folder, a `/` and the name.
+## them in the data folder; `memory` keeps them in a table, for tests that need no folder. `memory` has only the
+## folders it is given, and answers as `disk` does: the same error kinds (`io.not_found`, `io.exists`, `io.too_large`,
+## `io.eof`), the same line limit (a line with its newline), and CRLF read as a line end.
 
 ## The size of a file and its time of change: `modified` is in seconds on disk and counts the writes in memory.
 struct Stat
@@ -47,21 +48,23 @@ def disk(max_line: Int, max_write: Int) -> Port
   )
 end
 
-def memory(max_line: Int) -> Port
+## The files in a table: `folders` are the folders that are there.
+def memory(max_line: Int, folders: List[String]) -> Port
   files: ATS[String, List[String]] = ATS.new()
   writes: ATS[String, Int] = ATS.new()
+  dirs = folders.map { |dir| folder_name(dir) }
   text_of = ->(path: String) { text_in(files, path) }
   Port(
-    create: ->(path: String, text: String) { created(files, writes, path, text) },
-    append: ->(path: String, text: String) { appended(files, writes, path, text) },
+    create: ->(path: String, text: String) { created(files, writes, dirs, path, text) },
+    append: ->(path: String, text: String) { appended(files, writes, dirs, path, text) },
     read: ->(path: String) { content_of(try text_of.call(path), max_line) },
-    first_line: ->(path: String) { ok((try text_of.call(path)).split("\n").first) },
+    first_line: ->(path: String) { first_in(try text_of.call(path)) },
     head: ->(path: String, bytes: Int) { ok((try text_of.call(path)).bytes.take(bytes)) },
     stat: ->(path: String) {
       text = try text_of.call(path)
       ok(Stat(size: text.bytesize, modified: writes.get(path).unwrap_or(0)))
     },
-    names: ->(dir: String) { ok(listed(files.keys, dir)) },
+    names: ->(dir: String) { listed(files.keys, dirs, dir) },
     remove: ->(path: String) { removed(files, path) },
     replace: ->(path: String, text: String) {
       files.put(path, [text])
@@ -138,19 +141,46 @@ end
 def text_in(files: ATS[String, List[String]], path: String) -> Result[String]
   case files.get(path)
     ok(parts) -> ok(parts.join(""))
-    error(_) -> error("#{path}: no such file")
+    error(_) -> not_found(path)
   end
 end
 
-def created(files: ATS[String, List[String]], writes: ATS[String, Int], path: String, text: String) -> Result[Void]
-  return error("#{path}: already there") if not files.put_new(path, [text])
+def not_found[T](path: String) -> Result[T] = error("#{path}: no such file or folder", kind: "io.not_found")
+
+def folder_name(dir: String) -> String
+  return dir if dir == "/" or not dir.end_with?("/")
+
+  dir.slice(0, dir.length - 1)
+end
+
+def folder_of(path: String) -> String
+  parts = path.split("/")
+  folder_name(parts.take(parts.size - 1).join("/"))
+end
+
+def created(
+  files: ATS[String, List[String]],
+  writes: ATS[String, Int],
+  dirs: List[String],
+  path: String,
+  text: String,
+) -> Result[Void]
+  return not_found(path) if not dirs.include?(folder_of(path))
+  return error("#{path}: already there", kind: "io.exists") if not files.put_new(path, [text])
 
   _ = writes.add(path, 1)
   ok()
 end
 
-def appended(files: ATS[String, List[String]], writes: ATS[String, Int], path: String, text: String) -> Result[Void]
-  return error("#{path}: no such file") if not files.has_key?(path)
+# As `File.open(path, "append")`, a missing file in a folder that is there is made.
+def appended(
+  files: ATS[String, List[String]],
+  writes: ATS[String, Int],
+  dirs: List[String],
+  path: String,
+  text: String,
+) -> Result[Void]
+  return created(files, writes, dirs, path, text) if not files.has_key?(path)
 
   _ = files.push(path, text)
   _ = writes.add(path, 1)
@@ -158,32 +188,70 @@ def appended(files: ATS[String, List[String]], writes: ATS[String, Int], path: S
 end
 
 def removed(files: ATS[String, List[String]], path: String) -> Result[Void]
-  return error("#{path}: no such file") if not files.has_key?(path)
+  return not_found(path) if not files.has_key?(path)
 
   files.delete(path)
   ok()
 end
 
-# The lines as `File.foreach` gives them: split at each newline, none after a last newline.
+# The lines as `File.foreach` gives them: split at each newline, none after a last newline, a `\r` before a newline
+# dropped; a line with its newline over `max_line` bytes is refused.
 def content_of(text: String, max_line: Int) -> Result[Content]
-  lines = text.split("\n")
-  if text.end_with?("\n")
-    lines = lines.take(lines.size - 1)
-  end
+  lines: List[String] = []
+  for line in lines_of(text)
+    ended = line.end_with?("\n")
+    body = line
+    if ended
+      body = line.slice(0, line.length - 1)
+    end
 
-  if text.empty?
-    lines = []
-  end
+    return error("a line is over #{max_line} bytes", kind: "io.too_large") if line.bytesize > max_line
 
-  return error("a line is over #{max_line} bytes") if (lines.any? { |line| line.bytesize > max_line })
+    if ended and body.end_with?("\r")
+      body = body.slice(0, body.length - 1)
+    end
+
+    lines = lines.push(body)
+  end
 
   ok(Content(lines: lines, size: text.bytesize))
 end
 
-def listed(paths: List[String], dir: String) -> List[String]
-  prefix = "#{dir}/"
-  names = paths.select { |path| path.start_with?(prefix) }
-    .map { |path| path.slice(prefix.length, path.length - prefix.length) }
+def first_in(text: String) -> Result[String]
+  return error("end of file", kind: "io.eof") if text.empty?
 
-  names.select { |name| not name.include?("/") }
+  line = lines_of(text)[0]
+  return ok(line) if not line.end_with?("\n")
+
+  body = line.slice(0, line.length - 1)
+  return ok(body.slice(0, body.length - 1)) if body.end_with?("\r")
+
+  ok(body)
+end
+
+# Each line with its newline, the last one without when it has none.
+def lines_of(text: String) -> List[String]
+  return [] if text.empty?
+
+  parts = "#{text}x".split("\n")
+  lines = parts.take(parts.size - 1).map { |part| "#{part}\n" }
+  last = parts.last
+  return lines if last == "x"
+
+  lines.push(last.slice(0, last.length - 1))
+end
+
+def listed(paths: List[String], dirs: List[String], dir: String) -> Result[List[String]]
+  folder = folder_name(dir)
+  return not_found(dir) if not dirs.include?(folder)
+
+  prefix = "#{folder}/"
+  if folder == "/"
+    prefix = "/"
+  end
+
+  under = paths.select { |path| path.start_with?(prefix) }
+  names = under.map { |path| path.slice(prefix.length, path.length - prefix.length) }
+
+  ok(names.select { |name| not name.include?("/") })
 end
