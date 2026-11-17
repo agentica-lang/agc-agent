@@ -7,6 +7,7 @@ import Approvals from "approvals"
 import Calls from "calls"
 import Args from "args"
 import Git from "git"
+import Rate from "rate"
 import Transcript from "transcript"
 import Yolo from "pkg/client/yolo"
 import State from "state"
@@ -274,15 +275,16 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
   shown = app.with(last_event_id: seen, shown_id: seen)
   case event
     Protocol.Event.TextDelta(delta) ->
-      shown.with(entries: Transcript.add(shown.entries, Transcript.Kind.Assistant, delta.text))
+      timed(shown, delta.text).with(entries: Transcript.add(shown.entries, Transcript.Kind.Assistant, delta.text))
     Protocol.Event.ThinkingDelta(delta) ->
-      shown.with(entries: Transcript.add(shown.entries, Transcript.Kind.Thinking, delta.text))
+      timed(shown, delta.text).with(entries: Transcript.add(shown.entries, Transcript.Kind.Thinking, delta.text))
     Protocol.Event.TurnStarted(started) ->
-      shown.with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)))
+      shown.with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)), streamed: none)
     Protocol.Event.TurnFinished(done) ->
       ended = shown.with(turn: false, stopping: false, new_model: none, yolo: Yolo.running(shown.yolo, none))
       read_branch(Turn.after_turn(finished(ended, done.stop_reason), done.stop_reason))
-    Protocol.Event.Usage(usage) -> shown.with(usage: some(usage))
+    Protocol.Event.Usage(usage) ->
+      shown.with(usage: some(usage), streamed: none, rate: Rate.exact(usage).map { |r| some(r) }.unwrap_or(shown.rate))
     Protocol.Event.ApprovalRequested(request) if Yolo.allows?(shown.yolo) -> Answering.allowed(shown, request)
     Protocol.Event.ApprovalRequested(request) ->
       shown.with(approvals: Approvals.requested(shown.approvals, request, app.now))
@@ -329,6 +331,12 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
     Protocol.Event.Todos(list) -> State.noted(shown, todos(list.todos))
     _ -> shown
   end
+end
+
+# A piece of the reply: the estimate of the speed, once there is one, takes the place of the last rate.
+def timed(app: State.Model, text: String) -> State.Model
+  streamed = Rate.streamed(app.streamed, text, app.now)
+  app.with(streamed: some(streamed), rate: Rate.live(streamed, app.now).map { |r| some(r) }.unwrap_or(app.rate))
 end
 
 ## The model's todo list as a notice, one item a line.

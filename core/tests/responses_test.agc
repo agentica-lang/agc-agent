@@ -33,7 +33,7 @@ def test_a_turn_runs_on_the_responses_format() -> Result[Void]
     try Test.eq([string(items[3], "call_id"), string(items[4], "call_id")], ["call_core_1", "call_core_1"])
     try Test.eq(items.select { |item| JSON.get(item, "id").ok? }.size, 0)
     usage = a.seen.select { |s| Protocol.event_name(s.event) == "usage" }
-    try Test.eq(usage.map { |s| s.event }.first, Protocol.Event.Usage(usage_of(100, 60)))
+    try Test.eq(usage.map { |s| H.untimed(s.event) }.first, Protocol.Event.Usage(usage_of(100, 60)))
     shown = (try H.session(h, id)).history
     Test.eq(shown.map { |m| m.text }, ["Write hello.txt.", "I will write it.\n\nHello! It's a good day!"])
   end

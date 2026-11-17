@@ -171,6 +171,7 @@ def test_sessions_round_trip_idle_and_mid_turn() -> Result[Void]
     session_cost: some(0.5),
     window: some(100),
     call_output: some(2),
+    output_ms: some(1500),
   )
 
   try Test.eq(
@@ -178,7 +179,7 @@ def test_sessions_round_trip_idle_and_mid_turn() -> Result[Void]
     ok(idle.with(usage: some(used))),
   )
 
-  plain = used.with(session_cost: none, window: none, call_output: none)
+  plain = used.with(session_cost: none, window: none, call_output: none, output_ms: none)
   try Test.eq(Protocol.encode_session(idle.with(usage: some(plain))).include?("null}"), false)
   try Test.eq(
     Protocol.decode_session(Protocol.encode_session(idle.with(usage: some(plain)))),
@@ -262,6 +263,8 @@ end
 def test_negative_numbers_are_refused() -> Result[Void]
   usage = "{\"input\": 1, \"output\": 1, \"cache_read\": 1, \"cache_write\": 1, \"context\": -1}"
   try Test.eq(error_kind(Protocol.decode_event("usage", usage)), "protocol.invalid")
+  timed = "{\"input\": 1, \"output\": 1, \"cache_read\": 1, \"cache_write\": 1, \"context\": 1, \"output_ms\": -1}"
+  try Test.eq(error_kind(Protocol.decode_event("usage", timed)), "protocol.invalid")
   for cost in ["-0.5", "1e999"]
     costly = (
       "{\"input\": 1, \"output\": 1, \"cache_read\": 1, \"cache_write\": 1, \"context\": 1, \"session_cost\": #{cost}}"

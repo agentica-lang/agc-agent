@@ -144,4 +144,6 @@ On a short screen the first row goes first, so an approval keeps its rows.
 
 The counts read `↑4.8k ↓40 R3.6k 75% cached $0.013 15.0%/32k`. All but `$` are about the last model call: `↑` its whole prompt (the cached part too), `↓` its output, `R` the prompt read from the cache and the part of the prompt it was, and the prompt as a part of the model's window (its size in tokens while the window is not known). `$` is the session's cost, when the [catalog](providers.md) has prices.
 
+After the counts, `42 tok/s` is how fast the model wrote its last reply: the output tokens of the call, reasoning included, over the time from its first output to its end. While a reply streams, `~42 tok/s` is an estimate from its text (about 4 characters a token). The rate stays until the next one, and a narrow row drops it first.
+
 In `finn chat`, answer an approval with `y`, `n` or `a` and Enter. The answers are on [Approvals and security](security.md#answer).
