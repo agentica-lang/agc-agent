@@ -144,6 +144,8 @@ A package is added by the phase that needs it, never as an empty folder.
   follow-up issues there, not work here.
 - Every user-visible change adds a line under `## [Unreleased]` of
   `CHANGELOG.md`.
+- A user-visible change updates its page of the user guide in
+  `docs/content/` (`make docs` builds it).
 - The repo is private. Do not create other repos.
 - A line that is only `end` is followed by an empty line, except before
   another `end`, `else`, `elsif`, a closing `)` or `]`, or the end of the file
