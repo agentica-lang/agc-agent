@@ -110,7 +110,7 @@ def test_always_keeps_the_words_of_the_arity_table() -> Result[Void]
   try Test.eq(always.call("cd sub && make test"), ["make test *"])
   for command in [
     "git -c a=b log", "sudo rm x", "env A=1 make", "xargs rm", "timeout 5 make", "export A=1", "FOO=1 rm x",
-    ">log rm x", "npm run t?st",
+    ">log rm x", "rm=1 rm x", "npm run t?st", "npm run t[a]st", "ls*",
   ]
     try Test.eq(always.call(command), ["exact #{command}"])
   end
@@ -140,7 +140,11 @@ def test_an_always_answer_allows_the_prefix_of_each_command() -> Result[Void]
   # An exact command is kept as it is, not as a glob: its `*` matches only itself.
   exact = Permissions.answered(Permissions.Allows(), "allow_prefix", root, "bash", "sudo rm -rf ./build/*")
   tried = ["sudo rm -rf ./build/*", "sudo rm -rf ./build/ /", "sudo rm -rf ./build/x"]
-  Test.eq(tried.select { |c| Permissions.allows?(exact, rules, root, "bash", c) }, ["sudo rm -rf ./build/*"])
+  try Test.eq(tried.select { |c| Permissions.allows?(exact, rules, root, "bash", c) }, ["sudo rm -rf ./build/*"])
+  # A command after an assignment is kept whole too: `rm *` would never match the line it came from.
+  assigned = Permissions.answered(Permissions.Allows(), "allow_prefix", root, "bash", "FOO=1 rm x")
+  lines = ["FOO=1 rm x", "rm y", "FOO=2 rm x", "FOO=1 rm x; rm y"]
+  Test.eq(lines.select { |c| Permissions.allows?(assigned, rules, root, "bash", c) }, ["FOO=1 rm x"])
 end
 
 # A rule is `ACTION TOOL(PATTERN)`: a space in the tool or a pattern over MAX_PATTERN characters is refused.

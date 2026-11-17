@@ -167,6 +167,43 @@ def test_a_failed_service_stops_those_started_before_it() -> Result[Void]
   Test.error?(stopped.recv(0))
 end
 
+# A start or a stop that hangs past its time ends in about that time: its task is cancelled and nothing of it runs
+# after.
+def test_a_service_that_hangs_is_cancelled_in_its_time() -> Result[Void]
+  hang: Channel[Bool] = Channel.new(2)
+  seen: Channel[String] = Channel.new(2)
+  slow_start = Core.Service(
+    name: "slow",
+    start: -> {
+      _ = hang.recv(60_000)
+      _ = seen.send("started late", 0)
+      ok()
+    },
+    stop: -> { nil },
+  )
+
+  began = Time.monotonic_ms
+  try Test.eq(Extensions.start_services([slow_start], 100).ok?, false)
+  start_ms = Time.monotonic_ms - began
+  slow_stop = Core.Service(
+    name: "stuck",
+    start: -> { ok() },
+    stop: -> {
+      _ = hang.recv(60_000)
+      _ = seen.send("stopped late", 0)
+    },
+  )
+
+  running = try Extensions.start_services([slow_stop], 100)
+  began = Time.monotonic_ms
+  Extensions.stop_services(running)
+  stop_ms = Time.monotonic_ms - began
+  _ = hang.send(true, 0)
+  _ = hang.send(true, 0)
+  try Test.assert(start_ms < 1000 and stop_ms < 1000, "start took #{start_ms} ms and stop #{stop_ms} ms")
+  Test.error?(seen.recv(100))
+end
+
 # Names that are taken: a built-in tool, a tool of the core outside `Tools.all`, the MCP prefix, and another extension.
 def test_extension_tools_cannot_take_a_name() -> Result[Void]
   registry = Core.registry()

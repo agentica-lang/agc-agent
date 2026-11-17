@@ -122,12 +122,15 @@ A package is added by the phase that needs it, never as an empty folder.
     the server only through `client`, `protocol` and `sse`: it never depends
     on `core`, `llm` or another client.
   - Inside `core/src`, a folder imports only these others (`make coupling`
-    checks them): `tools` imports no other, `approval` and
-    `ext` import `tools`, `agent` imports `tools` and `approval`, `session`
-    imports `agent`, `tools`, `ext`, `approval` and `config`; `config` imports
-    `tools`, `approval` and `agent` (the model catalog); `http` imports
-    `config` and only `session/session` of `session`, and no folder imports
-    `http`. An import never has a `..` after its first folder.
+    checks them): `tools` and `providers` import no other, `approval` and
+    `ext` import `tools`; `agent` imports `tools`, `approval` and
+    `providers`; `config` imports `tools`, `approval` and `providers`;
+    `session` imports `agent`, `tools`, `ext`, `approval`, `config` and
+    `providers`; `http` imports `session`, `config` and `providers`, and of
+    `session` only `session/session`. No folder imports `http`. Inside
+    `session`, only the actor's files (`actor`, `turn`, `stream`, `branch`,
+    `state`) import `turn`, `stream`, `branch` and `state`. An import never
+    has a `..` after its first folder.
   - Each package has one `VERSION` constant in its public module, equal to its
     tag (`llm-0.0.1` is `VERSION = "0.0.1"`). A release goes in this order: tag
     the dependency (`llm-X`), then a PR that bumps the dependent's entry and

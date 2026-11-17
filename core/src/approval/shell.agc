@@ -74,7 +74,8 @@ end
 
 def always(text: String, tokens: List[String]) -> Resource
   exact = Resource(tool: "bash", pattern: text, literal: true)
-  return exact if tokens.empty? or RUNNERS.include?(tokens[0]) or not text.start_with?(tokens[0])
+  return exact if tokens.empty? or RUNNERS.include?(tokens[0])
+  return exact if text != tokens[0] and not text.start_with?("#{tokens[0]} ")
 
   words = Arity.prefix(tokens)
   return exact if (words.any? { |w| w.start_with?("-") or w.include?("*") or w.include?("?") or w.include?("[") })

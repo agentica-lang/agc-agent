@@ -13,6 +13,7 @@
 - **Breaking:** rules are OpenCode's: one `permission` list (`"allow bash(git *)"`, `"ask read_file(*.env)"`), the last match wins; `allow` and `deny` keys stop the start.
 - `bash` rules check each command of the line (tree-sitter-bash); a line it cannot read clearly asks. File rules cover the file tools only.
 - "Always" (`allow_prefix`) allows each command's first words from OpenCode's arity table (`npm run dev *`).
+- "Always" on a command with an assignment or a redirect first, or with glob characters in its first words, allows only that exact command.
 - `external_directory` rules check the paths outside the session folder that `cd`, `rm`, `cp` and the like name.
 - **Breaking:** with approvals on, reads of `.env` files ask by default.
 - The first start builds the bash parser; clients wait up to a minute and say so.
