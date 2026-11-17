@@ -1,4 +1,6 @@
 import Protocol from "pkg/protocol/protocol"
+import Config from "../src/config/config"
+import Sessions from "../src/session/session"
 import Store from "../src/session/store"
 import H from "support/harness"
 
@@ -1023,4 +1025,34 @@ def finished(sub: H.Sub) -> Result[Protocol.ShellFinished]
   end
 
   error("no shell_finished")
+end
+
+# The registry lists the session files of its store, here in memory: a write moves the file's time of change (the
+# count of its writes in memory), so the next list reads the file again and shows its first message.
+def test_the_list_reads_a_file_again_once_a_write_changes_it() -> Result[Void]
+  options = Config.Options(
+    state_dir: "/memory/state",
+    data_dir: "/memory",
+    providers: {},
+    provider: "local",
+    model: "m",
+    env: ->(_name: String) { error("unset") },
+  )
+
+  dir = Sessions.folder(options)
+  port = Store.memory([dir])
+  file = try Store.create(
+    port,
+    dir,
+    Store.Header(id: "s1", cwd: "/", model: "m", created_ms: 0, api: some("openai"), provider: some("local")),
+  )
+
+  sessions = Sessions.start(options, some(port))
+  before = Sessions.list(sessions)
+  appended = Store.append_user(file, "hello")
+  after = Sessions.list(sessions)
+  Sessions.stop(sessions)
+  try appended
+  shown = [try before, try after].map { |list| list.map { |s| "#{s.id} #{s.title} #{s.updated_s}" } }
+  Test.eq(shown, [["s1  1"], ["s1 hello 2"]])
 end

@@ -297,7 +297,12 @@ def test_a_fold_on_anthropic_drops_the_thinking_of_the_kept_messages() -> Result
   try Test.eq(folded.take(1), history.take(1))
   kept = Compaction.apply(history, span.with(summary: "S"))
   try Test.eq(kept.drop(kept.size - 2), history.drop(history.size - 2))
-  file = try Store.create(Store.memory(), "/memory", Store.Header(id: "s", cwd: "/", model: "m", created_ms: 0))
+  file = try Store.create(
+    Store.memory(["/memory"]),
+    "/memory",
+    Store.Header(id: "s", cwd: "/", model: "m", created_ms: 0),
+  )
+
   try Store.append_messages(file, history)
   try Store.append_compaction(file, stripped, [])
   Test.eq((try Store.load(file)).history, folded)
