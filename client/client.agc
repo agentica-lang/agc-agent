@@ -1,15 +1,24 @@
 ## What every client of the server needs: finding or starting the server of the state folder, the HTTP calls of the
 ## protocol, the task that reads the event stream of a session, and the commands a user types.
 
+import Backends from "src/backend"
 import Commands from "src/commands"
 import Control from "src/control"
 import Discovery from "src/discovery"
 import Events from "src/feed"
 import Http from "src/http"
+import Sessions from "src/sessions"
 import Tree from "src/tree"
 
 VERSION = "0.0.1"
 
+export Backends.Backend
+export Backends.http_backend
+export Backends.unreachable_backend
+export Sessions.new_session
+export Sessions.replay_from
+export Sessions.thinking
+export Sessions.compacted
 export Http.Server
 export Http.KIND_UNREACHABLE
 export Http.KIND_TIMEOUT

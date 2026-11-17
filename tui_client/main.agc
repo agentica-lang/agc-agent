@@ -28,13 +28,13 @@ end
 def run(options: Args.Options) -> Result[Int]
   launch = Args.launch(options)
   server = try Client.connect(launch, try Client.state_dir(launch))
-  TUI.Raw.open(->(screen) { App.run(screen, server, options) })
+  TUI.Raw.open(->(screen) { App.run(screen, Client.http_backend(server), options) })
 end
 
 def login(options: Args.Options) -> Result[Int]
   launch = Args.launch(options)
   server = try Client.connect(launch, try Client.state_dir(launch))
-  TUI.Raw.open(->(screen) { App.login(screen, server, options) })
+  TUI.Raw.open(->(screen) { App.login(screen, Client.http_backend(server), options) })
 end
 
 def finish(result: Result[Int]) -> Void

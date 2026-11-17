@@ -1,4 +1,3 @@
-import HTTP from "std/http"
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
@@ -348,20 +347,13 @@ def test_a_resync_with_no_turn_sends_the_follow_ups() -> Result[Void]
     history: [],
   )
 
-  handler = ->(_request: HTTP.Request, _body: HTTP.RequestBody) {
-    ok(HTTP.Answer.Whole(HTTP.Response(status: 200, headers: [], body: Protocol.encode_session(session).bytes)))
-  }
-
-  http = try HTTP.serve("127.0.0.1", 0, handler)
-  server = Client.Server(url: "http://127.0.0.1:#{HTTP.local_port(http)}", token: "t")
-  model = model_of(30, 8).with(server: server, id: "s1", turn: true, generation: 1, follow_ups: ["later"])
+  backend = Client.unreachable_backend().with(session: ->(_id: String) { ok(session) })
+  model = model_of(30, 8).with(backend: backend, id: "s1", turn: true, generation: 1, follow_ups: ["later"])
   resynced = App.update(model, App.Msg.Stream(1, [Client.Item.Event(some(3), Protocol.Event.Resync)])).model
   Task.await(resynced.stream.unwrap!)
   branched = Protocol.Branched(id: "s1", text: "Two.")
   moved = App.update(model.with(turn: false, moving: true), App.Msg.Moved(ok(branched))).model
   Task.await(moved.stream.unwrap!)
-  HTTP.close_server(http)
-  _ = HTTP.wait(http)
   try Test.eq([resynced.follow_ups, resynced.outbox], [[], ["later"]])
   Test.eq([moved.prompt, moved.follow_ups.size.to_s, moved.outbox.size.to_s], ["Two.\nlater", "0", "0"])
 end
@@ -381,17 +373,10 @@ def test_a_command_running_on_attach_waits_for_its_end() -> Result[Void]
     shell_id: some("sh1"),
   )
 
-  handler = ->(_request: HTTP.Request, _body: HTTP.RequestBody) {
-    ok(HTTP.Answer.Whole(HTTP.Response(status: 200, headers: [], body: Protocol.encode_session(session).bytes)))
-  }
-
-  http = try HTTP.serve("127.0.0.1", 0, handler)
-  server = Client.Server(url: "http://127.0.0.1:#{HTTP.local_port(http)}", token: "t")
-  model = model_of(40, 8).with(server: server, id: "s1", generation: 1)
+  backend = Client.unreachable_backend().with(session: ->(_id: String) { ok(session) })
+  model = model_of(40, 8).with(backend: backend, id: "s1", generation: 1)
   resynced = App.update(model, App.Msg.Stream(1, [Client.Item.Event(some(3), Protocol.Event.Resync)])).model
   Task.await(resynced.stream.unwrap!)
-  HTTP.close_server(http)
-  _ = HTTP.wait(http)
   try Test.eq([resynced.shell, App.subscriptions(resynced).size == 2], [true, true])
   cut = Protocol.ShellFinished(
     shell_id: "sh1",
@@ -621,7 +606,7 @@ def model_of(width: Int, height: Int) -> App.Model
     thinking: false,
   )
 
-  App.seed(Client.Server(url: "http://127.0.0.1:1", token: ""), options, Channel.new(1), width, height)
+  App.seed(Client.unreachable_backend(), options, Channel.new(1), width, height)
 end
 
 # The footer: the folder (home as ~), the branch and the first line of the first user message (not a command the prompt

@@ -435,7 +435,7 @@ def within(
   http = try HTTP.serve("127.0.0.1", 0, handler)
   feed: Channel[Client.Item] = Channel.new(16)
   server = Client.Server(url: "http://127.0.0.1:#{HTTP.local_port(http)}", token: "t")
-  start = App.seed(server, options(), Channel.new(1), width, height)
+  start = App.seed(Client.http_backend(server), options(), Channel.new(1), width, height)
   # No guard time: these tests send a key right after the panel shows (the guard has its own tests).
   model = start.with(
     id: "s1",

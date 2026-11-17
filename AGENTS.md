@@ -30,8 +30,9 @@ core/src/            one folder per domain: config/ (settings, CLI, the extensio
                      the stored keys and logins, the model catalog), tools/ (the tools and their sandbox), ext/
                      (MCP, skills), approval/ (the approval extension: rules, session allows); core/tests stay
                      flat
-client/              what every client shares: finding or starting the server, the HTTP calls, the event reader;
-                     client.agc is its public module
+client/              what every client shares: finding or starting the server, the HTTP calls and `Backend` (them
+                     as a record of functions; a test fills its own), the event reader, the session rules of
+                     both clients; client.agc is its public module
 cli/                 the line-mode client: depends only on client and protocol; main.agc is the entry point
 tui_client/          the TUI client on agentica-tui (pinned commit): client, protocol and tui; main.agc is the
                      entry point; tests/test_pty.py runs it under a pty against core and a fake model
@@ -142,7 +143,8 @@ A package is added by the phase that needs it, never as an empty folder.
   none fails.
 - Fast tests: `make test` stays near a minute and no test file passes 5 s
   (`agentica test --timing`). Order of preference: a unit or functional test
-  with fixtures, an app test on the fake terminal of `TUI.Testing` (`tui_client/tests/terminal_test.agc`, `app_test.agc`),
+  with fixtures, an app test on the fake terminal of `TUI.Testing` (`tui_client/tests/terminal_test.agc`), or on the
+  model with a fake `Client.Backend` (`app_test.agc`),
   then a child process on pipes (`cli`), and a pty only for what the terminal
   does (raw mode, resize, mouse, paste, drawing, signals). No `Task.sleep` or
   `time.sleep` to wait for something: wait on the event (a channel the test

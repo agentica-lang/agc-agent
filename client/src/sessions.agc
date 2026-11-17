@@ -1,0 +1,39 @@
+## What both clients decide the same way about a session: the request that opens one, where the events after a
+## snapshot are read from, and what a client says of its thinking level and of a compaction.
+
+import Protocol from "pkg/protocol/protocol"
+
+## A new session in `cwd`, else the folder the client runs in.
+def new_session(
+  cwd: Optional[String],
+  model: Optional[String],
+  api: Optional[String],
+  provider: Optional[String],
+) -> Result[Protocol.NewSession]
+  folder = case cwd
+    some(dir) -> dir
+    none -> try Path.cwd()
+  end
+
+  ok(Protocol.NewSession(cwd: folder, model: model, api: api, provider: provider))
+end
+
+## The event id to read the stream of `session` after: while a turn runs, the start of the turn, so the client gets
+## the whole turn; with `skip_replay` (a server that no longer has that start), and when no turn runs, what comes next.
+def replay_from(session: Protocol.Session, skip_replay: Bool) -> Int
+  return session.last_event_id if skip_replay
+
+  session.turn_from_event_id.unwrap_or(session.last_event_id)
+end
+
+## The thinking level of `session`, as a client says it.
+def thinking(session: Protocol.Session) -> String = "thinking #{session.effort.unwrap_or("as the model's default")}"
+
+## What a compaction did, or why it failed.
+def compacted(result: Result[Bool]) -> Result[String]
+  case result
+    ok(folded) if folded -> ok("compacted")
+    ok(_) -> ok("nothing to compact yet")
+    error(e) -> error(e)
+  end
+end
