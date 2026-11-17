@@ -23,13 +23,15 @@ CALL_MS = 15_000
 ## A device login waits this long for the user at most.
 DEVICE_MS = 900_000
 
-## Where the login and the API are, and how a device login polls: the interval the server asks (at least
-## `min_poll_ms`) plus `poll_margin_ms`.
+## Where the login and the API are, how a device login polls (the interval the server asks, at least `min_poll_ms`,
+## plus `poll_margin_ms`) and waits for the user (`device_ms`), and how long a call of the login may take.
 struct Endpoints
   issuer: String = ISSUER
   base_url: String = BASE_URL
   min_poll_ms: Int = 1000
   poll_margin_ms: Int = 3000
+  device_ms: Int = DEVICE_MS
+  call_ms: Int = CALL_MS
 end
 
 ## What a login keeps: the tokens, the account they are of, and the models Codex listed at the login.
@@ -41,12 +43,12 @@ struct Tokens
 end
 
 ## The login of a server: the file and who may own it (`Auth.refusal`), the endpoints, and the lock that makes the
-## refreshes of its sessions go one at a time.
+## refreshes and saves of its tokens go one at a time (its holder and until when it holds it).
 struct Login
   path: String
   owner: Optional[Int] = none
   endpoints: Endpoints
-  lock: ATS[String, Bool]
+  lock: ATS[String, String]
 end
 
 ## A device login that started: the code the user types at `url`. `id` asks for its end and stays on the server.
@@ -57,22 +59,21 @@ struct Device
   id: String
 end
 
-def endpoints(read: Fn[String, Result[String]]) -> Endpoints
-  Endpoints(issuer: given(read, ISSUER_ENV, ISSUER), base_url: given(read, BASE_URL_ENV, BASE_URL))
+## The endpoints of the variables: `https://`, or `http://` on this machine only (a test).
+def endpoints(read: Fn[String, Result[String]]) -> Result[Endpoints]
+  ok(Endpoints(issuer: try given(read, ISSUER_ENV, ISSUER), base_url: try given(read, BASE_URL_ENV, BASE_URL)))
 end
 
-def login(state_dir: String, owner: Optional[Int], read: Fn[String, Result[String]]) -> Login
-  Login(path: "#{state_dir}/#{FILE}", owner: owner, endpoints: endpoints(read), lock: ATS.new())
+def login(state_dir: String, owner: Optional[Int], read: Fn[String, Result[String]]) -> Result[Login]
+  ok(Login(path: "#{state_dir}/#{FILE}", owner: owner, endpoints: try endpoints(read), lock: ATS.new()))
 end
 
 ## The tokens of the file, none when it is missing. A file others may read, of another user or not a login is an
 ## error that says only why.
 def load(login: Login) -> Result[Optional[Tokens]]
-  return ok(none) if not File.stat(login.path).ok?
+  return ok(none) if not File.lstat(login.path).ok?
 
-  for why in option_list(Auth.refusal(login.path, login.owner))
-    return error(why)
-  end
+  try usable(login)
 
   case JSON.decode(try File.read_text(login.path), TokenFile)
     ok(file) ->
@@ -90,6 +91,14 @@ def load(login: Login) -> Result[Optional[Tokens]]
   end
 end
 
+## Writes the file, one save or refresh at a time (`save`).
+def store(login: Login, tokens: Tokens) -> Result[Void]
+  holder = try locked(login)
+  result = save(login, tokens)
+  unlock(login, holder)
+  result
+end
+
 ## Writes the file, private from the start: a new one under another name in the same folder, then renamed.
 def save(login: Login, tokens: Tokens) -> Result[Void]
   text = JSON.encode(
@@ -102,15 +111,12 @@ def save(login: Login, tokens: Tokens) -> Result[Void]
   )
 
   # One there is checked again (its mode may have changed) and replaced in one step, keeping its mode.
-  if File.stat(login.path).ok?
-    for why in option_list(Auth.refusal(login.path, login.owner))
-      return error(why)
-    end
-
+  if File.lstat(login.path).ok?
+    try usable(login)
     return File.replace(login.path, text.bytes)
   end
 
-  temp = "#{login.path}.#{Random.int(0, 999_999_999)}.tmp"
+  temp = "#{login.path}.#{OpenSSL.Random.hex(8)}.tmp"
   moved = written(temp, login.path, text)
   if not moved.ok?
     _ = Path.remove(temp)
@@ -144,8 +150,8 @@ def start(endpoints: Endpoints) -> Result[Device]
 end
 
 ## Polls until the user confirmed the code, then takes the tokens and the models of the account; at most `wait_ms`.
-def finish(endpoints: Endpoints, device: Device, wait_ms: Int = DEVICE_MS) -> Result[Tokens]
-  deadline = Time.monotonic_ms + wait_ms
+def finish(endpoints: Endpoints, device: Device) -> Result[Tokens]
+  deadline = Time.monotonic_ms + endpoints.device_ms
   body = JSON.encode(JSON.object({"device_auth_id": JSON.from(device.id), "user_code": JSON.from(device.user_code)}))
   while Time.monotonic_ms < deadline
     Task.sleep(device.interval_ms + endpoints.poll_margin_ms)
@@ -206,9 +212,9 @@ end
 ## The tokens after a 401 with `used`, one refresh at a time: those of the file when another session refreshed them
 ## since, else refreshed and saved. Tokens that cannot be saved still serve this server.
 def renewed(login: Login, used: String) -> Result[Tokens]
-  try locked(login.lock)
+  holder = try locked(login)
   result = renewed_locked(login, used)
-  login.lock.delete(LOCK)
+  unlock(login, holder)
   result
 end
 
@@ -244,9 +250,11 @@ end
 
 private
 
+LOOPBACK = ["http://127.0.0.1:", "http://127.0.0.1/", "http://localhost:", "http://localhost/", "http://[::1]:"]
 JSON_TYPE = "application/json"
 FORM_TYPE = "application/x-www-form-urlencoded"
 LOCK = "refresh"
+USED = "used"
 
 struct TokenFile
   access_token: String
@@ -276,31 +284,53 @@ struct Claims
   chatgpt_account_id: Optional[String]
 end
 
-def given(read: Fn[String, Result[String]], name: String, fallback: String) -> String
-  case read.call(name)
+def given(read: Fn[String, Result[String]], name: String, fallback: String) -> Result[String]
+  url = case read.call(name)
     ok(value) if not value.empty? -> value
     _ -> fallback
   end
+
+  return ok(url) if (url.start_with?("https://") or LOOPBACK.any? { |start| url.start_with?(start) })
+
+  error("#{name} must be an https:// URL (http:// only on this machine)")
 end
 
+# A file there must be a regular file (not a link) that only its user may read.
+def usable(login: Login) -> Result[Void]
+  return error("#{login.path} is not a regular file: it is not used") if (try File.lstat(login.path)).kind != "file"
+
+  for why in option_list(Auth.refusal(login.path, login.owner))
+    return error(why)
+  end
+
+  ok()
+end
+
+# Each session gets its own refresh (`renewer`), which knows the token its provider sends: the one of the start, then
+# the one of its last refresh.
 def provider_of(login: Login, tokens: Tokens, options: LLM.Options) -> Providers.Provider
   url = login.endpoints.base_url
-  used = tokens.access
-  refresh = -> { fresh_provider(login, used, options) }
-
+  access = tokens.access
   api = Providers.ModelApi(
     provider: LLM.codex(url, tokens.access, tokens.account, options),
     extra: Providers.stateless(),
     model: tokens.models.take(1).join(""),
     local: false,
-    refresh: some(refresh),
+    renewer: some(-> { session_refresh(login, access, options) }),
   )
 
   Providers.Provider(apis: {"openai_responses": api}, api: "openai_responses", catalog: NAME, models: tokens.models)
 end
 
-def fresh_provider(login: Login, used: String, options: LLM.Options) -> Result[LLM.Provider]
-  fresh = try renewed(login, used)
+def session_refresh(login: Login, access: String, options: LLM.Options) -> Fn[Result[LLM.Provider]]
+  used: ATS[String, String] = ATS.new()
+  used.put(USED, access)
+  -> { fresh_provider(login, used, options) }
+end
+
+def fresh_provider(login: Login, used: ATS[String, String], options: LLM.Options) -> Result[LLM.Provider]
+  fresh = try renewed(login, used.get(USED).unwrap_or(""))
+  used.put(USED, fresh.access)
   ok(LLM.codex(login.endpoints.base_url, fresh.access, fresh.account, options))
 end
 
@@ -317,15 +347,40 @@ def renewed_locked(login: Login, used: String) -> Result[Tokens]
   ok(fresh)
 end
 
-def locked(lock: ATS[String, Bool]) -> Result[Void]
-  deadline = Time.monotonic_ms + CALL_MS * 2
-  while not lock.put_new(LOCK, true)
-    return error("another refresh of the ChatGPT login did not end") if Time.monotonic_ms >= deadline
+# Takes the lock, and gives the holder's name. A holder keeps it one call and a second at most: one cancelled or
+# crashed in between never gives it back, so after that time it is taken over.
+def locked(login: Login) -> Result[String]
+  holder = OpenSSL.Random.hex(8)
+  hold_ms = login.endpoints.call_ms + 1000
+  give_up = Time.monotonic_ms + hold_ms * 2
+  while true
+    now = Time.monotonic_ms
+    return ok(holder) if login.lock.put_new(LOCK, "#{holder} #{now + hold_ms}")
+
+    if until_of(login.lock.get(LOCK).unwrap_or("")) < now
+      login.lock.put(LOCK, "#{holder} #{now + hold_ms}")
+      return ok(holder)
+    end
+
+    return error("another refresh of the ChatGPT login did not end") if now >= give_up
 
     Task.sleep(20)
   end
 
-  ok()
+  error("unreachable")
+end
+
+def unlock(login: Login, holder: String) -> Void
+  if login.lock.get(LOCK).unwrap_or("").start_with?("#{holder} ")
+    login.lock.delete(LOCK)
+  end
+end
+
+def until_of(held: String) -> Int
+  parts = held.split(" ")
+  return 0 if parts.size != 2
+
+  parts[1].to_i.unwrap_or(0)
 end
 
 def token_call(endpoints: Endpoints, form: List[URI.Pair], failed: String) -> Result[Granted]
@@ -340,7 +395,7 @@ end
 
 # The models of the account, in the order Codex lists them.
 def listed(endpoints: Endpoints, access: String, account: String) -> Result[List[String]]
-  case LLM.models(LLM.codex(endpoints.base_url, access, account, LLM.Options(timeout_ms: CALL_MS, tries: 1)))
+  case LLM.models(LLM.codex(endpoints.base_url, access, account, LLM.Options(timeout_ms: endpoints.call_ms, tries: 1)))
     ok(models) if not models.empty? -> ok(models.map { |m| m.id })
     ok(_) -> error("Codex listed no model for this account")
     error(e) -> error("Codex did not list the models (#{e.kind})")
@@ -385,7 +440,7 @@ def account_in(claims: JSON.Value) -> String
 end
 
 def post(endpoints: Endpoints, path: String, body: String, kind: String) -> Result[HTTP.Response]
-  client = try HTTP.client(HTTP.ClientOptions(timeout_ms: CALL_MS))
+  client = try HTTP.client(HTTP.ClientOptions(timeout_ms: endpoints.call_ms))
   headers = [HTTP.Header(name: "Content-Type", value: kind), HTTP.Header(name: "Accept", value: JSON_TYPE)]
   answer = HTTP.request(client, "POST", "#{endpoints.issuer}#{path}", body.bytes, headers)
   HTTP.close_client(client)

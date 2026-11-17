@@ -23,6 +23,8 @@ struct ModelApi
   local: Bool = true
   ## A provider with a fresh token, after a 401 (the token of `ant`).
   refresh: Optional[Fn[Result[LLM.Provider]]] = none
+  ## Makes the `refresh` of one session, for a login whose refresh must know the token the session sends (ChatGPT).
+  renewer: Optional[Fn[Fn[Result[LLM.Provider]]]] = none
 end
 
 ## A provider: its model APIs by name, and `api`, the one of a session that names none.

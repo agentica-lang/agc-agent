@@ -131,7 +131,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   auth_path = Auth.path(read)
   owner = Auth.owner(read)
   states = try state_dir(read)
-  chatgpt = Chatgpt.login(states, owner, read)
+  chatgpt = try Chatgpt.login(states, owner, read)
   stored = auth_path.map { |path| Auth.load(path, owner) }.unwrap_or(Auth.Stored())
   # A base URL a login stored serves `local` unless FINN_BASE_URL is set.
   server = Offered.Server(

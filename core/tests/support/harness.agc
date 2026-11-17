@@ -89,6 +89,8 @@ struct Setup
   local_login: Bool = false
   ## The ChatGPT login: its OAuth server at `/auth` of the fake and Codex at `/codex`, its tokens in the state folder.
   chatgpt: Bool = false
+  chatgpt_poll_ms: Int = 10
+  chatgpt_device_ms: Int = 5000
   ## The approvals on (calls that no rule allows ask); the deny rules of the config, as `bash(rm *)`, count either way.
   approvals: Bool = true
   deny: List[String] = []
@@ -199,10 +201,25 @@ def providers(
   all
 end
 
-## The ChatGPT login of a test's folder, against the fake, polling at once.
-def chatgpt_login(fake: Fake.Fake, base: String) -> Chatgpt.Login
+## The ChatGPT login of a test's folder, against the fake: a poll every `poll_ms`, a wait for the user of `device_ms`
+## and calls of `call_ms` at most.
+def chatgpt_login(
+  fake: Fake.Fake,
+  base: String,
+  poll_ms: Int = 10,
+  device_ms: Int = 5000,
+  call_ms: Int = 2000,
+) -> Chatgpt.Login
   root = fake_root(fake)
-  endpoints = Chatgpt.Endpoints(issuer: "#{root}/auth", base_url: "#{root}/codex", min_poll_ms: 10, poll_margin_ms: 0)
+  endpoints = Chatgpt.Endpoints(
+    issuer: "#{root}/auth",
+    base_url: "#{root}/codex",
+    min_poll_ms: poll_ms,
+    poll_margin_ms: 0,
+    device_ms: device_ms,
+    call_ms: call_ms,
+  )
+
   Chatgpt.Login(path: "#{base}/state/#{Chatgpt.FILE}", endpoints: endpoints, lock: ATS.new())
 end
 
@@ -229,7 +246,7 @@ def login_setup(setup: Setup, fake: Fake.Fake, base: String) -> Optional[Logins.
   path = auth_file(base)
   chatgpt: Optional[Chatgpt.Login] = none
   if setup.chatgpt
-    chatgpt = some(chatgpt_login(fake, base))
+    chatgpt = some(chatgpt_login(fake, base, setup.chatgpt_poll_ms, setup.chatgpt_device_ms))
   end
 
   some(

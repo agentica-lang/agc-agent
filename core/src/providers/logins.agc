@@ -371,7 +371,7 @@ def device_ended(state: State, result: Result[Chatgpt.Tokens]) -> State
 
   tokens = result.unwrap!
   login = state.setup.unwrap!.chatgpt.unwrap!
-  case Chatgpt.save(login, tokens)
+  case Chatgpt.store(login, tokens)
     ok(_) -> nil
     error(e) -> return state.with(device: DeviceRun.Failed("#{login.path} cannot be written: #{e.message}"))
   end
