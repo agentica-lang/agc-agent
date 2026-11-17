@@ -93,13 +93,18 @@ The command runs as the `bash` tool would, with a timeout of 10 minutes. It neve
 | Alt+Enter | send after the running turn ends (a follow-up) |
 | Ctrl+J | a new line |
 | Esc | stop the running turn |
-| Ctrl+C | quit |
+| Ctrl+C; Ctrl+D on an empty prompt | quit |
 | Shift+Tab | the next thinking level |
 | Ctrl+T | show or hide the thinking |
 | Ctrl+O | show or hide the tool output |
 | `@` | complete a file path of the session folder |
 | `/` | complete a command; Esc then Enter sends the text as typed |
-| Up | the earlier messages you sent |
+| Up, Down | move between the rows of the prompt; Up from its first row, or on an empty prompt, shows the earlier messages you sent |
+| Ctrl+A, Ctrl+E | the start or the end of the line |
+| Alt+Left, Alt+Right | the word before or after |
+| Ctrl+W | cut the word before the cursor |
+| Ctrl+U, Ctrl+K | cut to the start or the end of the line |
+| Delete, Ctrl+D | cut the character after the cursor |
 | PgUp, PgDn | scroll |
 | Ctrl+Y, Ctrl+N | allow or deny the call that waits for an approval |
 | Tab | move to the approval panel: `y` allow, `n` deny, `a` allow the same call for the session; Tab or Esc goes back |
