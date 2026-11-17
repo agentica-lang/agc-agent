@@ -103,8 +103,6 @@ struct Approver
   asking: Bool
   accept_edits: Bool
   with_accept_edits: Fn[Bool, Approver]
-  ## Whether a `!` command of the user is refused; none refuses none.
-  refuses: Optional[Fn[String, Bool]] = none
 end
 
 ## A session folder as the core's own extensions see it: its skills count when it is `trusted`.

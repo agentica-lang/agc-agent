@@ -9,7 +9,8 @@
 - **Breaking:** `finn --yolo` allows only the tool calls of the turns it starts.
 - **Breaking:** the command is `finn` and variables are `FINN_*`; most `AGC_AGENT_*` names still work.
 - **Breaking:** an old `agc-agent` `config.json`, `AGC_AGENT_CONFIG` or `AGC_AGENT_MCP_CONFIG` stops `finn serve` and says where to move it; an old `auth.json` warns.
-- Deny rules win over every allow rule and answer, in both modes; a `bash` command they cannot check asks, or is refused with approvals off.
+- **Breaking:** with approvals on, a `bash` command that only reads asks too; only an allow rule or an answer runs it.
+- `bash` rules match the whole command text, best effort, and deny rules win over allow rules; file rules cover the file tools only.
 - `finn chat` and `finn tui` refuse a server of another version and say how to stop it.
 
 ### Added
@@ -32,7 +33,6 @@
 - The `openai_responses` and `anthropic` APIs, with thinking and prompt cache.
 - Cost in USD from the models.dev catalog.
 - Approval rules in config files; allow a `bash` prefix, a tool or edits for the session.
-- Read-only `bash` commands in the session folder run without asking.
 - MCP servers on stdio and streamable HTTP.
 - Agent Skills from `.finn/skills`, `.agents/skills` and `.claude/skills`.
 - Code mode (`FINN_CODE_MODE=1`): the model calls tools from a sandboxed Python script.

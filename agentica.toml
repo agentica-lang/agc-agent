@@ -2,4 +2,4 @@
 # repository with the member's subdir; inside the repository it is read in place, never fetched.
 [workspace]
 repository = "https://github.com/agentica-lang/agc-agent"
-members = ["sse", "llm", "mcp", "protocol", "monty", "shell", "client", "core", "cli", "tui_client", "examples/extension"]
+members = ["sse", "llm", "mcp", "protocol", "monty", "client", "core", "cli", "tui_client", "examples/extension"]
