@@ -39,6 +39,33 @@ def test_a_resumed_session_prints_what_its_turns_did() -> Result[Void]
   end
 end
 
+# A session whose snapshot is over 1 MiB (here 300 long thinking blocks, not printed) is still resumed.
+def test_a_big_session_is_resumed() -> Result[Void]
+  thought = (1..300).to_a.map { |_n|
+    Protocol.Message(role: Protocol.Role.Assistant, text: "x" * 5000, thinking: true)
+  }
+
+  said = thought.push(Protocol.Message(role: Protocol.Role.Assistant, text: "done"))
+  big = Protocol.Session(
+    id: "s1",
+    cwd: "/work",
+    model: "m",
+    last_event_id: 0,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: said,
+  )
+
+  body = Protocol.encode_session(big)
+  Driver.within([Routes.session([Fake.Reply(body: body)]), Routes.held_events()]) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN + ["--session", "s1"])
+    lines = try Driver.read_until(cli, "assistant: done")
+    _ = try Driver.finish(cli)
+    Test.eq([(body.bytes.size > 1_048_576).to_s, lines.size.to_s], ["true", "2"])
+  end
+end
+
 def test_a_new_session_names_its_model_api_and_profile() -> Result[Void]
   Driver.within([Routes.created(), Routes.held_events()]) do |rig|
     cli = try Driver.start(rig.dir, PLAIN + ["--model", "m", "--api", "openai_responses", "--profile", "plan"])

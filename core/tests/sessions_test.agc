@@ -1141,6 +1141,36 @@ def test_a_cut_command_before_a_turn_is_not_ended_again() -> Result[Void]
   end
 end
 
+# A client that attaches mid-turn gets the history up to the turn's start, then the turn from the replay: each of its
+# items comes once. After the turn the history holds them.
+def test_a_mid_turn_attach_gets_each_item_of_the_turn_once() -> Result[Void]
+  H.using(H.Setup(replies: ["think_read.sse", "write_file.sse", "text.sse"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Read missing.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    H.close(a)
+    snapshot = try H.session(h, id)
+    try Test.eq(snapshot.history.map { |m| item(m) }, ["user Read missing.txt."])
+    b = try H.until(try H.subscribe(h, id, snapshot.turn_from_event_id), Protocol.EventKind.ApprovalRequested)
+    H.close(b)
+    started = b.seen.select { |s| Protocol.event_name(s.event) == "tool_started" }.size
+    try Test.eq([H.kinds(b.seen)[0], started.to_s], ["turn_started", "2"])
+    _ = try H.approve(h, id, (try H.approval(b)).approval_id, Protocol.Decision.Allow)
+    done = try H.idle(h, id)
+    Test.eq(
+      done.history.map { |m| item(m) },
+      [
+        "user Read missing.txt.",
+        "thinking The user wants the file.",
+        "tool read_file false",
+        "tool write_file true",
+        "assistant I will write it.\n\nHello! It's a pleasure to meet you.",
+      ],
+    )
+  end
+end
+
 # The history of a session shows what its turns did, as a client draws it live: the thinking of a round before the tool
 # calls it made, each call with its end, and how a turn ended when not as asked. It is the same after a restart, and
 # `turn_finished` counts it.

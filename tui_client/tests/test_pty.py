@@ -732,6 +732,22 @@ class PtyTest(unittest.TestCase):
         term.type("/quit\r")
         term.wait_for(f"to come back: finn --session {first}")
 
+    def test_a_session_attached_mid_turn_shows_each_item_once(self) -> None:
+        """A second client that opens a session while its turn waits for an approval shows the history up to the turn,
+        then the turn from the replay: each thinking block and tool call once, as the first client does."""
+        term = self.start([Reply("think_read.sse"), Reply("write_file.sse"), Reply("text.sse")])
+        first = re.search(r" session (\S+)", text_of(term.screen())).group(1)
+        term.type("Read missing.txt.\r")
+        term.wait_for("Tab to answer")
+        args = ["--session", first, "--state-dir", str(term.base / "state"), "--", *program(CORE), "serve"]
+        other = Terminal(term.base, self.fake, args, ROWS, COLS, {})
+        self.addCleanup(other.close)
+        other.wait_for("Tab to answer")
+        rows = other.settle()
+        text = text_of(rows[: next(i for i, row in enumerate(rows) if row.startswith("──"))])
+        for once in ["Read missing.txt.", "▸ thinking", "read missing.txt", "write hello.txt"]:
+            self.assertEqual(text.count(once), 1, f"{once!r} in:\n{text}")
+
     def test_quitting_an_empty_session_says_nothing_of_it(self) -> None:
         term = self.start([])
         term.wait_for("ready")
