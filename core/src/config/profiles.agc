@@ -17,6 +17,8 @@
 
 import Protocol from "pkg/protocol/protocol"
 import Approval from "../approval/approval"
+import Extensions from "registry"
+import Tools from "../tools/tools"
 
 DEFAULT = "build"
 PROJECT_FOLDER = ".finn/profiles"
@@ -143,6 +145,9 @@ def unknown(profile: Profile, known: List[String]) -> List[String]
     not name.include?("*") and not name.include?("?") and not name.start_with?("mcp__") and not known.include?(name)
   end
 end
+
+## The names of the tools every session may have, for the warnings about the names of a profile.
+def known_tools() -> List[String] = Tools.all().map { |tool| tool.name } + Extensions.RESERVED
 
 ## The system prompt with the profile's text after it.
 def system(base: String, profile: Profile) -> String

@@ -11,7 +11,6 @@ import Protocol from "pkg/protocol/protocol"
 import Catalog from "../providers/catalog"
 import Config from "../config/config"
 import Profiles from "../config/profiles"
-import Profile from "profile"
 import Logins from "../providers/logins"
 import Providers from "../providers/providers"
 import Extensions from "../config/registry"
@@ -106,7 +105,7 @@ end
 def profiles(sessions: Sessions, id: String) -> Result[Protocol.ProfileList]
   loaded = profiles_of(sessions.options, (try snapshot(sessions, id)).cwd)
   shown = loaded.profiles.map do |p|
-    warnings = Profiles.warnings_of(loaded, p, Profile.known_tools())
+    warnings = Profiles.warnings_of(loaded, p, Profiles.known_tools())
     Protocol.Profile(name: p.name, source: p.source, description: p.description, warnings: warnings)
   end
 
@@ -629,7 +628,7 @@ def entry(
   )
 
   setup = SessionActor.switched(base, endpoint).with(model: header.model, refused: refusal(options, provider))
-  setup = Profile.applied(setup, profiles_of(options, context.root), profile)
+  setup = SessionActor.applied(setup, profiles_of(options, context.root), profile)
 
   ok(
     Entry(

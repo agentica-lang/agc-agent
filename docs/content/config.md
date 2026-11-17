@@ -40,7 +40,7 @@ Every key is optional, and so is the file. How the rules work is on [Approvals a
 
 - the `allow` and `ask` rules of its `.finn/config.json`;
 - its skills ([Skills](skills.md));
-- its profiles, in `.finn/profiles/` ([Profiles](tools.md#profiles)).
+- its profiles, in `.finn/profiles/`, which choose the tools, the model (on the session's provider) and the thinking level ([Profiles](tools.md#profiles)).
 
 The deny rules of a project count everywhere.
 

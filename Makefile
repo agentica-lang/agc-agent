@@ -66,7 +66,7 @@ coupling:
 	@$(call none,core/src/agent imports a core folder but tools approval and providers,$(call core_imports,agent,tools|approval|providers))
 	@$(call none,core/src/session imports http,$(call core_imports,session,agent|tools|ext|approval|config|providers))
 	@$(call none,a session file outside the actor imports one of its parts,-g 'core/src/session/**' \
-	  $(foreach f,actor turn stream branch state profile,-g '!core/src/session/$(f).agc') '^import \w+ from "(turn|stream|branch|state)"' .)
+	  $(foreach f,actor turn stream branch state,-g '!core/src/session/$(f).agc') '^import \w+ from "(turn|stream|branch|state)"' .)
 	@$(call none,a session file but storage.agc reaches the session files (prompt.agc and folder.agc read the session's working folder),-g 'core/src/session/**' \
 	  $(foreach f,storage prompt folder,-g '!core/src/session/$(f).agc') '\b(File|Dir)\.|Path\.(remove|rename)\b' .)
 	@$(call none,core/src/config imports a core folder but tools approval and providers,$(call core_imports,config,tools|approval|providers))
