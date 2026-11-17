@@ -90,11 +90,17 @@ case ${1:-} in
   *)
     # The forms of the line client go there (a task, a delete, a logout, a server command or action); the rest opens
     # the full screen, which needs a terminal unless it only prints its help or version. The words after -- are the
-    # server command's.
+    # server command's, and the word after an option that takes one is its value.
     screen=yes
+    value=no
     for arg in "$@"; do
+      if [ $value = yes ]; then
+        value=no
+        continue
+      fi
       case $arg in
         --) break ;;
+        --state-dir|--session|--cwd|--model|--api|--provider) value=yes ;;
         -p*|--prompt|--prompt=*|--delete|--delete=*|--logout|--logout=*|--server-command|--server-command=*|server)
           exec "$agentica" "$root/cli/main.agc" "$@" ;;
         -h|--help|--version) screen=no ;;

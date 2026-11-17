@@ -909,7 +909,7 @@ class FinnCommandTest(unittest.TestCase):
                     try:
                         os.read(master, 4096)
                     except OSError:
-                        pass
+                        break
             process.communicate(timeout=TIMEOUT)
         finally:
             os.close(master)
@@ -917,7 +917,15 @@ class FinnCommandTest(unittest.TestCase):
         return process.returncode, got
 
     def test_no_command_and_options_alone_open_the_full_screen(self) -> None:
-        for args in [[], ["--yolo", "--model", "m"], ["tui", "--yolo"], ["--", "my-server", "-p", "8080"]]:
+        forms = [
+            [],
+            ["--yolo", "--model", "m"],
+            ["tui", "--yolo"],
+            ["--", "my-server", "-p", "8080"],
+            ["--cwd", "server"],
+            ["--model", "-p"],
+        ]
+        for args in forms:
             words = args[1:] if args[:1] == ["tui"] else args
             self.assertEqual(self.finn(args), (0, [self.tui, *words]), args)
 
@@ -943,7 +951,7 @@ class FinnCommandTest(unittest.TestCase):
                 self.assertEqual(self.finn(args, tty_in, tty_out), (2, []), (args, tty_in, tty_out))
 
     def test_help_and_version_need_no_terminal(self) -> None:
-        for args in [["--model", "x", "--help"], ["--yolo", "--version"]]:
+        for args in [["--model", "x", "--help"], ["--yolo", "-h"], ["--yolo", "--version"]]:
             self.assertEqual(self.finn(args, tty_in=False, tty_out=False), (0, [self.tui, *args]), args)
 
 
