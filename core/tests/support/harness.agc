@@ -8,13 +8,14 @@ import Protocol from "pkg/protocol/protocol"
 import SSE from "pkg/sse/sse"
 import Approval from "../../src/approval/approval"
 import Permissions from "../../src/approval/permissions"
-import Catalog from "../../src/agent/catalog"
+import Catalog from "../../src/providers/catalog"
 import CodeMode from "../../src/tools/code_mode"
-import Auth from "../../src/config/auth"
+import Auth from "../../src/providers/auth"
 import Config from "../../src/config/config"
+import Offered from "../../src/providers/offered"
 import Extensions from "../../src/config/registry"
-import Logins from "../../src/config/logins"
-import Providers from "../../src/config/providers"
+import Logins from "../../src/providers/logins"
+import Providers from "../../src/providers/providers"
 import Server from "../../src/http/server"
 import Builtins from "../../src/session/builtins"
 import Tools from "../../src/tools/tools"
@@ -155,7 +156,7 @@ end
 # With `fresh_token`, Anthropic gets that token after a 401.
 def apis(setup: Setup, fake: Fake.Fake) -> Map[String, Config.ModelApi]
   options = LLM.Options(timeout_ms: 5000, retry_base_ms: 1)
-  all = Config.apis(fake.url, "test-key", options)
+  all = Offered.apis(fake.url, "test-key", options)
   return all if setup.fresh_token.empty?
 
   token = setup.fresh_token
@@ -165,7 +166,7 @@ def apis(setup: Setup, fake: Fake.Fake) -> Map[String, Config.ModelApi]
 end
 
 def providers(setup: Setup, fake: Fake.Fake, keys: Map[String, String] = {}) -> Map[String, Config.Provider]
-  all = Config.builtin(apis(setup, fake), setup.api)
+  all = Offered.builtin(apis(setup, fake), setup.api)
   root = fake_root(fake)
   customs = setup.providers.map do |given|
     parts = given.split(":").push("openai")
@@ -286,7 +287,7 @@ def restarted(h: Harness, setup: Setup, cut: String, body: Fn[Harness, Result[Vo
 end
 
 def server_provider(setup: Setup) -> String
-  return Config.default_provider(setup.api) if setup.provider.empty?
+  return Offered.default_provider(setup.api) if setup.provider.empty?
 
   setup.provider
 end

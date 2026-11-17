@@ -13,7 +13,7 @@
 ## The code of an extension runs in a task of its own, with a time limit: a crash or a hang fails that tool call, refuses
 ## that message or adds nothing to that fold, and never stops a session or the server.
 
-import Catalog from "src/agent/catalog"
+import Catalog from "src/providers/catalog"
 import Cli from "src/config/cli"
 import Config from "src/config/config"
 import Extensions from "src/config/registry"

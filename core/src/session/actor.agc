@@ -155,9 +155,14 @@ def shell(address: Address[Session.Msg], request: Protocol.RunShell) -> Result[P
   ok(try try run)
 end
 
-## Stops the running turn or command; whether one ran.
-def stop(address: Address[Session.Msg]) -> Result[Bool]
-  Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Stop(reply) end
+## Stops the running turn or command, with `turn_id` only that turn while it runs; whether one ran.
+def stop(address: Address[Session.Msg], turn_id: Optional[String]) -> Result[Bool]
+  Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Stop(turn_id, reply) end
+end
+
+## The folder of the session and what its rules hide, for reads outside the actor.
+def context(address: Address[Session.Msg]) -> Result[Tools.Context]
+  Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Context(reply) end
 end
 
 ## The user messages of every branch of the session.
@@ -196,6 +201,11 @@ struct Cut
   approvals: List[String]
 end
 
+# A stop for a turn that is no longer the running one stops nothing.
+def stops?(state: Session.State, turn_id: Optional[String]) -> Bool
+  turn_id.none? or state.turn.map { |turn| turn.id } == turn_id
+end
+
 def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
   case msg
     Session.Msg.Snapshot(reply) ->
@@ -217,7 +227,13 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
 
       Actor.reply(reply, ok())
       Actor.done(state)
-    Session.Msg.Stop(reply) ->
+    Session.Msg.Stop(turn_id, reply) if not stops?(state, turn_id) ->
+      Actor.reply(reply, false)
+      Actor.continue(state)
+    Session.Msg.Context(reply) ->
+      Actor.reply(reply, state.setup.ctx)
+      Actor.continue(state)
+    Session.Msg.Stop(_, reply) ->
       Actor.reply(reply, state.turn.some? or state.shell.some?)
       Actor.continue(stop_shell(Turn.stop_turn(state)))
     Session.Msg.Emit(turn_id, event) ->

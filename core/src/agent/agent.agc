@@ -4,7 +4,7 @@
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
-import Catalog from "catalog"
+import Catalog from "../providers/catalog"
 import CodeMode from "../tools/code_mode"
 import Compaction from "compaction"
 import Tools from "../tools/tools"

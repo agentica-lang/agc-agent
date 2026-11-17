@@ -45,9 +45,8 @@ HINTS = [
   "↑ history",
   "PgUp/PgDn",
 ]
-## The most files the `@` list reads from the session's folder, and the folders it never enters.
-MAX_FILES = 5000
-SKIPPED_DIRS = ["node_modules", "deps", "target", "dist", "build", "__pycache__"]
+## How long `@` waits to ask the server again after a read of the files timed out.
+FILES_AGAIN_MS = 10_000
 SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 SPIN_MS = 80
 ## The thinking levels Shift+Tab goes through, none for the model's default.
@@ -56,7 +55,7 @@ LEVELS: List[Optional[String]] = [none, some("low"), some("medium"), some("high"
 struct Model
   server: Client.Server
   id: String
-  ## The folder of the session, where `@` finds files.
+  ## The folder of the session.
   cwd: String = ""
   ## What `/new` makes a session with.
   options: Args.Options
@@ -98,6 +97,8 @@ struct Model
   ## the word that Esc closed.
   files: Optional[List[String]] = none
   reading_files: Bool = false
+  ## After a read that timed out, while the server may still walk the folder, `@` asks again only from this time on.
+  files_again_at: Int = 0
   mention_selected: Int = 0
   mention_top: Int = 0
   mention_closed: Optional[Int] = none
@@ -165,7 +166,7 @@ enum Msg
   ## The reply to a message sent: the `opened` count when it was sent, and the text.
   Sent(Int, String, Result[Protocol.MessageAccepted])
   ## The reply to a stop.
-  Stopped(Result[Void])
+  Stopped(Result[Bool])
   ## The spinner moves on.
   Spin
   ## The reply to a change of the thinking level.
@@ -175,7 +176,7 @@ enum Msg
   ## The reply to a login, with no key in it.
   LoggedIn(String, Result[Protocol.LoginStatus])
   ## The files of the session's folder, for the `opened` count when they were asked.
-  Files(Int, List[String])
+  Files(Int, Result[List[String]])
   ## The reply to a `!` command: the command, and whether it runs.
   ShellSent(String, Result[Protocol.ShellAccepted])
 end
@@ -352,7 +353,7 @@ def handled(app: Model, msg: Msg) -> Model
     Msg.LoggedIn(name, result) -> logged_in(app, name, result)
     Msg.Rechecked(generation, result) if generation == app.generation -> rechecked(app, result)
     Msg.Rechecked(_, _) -> app
-    Msg.Files(opened, files) if opened == app.opened -> app.with(files: some(files), reading_files: false)
+    Msg.Files(opened, result) if opened == app.opened -> files_read(app.with(reading_files: false), result)
     Msg.Files(_, _) -> app
     Msg.ShellSent(command, result) -> shell_reply(app, command, result)
   end
@@ -597,7 +598,7 @@ def typed(app: Model, piece: String) -> Model
     edited = edited.with(mention_closed: none, mention_selected: 0, mention_top: 0)
   end
 
-  return edited if piece != "@" or edited.files.some? or edited.reading_files
+  return edited if piece != "@" or edited.reading_files or app.id == "" or app.now < app.files_again_at
 
   read_files(edited)
 end
@@ -661,52 +662,21 @@ def remembered(history: List[String], text: String) -> List[String]
   history.push(text)
 end
 
-# The files of the session's folder are read once, by a command.
+# The files of the session's folder come from the server each time an `@` is typed; the list shows the ones read last.
 def read_files(app: Model) -> Model
-  root = app.cwd
+  server = app.server
+  id = app.id
   opened = app.opened
-  effect(app.with(reading_files: true), TUI.Cmd.Run(-> { Msg.Files(opened, listed(root)) }))
+  effect(app.with(reading_files: true), TUI.Cmd.Run(-> { Msg.Files(opened, Client.files(server, id)) }))
 end
 
-# The paths of the files under `root`, at most MAX_FILES, without hidden files and the folders of SKIPPED_DIRS.
-def listed(root: String) -> List[String]
-  found: List[String] = []
-  dirs = [""]
-  while not dirs.empty? and found.size < MAX_FILES
-    dir = dirs[0]
-    dirs = dirs.drop(1)
-    names: List[String] = Dir.list(under(root, dir)).unwrap_or([])
-    for name in names.sort
-      next if name.start_with?(".") or SKIPPED_DIRS.include?(name)
-
-      path = name
-      if dir != ""
-        path = "#{dir}/#{name}"
-      end
-
-      kind = kind_of(under(root, path))
-      if kind == "directory"
-        dirs = dirs.push(path)
-      elsif kind == "file"
-        found = found.push(path)
-      end
-    end
+def files_read(app: Model, result: Result[List[String]]) -> Model
+  case result
+    ok(files) -> app.with(files: some(files))
+    error(e) if e.kind == Client.KIND_TIMEOUT ->
+      noted(app.with(files_again_at: app.now + FILES_AGAIN_MS), "error: the files were not listed: #{e.message}")
+    error(e) -> noted(app, "error: the files were not listed: #{e.message}")
   end
-
-  found.take(MAX_FILES)
-end
-
-def kind_of(path: String) -> String
-  case File.lstat(path)
-    ok(info) -> info.kind
-    error(_) -> ""
-  end
-end
-
-def under(root: String, path: String) -> String
-  return root if path == ""
-
-  "#{root}/#{path}"
 end
 
 # The list under the editor: the commands while the prompt is `/` and part of a name that some command starts with,
@@ -758,7 +728,9 @@ def mention_choices(app: Model, found: Input.Mention) -> List[Input.Choice]
   case found.source
     Input.Source.Commands -> Input.commands(Client.listed(), found.query)
     Input.Source.Files ->
-      Input.matches(app.files.unwrap_or([]), found.query).map { |p| Input.Choice(value: p, label: p) }
+      Input.matches(app.files.unwrap_or([]), found.query).map { |p|
+        Input.Choice(value: p, label: Client.printable(p))
+      }
   end
 end
 
@@ -913,13 +885,13 @@ def sent_reply(app: Model, text: String, result: Result[Protocol.MessageAccepted
       return queued if not app.stop_wanted
 
       # The message went into a turn that runs (another client's): that is the turn Esc asked to stop.
-      stop(queued.with(turn: true, stop_wanted: false))
+      stop(queued.with(turn: true, stop_wanted: false), some(accepted.turn_id))
     ok(accepted) ->
       entries = Transcript.add(app.entries, Transcript.Kind.User, text)
       started = app.with(entries: entries, turn: true, stopping: false, yolo: Yolo.accepted(app.yolo, accepted))
       return started if not app.stop_wanted
 
-      stop(started.with(stop_wanted: false))
+      stop(started.with(stop_wanted: false), some(accepted.turn_id))
     # The text stays in the note: put back in the prompt, it would take the keys typed after it.
     error(e) if e.kind == Client.KIND_TIMEOUT ->
       noted(app, "error: the message may not have been sent (#{e.message}): #{Client.printable(text)}")
@@ -931,9 +903,10 @@ def sent_reply(app: Model, text: String, result: Result[Protocol.MessageAccepted
   end
 end
 
-def stop_reply(app: Model, result: Result[Void]) -> Model
+def stop_reply(app: Model, result: Result[Bool]) -> Model
   case result
-    ok(_) -> app
+    ok(true) -> app
+    ok(_) -> noted(app.with(stopping: false), "the turn had already ended")
     error(e) -> noted(app.with(stopping: false), "error: the stop was not sent: #{e.message}")
   end
 end
@@ -1225,18 +1198,24 @@ def compacted(server: Client.Server, id: String) -> String
   end
 end
 
-def stop(app: Model) -> Model
+## Stops what runs: the turn by its id (`turn_id`, else the one running), so a stop cannot reach the turn after it.
+def stop(app: Model, turn_id: Optional[String] = none) -> Model
   return noted(app.with(stop_wanted: true), "the turn stops once it starts") if not app.turn and not app.outbox.empty?
   return app if not busy?(app) or app.stopping
 
   server = app.server
   id = app.id
+  wanted = turn_id
+  if wanted.none? and app.turn
+    wanted = app.yolo.turn
+  end
+
   stopping = "stopping the turn"
   if not app.turn
     stopping = "stopping the command"
   end
 
-  effect(noted(app.with(stopping: true), stopping), TUI.Cmd.Run(-> { Msg.Stopped(Client.stop(server, id)) }))
+  effect(noted(app.with(stopping: true), stopping), TUI.Cmd.Run(-> { Msg.Stopped(Client.stop(server, id, wanted)) }))
 end
 
 # The answer is sent by a command, so the keys go on; its reply comes back as a message.

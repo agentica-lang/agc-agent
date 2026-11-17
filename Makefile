@@ -62,10 +62,13 @@ coupling:
 	@$(call none,core/src/tools imports another core folder,$(call core_imports,tools,tools))
 	@$(call none,core/src/approval imports a core folder but tools,$(call core_imports,approval,tools))
 	@$(call none,core/src/ext imports a core folder but tools,$(call core_imports,ext,tools))
-	@$(call none,core/src/agent imports a core folder but tools and approval,$(call core_imports,agent,tools|approval))
-	@$(call none,core/src/session imports http,$(call core_imports,session,agent|tools|ext|approval|config))
-	@$(call none,core/src/config imports a core folder but tools approval and agent,$(call core_imports,config,tools|approval|agent))
-	@$(call none,core/src/http imports a core folder but session and config,$(call core_imports,http,session|config))
+	@$(call none,core/src/providers imports another core folder,$(call core_imports,providers,providers))
+	@$(call none,core/src/agent imports a core folder but tools approval and providers,$(call core_imports,agent,tools|approval|providers))
+	@$(call none,core/src/session imports http,$(call core_imports,session,agent|tools|ext|approval|config|providers))
+	@$(call none,a session file outside the actor imports one of its parts,-g 'core/src/session/**' \
+	  $(foreach f,actor turn stream branch state,-g '!core/src/session/$(f).agc') '^import \w+ from "(turn|stream|branch|state)"' .)
+	@$(call none,core/src/config imports a core folder but tools approval and providers,$(call core_imports,config,tools|approval|providers))
+	@$(call none,core/src/http imports a core folder but session config and providers,$(call core_imports,http,session|config|providers))
 	@$(call none,core/src/http imports a file of session but session.agc,-g 'core/src/http/**' '^import \w+ from "\.\./session/(?!session")' -P .)
 
 fmt-check:

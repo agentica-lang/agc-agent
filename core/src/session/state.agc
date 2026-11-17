@@ -4,7 +4,7 @@
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Agent from "../agent/agent"
-import Catalog from "../agent/catalog"
+import Catalog from "../providers/catalog"
 import CodeMode from "../tools/code_mode"
 import Compaction from "../agent/compaction"
 import Extensions from "../config/registry"
@@ -78,7 +78,8 @@ enum Msg
   Subscribe(Optional[Int], Channel[Channel[Bytes]])
   Send(String, Channel[Result[Protocol.MessageAccepted]])
   Answer(String, Protocol.Decision, Channel[Result[Void]])
-  Stop(Channel[Bool])
+  Stop(Optional[String], Channel[Bool])
+  Context(Channel[Tools.Context])
   Close(Channel[Result[Void]])
   Emit(String, Protocol.Event)
   Ask(String, Agent.Ask, Channel[Protocol.Decision])

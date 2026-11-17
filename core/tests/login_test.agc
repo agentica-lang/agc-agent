@@ -3,9 +3,9 @@
 # or answer.
 
 import Protocol from "pkg/protocol/protocol"
-import Auth from "../src/config/auth"
+import Auth from "../src/providers/auth"
 import Config from "../src/config/config"
-import Logins from "../src/config/logins"
+import Logins from "../src/providers/logins"
 import Fake from "support/fake_llm"
 import H from "support/harness"
 

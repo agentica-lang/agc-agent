@@ -155,6 +155,18 @@ struct ShellAccepted
   shell_id: String
 end
 
+## The answer of `POST /v1/sessions/ID/stop`: whether a turn or command was stopped.
+struct Stopped
+  stopped: Bool
+end
+
+## `GET /v1/sessions/ID/files`: the files of the session folder, for a client's `@` list. Hidden files, the folders of
+## build output and dependencies, links and the paths a `read_file` deny rule hides are left out, and the walk is cut
+## at a few thousand files or about two seconds.
+struct FileList
+  files: List[String]
+end
+
 ## `server.json` in the state folder, which only its user can read: where the server listens and its Bearer token.
 struct ServerInfo
   port: Int
@@ -221,6 +233,14 @@ def encode_login_list(reply: LoginList) -> String = JSON.encode(reply)
 def decode_login_list(text: String) -> Result[LoginList] = Wire.decode(text, LoginList.codec)
 
 def decode_shell_accepted(text: String) -> Result[ShellAccepted] = Wire.decode(text, ShellAccepted.codec)
+
+def encode_stopped(reply: Stopped) -> String = JSON.encode(reply)
+
+def decode_stopped(text: String) -> Result[Stopped] = Wire.decode(text, Stopped.codec)
+
+def encode_file_list(reply: FileList) -> String = JSON.encode(reply)
+
+def decode_file_list(text: String) -> Result[FileList] = Wire.decode(text, FileList.codec)
 
 ## It trusts its input: it does not check what `decode_session` checks about `turn_id`, `turn_from_event_id` and
 ## `last_event_id`, so the server must build a consistent `Session`.
@@ -294,6 +314,8 @@ def shape() -> List[String]
     Wire.record("Branched", Branched.members),
     Wire.record("ServerStatus", ServerStatus.members),
     Wire.record("ShellAccepted", ShellAccepted.members),
+    Wire.record("Stopped", Stopped.members),
+    Wire.record("FileList", FileList.members),
     Wire.record("LoginStatus", LoginStatus.members),
     Wire.record("LoginList", LoginList.members),
     Wire.record("MessageWire", MessageWire.members),

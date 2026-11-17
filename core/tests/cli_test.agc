@@ -1,6 +1,7 @@
 import LLM from "pkg/llm/llm"
 import Cli from "../src/config/cli"
 import Config from "../src/config/config"
+import Offered from "../src/providers/offered"
 
 def test_version_names_core_and_llm() -> Result[Void]
   try Test.eq(Cli.parse(["--version"]), ok(Cli.Command.Version))
@@ -53,10 +54,10 @@ def test_the_anthropic_credential_comes_in_its_order() -> Result[Void]
   given: Fn[Result[String]] = -> { ok("from-ant") }
   refused: Fn[Result[String]] = -> { error("ant auth print-credentials failed: run ant auth login") }
   never: Fn[Result[String]] = -> { error("ant was asked") }
-  try Test.eq(shown(Config.anthropic_access(->(n) { from_map(both, n) }, true, never)), "k  false")
-  try Test.eq(shown(Config.anthropic_access(->(n) { from_map(token, n) }, true, never)), " t false")
-  try Test.eq(shown(Config.anthropic_access(->(n) { from_map(bare, n) }, true, given)), " from-ant true")
-  try Test.eq(shown(Config.anthropic_access(->(n) { from_map(bare, n) }, false, never)), "  true")
+  try Test.eq(shown(Offered.anthropic_access(->(n) { from_map(both, n) }, true, never)), "k  false")
+  try Test.eq(shown(Offered.anthropic_access(->(n) { from_map(token, n) }, true, never)), " t false")
+  try Test.eq(shown(Offered.anthropic_access(->(n) { from_map(bare, n) }, true, given)), " from-ant true")
+  try Test.eq(shown(Offered.anthropic_access(->(n) { from_map(bare, n) }, false, never)), "  true")
   failed = Config.from_env_with(->(n) { located(bare, n) }, refused)
   try Test.assert(not failed.ok? and failed.message.include?("ANTHROPIC_API_KEY"), failed.message)
   options = try Config.from_env_with(->(n) { located(token, n) }, never)
@@ -88,10 +89,10 @@ def fake_ant(dir: String, body: String) -> Result[String]
   path = "#{dir}/ant-#{body.length}"
   try File.write_text(path, "#!/bin/sh\n#{body}\n")
   try Process.output(try Process.spawn_captured("chmod", ["700", path]), 5000)
-  Config.ant_token_with(path)
+  Offered.ant_token_with(path)
 end
 
-def shown(access: Result[Config.AnthropicAccess]) -> String
+def shown(access: Result[Offered.AnthropicAccess]) -> String
   case access
     ok(a) -> "#{a.api_key} #{a.auth_token} #{a.ant.some?}"
     error(e) -> "error #{e.message}"
