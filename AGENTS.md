@@ -22,9 +22,9 @@ core/                the server: agent loop, tools, approval, sessions, extensio
                      of extensions)
 core/src/            one folder per domain: config/ (settings, CLI, the extension registry), http/ (the routes),
                      session/ (the registry of sessions, one session's actor, its store and prompt, builtins.agc:
-                     the skills and MCP on the extension registry), agent/ (the loop, compaction, the model
-                     catalog), tools/ (the tools and their sandbox), ext/ (MCP, skills), approval/ (the approval
-                     extension: rules, session allows); core/tests stay flat
+                     the skills, MCP and the approval on the extension registry), agent/ (the loop, compaction,
+                     the model catalog), tools/ (the tools and their sandbox), ext/ (MCP, skills), approval/ (the
+                     approval extension: rules, session allows); core/tests stay flat
 client/              what every client shares: finding or starting the server, the HTTP calls, the event reader;
                      client.agc is its public module
 cli/                 the line-mode client: depends only on client and protocol; main.agc is the entry point

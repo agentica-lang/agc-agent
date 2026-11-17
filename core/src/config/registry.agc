@@ -73,9 +73,34 @@ struct Registry
   handler_ms: Int = HANDLER_MS
   service_ms: Int = SERVICE_MS
   tool_ms: Int = TOOL_MS
-  ## The core's own extensions (the skills), and the tools that come later (the MCP servers that still list them).
+end
+
+## What a server runs with: the registry of the program (`Core.serve`) and the core's own extensions, which need more
+## than the public API: the skills, the tools that come later (the MCP servers that still list them) and the approval.
+## Not part of `Core`.
+struct Served
+  registry: Registry
   builtins: List[Builtin] = []
   late: List[Fn[List[Spec.Tool]]] = []
+  approver: Optional[Fn[Place, Result[Approver]]] = none
+end
+
+## The approval of a session: it decides on each call before it runs, and keeps what the session's answers allowed;
+## an answer, or a change of `accept_edits`, gives the next one.
+struct Approver
+  ## Whether a call runs, asks or is refused; none runs every call.
+  verdict: Optional[Fn[Spec.Context, String, JSON.Value, Spec.Verdict]]
+  ## Whether the session's answers allow a call of a tool on a target without asking.
+  allows: Fn[String, String, Bool]
+  ## The words that an answer for all such calls would allow (`git push` of `git push origin main`).
+  prefix: Fn[String, String, Optional[String]]
+  ## After an answer (its decision's name) to a call of a tool on a target.
+  answered: Fn[String, String, String, Approver]
+  ## Whether a path relative to the session folder is hidden from the tools.
+  hidden: Fn[String, Bool]
+  asking: Bool
+  accept_edits: Bool
+  with_accept_edits: Fn[Bool, Approver]
 end
 
 ## A session folder as the core's own extensions see it: its skills count when it is `trusted`.
@@ -197,29 +222,26 @@ def prompt(registry: Registry, system: String) -> String = ([system] + registry.
 ## A call of a tool in the session folder `root`, for the tests of an extension: its paths resolve in `root`, with no
 ## deny rule.
 def call(root: String, input: JSON.Value) -> Call
-  Call(root: root, input: input, resolve: ->(path: String) { Sandbox.resolve(root, path) })
+  real = Path.real(root).unwrap_or(root)
+  Call(root: real, input: input, resolve: ->(path: String) { Sandbox.resolve(real, path) })
 end
 
-def add_builtin(registry: Registry, builtin: Builtin) -> Registry
-  registry.with(builtins: registry.builtins.push(builtin))
-end
+def add_builtin(served: Served, builtin: Builtin) -> Served = served.with(builtins: served.builtins.push(builtin))
 
-def add_late_tools(registry: Registry, tools: Fn[List[Spec.Tool]]) -> Registry
-  registry.with(late: registry.late.push(tools))
-end
+def add_late_tools(served: Served, tools: Fn[List[Spec.Tool]]) -> Served = served.with(late: served.late.push(tools))
 
 ## The tools that come later, none without any.
-def late_tools(registry: Registry) -> Optional[Fn[List[Spec.Tool]]]
-  return none if registry.late.empty?
+def late_tools(served: Served) -> Optional[Fn[List[Spec.Tool]]]
+  return none if served.late.empty?
 
-  late = registry.late
+  late = served.late
   some(-> { late.flat_map { |tools| tools.call() } })
 end
 
 ## The system prompt of a new session in `place`: `system` with what the core's own extensions add.
-def new_system(registry: Registry, place: Place, system: String) -> String
+def new_system(served: Served, place: Place, system: String) -> String
   out = system
-  for builtin in registry.builtins
+  for builtin in served.builtins
     out = builtin.system.call(place, out)
   end
 
@@ -227,8 +249,18 @@ def new_system(registry: Registry, place: Place, system: String) -> String
 end
 
 ## What the core's own extensions give a session in `place` that opens with `system`.
-def open(registry: Registry, place: Place, system: String) -> List[Opened]
-  registry.builtins.map { |builtin| builtin.open.call(place, system) }
+def open(served: Served, place: Place, system: String) -> List[Opened]
+  served.builtins.map { |builtin| builtin.open.call(place, system) }
+end
+
+## The approval of a session in `place`, none when the server has none; an error when it cannot open (a broken project
+## file).
+def approver(served: Served, place: Place) -> Result[Optional[Approver]]
+  for open in option_list(served.approver)
+    return ok(some(try open.call(place)))
+  end
+
+  ok(none)
 end
 
 def read_roots(opened: List[Opened]) -> List[String] = opened.flat_map { |o| o.read_roots }

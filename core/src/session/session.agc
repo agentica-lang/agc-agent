@@ -9,7 +9,6 @@ import Actor from "std/actor"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Catalog from "../agent/catalog"
-import Extension from "../approval/extension"
 import Config from "../config/config"
 import Logins from "../config/logins"
 import Providers from "../config/providers"
@@ -210,10 +209,10 @@ struct Chosen
   api: String
 end
 
-# The context of a session and its approval extension.
+# The context of a session and its approval.
 struct Opened
   context: Tools.Context
-  approvals: Optional[Extension.Approvals]
+  approver: Optional[Extensions.Approver]
 end
 
 ## What the task that loads a session read from its file.
@@ -418,7 +417,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   end
 
   context = try ctx
-  approvals = try approvals_of(options, context.root)
+  approver = try approver_of(options, context.root)
   provider = request.provider.unwrap_or(provider_of_api(options, request.api))
   if not options.providers.has_key?(provider)
     names = options.providers.keys.join(", ")
@@ -442,7 +441,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   )
 
   file = try Store.create(folder(options), header)
-  entry(options, header, opened(context, approvals), file, none)
+  entry(options, header, opened(context, approver), file, none)
 end
 
 def new_id(count: Int) -> String = "s#{count + 1}-#{OpenSSL.Random.hex(4)}"
@@ -508,7 +507,7 @@ def read(options: Config.Options, listed: Entry) -> Result[Loaded]
     wrap_of(options),
   )
 
-  ok(Loaded(saved: saved, opened: opened(context, try approvals_of(options, context.root))))
+  ok(Loaded(saved: saved, opened: opened(context, try approver_of(options, context.root))))
 end
 
 # Starts the session that a load read, and answers the requests that waited for it. A load of a session deleted since
@@ -588,8 +587,8 @@ def entry(
     catalog: options.catalog,
     take_ms: options.take_ms,
     catalog_wait_ms: options.catalog_wait_ms,
-    approvals: opened.approvals,
-    registry: options.registry,
+    approver: opened.approver,
+    registry: options.registry.map { |served| served.registry },
     origin: "#{chosen.provider}/#{chosen.api}",
     endpoint: some(->(name: String, now: String) { switched_endpoint(Config.now(options), name, now) }),
   )
@@ -805,12 +804,12 @@ end
 # `AGENTS.md` goes to the model only when it is a regular file inside the folder: a link out of it could be any file.
 def system_of(options: Config.Options, root: String) -> String
   system = Prompt.system_prompt(root)
-  options.registry.map { |r| Extensions.prompt(r, system) }.unwrap_or(system)
+  options.registry.map { |served| Extensions.prompt(served.registry, system) }.unwrap_or(system)
 end
 
 def wrap_of(options: Config.Options) -> Optional[Fn[String, Spec.Run, Spec.Run]]
-  for registry in option_list(options.registry)
-    return Extensions.wrap(registry)
+  for served in option_list(options.registry)
+    return Extensions.wrap(served.registry)
   end
 
   none
@@ -850,12 +849,12 @@ def option_list[T](value: Optional[T]) -> List[T]
   end
 end
 
-# The approval extension of a session in `root`, when the server turns it on: the rules of the project file of the
-# folder join the server's; a broken file is an invalid request.
-def approvals_of(options: Config.Options, root: String) -> Result[Optional[Extension.Approvals]]
-  for rules in option_list(options.approvals)
-    case Extension.open(rules, root, trusted?(options, root), options.asking)
-      ok(approvals) -> return ok(some(approvals))
+# The approval of a session in `root`, when the server has one; one that cannot open (a broken project file) is an
+# invalid request.
+def approver_of(options: Config.Options, root: String) -> Result[Optional[Extensions.Approver]]
+  for served in option_list(options.registry)
+    case Extensions.approver(served, place_of(options, root))
+      ok(approver) -> return ok(approver)
       error(e) -> return error(e.message, kind: Protocol.KIND_INVALID)
     end
   end
@@ -864,14 +863,10 @@ def approvals_of(options: Config.Options, root: String) -> Result[Optional[Exten
 end
 
 # A deny rule of `read_file` hides its files from `glob` and `grep` too.
-def opened(context: Tools.Context, approvals: Optional[Extension.Approvals]) -> Opened
-  case approvals
-    some(a) ->
-      Opened(
-        context: context.with(hidden: some(->(path: String) { Extension.hidden?(a, path) })),
-        approvals: approvals,
-      )
-    none -> Opened(context: context, approvals: none)
+def opened(context: Tools.Context, approver: Optional[Extensions.Approver]) -> Opened
+  case approver
+    some(a) -> Opened(context: context.with(hidden: some(a.hidden)), approver: approver)
+    none -> Opened(context: context, approver: none)
   end
 end
 
