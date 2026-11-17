@@ -317,6 +317,18 @@ def test_an_export_over_the_limit_is_too_large() -> Result[Void]
   Test.eq((try whole).entries[0].text.length, 1_100_000)
 end
 
+# A max_tokens stop says the output limit it hit, when the server sent one; another stop has no note.
+def test_a_max_tokens_stop_names_the_output_limit() -> Result[Void]
+  cut = Protocol.TurnFinished(turn_id: "t", stop_reason: Protocol.StopReason.MaxTokens, max_tokens: some(500))
+  notes = [
+    Client.stop_note(cut),
+    Client.stop_note(cut.with(max_tokens: none)),
+    Client.stop_note(cut.with(stop_reason: Protocol.StopReason.EndTurn)),
+  ]
+
+  Test.eq(notes, ["the reply hit the model's output limit (500 tokens)", "the reply hit the model's output limit", ""])
+end
+
 # A file that appears before the export is made is an error and is left as it is.
 def test_an_export_never_removes_a_file_it_did_not_make() -> Result[Void]
   path = "#{System.env("TMPDIR").unwrap_or("/tmp")}/finn-export-#{Random.int(0, 999_999_999)}.md"

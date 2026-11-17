@@ -16,7 +16,7 @@ def test_streams_text_and_sends_the_request() -> Result[Void]
     model: MODEL,
     system: "Answer in one short sentence.",
     messages: [Ev.user("Say hello.")],
-    max_tokens: 32,
+    max_tokens: some(32),
     temperature: some(0.0),
     extra: {"store": JSON.from(false)},
   )
@@ -431,7 +431,7 @@ def test_codex_sends_its_headers_without_max_output_tokens_and_lists_its_models(
   ])
 
   codex = LLM.codex(fake.url, KEY, "acct-1", LLM.Options(timeout_ms: 5000, retry_base_ms: 1))
-  request = LLM.Request(model: MODEL, messages: [Ev.user("Say hello.")], max_tokens: 32)
+  request = LLM.Request(model: MODEL, messages: [Ev.user("Say hello.")], max_tokens: some(32))
   _ = try LLM.response(try LLM.stream(codex, request))
   models = try LLM.models(codex)
   call = try Fake.next_request(fake)

@@ -191,6 +191,8 @@ struct TurnFinished
   turn_id: String
   stop_reason: StopReason
   history_size: Optional[Int] = none
+  ## The output limit the last call of the turn sent, when it sent one: what a `max_tokens` stop hit.
+  max_tokens: Optional[Int] = none
 end
 
 ## `Resync` says the `Last-Event-ID` is unknown or too old: read the session again.
@@ -322,6 +324,7 @@ def encode_event(event: Event) -> String
         turn_id: data.turn_id,
         stop_reason: stop_reason_name(data.stop_reason),
         history_size: field(data.history_size),
+        max_tokens: Wire.field(data.max_tokens),
       )
 
       JSON.encode(wire)
@@ -475,6 +478,7 @@ struct TurnFinishedWire
   turn_id: String
   stop_reason: String
   history_size: JSON.Field[Int]
+  max_tokens: JSON.Field[Int]
 end
 
 def following_kind(kind: EventKind) -> Optional[EventKind]
@@ -557,6 +561,7 @@ def decode_turn_finished(data: String) -> Result[Event]
     turn_id: wire.turn_id,
     stop_reason: parse_stop_reason(wire.stop_reason),
     history_size: try history_size(wire.history_size),
+    max_tokens: Wire.optional(wire.max_tokens),
   )
 
   ok(Event.TurnFinished(finished))

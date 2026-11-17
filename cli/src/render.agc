@@ -43,7 +43,7 @@ def event(event: Protocol.Event, style: Style) -> Optional[Out]
     Protocol.Event.ToolFinished(tool) -> some(line(finished(tool)))
     Protocol.Event.ApprovalResolved(resolved) -> some(line(resolution(resolved)))
     Protocol.Event.Usage(usage) -> some(line(counts(usage)))
-    Protocol.Event.TurnFinished(done) -> some(line("[turn finished] #{Protocol.stop_reason_name(done.stop_reason)}"))
+    Protocol.Event.TurnFinished(done) -> some(line(turn_finished(done)))
     Protocol.Event.Error(failure) -> some(line("[error] #{failure.kind}: #{failure.message}"))
     Protocol.Event.TurnStarted(_) -> none
     Protocol.Event.ApprovalRequested(_) -> none
@@ -190,4 +190,11 @@ def counts(usage: Protocol.Usage) -> String
     "[usage] input #{usage.input}, output (session) #{usage.output}, cache read #{usage.cache_read}, " +
     "cache write #{usage.cache_write}, context #{usage.context}"
   )
+end
+
+def turn_finished(done: Protocol.TurnFinished) -> String
+  note = Client.stop_note(done)
+  return "[turn finished] #{Protocol.stop_reason_name(done.stop_reason)}" if note.empty?
+
+  "[turn finished] #{Protocol.stop_reason_name(done.stop_reason)}: #{note}"
 end

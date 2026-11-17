@@ -114,6 +114,7 @@ def test_a_turn_compacts_at_its_start() -> Result[Void]
     tool_output = string((try JSON.list(try JSON.get(try body(h), "messages"))).last, "content")
     _ = try H.next_request(h)
     summary_request = try body(h)
+    try Test.eq(JSON.get(summary_request, "max_tokens"), ok(JSON.from(16_384)))
     asked = try JSON.list(try JSON.get(summary_request, "messages"))
     items = try JSON.list(try JSON.parse(string(asked[1], "content")))
     results = items.select { |item| string(item, "type") == "tool_result" }.map { |item| string(item, "content") }
@@ -125,6 +126,7 @@ def test_a_turn_compacts_at_its_start() -> Result[Void]
     )
 
     after = try body(h)
+    try Test.eq(JSON.get(after, "max_tokens").ok?, false)
     try Test.eq(roles(after), ["system", "user", "assistant", "user"])
     try Test.eq(contents(after).drop(1), ["Write hello.txt.", summary(), "Go on."])
     shown = H.said((try H.session(h, id)).history)

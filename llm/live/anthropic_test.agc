@@ -23,7 +23,7 @@ def test_anthropic_text_tool_round_and_cache() -> Result[Void]
         input_schema: try JSON.parse(READ_FILE_SCHEMA),
       ),
     ],
-    max_tokens: MAX_TOKENS,
+    max_tokens: some(MAX_TOKENS),
     effort: some("low"),
     cache: true,
   )

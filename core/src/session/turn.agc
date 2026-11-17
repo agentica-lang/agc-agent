@@ -107,6 +107,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
     ),
     last_context: state.context,
     code_mode: setup.code_mode,
+    max_tokens: setup.max_tokens,
     catalog: setup.catalog,
     catalog_provider: setup.catalog_provider,
     catalog_wait_ms: setup.catalog_wait_ms,
@@ -235,16 +236,16 @@ def stop_turn(state: Session.State) -> Session.State
         denied = resolve(denied, waiting.request.approval_id, Protocol.Decision.Deny, Protocol.ApprovalSource.Stop)
       end
 
-      finish(denied, Protocol.StopReason.Cancelled)
+      finish(denied, Protocol.StopReason.Cancelled, none)
     none -> state
   end
 end
 
-def finish(state: Session.State, reason: Protocol.StopReason) -> Session.State
+def finish(state: Session.State, reason: Protocol.StopReason, limit: Optional[Int]) -> Session.State
   case state.turn
     some(turn) if reason == Protocol.StopReason.Cancelled ->
       ended(dropped(state), turn.id, turn.texts, reason).with(turn: none)
-    some(turn) -> next_turn(ended(state, turn.id, turn.texts, reason).with(turn: none))
+    some(turn) -> next_turn(ended(state, turn.id, turn.texts, reason, limit).with(turn: none))
     none -> state
   end
 end
@@ -352,7 +353,13 @@ def commit(
 end
 
 ## Shows the answer of the turn, its `texts` together, then ends the turn.
-def ended(state: Session.State, turn_id: String, texts: List[String], reason: Protocol.StopReason) -> Session.State
+def ended(
+  state: Session.State,
+  turn_id: String,
+  texts: List[String],
+  reason: Protocol.StopReason,
+  limit: Optional[Int] = none,
+) -> Session.State
   text = texts.join("\n\n")
   shown = state
   if not text.empty?
@@ -364,7 +371,13 @@ def ended(state: Session.State, turn_id: String, texts: List[String], reason: Pr
     end
   end
 
-  finished = Protocol.TurnFinished(turn_id: turn_id, stop_reason: reason, history_size: some(shown.display.size))
+  finished = Protocol.TurnFinished(
+    turn_id: turn_id,
+    stop_reason: reason,
+    history_size: some(shown.display.size),
+    max_tokens: limit,
+  )
+
   Stream.emit(shown, Protocol.Event.TurnFinished(finished))
 end
 
@@ -390,7 +403,7 @@ end
 
 def run_turn(job: Job) -> Void
   outcome = Agent.run(job.turn)
-  _ = Actor.cast(job.address, Session.Msg.Finished(job.turn.id, outcome.reason), Session.CALL_MS)
+  _ = Actor.cast(job.address, Session.Msg.Finished(job.turn.id, outcome.reason, outcome.max_tokens), Session.CALL_MS)
 end
 
 # A session that is gone cannot take the turn's events: the turn ends.

@@ -27,6 +27,7 @@
 
 ### Added
 
+- A reply may be as long as the model allows (its output limit from models.dev, else the provider's), not 4096 tokens; `FINN_MAX_TOKENS` sets a limit, and a cut reply says which.
 - `files.command` in the user's config names the program that lists the files for `@`, such as `rg --files`.
 - Slash commands: `/NAME` sends the prompt of `NAME.md` in `~/.config/finn/commands/` or a trusted `.finn/commands/`, with `$ARGUMENTS`.
 - With approvals on, a file change under `.finn/` always asks, as one under `.git/` does.

@@ -287,7 +287,7 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
       shown.with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)), streamed: none)
     Protocol.Event.TurnFinished(done) ->
       ended = shown.with(turn: false, stopping: false, new_model: none, yolo: Yolo.running(shown.yolo, none))
-      read_branch(Turn.after_turn(finished(ended, done.stop_reason), done.stop_reason))
+      read_branch(Turn.after_turn(finished(ended, done), done.stop_reason))
     Protocol.Event.Usage(usage) ->
       shown.with(usage: some(usage), streamed: none, rate: Rate.exact(usage).map { |r| some(r) }.unwrap_or(shown.rate))
     Protocol.Event.ApprovalRequested(request) if Yolo.allows?(shown.yolo) -> Answering.allowed(shown, request)
@@ -351,11 +351,13 @@ def todos(list: List[Protocol.Todo]) -> String
   (["todos:"] + Client.todo_lines(list)).join("\n")
 end
 
-def finished(app: State.Model, reason: Protocol.StopReason) -> State.Model
-  case reason
+def finished(app: State.Model, done: Protocol.TurnFinished) -> State.Model
+  note = Client.stop_note(done)
+  case done.stop_reason
     Protocol.StopReason.EndTurn -> app
     Protocol.StopReason.Cancelled -> State.noted(app, "stopped")
-    _ -> State.noted(app, "the turn ended: #{Protocol.stop_reason_name(reason)}")
+    _ if not note.empty? -> State.noted(app, note)
+    _ -> State.noted(app, "the turn ended: #{Protocol.stop_reason_name(done.stop_reason)}")
   end
 end
 

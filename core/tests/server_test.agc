@@ -341,19 +341,22 @@ def test_allow_session_allows_the_same_command_only() -> Result[Void]
   end
 end
 
-# A `length` stop in the middle of a call runs no tool and sends no call back.
+# A `length` stop in the middle of a call runs no tool and sends no call back; the turn's end names the limit sent,
+# `FINN_MAX_TOKENS` here.
 def test_a_call_cut_by_max_tokens_is_dropped() -> Result[Void]
-  H.using(H.Setup(replies: ["length_tool.sse", "text.sse"])) do |h|
+  H.using(H.Setup(replies: ["length_tool.sse", "text.sse"], max_tokens: some(500))) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Write cut.txt.")
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     try Test.eq(H.stop_reason(a), "max_tokens")
+    try Test.eq(H.turn_max_tokens(a), some(500))
+    try Test.eq(JSON.get(try JSON.parse((try H.next_request(h)).body), "max_tokens"), ok(JSON.from(500)))
     try Test.eq(H.kinds(a.seen).select { |k| k == "tool_started" }, [])
     _ = try H.send(h, id, "Go on.")
     a = try H.until(a.with(seen: []), Protocol.EventKind.TurnFinished)
     H.close(a)
-    second = try H.request_messages(h, 2)
+    second = try H.request_messages(h, 1)
     try Test.eq(second.map { |m| JSON.get(m, "tool_calls").ok? }, [false, false, false, false])
     Test.eq(JSON.get(second[2], "content"), ok(JSON.from("Writing it now.")))
   end

@@ -634,6 +634,7 @@ def entry(
     file: file,
     window: options.context_window.unwrap_or(0),
     code_mode: options.code_mode,
+    max_tokens: options.max_tokens,
     catalog: options.catalog,
     take_ms: options.take_ms,
     catalog_wait_ms: options.catalog_wait_ms,

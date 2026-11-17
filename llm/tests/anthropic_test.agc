@@ -13,7 +13,7 @@ def test_streams_text_and_sends_the_request() -> Result[Void]
     system: "Be short.",
     messages: [Ev.user("Say hello."), assistant([Ev.text_block("")]), Ev.user("Again.")],
     tools: [read_file()],
-    max_tokens: 32,
+    max_tokens: some(32),
     effort: some("high"),
     cache: true,
     temperature: some(0.0),
