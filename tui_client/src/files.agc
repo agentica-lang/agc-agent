@@ -42,7 +42,7 @@ def asked(app: State.Model) -> State.Model
     kept = kept.with(arguments: none)
   end
 
-  if app.arguments_failed.some? and command != app.arguments_failed
+  if app.arguments_failed.some? and not app.prompt.start_with?("#{app.arguments_failed.unwrap!} ")
     kept = kept.with(arguments_failed: none)
   end
 
@@ -68,7 +68,7 @@ def arguments_read(app: State.Model, command: String, result: Result[Input.Argum
     ok(listed) -> asked(app.with(arguments: some(listed)))
     error(e) ->
       failed = app.with(arguments_failed: some(command))
-      State.noted(failed, "error: the choices of #{command} were not listed: #{e.message}")
+      State.noted(failed, "error: the choices of #{command} were not listed: #{Client.printable(e.message)}")
   end
 end
 
@@ -176,19 +176,16 @@ def listing(
   case command
     "/model" ->
       pairs = Picker.models(try backend.list_providers.call(), serving).models
-      shown = pairs.map { |pair| Client.printable(pair) }
-      ok(Input.Arguments(command: command, choices: shown.map { |pair| Input.Choice(value: pair, label: pair) }))
+      ok(Input.Arguments(command: command, choices: pairs.map { |pair| Input.Choice(value: pair, label: pair) }))
     "/resume" ->
       sessions = (try backend.list_sessions.call()).sessions
       shown = Picker.shown(Picker.Picker(sessions: sessions), now_s)
-      choices = shown.map { |c| Input.Choice(value: Client.printable(c.key), label: Client.printable(c.text)) }
+      choices = shown.map { |c| Input.Choice(value: Client.printable(c.key), label: c.text) }
       ok(Input.Arguments(command: command, choices: choices))
     _ ->
       tree = try backend.tree.call(id)
       shown = Picker.shown(Picker.Picker(tree: Client.tree_rows(tree), kind: Picker.Kind.Fork))
-      numbered = (0...shown.size).to_a.map { |i|
-        Input.Choice(value: "#{i + 1}", label: Client.printable(shown[i].text))
-      }
+      numbered = (0...shown.size).to_a.map { |i| Input.Choice(value: "#{i + 1}", label: shown[i].text) }
 
       ok(Input.Arguments(command: command, choices: numbered, tree: some(tree)))
   end

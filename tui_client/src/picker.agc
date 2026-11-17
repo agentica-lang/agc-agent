@@ -151,7 +151,11 @@ def choices(picker: Picker, now_s: Int) -> List[Choice]
 end
 
 def login_choice(login: Protocol.LoginStatus) -> Choice
-  Choice(key: login.name, search: "#{login.name} #{login.label}", text: "#{login.name}  #{login_state(login)}")
+  Choice(
+    key: login.name,
+    search: "#{login.name} #{login.label}",
+    text: Client.printable("#{login.name}  #{login_state(login)}"),
+  )
 end
 
 def login_state(login: Protocol.LoginStatus) -> String

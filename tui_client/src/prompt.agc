@@ -63,6 +63,11 @@ def previous_char(text: String, at: Int) -> Int
     run = run - 1
   end
 
+  # A flag letter after a joiner belongs to the character before it.
+  if run > 0 and text.slice(run - 1, 1).code == ZWJ
+    run = run + 1
+  end
+
   return start - 1 if (start - run) % 2 == 1
 
   start
