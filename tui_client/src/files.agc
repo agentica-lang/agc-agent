@@ -21,16 +21,23 @@ end
 
 def files_read(app: State.Model, result: Result[Protocol.FileList]) -> State.Model
   case result
-    ok(list) if list.truncated and not app.files_cut ->
-      State.noted(
-        app.with(files: some(list.files), files_cut: true),
-        "the @ list is cut: the folder has more files than it reads",
-      )
-    ok(list) -> app.with(files: some(list.files), files_cut: list.truncated)
+    ok(list) -> listed(app, list)
     error(e) if e.kind == Client.KIND_TIMEOUT ->
       State.noted(app.with(files_again_at: app.now + FILES_AGAIN_MS), "error: the files were not listed: #{e.message}")
     error(e) -> State.noted(app, "error: the files were not listed: #{e.message}")
   end
+end
+
+# A cut list and a note of the server are said once, until they change.
+def listed(app: State.Model, list: Protocol.FileList) -> State.Model
+  read = app.with(files: some(list.files), files_cut: list.truncated, files_note: list.note)
+  if list.note != "" and list.note != app.files_note
+    read = State.noted(read, "@ files: #{Client.printable(list.note)}")
+  end
+
+  return read if not list.truncated or app.files_cut
+
+  State.noted(read, "the @ list is cut: the folder has more files than it reads")
 end
 
 ## When the argument of a command starts, its choices are asked of the server once; they go when the command does.

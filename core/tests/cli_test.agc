@@ -180,6 +180,21 @@ def test_providers_come_from_presets_with_a_key_and_the_config_file() -> Result[
   Test.eq([missing.ok?, broken.ok?, slash.ok?], [false, false, false])
 end
 
+# `files.command` of the user's config names the program that lists the files for `@`; a key without a program stops
+# the start.
+def test_the_files_command_comes_from_the_user_config() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-files-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  try File.write_text("#{dir}/config.json", "{\"files\": {\"command\": [\"rg\", \"--files\"]}}")
+  try File.write_text("#{dir}/empty.json", "{\"files\": {\"command\": []}}")
+  given = try Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/config.json"}, n) })
+  empty = Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/empty.json"}, n) })
+  bare = try Config.from_env(->(n) { located({}, n) })
+  _ = Path.remove(dir)
+  try Test.eq([given.files_command, bare.files_command], [["rg", "--files"], []])
+  Test.eq(empty.ok?, false)
+end
+
 # A key a login stored offers its provider; a key file that others may read is not used, with a warning. The login
 # entries are `anthropic` and the presets.
 def test_a_stored_key_offers_its_provider_unless_the_file_is_open() -> Result[Void]

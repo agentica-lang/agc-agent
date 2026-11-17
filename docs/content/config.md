@@ -27,8 +27,15 @@ Finn reads environment variables when the server starts, and a few JSON files. A
 | `approvals` | `true` makes a call of a [tool that asks](security.md#what-asks) wait for your answer, unless a rule allows it |
 | `permission` | the rules, in order: the last one that matches a call allows it, asks or denies it; a file rule covers the file tools, and a `read_file` rule also, best effort, the files that `cat`, `grep` and the like name in `bash` ([how they check bash](security.md#how-rules-check-bash)) |
 | `providers` | OpenAI-compatible APIs of your own ([Providers](providers.md#your-own-provider)) |
+| `files` | `{"command": ["rg", "--files"]}`: the program that lists the files for the `@` completion, in place of the built-in walk ([The files command](#the-files-command)) |
 
 Every key is optional, and so is the file. How the rules work is on [Approvals and security](security.md#rules), and where they fall short in [What rules cannot do](security.md#what-rules-cannot-do).
+
+### The files command
+
+`files.command` names a program and its arguments, such as `["rg", "--files"]`, `["fd", "-t", "f"]` or `["git", "-c", "core.fsmonitor=false", "ls-files"]`. Only your own config file can name it: a project's `.finn/config.json` cannot, since a cloned repository must not choose what runs when you type `@`. The command runs unasked in every session folder, so pick a program that runs nothing from that folder's config: `rg --files` and `fd` run nothing, while a plain `git ls-files` runs the program that the folder's `.git/config` names in `core.fsmonitor`, which a folder that comes with its `.git/` (a tarball, a zip, a shared folder) can set.
+
+The server runs it in the session folder as the `bash` tool runs a command: in its own process group, with a clean environment and no input. It reads one path per line, for 2 seconds at most, up to 20000 lines and 1 MiB. The command only proposes paths: a path stays only when it is a regular file inside the folder, reached through no link, with a printable name, and no `read_file` deny rule hides it or a folder above it. An `ask` rule hides nothing from the list; only a `deny` rule does. Which hidden files and build folders it lists is the command's choice, unlike the built-in walk, which skips them. If the command fails or does not end in time, the built-in walk lists the files, and `finn` shows a note that says why. Whatever the command started is killed when the list is read.
 
 ## The project file
 

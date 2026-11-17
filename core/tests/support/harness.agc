@@ -93,6 +93,8 @@ struct Setup
   ## When given, the rules and the mode come from this environment as the server reads them (`Config.from_env`), in
   ## place of `approvals` and `deny`.
   approvals_env: Optional[Fn[String, Result[String]]] = none
+  ## The command that lists the files for `@` (`files.command` of the user's config).
+  files_command: List[String] = []
   ## What extensions add (`Core.serve`): its tools join those of the server.
   registry: Optional[Extensions.Registry] = none
   ## The server ends as `Core.serve` ends it (`Server.shutdown`), not at once.
@@ -276,6 +278,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     catalog_wait_ms: setup.catalog_wait_ms,
     home: skills_home(setup, base),
     trusted: skills_trusted(setup, base),
+    files_command: setup.files_command,
   )
 
   server = try Server.start(options)

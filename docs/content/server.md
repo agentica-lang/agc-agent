@@ -51,7 +51,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `POST /v1/sessions/ID/fork` | a new session from an earlier message |
 | `GET /v1/sessions/ID/commands` | the session's slash commands: `{"commands": [{"name", "source", "description", "warnings"}]}`; one that does not load has an empty `source` |
 | `GET /v1/sessions/ID/profiles` | the profiles the session may take: `{"profiles": [{"name", "source", "description", "warnings"}]}`; one that does not load has an empty `source` |
-| `GET /v1/sessions/ID/files` | the files of the session folder that the deny rules do not hide, for the `@` completion: `{"files": [...], "truncated": false}`; `truncated` is true when the walk stopped at 5000 files, 2000 folders or about 2 s |
+| `GET /v1/sessions/ID/files` | the files of the session folder that the deny rules do not hide, for the `@` completion: `{"files": [...], "truncated": false}`; `truncated` is true when the walk stopped at 5000 files, 2000 folders or about 2 s; with a [files command](config.md#the-files-command) they are the files of its output that the same rules let through, and `note` says why the walk listed them instead when it failed |
 | `POST /v1/sessions/ID/shell` | run `{"command": "...", "context": true}` in the session folder |
 
 A decision is `allow`, `deny`, `allow_session`, `allow_prefix` or `allow_tool` ([Answer](security.md#answer)).
