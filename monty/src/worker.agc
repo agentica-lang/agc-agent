@@ -39,8 +39,8 @@ struct Outcome
   error: Optional[String]
 end
 
-## The words that start the worker of `binary`.
-def command(binary: String) -> List[String] = [binary, "subprocess"]
+## The words that start the worker of `binary`, with an empty environment: the server's holds API keys.
+def command(binary: String) -> List[String] = ["/usr/bin/env", "-i", binary, "subprocess"]
 
 ## Runs `code` in a worker that `words` start, with each of `functions` a host function that `host` answers. A Python
 ## error is an outcome with `error`; a worker that crashes, refuses the session or goes past `wait_ms` is an `error`.

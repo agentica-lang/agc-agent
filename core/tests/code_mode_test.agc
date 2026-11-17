@@ -66,7 +66,27 @@ def test_code_mode_is_on_by_default_where_a_worker_exists() -> Result[Void]
   result
 end
 
+# A failed fetch of the worker is given again without a new try until its time is up, so a script cannot start a
+# download on each call.
+def test_a_failed_fetch_is_not_tried_again_for_a_while() -> Result[Void]
+  tries: ATS[String, Int] = ATS.new()
+  clock: ATS[String, Int] = ATS.new()
+  clock.put("now", 0)
+  worker = Config.remembered(-> { failing(tries) }, 1000, -> { clock.get("now").unwrap_or(0) })
+  first = worker.call()
+  again = worker.call()
+  clock.put("now", 1000)
+  later = worker.call()
+  try Test.eq([first.message, again.message, later.message], ["no worker", "no worker", "no worker"])
+  Test.eq(tries.get("n"), ok(2))
+end
+
 private
+
+def failing(tries: ATS[String, Int]) -> Result[List[String]]
+  tries.put("n", tries.get("n").unwrap_or(0) + 1)
+  error("no worker", kind: "monty.install")
+end
 
 def defaults_in(base: String) -> Result[Void]
   env = {"XDG_CACHE_HOME": base}
@@ -83,6 +103,16 @@ def defaults_in(base: String) -> Result[Void]
       Config.code_mode_on(->(n) { bad.get(n).to_result("not set") }, &linux).ok?,
     ],
     [true, false, false, true, false],
+  )
+
+  read_env = ->(n: String) { env.get(n).to_result("not set") }
+  try Test.eq(
+    [
+      Config.no_worker?(read_env, &elsewhere),
+      Config.no_worker?(read_env, &linux),
+      Config.no_worker?(->(n: String) { off.get(n).to_result("not set") }, &elsewhere),
+    ],
+    [true, false, false],
   )
 
   # The cache folder is open to others, so the fetch stops before any download.

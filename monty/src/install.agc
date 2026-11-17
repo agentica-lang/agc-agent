@@ -1,5 +1,7 @@
 ## The pinned worker binary: `scripts/monty` of the pydantic-monty-runtime wheel of this platform, downloaded on first
-## use with its sha256 checked, and only that one member extracted. The wheel is untrusted until its hash matches.
+## use with its sha256 checked, and only that one member extracted. The wheel is untrusted until its hash matches, and
+## the worker until it runs once (`--version`). An installed worker is used only while its folders and file are the
+## user's and no one else can write them, and the file is not a link.
 
 import Archive from "std/archive"
 import HTTP from "std/http"
@@ -8,7 +10,16 @@ MONTY_VERSION = "1.6.0"
 MEMBER = "pydantic_monty_runtime-1.6.0.data/scripts/monty"
 MAX_WHEEL_BYTES = 67_108_864
 DOWNLOAD_MS = 300_000
+## A download or staging folder older than this is left from a cancelled install.
+STALE_S = 900
+SMOKE_MS = 10_000
+## The write bits of the group and of others; with read and run too, `OPEN_BITS`.
+WRITE_BITS = 18
+OPEN_BITS = 63
 FILES = "https://files.pythonhosted.org/packages"
+CHMOD = "/bin/chmod"
+## Runs the worker with an empty environment: it needs none, and the server's holds API keys.
+ENV = "/usr/bin/env"
 
 ## Where a wheel is and the sha256 it must have.
 struct Wheel
@@ -77,15 +88,12 @@ end
 ## The worker under `cache_dir`, fetched from `wheel` when it is not there yet.
 def binary(cache_dir: String, wheel: Wheel) -> Result[String]
   dir = try Path.join([cache_dir, "monty-#{MONTY_VERSION}"])
-  path = try Path.join([dir, MEMBER])
-  return ok(path) if File.stat(path).ok?
-
   try folders(cache_dir)
-  mode = (try File.stat(cache_dir)).mode
-  if mode.bit_and(63) != 0
-    return error("monty: the cache folder #{cache_dir} is open to others: chmod 700 it", kind: "monty.install")
-  end
+  owner = try user_id(cache_dir)
+  try private_cache(cache_dir, owner)
+  return installed(dir, owner) if File.lstat(dir).ok?
 
+  clear_stale(cache_dir)
   tag = "#{System.pid()}-#{Random.int(0, 999_999_999)}"
   part = try Path.join([cache_dir, "monty-#{MONTY_VERSION}-#{tag}.whl"])
   staging = try Path.join([cache_dir, "monty-#{MONTY_VERSION}-#{tag}"])
@@ -101,7 +109,7 @@ def binary(cache_dir: String, wheel: Wheel) -> Result[String]
     _ = Path.remove(staging)
   end
 
-  return ok(path) if File.stat(path).ok?
+  return installed(dir, owner) if File.lstat(dir).ok?
 
   error("monty: the worker was not installed in #{dir}", kind: "monty.install")
 end
@@ -119,11 +127,93 @@ def fetch(wheel: Wheel, part: String, staging: String) -> Result[Void]
 
   limits = Archive.Options(timeout_ms: DOWNLOAD_MS, max_output_bytes: MAX_WHEEL_BYTES)
   _ = try Archive.extract_zip(part, [MEMBER], staging, limits)
-  chmod = try Process.spawn("chmod", ["700", try Path.join([staging, MEMBER])])
-  code = try Process.wait(chmod, 5_000)
+  worker = try Path.join([staging, MEMBER])
+  # The folders the extract made follow the umask: only the user may write them.
+  try chmod(["-R", "go-w", staging])
+  try chmod(["700", worker])
+  runs(worker)
+end
+
+# Agentica has no call that sets a mode: chmod by its full path, not from PATH.
+def chmod(args: List[String]) -> Result[Void]
+  process = try Process.spawn(CHMOD, args)
+  code = try Process.wait(process, 5_000)
   return error("monty: chmod of the worker failed") if code != 0
 
   ok()
+end
+
+# The worker answers `--version`: one built for another libc (musl) or CPU does not.
+def runs(worker: String) -> Result[Void]
+  process = try Process.spawn_captured(ENV, ["-i", worker, "--version"])
+  waited = Process.wait(process, SMOKE_MS)
+  Process.close(process)
+  case waited
+    ok(0) -> ok()
+    _ -> error("monty: code mode isn't available on this system: its worker does not run here")
+  end
+end
+
+# The cache folder is the user's and only theirs.
+def private_cache(cache_dir: String, owner: Int) -> Result[Void]
+  info = try File.lstat(cache_dir)
+  if info.kind != "directory" or info.user_id != owner
+    return error("monty: the cache folder #{cache_dir} is not a folder of this user", kind: "monty.install")
+  end
+
+  return ok() if info.mode.bit_and(OPEN_BITS) == 0
+
+  error("monty: the cache folder #{cache_dir} is open to others: chmod 700 it", kind: "monty.install")
+end
+
+# The installed worker, when each folder down to it and the file are the user's, not links, and no one else can write
+# them: another user could swap it.
+def installed(dir: String, owner: Int) -> Result[String]
+  path = dir
+  for part in [""] + MEMBER.split("/")
+    if not part.empty?
+      path = try Path.join([path, part])
+    end
+
+    info = try File.lstat(path)
+    wanted = "directory"
+    if part == "monty"
+      wanted = "file"
+    end
+
+    if info.kind != wanted or info.user_id != owner or info.mode.bit_and(WRITE_BITS) != 0
+      return error(
+        "monty: the worker at #{path} is not safe to run (a link, another owner or writable by others): remove #{dir}",
+        kind: "monty.install",
+      )
+    end
+  end
+
+  ok(path)
+end
+
+# The user's id: the owner of a private folder made just now.
+def user_id(cache_dir: String) -> Result[Int]
+  probe = try Path.join([cache_dir, ".id-#{System.pid()}-#{Random.int(0, 999_999_999)}"])
+  try Dir.mkdir_private(probe)
+  info = File.lstat(probe)
+  _ = Path.remove(probe)
+  ok((try info).user_id)
+end
+
+# Removes the download and staging folders an install left when it was cancelled; a running install's are newer.
+def clear_stale(cache_dir: String) -> Void
+  now_s = Time.now_ms / 1000
+  names: List[String] = Dir.list(cache_dir).unwrap_or([])
+  for name in names
+    next if not name.start_with?("monty-#{MONTY_VERSION}-")
+
+    path = Path.join([cache_dir, name]).unwrap_or("")
+    case File.lstat(path)
+      ok(info) if now_s - info.modified_seconds > STALE_S -> _ = Path.remove(path)
+      _ -> nil
+    end
+  end
 end
 
 # Makes each missing folder of `path`, private to the user.
