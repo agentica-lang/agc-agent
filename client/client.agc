@@ -18,6 +18,7 @@ export Backends.http_backend
 export Backends.unreachable_backend
 export Sessions.new_session
 export Sessions.replay_from
+export Sessions.resume_hint
 export Sessions.thinking
 export Sessions.compacted
 export Http.Server

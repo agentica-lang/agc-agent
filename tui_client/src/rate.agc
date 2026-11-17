@@ -32,11 +32,12 @@ def live(s: Streamed, now_ms: Int) -> Optional[Rate]
   some(Rate(per_s: (s.chars * 1000 + (CHARS_PER_TOKEN * elapsed) / 2) / (CHARS_PER_TOKEN * elapsed), estimated: true))
 end
 
-## The output tokens of the call (its reasoning included) over the time from its first output to its end.
+## The output tokens of the call (its reasoning included) over the time from its first output to its end; none for a
+## call whose output came in one burst (a reply not streamed, or held back on the way), which has no speed to show.
 def exact(usage: Protocol.Usage) -> Optional[Rate]
   ms = usage.output_ms.unwrap_or(0)
   tokens = usage.call_output.unwrap_or(0)
-  return none if ms <= 0 or tokens <= 0
+  return none if ms < MIN_EXACT_MS or tokens <= 0
 
   some(Rate(per_s: (tokens * 1000 + ms / 2) / ms))
 end
@@ -54,3 +55,4 @@ private
 
 CHARS_PER_TOKEN = 4
 MIN_MS = 500
+MIN_EXACT_MS = 200

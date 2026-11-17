@@ -14,6 +14,27 @@ def test_a_turn_streams_text_tools_and_usage() -> Result[Void]
   Driver.within([Routes.created(), Routes.held_events(), Routes.accepting(["turn.sse"])], &a_turn)
 end
 
+# A resumed session prints its turns as they were printed live: the tool calls with their ends and how a turn ended
+# (the thinking only when it is shown). Leaving it says how to come back.
+def test_a_resumed_session_prints_what_its_turns_did() -> Result[Void]
+  Driver.within([Routes.session([Fake.Reply(session: "session_worked.json")]), Routes.held_events()]) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN + ["--session", "s1"])
+    lines = try Driver.read_until(cli, "[turn finished] max_tokens")
+    done = try Driver.finish(cli)
+    expected = [
+      "[session s1]",
+      "user: Read missing.txt.",
+      "[tool] read_file missing.txt",
+      "[tool failed] path does not exist (2 ms)",
+      "assistant: Hello!",
+      "[turn finished] max_tokens",
+    ]
+
+    try Test.eq(lines, expected)
+    Test.eq(done.lines, ["[to come back: finn chat --session s1]"])
+  end
+end
+
 def test_a_new_session_names_its_model_api_and_profile() -> Result[Void]
   Driver.within([Routes.created(), Routes.held_events()]) do |rig|
     cli = try Driver.start(rig.dir, PLAIN + ["--model", "m", "--api", "openai_responses", "--profile", "plan"])
@@ -46,7 +67,7 @@ def a_turn(rig: Driver.Rig) -> Result[Void]
 
   try Test.eq(lines, expected)
   try Test.eq(done.code, 0)
-  try Test.eq(done.lines, [])
+  try Test.eq(done.lines, ["[to come back: finn chat --session s1]"])
   try Test.eq(Protocol.decode_new_session(create.body), ok(Protocol.NewSession(cwd: "/work", model: none)))
   try Test.eq(Protocol.decode_send_message(message.body), ok(Protocol.SendMessage(text: "hello")))
   try Test.eq(Driver.header(events, Protocol.LAST_EVENT_ID_HEADER), ["0"])
@@ -334,7 +355,7 @@ def left_after_ctrl_c(rig: Driver.Rig, marker: String) -> Result[Void]
   try Process.signal(cli, System.Signal.Int)
   done = try Driver.finish(cli)
   try Test.eq(done.code, 130)
-  Test.eq(done.lines, ["[interrupted]"])
+  Test.eq(done.lines, ["[interrupted]", "[to come back: finn chat --session s1]"])
 end
 
 def test_resuming_mid_turn_replays_the_whole_turn() -> Result[Void]
@@ -412,7 +433,11 @@ def denied_at_the_end(rig: Driver.Rig) -> Result[Void]
   try Test.eq(Protocol.decode_approve(a1.body), deny)
   try Test.eq(Protocol.decode_approve(a2.body), deny)
   try Test.assert(not done.lines.include?(PROMPT), "nobody was asked: #{done.lines}")
-  try Test.eq(done.lines.last, "[turn finished] end_turn")
+  try Test.eq(
+    done.lines.drop(done.lines.size - 2),
+    ["[turn finished] end_turn", "[to come back: finn chat --session s1]"],
+  )
+
   Test.eq(done.code, 0)
 end
 

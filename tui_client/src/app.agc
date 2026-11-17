@@ -64,12 +64,22 @@ def started(
     start = start.with(theme: Theme.basic())
   end
 
-  drive(TUI.Raw.backend(screen), start, output)
+  last = try driven(TUI.Raw.backend(screen), start, output)
+  for hint in State.option_list(Client.resume_hint("finn", last.id, not Session.content?(last)))
+    puts(hint)
+  end
+
+  ended(last)
 end
 
 ## Runs the app from the model `start` and its effects on `backend` until it ends: the exit code. The tests give it a
 ## fake terminal.
 def drive(backend: TUI.Backend, start: State.Model, output: TUI.OutputMode = TUI.OutputMode.Colors256) -> Result[Int]
+  ended(try driven(backend, start, output))
+end
+
+# The model the app ends with.
+def driven(backend: TUI.Backend, start: State.Model, output: TUI.OutputMode) -> Result[State.Model]
   app = TUI.App(
     model: start.with(effects: []),
     update: &update,
@@ -81,7 +91,10 @@ def drive(backend: TUI.Backend, start: State.Model, output: TUI.OutputMode = TUI
     output: output,
   )
 
-  last = try TUI.Raw.program(backend, app)
+  TUI.Raw.program(backend, app)
+end
+
+def ended(last: State.Model) -> Result[Int]
   case last.failure
     some(reason) -> error(reason, kind: "tui.session")
     none -> ok(last.exit.unwrap_or(0))

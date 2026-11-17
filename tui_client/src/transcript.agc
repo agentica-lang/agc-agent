@@ -53,12 +53,19 @@ struct Wrapped
 end
 
 def from_history(messages: List[Protocol.Message]) -> List[Entry]
-  messages.map do |message|
-    case message.role
-      Protocol.Role.User -> Entry(kind: Kind.User, text: message.text)
-      Protocol.Role.Assistant -> Entry(kind: Kind.Assistant, text: message.text)
-    end
+  entries: List[Entry] = []
+  for message in messages
+    entries = from_message(entries, message)
   end
+
+  entries
+end
+
+## How a turn that did not end as asked is noted.
+def stop_note(reason: Protocol.StopReason) -> String
+  return "stopped" if reason == Protocol.StopReason.Cancelled
+
+  "the turn ended: #{Protocol.stop_reason_name(reason)}"
 end
 
 ## Adds `text`: a streamed kind (the answer, the thinking) goes on the end of the last entry when it is of that kind.
@@ -216,6 +223,28 @@ def wrap(text: String, width: Int) -> List[String]
 end
 
 private
+
+# A message of the history drawn as it was live: a thinking block, a tool call with its end, or how the turn ended.
+def from_message(entries: List[Entry], message: Protocol.Message) -> List[Entry]
+  return entries.push(Entry(kind: Kind.Thinking, text: message.text)) if message.thinking
+
+  case message.tool
+    some(started) ->
+      running = tool_started(entries, started)
+      return message.done.map { |done| tool_finished(running, done) }.unwrap_or(running)
+    none -> nil
+  end
+
+  case message.stop
+    some(reason) -> return note(entries, stop_note(reason))
+    none -> nil
+  end
+
+  case message.role
+    Protocol.Role.User -> entries.push(Entry(kind: Kind.User, text: message.text))
+    Protocol.Role.Assistant -> entries.push(Entry(kind: Kind.Assistant, text: message.text))
+  end
+end
 
 def found(entries: List[Entry], call_id: String) -> Optional[Int]
   return none if call_id == ""

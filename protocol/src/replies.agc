@@ -146,10 +146,16 @@ struct LoginList
   first: Bool
 end
 
-## A finished message, as the text to draw.
+## A finished message, as the text to draw. An item of the assistant may instead be what its turn did, with `text` "":
+## a thinking block (its text in `text`, with `thinking`), a tool call (`tool`, and `done` once it finished), or how
+## the turn ended when not as asked (`stop`).
 struct Message
   role: Role
   text: String
+  thinking: Bool = false
+  tool: Optional[Events.ToolStarted] = none
+  done: Optional[Events.ToolFinished] = none
+  stop: Optional[Events.StopReason] = none
 end
 
 ## The answer of `GET /v1/sessions/ID`. Subscribe with `Last-Event-ID` set to `last_event_id` to miss and repeat no
@@ -351,7 +357,7 @@ def decode_file_list(text: String) -> Result[FileList] = Wire.decode(text, FileL
 ## It trusts its input: it does not check what `decode_session` checks about `turn_id`, `turn_from_event_id` and
 ## `last_event_id`, so the server must build a consistent `Session`.
 def encode_session(reply: Session) -> String
-  history = reply.history.map { |m| MessageWire(role: role_name(m.role), text: m.text) }
+  history = reply.history.map { |m| message_wire(m) }
   JSON.encode(
     SessionWire(
       id: reply.id,
@@ -388,7 +394,7 @@ def decode_session(text: String) -> Result[Session]
 
   history: List[Message] = []
   for item in wire.history
-    history = history.push(Message(role: try parse_role(item.role), text: item.text))
+    history = history.push(try message_of_wire(item))
   end
 
   ok(
@@ -456,6 +462,10 @@ private
 struct MessageWire
   role: String
   text: String
+  thinking: JSON.Field[Bool]
+  tool: JSON.Field[Events.ToolStarted]
+  done: JSON.Field[Events.ToolFinished]
+  stop: JSON.Field[String]
 end
 
 struct SessionWire
@@ -495,4 +505,37 @@ def following(role: Role) -> Optional[Role]
     Role.User -> some(Role.Assistant)
     Role.Assistant -> none
   end
+end
+
+def message_wire(m: Message) -> MessageWire
+  thinking: Optional[Bool] = none
+  if m.thinking
+    thinking = some(true)
+  end
+
+  MessageWire(
+    role: role_name(m.role),
+    text: m.text,
+    thinking: Wire.field(thinking),
+    tool: Wire.field(m.tool),
+    done: Wire.field(m.done),
+    stop: Wire.field(m.stop.map { |r| Events.stop_reason_name(r) }),
+  )
+end
+
+def message_of_wire(wire: MessageWire) -> Result[Message]
+  for done in Wire.option_list(Wire.optional(wire.done))
+    try Wire.non_negative("duration_ms", done.duration_ms)
+  end
+
+  ok(
+    Message(
+      role: try parse_role(wire.role),
+      text: wire.text,
+      thinking: Wire.optional(wire.thinking).unwrap_or(false),
+      tool: Wire.optional(wire.tool),
+      done: Wire.optional(wire.done),
+      stop: Wire.optional(wire.stop).map { |name| Events.parse_stop_reason(name) },
+    ),
+  )
 end

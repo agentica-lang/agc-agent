@@ -345,7 +345,8 @@ def commit(
   case Stream.save(shown, -> { Store.append_messages(state.setup.file, added, marks) })
     ok(_) ->
       turn = shown.turn.map { |t| t.with(texts: t.texts + answer_texts(added)) }
-      shown.with(history: history, turn: turn, broken: none, marks: shown.marks + marks)
+      display = Store.with_thinking(shown.display, added)
+      shown.with(history: history, turn: turn, broken: none, marks: shown.marks + marks, display: display)
     error(e) -> Stream.broke(shown, e)
   end
 end

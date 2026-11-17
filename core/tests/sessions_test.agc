@@ -29,7 +29,7 @@ def test_a_restarted_server_resumes_a_session_with_its_event_ids() -> Result[Voi
       listed = try Protocol.decode_session_list((try H.get(r, Protocol.SESSIONS_PATH)).text)
       try Test.eq(listed.sessions.map { |s| s.id }, [id])
       after = try H.session(r, id)
-      try Test.eq([after.last_event_id, after.history.size], [before.last_event_id, 2])
+      try Test.eq([after.last_event_id, after.history.size], [before.last_event_id, 3])
       try Test.eq(after.history, before.history)
       tail = a.seen.drop(a.seen.size - 2)
       try Test.eq(H.kinds(tail), ["usage", "turn_finished"])
@@ -305,9 +305,13 @@ def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Re
     try Test.eq(JSON.get(second.last, "role"), ok(JSON.from("user")))
     try Test.eq(JSON.get(second.last, "content"), ok(JSON.from("Also say hi.")))
     before = try H.session(h, id)
-    texts = before.history.map { |m| "#{Protocol.role_name(m.role)}: #{m.text}" }
-    try Test.eq(texts.take(3), ["user: Write hello.txt.", "assistant: I will write it.", "user: Also say hi."])
-    try Test.eq(before.history.size, 4)
+    texts = before.history.map { |m| item(m) }
+    try Test.eq(
+      texts.take(4),
+      ["user Write hello.txt.", "tool write_file true", "assistant I will write it.", "user Also say hi."],
+    )
+
+    try Test.eq(before.history.size, 5)
     _ = try H.send(h, id, "Write it again.")
     a = try H.until(a.with(seen: []), Protocol.EventKind.ApprovalRequested)
     never = try Protocol.decode_message_accepted((try H.send(h, id, "Never read.")).text)
@@ -508,8 +512,14 @@ def test_a_turn_cut_by_a_restart_ends_cancelled() -> Result[Void]
       after = try H.session(r, id)
       try Test.eq([after.turn_id.some?, after.turn_from_event_id.some?], [false, false])
       try Test.eq([after.last_event_id, after.pending_approvals.size], [before.last_event_id + 2, 0])
-      try Test.eq(after.history.map { |m| Protocol.role_name(m.role) }, ["user", "assistant"])
-      try Test.assert(after.history[1].text.start_with?("word0 "), "the answer so far is not shown")
+      try Test.eq(
+        after.history.map { |m| item(m).split(" ").take(3).join(" ") },
+        [
+          "user Write long.txt,", "tool write_file true", "tool write_file none", "assistant word0 word1",
+          "stop cancelled",
+        ],
+      )
+
       b = try H.until(try H.subscribe(r, id, some(before.last_event_id)), Protocol.EventKind.TurnFinished)
       try Test.eq(H.kinds(b.seen), ["approval_resolved", "turn_finished"])
       try Test.eq([H.resolved_by(b), [H.stop_reason(b)]], [["deny stop"], ["cancelled"]])
@@ -545,18 +555,18 @@ def test_a_turn_cut_before_it_started_ends_cancelled() -> Result[Void]
     H.restarted(h, setup, "{\"type\":\"user\",\"text\":\"two\"}\n") do |r|
       after = try H.session(r, id)
       try Test.eq(after.last_event_id, before.last_event_id + 2)
-      try Test.eq(after.history.map { |m| m.text }.drop(2), ["two"])
+      try Test.eq(after.history.map { |m| item(m) }.drop(2), ["user two", "stop cancelled"])
       b = try H.until(try H.subscribe(r, id, some(before.last_event_id)), Protocol.EventKind.TurnFinished)
       try Test.eq(H.kinds(b.seen), ["turn_started", "turn_finished"])
       try Test.eq(started_turn(b.seen[0]), some("turn-2"))
       try Test.eq(history_size(b.seen[0]), some(3))
       try Test.eq(H.stop_reason(b), "cancelled")
-      try Test.eq(history_size(b.seen.last), some(3))
+      try Test.eq(history_size(b.seen.last), some(4))
       sent = try H.send(r, id, "three")
       try Test.eq(number((try Protocol.decode_message_accepted(sent.text)).turn_id), "turn-3")
       b = try H.until(b.with(seen: []), Protocol.EventKind.TurnFinished)
       H.close(b)
-      try Test.eq(history_size(b.seen[0]), some(4))
+      try Test.eq(history_size(b.seen[0]), some(5))
       try Test.eq(history_size(b.seen.last), some((try H.session(r, id)).history.size))
       Test.eq(H.stop_reason(b), "end_turn")
     end
@@ -1131,6 +1141,35 @@ def test_a_cut_command_before_a_turn_is_not_ended_again() -> Result[Void]
   end
 end
 
+# The history of a session shows what its turns did, as a client draws it live: the thinking of a round before the tool
+# calls it made, each call with its end, and how a turn ended when not as asked. It is the same after a restart, and
+# `turn_finished` counts it.
+def test_the_history_shows_the_thinking_tools_and_stop_of_a_turn() -> Result[Void]
+  setup = H.Setup(replies: ["think_read.sse", "text_length.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Read missing.txt.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    shown = (try H.session(h, id)).history
+    try Test.eq(
+      shown.map { |m| item(m) },
+      [
+        "user Read missing.txt.",
+        "thinking The user wants the file.",
+        "tool read_file false",
+        "assistant Hello! It's a pleasure to meet you.",
+        "stop max_tokens",
+      ],
+    )
+
+    sizes = a.seen.map { |s| finished_size(s.event) }.select { |n| n >= 0 }
+    try Test.eq(sizes, [shown.size])
+    H.restarted(h, setup, "") do |r| Test.eq((try H.session(r, id)).history, shown) end
+  end
+end
+
 private
 
 WAIT_MS = 20_000
@@ -1260,4 +1299,26 @@ def test_the_list_reads_a_file_again_once_a_write_changes_it() -> Result[Void]
       ["s1 hello 2 false", "s2  2 true", "s3  2 false", "s4  2 false"],
     ],
   )
+end
+
+def item(m: Protocol.Message) -> String
+  return "thinking #{m.text}" if m.thinking
+  case m.tool
+    some(tool) -> return "tool #{tool.name} #{m.done.map { |d| d.ok.to_s }.unwrap_or("none")}"
+    none -> nil
+  end
+
+  case m.stop
+    some(reason) -> return "stop #{Protocol.stop_reason_name(reason)}"
+    none -> nil
+  end
+
+  "#{Protocol.role_name(m.role)} #{m.text}"
+end
+
+def finished_size(event: Protocol.Event) -> Int
+  case event
+    Protocol.Event.TurnFinished(done) -> done.history_size.unwrap_or(-1)
+    _ -> -1
+  end
 end

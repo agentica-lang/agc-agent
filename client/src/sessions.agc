@@ -1,5 +1,6 @@
 ## What both clients decide the same way about a session: the request that opens one, where the events after a
-## snapshot are read from, and what a client says of its thinking level and of a compaction.
+## snapshot are read from, and what a client says of its thinking level, of a compaction and, on leaving, of how to
+## come back.
 
 import Protocol from "pkg/protocol/protocol"
 
@@ -25,6 +26,13 @@ def replay_from(session: Protocol.Session, skip_replay: Bool) -> Int
   return session.last_event_id if skip_replay
 
   session.turn_from_event_id.unwrap_or(session.last_event_id)
+end
+
+## How to come back to session `id` with `command` (`finn`, `finn chat`); none for a session with nothing in it yet.
+def resume_hint(command: String, id: String, empty: Bool) -> Optional[String]
+  return none if empty or id == ""
+
+  some("to come back: #{command} --session #{id}")
 end
 
 ## The thinking level of `session`, as a client says it.

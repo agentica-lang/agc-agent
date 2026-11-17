@@ -572,6 +572,11 @@ end
 
 def kinds(seen: List[Seen]) -> List[String] = seen.map { |s| Protocol.event_name(s.event) }
 
+## The user messages and answers of a history, without the thinking, tool calls and stops of the turns.
+def said(history: List[Protocol.Message]) -> List[Protocol.Message]
+  history.select { |m| not m.thinking and m.tool.none? and m.stop.none? }
+end
+
 ## An event with no time of output, which changes from run to run.
 def untimed(event: Protocol.Event) -> Protocol.Event
   case event

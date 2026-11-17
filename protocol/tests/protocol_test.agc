@@ -160,6 +160,16 @@ def test_sessions_round_trip_idle_and_mid_turn() -> Result[Void]
   try Test.eq(idle.turn_from_event_id, none)
   try Test.eq(idle.pending_approvals.size, 0)
   try Test.eq(Protocol.decode_session(Protocol.encode_session(idle)), ok(idle))
+  shown = idle.history.map { |m|
+    [
+      m.thinking.to_s,
+      m.tool.map { |t| t.name }.unwrap_or(""),
+      m.done.map { |d| d.summary }.unwrap_or(""),
+      m.stop.map { |r| Protocol.stop_reason_name(r) }.unwrap_or(""),
+    ].join(" ")
+  }
+
+  try Test.eq(shown, ["false   ", "true   ", "false write_file wrote 1 line ", "false   max_tokens", "false   "])
   shell = idle.with(shell_id: some("shell-1"))
   try Test.eq(Protocol.decode_session(Protocol.encode_session(shell)), ok(shell))
   used = Protocol.Usage(
@@ -180,7 +190,7 @@ def test_sessions_round_trip_idle_and_mid_turn() -> Result[Void]
   )
 
   plain = used.with(session_cost: none, window: none, call_output: none, output_ms: none)
-  try Test.eq(Protocol.encode_session(idle.with(usage: some(plain))).include?("null}"), false)
+  try Test.eq(Protocol.encode_session(idle.with(usage: some(plain), history: [])).include?("null}"), false)
   try Test.eq(
     Protocol.decode_session(Protocol.encode_session(idle.with(usage: some(plain)))),
     ok(idle.with(usage: some(plain))),

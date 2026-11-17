@@ -91,8 +91,17 @@ def emit_counted(state: Session.State, event: Protocol.Event) -> Session.State
   end
 end
 
-def emit(state: Session.State, event: Protocol.Event) -> Session.State
+## The event is saved, sent to every subscriber and drawn in the session's display; a `turn_finished` counts the
+## display with what it adds.
+def emit(state: Session.State, given: Protocol.Event) -> Session.State
   id = state.counter + 1
+  display = Store.shown_after(state.display, given)
+  event = case given
+    Protocol.Event.TurnFinished(finished) ->
+      Protocol.Event.TurnFinished(finished.with(history_size: finished.history_size.map { |_| display.size }))
+    _ -> given
+  end
+
   logged = Store.Logged(id: id, event: event)
   case save(state, -> { saved_event(state, logged) })
     ok(_) ->
@@ -106,7 +115,7 @@ def emit(state: Session.State, event: Protocol.Event) -> Session.State
       end
 
       log = trim(state.log.push(logged), state)
-      prune(state.with(counter: id, log: log, subscribers: live, broken: none, reserved: reserved))
+      prune(state.with(counter: id, log: log, subscribers: live, broken: none, reserved: reserved, display: display))
     error(e) -> broke(state, e)
   end
 end

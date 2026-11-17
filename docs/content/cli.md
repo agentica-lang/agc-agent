@@ -74,7 +74,7 @@ Type them in either client:
 | `/logout [PROVIDER]` | remove a stored key; alone, every one |
 | `/stop` | stop the running turn |
 | `/help` | the list |
-| `/quit` | leave |
+| `/quit` | leave; a session with something in it prints how to come back to it (`finn --session ID`, `finn chat --session ID`) |
 
 Any other `/name` goes to the agent as a message, so `/name` of a [skill](skills.md) loads that skill, and a [slash command](#slash-commands) puts its prompt there. What `/tree`, `/fork` and `/compact` do is on [Sessions](sessions.md).
 

@@ -69,6 +69,8 @@ struct Chat
   shown_id: Int = 0
   ## The size of the session's history the client has seen, so a resync prints only the rest.
   known: Int = 0
+  ## The session has something in it: a history, or a turn seen.
+  used: Bool = false
   turn: Bool = false
   ## A `!` command of this client runs.
   shell: Bool = false
@@ -152,7 +154,7 @@ def attach(chat: Chat, session: Protocol.Session, skip_replay: Bool) -> Chat
   missed = session.history.drop(chat.known)
   shown = chat
   if not missed.empty?
-    shown = note(chat, Render.history(missed))
+    shown = note(chat, Render.history(missed, chat.style))
   end
 
   running = session.turn_id.some?
@@ -164,6 +166,7 @@ def attach(chat: Chat, session: Protocol.Session, skip_replay: Bool) -> Chat
 
   fresh = shown.with(
     known: session.history.size,
+    used: shown.used or not session.history.empty?,
     turn: running,
     shell: session.shell_id.some?,
     stopping: false,
@@ -201,7 +204,7 @@ def loop(chat: Chat) -> Result[Int]
       ok(input) ->
         step = try handle(state, input)
         state = step.chat
-        return ok(step.exit.unwrap!) if step.exit.some?
+        return ok(left(state, step.exit.unwrap!)) if step.exit.some?
 
       error(_) -> next
     end
@@ -263,7 +266,13 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
   changed = case event
     Protocol.Event.TurnStarted(started) ->
       known = started.history_size.unwrap_or(shown.known)
-      shown.with(turn: true, stopping: false, known: known, yolo: Yolo.running(shown.yolo, some(started.turn_id)))
+      shown.with(
+        turn: true,
+        stopping: false,
+        known: known,
+        used: true,
+        yolo: Yolo.running(shown.yolo, some(started.turn_id)),
+      )
     # An error (a write of `shell_finished` that failed) also ends a command: no other event of it comes.
     Protocol.Event.Error(failure) if not repeated -> warned(shown, failure)
     Protocol.Event.Error(_) -> shown.with(shell: false)
@@ -586,6 +595,17 @@ def settled(chat: Chat) -> Result[Step]
   return ok(Step(chat: chat, exit: some(0))) if chat.eof and not chat.turn and not chat.shell
 
   ok(Step(chat: chat))
+end
+
+# Leaving a session of the line chat says how to come back to it, unless it has nothing in it yet.
+def left(chat: Chat, code: Int) -> Int
+  return code if chat.once
+
+  for hint in option_list(Client.resume_hint("finn chat", chat.id, not chat.used))
+    _ = note(chat, "[#{hint}]")
+  end
+
+  code
 end
 
 def exit_status(reason: Protocol.StopReason) -> Int

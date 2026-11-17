@@ -1,0 +1,16 @@
+{
+  "id": "s1",
+  "cwd": "/work",
+  "model": "fake-model",
+  "last_event_id": 9,
+  "turn_id": null,
+  "turn_from_event_id": null,
+  "pending_approvals": [],
+  "history": [
+    {"role": "user", "text": "Read missing.txt."},
+    {"role": "assistant", "text": "The user wants the file.", "thinking": true},
+    {"role": "assistant", "text": "", "tool": {"call_id": "c1", "name": "read_file", "summary": "missing.txt"}, "done": {"call_id": "c1", "ok": false, "summary": "path does not exist", "duration_ms": 2, "output": null, "diff": null}},
+    {"role": "assistant", "text": "Hello!"},
+    {"role": "assistant", "text": "", "stop": "max_tokens"}
+  ]
+}
