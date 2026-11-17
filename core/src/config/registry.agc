@@ -11,6 +11,8 @@ import Spec from "../tools/spec"
 HANDLER_MS = 2000
 ## How long all the `ToolBefore` handlers of one call may take together: they run in the turn, not in the session.
 TOOL_BEFORE_MS = 10_000
+## The most characters of the reason of a `Stop` that the model gets.
+STOP_MAX = 1000
 ## How long a service may take to start, or to stop.
 SERVICE_MS = 30_000
 ## How long the target of an extension tool may take: it runs before the approval asks.
@@ -46,7 +48,7 @@ struct Tool
 end
 
 ## A call of a tool as a `ToolBefore` handler sees it: the session, its folder, the tool's name and the input.
-struct ToolCall
+struct Pending
   session: String
   root: String
   name: String
@@ -85,7 +87,7 @@ enum Event
   Message(Fn[String, String])
   Fold(Fn[List[String], String])
   Seen(List[String], Fn[Seen, Void])
-  ToolBefore(Fn[ToolCall, Check])
+  ToolBefore(Fn[Pending, Check])
 end
 
 ## Something that runs with the server: `start` once the server holds its lock, before it listens, and `stop` after it
@@ -259,7 +261,7 @@ def before(registry: Registry, session: String) -> Optional[Spec.Before]
   ms = registry.tool_before_ms
   some(
     ->(ctx: Spec.Context, name: String, input: JSON.Value) {
-      checked(handlers, ms, ToolCall(session: session, root: ctx.root, name: name, input: input))
+      checked(handlers, ms, Pending(session: session, root: ctx.root, name: name, input: input))
     },
   )
 end
@@ -459,7 +461,7 @@ def cancelled(task: Task[Void], news: Channel[Note]) -> Void
   end
 end
 
-def checked(handlers: List[Fn[ToolCall, Check]], ms: Int, given: ToolCall) -> Result[JSON.Value]
+def checked(handlers: List[Fn[Pending, Check]], ms: Int, given: Pending) -> Result[JSON.Value]
   deadline = Time.monotonic_ms() + ms
   call = given
   for handle in handlers
@@ -467,15 +469,21 @@ def checked(handlers: List[Fn[ToolCall, Check]], ms: Int, given: ToolCall) -> Re
     case check
       Check.Go -> nil
       Check.Input(changed) -> call = call.with(input: changed)
-      Check.Stop(reason) -> return error(reason, kind: Spec.BLOCKED)
+      Check.Stop(reason) -> return error(cut(reason, STOP_MAX), kind: Spec.BLOCKED)
     end
   end
 
   ok(call.input)
 end
 
-def tool_before_handlers(registry: Registry) -> List[Fn[ToolCall, Check]]
-  out: List[Fn[ToolCall, Check]] = []
+def cut(text: String, max: Int) -> String
+  return text if text.length <= max
+
+  text.slice(0, max)
+end
+
+def tool_before_handlers(registry: Registry) -> List[Fn[Pending, Check]]
+  out: List[Fn[Pending, Check]] = []
   for event in registry.events
     case event
       Event.ToolBefore(handle) -> out = out.push(handle)

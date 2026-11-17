@@ -10,6 +10,10 @@ import Fake from "support/fake_llm"
 import H from "support/harness"
 
 HOOKED = "echo hooked | tee other.txt"
+## What the script of `run_script_refused.sse` prints, as the fake worker replays it.
+SCRIPT_OUTPUT = (
+  "type: read_file() takes keyword arguments only, as read_file(path='a.txt')\nrule: denied by a rule of the config\n"
+)
 
 # The model gets the prompt of the extension after the system prompt, and the message as the handler changed it; the
 # session keeps what the user typed. A handler that crashes refuses its message and the session goes on.
@@ -40,7 +44,7 @@ end
 # tool runs on it.
 def test_a_tool_before_handler_changes_what_the_approval_sees_and_what_runs() -> Result[Void]
   calls: Channel[String] = Channel.new(4)
-  registry = Core.registry() |> Core.on(Core.Event.ToolBefore(->(call: Core.ToolCall) { hooked(calls, call) }))
+  registry = Core.registry() |> Core.on(Core.Event.ToolBefore(->(call: Core.Pending) { hooked(calls, call) }))
   H.using(H.Setup(replies: ["bash_echo.sse", "text.sse"], registry: some(registry))) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
@@ -52,18 +56,64 @@ def test_a_tool_before_handler_changes_what_the_approval_sees_and_what_runs() ->
     H.close(a)
     try Test.eq(calls.recv(0), ok("#{id} bash"))
     try Test.eq(asked.preview, HOOKED)
-    Test.eq(File.read_text("#{h.work}/other.txt"), ok("hooked\n"))
+    try Test.eq(File.read_text("#{h.work}/other.txt"), ok("hooked\n"))
+    _ = try Fake.next_request(h.fake)
+    body = (try Fake.next_request(h.fake)).body
+    Test.assert(
+      body.include?("an extension changed the input of this call to: "),
+      "the history says what ran: #{body}",
+    )
+  end
+end
+
+# Each handler gets the input the one before gave, and the first stop ends the chain.
+def test_tool_before_handlers_pass_the_input_on_and_the_first_stop_wins() -> Result[Void]
+  seen: Channel[String] = Channel.new(4)
+  hook = ->(_pending: Core.Pending) { Core.Check.Input(JSON.object({"command": JSON.from(HOOKED)})) }
+  registry = (
+    Core.registry()
+    |> Core.on(Core.Event.ToolBefore(hook))
+    |> Core.on(Core.Event.ToolBefore(->(pending: Core.Pending) { stopped_after(seen, pending, "first") }))
+    |> Core.on(Core.Event.ToolBefore(->(pending: Core.Pending) { stopped_after(seen, pending, "second") }))
+  )
+
+  try stopped_call(registry, "blocked by an extension: first")
+  try Test.eq(seen.recv(0), ok("#{HOOKED} first"))
+  Test.assert(not seen.recv(0).ok?, "a handler after the stop ran")
+end
+
+# The calls of a script pass the handlers too: a stop is denied there (`PermissionError`), and a changed input runs.
+def test_tool_before_handlers_check_the_calls_of_a_script() -> Result[Void]
+  stop = Core.registry() |> Core.on(Core.Event.ToolBefore(->(pending: Core.Pending) { bash_stopped(pending) }))
+  setup = H.Setup(replies: ["run_script_refused.sse", "text.sse"], monty: "blocked.json", registry: some(stop))
+  try H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Clean up with a script.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.kinds(a.seen).include?("approval_requested"), false)
+    second = try H.request_messages(h, 2)
+    Test.eq(JSON.get(second.last, "content"), ok(JSON.from(SCRIPT_OUTPUT)))
+  end
+
+  change = Core.registry() |> Core.on(Core.Event.ToolBefore(->(pending: Core.Pending) { bash_changed(pending) }))
+  setup = setup.with(monty: "changed.json", registry: some(change), approvals: false)
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Clean up with a script.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    Test.eq(File.read_text("#{h.work}/ran.txt"), ok(""))
   end
 end
 
 # A `ToolBefore` handler that stops a call, or crashes, fails it before its approval: the model gets the reason.
 def test_a_tool_before_handler_that_stops_or_crashes_fails_the_call() -> Result[Void]
-  stop = (
-    Core.registry()
-    |> Core.on(Core.Event.ToolBefore(->(_call: Core.ToolCall) { Core.Check.Stop("no echo here") }))
-  )
+  stop = Core.registry() |> Core.on(Core.Event.ToolBefore(->(_call: Core.Pending) { Core.Check.Stop("no echo here") }))
 
-  crash = Core.registry() |> Core.on(Core.Event.ToolBefore(->(_call: Core.ToolCall) { crash_check() }))
+  crash = Core.registry() |> Core.on(Core.Event.ToolBefore(->(_call: Core.Pending) { crash_check() }))
   try stopped_call(stop, "blocked by an extension: no echo here")
   stopped_call(crash, "a tool_before handler failed: task crashed")
 end
@@ -476,9 +526,28 @@ def crashing_tool() -> Core.Tool
   )
 end
 
-def hooked(calls: Channel[String], call: Core.ToolCall) -> Core.Check
+def hooked(calls: Channel[String], call: Core.Pending) -> Core.Check
   _ = calls.send("#{call.session} #{call.name}", 0)
   Core.Check.Input(JSON.object({"command": JSON.from(HOOKED)}))
+end
+
+def stopped_after(seen: Channel[String], pending: Core.Pending, reason: String) -> Core.Check
+  command = JSON.string(JSON.get(pending.input, "command").unwrap_or(JSON.from(""))).unwrap_or("")
+  _ = seen.send("#{command} #{reason}", 0)
+  Core.Check.Stop(reason)
+end
+
+# The reason is as long as the rule's message that the fake worker expects in its place.
+def bash_stopped(pending: Core.Pending) -> Core.Check
+  return Core.Check.Go if pending.name != "bash"
+
+  Core.Check.Stop("no rm")
+end
+
+def bash_changed(pending: Core.Pending) -> Core.Check
+  return Core.Check.Go if pending.name != "bash"
+
+  Core.Check.Input(JSON.object({"command": JSON.from("touch ran.txt")}))
 end
 
 def crash_check() -> Core.Check
