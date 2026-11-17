@@ -10,7 +10,7 @@ weight: 10
 
 Finn runs on [Agentica](https://github.com/agentica-lang/agentica) 0.32.0 or later: `agentica` on your `PATH`, or `AGENTICA` set to the binary.
 
-1. Clone the repository: `git clone https://github.com/agentica-lang/agc-agent` (it is private: you need access).
+1. Clone the repository: `git clone https://github.com/agentica-lang/agc-agent`.
 2. In the clone, run `make install`. It fetches the packages that the server and the TUI depend on.
 3. Use `bin/finn` from any folder, or link it into your `PATH`: `ln -s "$PWD/bin/finn" ~/.local/bin/finn`.
 
