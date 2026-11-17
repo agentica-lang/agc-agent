@@ -1,12 +1,15 @@
 ## The keys a login stores, in `auth.json` of the user's config folder (`$XDG_CONFIG_HOME/finn/`, else
-## `~/.config/finn/`): `{"keys": {"PROVIDER": "KEY"}}`. Only its user may read it: a file that its group or others may
+## `~/.config/finn/`): `{"keys": {"PROVIDER": "KEY"}}`, and `"urls": {"local": "URL"}` once a login set the base URL of
+## a local server. Only its user may read it: a file that its group or others may
 ## read, or that another user owns, is not read (as ssh does with a private key), and the server says why.
 
 FILE = "auth.json"
 
-## The keys of the file by provider. `found` when the file is there, read or not; `refused` says why it was not read.
+## The keys of the file by provider, and the base URLs. `found` when the file is there, read or not; `refused` says why
+## it was not read.
 struct Stored
   keys: Map[String, String] = {}
+  urls: Map[String, String] = {}
   found: Bool = false
   refused: String = ""
 end
@@ -46,7 +49,7 @@ def load(path: String, owner: Optional[Int]) -> Stored
 
   # A JSON error may quote the file: only its place is said.
   case decoded(path)
-    ok(file) -> Stored(keys: file.keys.unwrap_or({}), found: true)
+    ok(file) -> Stored(keys: file.keys.unwrap_or({}), urls: file.urls.unwrap_or({}), found: true)
     error(_) -> Stored(found: true, refused: "#{path} is not a JSON object of keys: its keys are not used")
   end
 end
@@ -54,21 +57,21 @@ end
 ## Writes `keys` to `path`, readable only by its user from the start. A new file is made private under another name in
 ## the same folder, then renamed; an existing one is checked again (its mode may have changed since it was read) and
 ## replaced in one step, keeping its mode.
-def save(path: String, keys: Map[String, String], owner: Optional[Int]) -> Result[Void]
+def save(path: String, keys: Map[String, String], owner: Optional[Int], urls: Map[String, String]) -> Result[Void]
   if File.stat(path).ok?
     for why in option_list(refusal(path, owner))
       return error(why)
     end
 
-    return File.replace(path, JSON.encode(JSON.object({"keys": JSON.from(keys)})).bytes)
+    return File.replace(path, text_of(keys, urls).bytes)
   end
 
-  create(path, keys)
+  create(path, keys, urls)
 end
 
 ## Writes `keys` to a new file at `path`, private from the start; `io.exists` when another process made one first.
-def create(path: String, keys: Map[String, String]) -> Result[Void]
-  text = JSON.encode(JSON.object({"keys": JSON.from(keys)}))
+def create(path: String, keys: Map[String, String], urls: Map[String, String]) -> Result[Void]
+  text = text_of(keys, urls)
   parts = path.split("/")
   dir = parts.take(parts.size - 1).join("/")
   try Dir.mkdir(dir)
@@ -99,6 +102,13 @@ private
 
 struct AuthFile
   keys: Optional[Map[String, String]] = none
+  urls: Optional[Map[String, String]] = none
+end
+
+def text_of(keys: Map[String, String], urls: Map[String, String]) -> String
+  return JSON.encode(JSON.object({"keys": JSON.from(keys)})) if urls.empty?
+
+  JSON.encode(JSON.object({"keys": JSON.from(keys), "urls": JSON.from(urls)}))
 end
 
 def option_list[T](value: Optional[T]) -> List[T]

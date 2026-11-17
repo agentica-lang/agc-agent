@@ -112,6 +112,12 @@ def login(server: Server, provider: String, key: String) -> Result[Protocol.Logi
   Protocol.decode_login_status(try call_within(server, "POST", Protocol.auth_path(provider), body, LOGIN_TIMEOUT_MS))
 end
 
+## Checks `url` as the base URL of a local server (its `GET /models`) and stores it on the server.
+def login_url(server: Server, provider: String, url: String) -> Result[Protocol.LoginStatus]
+  body = Protocol.encode_login_url(Protocol.LoginUrl(base_url: url))
+  Protocol.decode_login_status(try call_within(server, "POST", Protocol.auth_path(provider), body, LOGIN_TIMEOUT_MS))
+end
+
 ## Removes the stored key of `provider`, or every stored key when none.
 def logout(server: Server, provider: Optional[String]) -> Result[Void]
   path = provider.map { |p| Protocol.auth_path(p) }.unwrap_or(Protocol.AUTH_PATH)

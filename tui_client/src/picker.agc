@@ -136,7 +136,7 @@ def keys(kind: Kind) -> List[String]
     Kind.Tree -> ["↑↓ move", "Enter go there", "Esc close", "type to filter"]
     Kind.Fork -> ["↑↓ move", "Enter fork", "Esc close", "type to filter"]
     Kind.Models -> ["↑↓ move", "Enter use", "Esc close", "type to filter"]
-    Kind.Logins -> ["↑↓ move", "Enter give its key", "Esc close", "type to filter"]
+    Kind.Logins -> ["↑↓ move", "Enter set it up", "Esc close", "type to filter"]
   end
 end
 
@@ -156,6 +156,9 @@ end
 
 def login_state(login: Protocol.LoginStatus) -> String
   return "#{login.label}: coming" if login.coming
+  return "#{login.base_url} (#{login.key_env} is set)" if login.asks == Protocol.ASKS_URL and login.from == "env"
+  return "#{login.base_url}" if login.asks == Protocol.ASKS_URL and login.from == "stored"
+  return "base URL, now #{login.base_url}: #{login.label}" if login.asks == Protocol.ASKS_URL
   return "set up: #{login.key_env} is set" if login.from == "env"
   return "set up: key stored" if login.from == "stored"
 

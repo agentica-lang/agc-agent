@@ -4,6 +4,10 @@ import Events from "events"
 import Kinds from "kinds"
 import Wire from "wire"
 
+## What a login gives (`LoginStatus.asks`): a key, or the base URL of a local server.
+ASKS_KEY = "key"
+ASKS_URL = "url"
+
 ## Who wrote a message of the history. The history is display text: an entry of another kind (a tool call) will be a
 ## new type, not a new `Role`, so a `case` on `Role` stays exhaustive.
 enum Role
@@ -73,14 +77,17 @@ struct ProviderList
   providers: List[ProviderInfo]
 end
 
-## A provider a login can set up. `from` is where its key comes from: `env` (its variable, which wins), `stored` (a
-## login) or empty; `coming` is a login with no flow yet, which cannot be picked.
+## A provider a login can set up. `asks` is what a login gives: `key`, or `url` (a local server: its base URL, no
+## key; `base_url` is the one it uses now). `from` is where it comes from: `env` (its variable, which wins), `stored`
+## (a login) or empty; `coming` is a login with no flow yet, which cannot be picked.
 struct LoginStatus
   name: String
   label: String
   key_env: String
   from: String
   coming: Bool
+  asks: String = ASKS_KEY
+  base_url: String = ""
 end
 
 ## The answer of `GET /v1/auth`. `first`: no key file and no key in the environment, so a client offers a login.

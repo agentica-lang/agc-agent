@@ -349,6 +349,20 @@ def test_a_login_round_trips() -> Result[Void]
   login = Protocol.Login(key: "sk-1")
   try Test.eq(Protocol.decode_login(Protocol.encode_login(login)), ok(login))
   try Test.eq(error_kind(Protocol.decode_login("{\"key\": \"\"}")), "protocol.invalid")
+  url = Protocol.LoginUrl(base_url: "http://127.0.0.1:8080/v1")
+  try Test.eq(Protocol.decode_login_url(Protocol.encode_login_url(url)), ok(url))
+  try Test.eq(error_kind(Protocol.decode_login_url("{\"key\": \"sk\"}")), "protocol.invalid")
+  local = Protocol.LoginStatus(
+    name: "local",
+    label: "",
+    key_env: "",
+    from: "",
+    coming: false,
+    asks: "url",
+    base_url: "u",
+  )
+
+  try Test.eq(Protocol.decode_login_status(Protocol.encode_login_status(local)), ok(local))
   status = Protocol.LoginStatus(name: "groq", label: "", key_env: "GROQ_API_KEY", from: "stored", coming: false)
   list = Protocol.LoginList(providers: [status], first: false)
   try Test.eq(Protocol.decode_login_status(Protocol.encode_login_status(status)), ok(status))
