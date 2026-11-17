@@ -48,12 +48,14 @@ end
 ## The folder of the session files.
 def folder(options: Config.Options) -> String = "#{options.data_dir}/#{SESSIONS_DIR}"
 
-## Starts the registry, which lists the session files of `options`, and the holder of the providers.
-def start(given: Config.Options) -> Sessions
+## Starts the registry, which lists the session files of `options` in `store` (on disk when none), and the holder of
+## the providers.
+def start(given: Config.Options, store: Optional[Store.Port] = none) -> Sessions
   options = given.with(logins: some(Logins.start(given.providers, given.login)))
+  port = store.unwrap_or(Store.disk())
   init = -> {
     inbox: Channel[Msg] = Actor.inbox()
-    Registry(options: options, sessions: load_sessions(options), address: inbox.address)
+    Registry(options: options, store: port, sessions: load_sessions(options, port), address: inbox.address)
   }
 
   registry = Actor.start(Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate)))
@@ -189,8 +191,7 @@ def fork(sessions: Sessions, id: String, entry: Optional[Int]) -> Result[Protoco
   copied = try SessionActor.copy(address, entry, SessionActor.Copying(header: header, dir: sessions.dir))
   adopted: Result[Bool] = Actor.call(registry, CALL_MS) do |reply| Msg.Adopt(header, copied.file, reply) end
   if not adopted.ok?
-    _ = Path.remove(copied.file)
-    _ = Path.remove(Store.settings_file(copied.file))
+    _ = Store.remove(copied.file)
   end
 
   _ = try adopted
@@ -204,7 +205,7 @@ TITLE_CHARS = 200
 struct Entry
   summary: Protocol.SessionSummary
   header: Store.Header
-  file: String
+  file: Store.Ref
   ## None until the session is first used.
   session: Optional[Actor.Ref[SessionActor.State, SessionActor.Msg]]
   ## The requests that wait while the session loads; a load runs while it is not empty.
@@ -231,12 +232,13 @@ struct Loaded
 end
 
 struct Listed
-  file: String
+  file: Store.Ref
   header: Store.Header
 end
 
 struct Registry
   options: Config.Options
+  store: Store.Port
   sessions: List[Entry] = []
   address: Address[Msg]
 end
@@ -263,7 +265,7 @@ enum Msg
   ## What a list read of session files, kept for the next list.
   Listed(List[Cached])
   ## A session file written outside the registry (a fork), to list.
-  Adopt(Store.Header, String, Channel[Bool])
+  Adopt(Store.Header, Store.Ref, Channel[Bool])
 end
 
 ## What a list read of one session file, valid while its size and time of change stay.
@@ -334,10 +336,7 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
 
       case ended(found[0])
         ok(entry) ->
-          removed = remove_file(entry.file)
-          if removed.ok?
-            _ = Path.remove(Store.settings_file(entry.file))
-          end
+          removed = Store.remove(entry.file)
 
           Actor.reply(reply, removed)
           sessions = registry.sessions.map { |e| replaced(e, entry) }
@@ -382,10 +381,10 @@ end
 def cached(entry: Entry) -> Cached
   size = 0
   modified = 0
-  case File.stat(entry.file)
+  case Store.changed(entry.file)
     ok(info) ->
-      size = info.size_bytes
-      modified = info.modified_seconds
+      size = info.size
+      modified = info.modified
     error(_) -> nil
   end
 
@@ -450,7 +449,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     provider: some(provider),
   )
 
-  file = try Store.create(folder(options), header)
+  file = try Store.create(registry.store, folder(options), header)
   entry(options, header, opened(context, approver), file, none)
 end
 
@@ -464,13 +463,6 @@ def ended(listed: Entry) -> Result[Entry]
   end
 
   ok(listed.with(session: none))
-end
-
-def remove_file(file: String) -> Result[Void]
-  info = try File.lstat(file)
-  return error("#{file}: not a regular file") if info.kind != "file"
-
-  Path.remove(file)
 end
 
 def replaced(entry: Entry, by: Entry) -> Entry
@@ -499,9 +491,6 @@ def read(options: Config.Options, listed: Entry) -> Result[Loaded]
   for hook in option_list(options.before_load)
     hook.call(listed.summary.id)
   end
-
-  info = try File.lstat(listed.file)
-  return error("not a regular file") if info.kind != "file"
 
   saved = try Store.load(listed.file)
   if saved.skipped > 0
@@ -562,7 +551,7 @@ def entry(
   options: Config.Options,
   header: Store.Header,
   opened: Opened,
-  file: String,
+  file: Store.Ref,
   saved: Optional[Store.Saved],
 ) -> Result[Entry]
   chosen = chosen_of(options, header)
@@ -781,20 +770,18 @@ def summary_of(options: Config.Options, header: Store.Header) -> Protocol.Sessio
 end
 
 # In the order they were made, not loaded yet. A file whose first line is not a session is left out, with a warning.
-def load_sessions(options: Config.Options) -> List[Entry]
-  dir = folder(options)
-  names: List[String] = []
-  case Dir.list(dir)
-    ok(found) -> names = found.select { |name| name.end_with?(Store.EXTENSION) }
+def load_sessions(options: Config.Options, store: Store.Port) -> List[Entry]
+  files: List[Store.Ref] = []
+  case Store.all(store, folder(options))
+    ok(found) -> files = found
     error(e) -> IO.warn("sessions not listed: #{e.message}")
   end
 
   listed: List[Listed] = []
-  for name in names
-    file = "#{dir}/#{name}"
-    case listed_session(file)
+  for file in files
+    case Store.header(file)
       ok(header) -> listed = listed.push(Listed(file: file, header: header))
-      error(e) -> IO.warn("session #{name} not listed: #{e.message}")
+      error(e) -> IO.warn("session #{file.path.split("/").last} not listed: #{e.message}")
     end
   end
 
@@ -802,13 +789,6 @@ def load_sessions(options: Config.Options) -> List[Entry]
   sorted.map { |one|
     Entry(summary: summary_of(options, one.header), header: one.header, file: one.file, session: none)
   }
-end
-
-def listed_session(file: String) -> Result[Store.Header]
-  info = try File.lstat(file)
-  return error("not a regular file") if info.kind != "file"
-
-  Store.header(file)
 end
 
 # `AGENTS.md` goes to the model only when it is a regular file inside the folder: a link out of it could be any file.

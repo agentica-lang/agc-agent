@@ -4,6 +4,7 @@ import Compaction from "../src/agent/compaction"
 import Store from "../src/session/store"
 
 LINEAR = "tests/fixtures/sessions/linear.jsonl"
+MEMORY = "/memory"
 
 # Every kind of block reads back as it was written, so the history a restart gives the model is the same.
 def test_a_message_reads_back_with_every_kind_of_block() -> Result[Void]
@@ -65,31 +66,22 @@ end
 
 # A crash can cut the last line and leave a line that does not parse; a record of a kind or event it does not know is
 # skipped too. The rest loads, and after `reopen` the next record starts on a line of its own.
-def test_a_load_skips_broken_lines_and_reopen_ends_a_cut_one() -> Result[Void]
-  dir = try temp_dir()
-  result = broken_lines(dir)
-  _ = Path.remove(dir)
-  result
-end
+def test_a_load_skips_broken_lines_and_reopen_ends_a_cut_one() -> Result[Void] = on_both(&broken_lines)
 
 # A record longer than a load reads is refused, and the file keeps what it had.
-def test_a_record_over_the_line_limit_is_refused() -> Result[Void]
-  dir = try temp_dir()
-  result = too_long(dir)
-  _ = Path.remove(dir)
-  result
-end
+def test_a_record_over_the_line_limit_is_refused() -> Result[Void] = on_both(&too_long)
 
 # A file written before sessions were trees loads as it did: one branch, the turns of every record.
 def test_a_session_file_of_the_linear_format_still_loads() -> Result[Void]
-  saved = try Store.load(LINEAR)
+  linear = Store.Ref(port: Store.disk(), path: LINEAR)
+  saved = try Store.load(linear)
   try Test.eq([saved.skipped, saved.users, saved.last_id, saved.reserved], [0, 2, 1005, 0])
   try Test.eq(saved.shown.map { |m| m.text }, ["Hi", "Hi!", "Again.", "Yes."])
   try Test.eq(saved.history.size, 4)
   try Test.eq(saved.events.map { |l| l.id }, [1, 1002, 1003, 1004, 1005])
   try Test.eq([saved.model, saved.effort], [some("m2"), some("low")])
   try Test.eq(saved.usage.map { |u| u.session_cost }, some(some(0.5)))
-  tree = Store.tree(try Store.entries(LINEAR))
+  tree = Store.tree(try Store.entries(linear))
   nodes = [
     Protocol.TreeNode(id: 1, text: "Hi", answer: "Hi!", last: 7, active: true),
     Protocol.TreeNode(id: 9, parent: some(1), text: "Again.", answer: "Yes.", last: 13, active: true),
@@ -102,33 +94,25 @@ end
 # A tree read again reads only the lines added since, and is the tree a whole read gives. The ids, the turns, the
 # settings and the cost stay those of the whole file, the end of a turn stays where it was, and a copy keeps one
 # branch.
-def test_a_branch_replays_its_own_records() -> Result[Void]
-  dir = try temp_dir()
-  result = branches(dir)
-  _ = Path.remove(dir)
-  result
-end
+def test_a_branch_replays_its_own_records() -> Result[Void] = on_both(&branches)
+
+# The session files of a folder are its own `.jsonl` files, not those of another folder or of another kind.
+def test_the_sessions_of_a_folder_are_its_session_files() -> Result[Void] = on_both(&listed)
 
 # A tree read while the last line has no newline yet leaves it out; the read after it is written whole has it, as a
 # whole read does. A node keeps the first line of its answer.
-def test_a_tree_read_leaves_a_line_still_being_written() -> Result[Void]
-  dir = try temp_dir()
-  result = partial_line(dir)
-  _ = Path.remove(dir)
-  result
-end
+def test_a_tree_read_leaves_a_line_still_being_written() -> Result[Void] = on_both(&partial_line)
 
 private
 
-def partial_line(dir: String) -> Result[Void]
-  path = "#{dir}/s1-0123.jsonl"
-  try File.write_text(path, try File.read_text(LINEAR))
+def partial_line(port: Store.Port, dir: String) -> Result[Void]
+  path = try linear_in(port, dir)
   known = try Store.entries(path)
-  try File.append_text(path, "{\"type\":\"user\",\"te")
+  try port.append.call(path.path, "{\"type\":\"user\",\"te")
   partial = try Store.entries(path, some(known))
   try Test.eq([partial.lines, partial.size], [known.lines, known.size])
   try Test.eq(Store.tree(partial), Store.tree(known))
-  try File.append_text(path, "xt\":\"Late.\"}\n")
+  try port.append.call(path.path, "xt\":\"Late.\"}\n")
   try Store.append_answer(path, "first line\nsecond line")
   whole = try Store.entries(path, some(partial))
   nodes = Store.tree(whole).nodes
@@ -137,9 +121,8 @@ def partial_line(dir: String) -> Result[Void]
   Test.eq(Store.tree(whole), Store.tree(try Store.entries(path)))
 end
 
-def branches(dir: String) -> Result[Void]
-  path = "#{dir}/s1-0123.jsonl"
-  try File.write_text(path, try File.read_text(LINEAR))
+def branches(port: Store.Port, dir: String) -> Result[Void]
+  path = try linear_in(port, dir)
   known = try Store.entries(path)
   before = try Store.point(known, some(9))
   try Test.eq(before, Store.Point(leaf: 8, text: "Again."))
@@ -170,21 +153,16 @@ def branches(dir: String) -> Result[Void]
   copy = try Store.copy(path, dir, header, (try Store.point(known, none)).leaf)
   copied = try Store.load(copy)
   try Test.eq(copied.shown, back.shown)
-  try Test.assert(not (try File.read_text(copy)).include?("branch"), "a copy keeps the branch records")
+  try Test.assert(not (try port.read_text.call(copy.path)).include?("branch"), "a copy keeps the branch records")
   Test.eq(Store.tree(try Store.entries(copy)).nodes.map { |n| n.text }, ["Hi", "Again."])
 end
 
 # The answer a compaction keeps belongs to its turn: the next turn starts without it. An `answer` of the wrong type is
 # left out, not the compaction.
-def test_a_folded_answer_belongs_to_its_turn() -> Result[Void]
-  dir = try temp_dir()
-  result = folded_answers(dir)
-  _ = Path.remove(dir)
-  result
-end
+def test_a_folded_answer_belongs_to_its_turn() -> Result[Void] = on_both(&folded_answers)
 
-def folded_answers(dir: String) -> Result[Void]
-  path = try Store.create(dir, Store.Header(id: "s1-cd", cwd: "/work", model: "m", created_ms: 7))
+def folded_answers(port: Store.Port, dir: String) -> Result[Void]
+  path = try Store.create(port, dir, Store.Header(id: "s1-cd", cwd: "/work", model: "m", created_ms: 7))
   try Store.append_user(path, "one")
   try Store.append_event(path, started(1))
   try Store.append_messages(path, [said("first answer")])
@@ -195,7 +173,7 @@ def folded_answers(dir: String) -> Result[Void]
   try Store.append_user(path, "two")
   try Store.append_event(path, started(2))
   try Test.eq((try Store.load(path)).folded, none)
-  try File.append_text(path, "{\"type\":\"compaction\",\"from\":1,\"to\":2,\"summary\":\"again\",\"answer\":5}\n")
+  try port.append.call(path.path, "{\"type\":\"compaction\",\"from\":1,\"to\":2,\"summary\":\"again\",\"answer\":5}\n")
   again = try Store.load(path)
   try Test.eq([again.skipped, again.history.size], [0, 3])
   try Test.assert(Compaction.transcript([again.history[1]]).include?("again"), "the compaction was left out")
@@ -206,8 +184,8 @@ def said(text: String) -> LLM.Message
   LLM.Message(role: LLM.Role.Assistant, content: [LLM.Block.Text(LLM.TextPart(text: text))])
 end
 
-def too_long(dir: String) -> Result[Void]
-  path = try Store.create(dir, Store.Header(id: "s1-ab", cwd: "/work", model: "m", created_ms: 7))
+def too_long(port: Store.Port, dir: String) -> Result[Void]
+  path = try Store.create(port, dir, Store.Header(id: "s1-ab", cwd: "/work", model: "m", created_ms: 7))
   try Test.error?(Store.append_user(path, "x" * Store.MAX_LINE_BYTES))
   try Store.append_user(path, "x" * (Store.MAX_LINE_BYTES - 100))
   saved = try Store.load(path)
@@ -224,20 +202,23 @@ def block_kind(block: LLM.Block) -> String
   end
 end
 
-def broken_lines(dir: String) -> Result[Void]
+def broken_lines(port: Store.Port, dir: String) -> Result[Void]
   header = Store.Header(id: "s1-ab", cwd: "/work", model: "m", created_ms: 7)
-  path = try Store.create(dir, header)
-  try Test.eq((try File.stat(path)).mode % 512, 384)
-  try Test.error?(Store.create(dir, header))
+  path = try Store.create(port, dir, header)
+  if dir != MEMORY
+    try Test.eq((try File.stat(path.path)).mode % 512, 384)
+  end
+
+  try Test.error?(Store.create(port, dir, header))
   try Store.append_user(path, "Hello.")
   try Store.append_event(path, started(1))
-  try File.append_text(path, "not json\n{\"type\":\"event\",\"id\":2,\"name\":\"no_such_event\",\"data\":{}}\n")
-  try File.append_text(path, "{\"type\":\"wat\"}\n")
+  try port.append.call(path.path, "not json\n{\"type\":\"event\",\"id\":2,\"name\":\"no_such_event\",\"data\":{}}\n")
+  try port.append.call(path.path, "{\"type\":\"wat\"}\n")
   try Store.append_answer(path, "Hi!")
   clean = try Store.load(path)
   try Test.eq([clean.skipped, clean.events.size], [3, 1])
   try Test.eq(clean.open_end, false)
-  try File.append_text(path, "{\"type\":\"event\",\"id\":2,\"na")
+  try port.append.call(path.path, "{\"type\":\"event\",\"id\":2,\"na")
   cut = try Store.load(path)
   try Test.eq([cut.skipped, cut.events.size], [4, 1])
   try Test.eq(cut.open_end, true)
@@ -257,9 +238,32 @@ def started(id: Int) -> Store.Logged
   Store.Logged(id: id, event: Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: "turn-#{id}")))
 end
 
-def temp_dir() -> Result[String]
-  tmp = System.env("TMPDIR").unwrap_or("/tmp")
-  dir = "#{tmp}/agc-store-#{Random.int(0, 999999999)}"
+# The scenario on disk, in a folder of its own, and in memory.
+def listed(port: Store.Port, dir: String) -> Result[Void]
+  for name in ["a.jsonl", "b.jsonl", "notes.txt"]
+    try port.create.call("#{dir}/#{name}", "{}\n")
+  end
+
+  # A folder whose name starts with this one's: only the memory adapter can hold one without making it.
+  if dir == MEMORY
+    try port.create.call("#{dir}x/c.jsonl", "{}\n")
+  end
+
+  found = try Store.all(port, dir)
+  Test.eq(found.map { |r| r.path }.sort, ["#{dir}/a.jsonl", "#{dir}/b.jsonl"])
+end
+
+def on_both(scenario: Fn[Store.Port, String, Result[Void]]) -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/agc-store-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)
-  ok(dir)
+  on_disk = scenario.call(Store.disk(), dir)
+  _ = Path.remove(dir)
+  try on_disk
+  scenario.call(Store.memory(), MEMORY)
+end
+
+def linear_in(port: Store.Port, dir: String) -> Result[Store.Ref]
+  path = "#{dir}/s1-0123.jsonl"
+  try port.create.call(path, try File.read_text(LINEAR))
+  ok(Store.Ref(port: port, path: path))
 end

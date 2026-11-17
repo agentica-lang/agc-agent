@@ -49,7 +49,7 @@ def test_a_restarted_server_resumes_a_session_with_its_event_ids() -> Result[Voi
       third = try H.request_messages(r, 1)
       try Test.eq(third.map { |m| JSON.encode(JSON.get(m, "role").unwrap_or(JSON.null())) }.join(" "), roles())
       try Test.eq(third.take(4).map { |m| JSON.encode(m) }, second.map { |m| JSON.encode(m) })
-      saved = try Store.load(H.session_file(r, id))
+      saved = try Store.load(Store.Ref(port: Store.disk(), path: H.session_file(r, id)))
       try Test.eq(saved.skipped, 1)
       try Test.eq(saved.events.map { |l| l.id }.max, some((try H.session(r, id)).last_event_id))
       try Test.eq(saved.events.select { |l| Protocol.event_name(l.event).end_with?("_delta") }.size, 0)

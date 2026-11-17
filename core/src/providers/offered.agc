@@ -92,10 +92,7 @@ def apis(
 
   claude = LLM.anthropic(access.url, access.api_key, options, access.auth_token)
   url = access.url
-  refresh = access.ant.map do |ant|
-    fetch: Fn[Result[LLM.Provider]] = -> { ok(LLM.anthropic(url, "", options, try ant.call())) }
-    fetch
-  end
+  refresh = access.ant.map { |ant| refreshed(url, options, ant) }
 
   {
     "openai": Providers.ModelApi(provider: LLM.openai_chat(base_url, api_key, options)),
@@ -179,4 +176,11 @@ def anthropic_access(
     ok(found) -> ok(AnthropicAccess(url: url, auth_token: found, inherit: false, ant: some(ant)))
     error(e) -> error("FINN_API is anthropic and there is no credential: set ANTHROPIC_API_KEY, or #{e.message}")
   end
+end
+
+private
+
+# A new Anthropic provider with a fresh token of `ant login`.
+def refreshed(url: String, options: LLM.Options, ant: Fn[Result[String]]) -> Fn[Result[LLM.Provider]]
+  -> { ok(LLM.anthropic(url, "", options, try ant.call())) }
 end

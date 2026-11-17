@@ -24,8 +24,10 @@ core/                the server: agent loop, tools, approval, sessions, extensio
                      of extensions)
 core/src/            one folder per domain: config/ (settings, CLI, the extension registry), http/ (the routes),
                      session/ (the registry of sessions; one session's actor, which calls turn.agc, stream.agc
-                     (the event fan-out) and branch.agc, with its state in state.agc; its store and prompt;
-                     builtins.agc: the skills, MCP and the approval on the extension registry), agent/ (the
+                     (the event fan-out) and branch.agc, with its state in state.agc; store.agc, the records
+                     of a session file, which reach the files only through the port of storage.agc (`disk`,
+                     or `memory` for tests); the prompt; builtins.agc: the skills, MCP and the approval on the
+                     extension registry), agent/ (the
                      loop, compaction), providers/ (the presets and the user's providers, what a server offers,
                      the stored keys and logins, the model catalog), tools/ (the tools and their sandbox), ext/
                      (MCP, skills), approval/ (the approval extension: rules, session allows); core/tests stay
