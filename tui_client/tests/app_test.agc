@@ -184,6 +184,24 @@ end
 # `!cmd` goes to the shell route from a command and draws as a `$` line with its output, and a muted line when the
 # model does not get it; Esc stops it. A refused command goes back to the prompt, one that may have run does not, and
 # none goes while the session moves or as a follow-up.
+# The model's todo list shows as a notice, one item a line.
+def test_a_todo_list_is_drawn() -> Result[Void]
+  model = model_of(40, 10).with(id: "s1", generation: 1)
+  list = [
+    Protocol.Todo(content: "Write the test", status: "completed"),
+    Protocol.Todo(content: "Fix the bug", status: "in_progress"),
+    Protocol.Todo(content: "Docs", status: "pending"),
+  ]
+
+  event = Protocol.Event.Todos(Protocol.Todos(todos: list))
+  shown = rows(App.update(model, App.Msg.Stream(1, [Client.Item.Event(some(1), event)])).model)
+  for row in ["[x] Write the test", "[>] Fix the bug", "[ ] Docs"]
+    try Test.assert(shown.include?(row), "#{row} is drawn: #{shown}")
+  end
+
+  ok()
+end
+
 def test_a_bang_line_runs_a_shell_command() -> Result[Void]
   model = model_of(40, 10).with(id: "s1", generation: 1, prompt: "!echo one")
   sending = App.update(model, enter())

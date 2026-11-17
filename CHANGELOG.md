@@ -25,6 +25,7 @@
 - `finn`: Ctrl+G edits the prompt in `$VISUAL` or `$EDITOR`.
 - Finn Agent, a coding agent: `finn` (full screen) and `finn chat` (lines) talk to a local server.
 - Tools: read, write and edit files, `glob`, `grep`, `bash`, and `apply_patch` for models that use it.
+- `todo_write`: the model keeps a todo list that `finn` and `finn chat` show and the session keeps.
 - `finn -p TASK` runs one task and prints the answer.
 - Sessions are kept on disk and resume after a restart; `finn --delete ID` removes one.
 - Long histories are compacted into a summary before the context window fills.

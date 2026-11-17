@@ -132,6 +132,8 @@ struct Session
   shell_id: Optional[String] = none
   ## The `usage` of the last model call, none before one.
   usage: Optional[Events.Usage] = none
+  ## The model's todo list, as its last `todos` event on this branch gave it.
+  todos: List[Events.Todo] = []
 end
 
 ## A user message of `SessionTree`. `id` is its entry: a branch from it goes back before the message. `last` is the
@@ -273,6 +275,7 @@ def encode_session(reply: Session) -> String
       api: some(reply.api),
       shell_id: reply.shell_id,
       usage: Wire.field(reply.usage.map { |u| Events.usage_wire(u) }),
+      todos: some(reply.todos),
     ),
   )
 end
@@ -309,6 +312,7 @@ def decode_session(text: String) -> Result[Session]
       api: wire.api.unwrap_or(""),
       shell_id: wire.shell_id,
       usage: usage,
+      todos: wire.todos.unwrap_or([]),
     ),
   )
 end
@@ -365,6 +369,7 @@ struct SessionWire
   api: Optional[String] = none
   shell_id: Optional[String] = none
   usage: JSON.Field[Events.UsageWire]
+  todos: Optional[List[Events.Todo]] = none
 end
 
 def check_turn(wire: SessionWire) -> Result[Void]

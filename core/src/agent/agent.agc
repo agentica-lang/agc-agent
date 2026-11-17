@@ -7,6 +7,7 @@ import Protocol from "pkg/protocol/protocol"
 import Catalog from "../providers/catalog"
 import CodeMode from "../tools/code_mode"
 import Compaction from "compaction"
+import Todos from "../tools/todos"
 import Tools from "../tools/tools"
 
 MAX_ROUNDS = 50
@@ -485,6 +486,15 @@ def noticed_run(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Tools.Tu
   )
 
   turn.link.emit.call(Protocol.Event.ToolFinished(finished))
+  if call.name == Todos.NAME and not output.is_error
+    case Todos.todos(call.input)
+      ok(list) ->
+        todos = list.map { |t| Protocol.Todo(content: t.content, status: t.status) }
+        turn.link.emit.call(Protocol.Event.Todos(Protocol.Todos(todos: todos)))
+      error(_) -> nil
+    end
+  end
+
   ran
 end
 

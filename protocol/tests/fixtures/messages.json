@@ -27,7 +27,8 @@
       {"role": "assistant", "text": "Done."}
     ],
     "accept_edits": false,
-    "cost": 0.42
+    "cost": 0.42,
+    "todos": []
   },
   "session_mid_turn": {
     "id": "s1",
@@ -48,7 +49,8 @@
       {"role": "assistant", "text": "Done."},
       {"role": "user", "text": "Now delete the build folder."}
     ],
-    "accept_edits": true
+    "accept_edits": true,
+    "todos": [{"content": "Delete the build folder", "status": "in_progress"}]
   },
   "failure": {"kind": "approval.resolved", "message": "the approval was answered already"}
 }

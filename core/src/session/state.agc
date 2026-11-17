@@ -210,6 +210,8 @@ struct State
   shell: Optional[ShellRun] = none
   ## The output of the commands that go to the model before the next message.
   shells: List[String] = []
+  ## The model's todo list: that of the last `todos` event on the branch.
+  todos: List[Protocol.Todo] = []
 end
 
 ## The end of a turn that a failed write stopped: the clients got `frames` without an id after event `to`, and a
@@ -230,6 +232,18 @@ end
 
 def choice(setup: Setup) -> Store.Choice
   Store.Choice(model: setup.model, effort: setup.effort, provider: setup.provider_name, api: setup.api)
+end
+
+def last_todos(events: List[Store.Logged]) -> List[Protocol.Todo]
+  last: List[Protocol.Todo] = []
+  for logged in events
+    case logged.event
+      Protocol.Event.Todos(list) -> last = list.todos
+      _ -> nil
+    end
+  end
+
+  last
 end
 
 def last_usage(events: List[Store.Logged]) -> Protocol.Usage

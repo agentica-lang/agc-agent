@@ -62,6 +62,49 @@ def test_a_restarted_server_resumes_a_session_with_its_event_ids() -> Result[Voi
   end
 end
 
+# `todo_write` replaces the model's todo list: the clients get it in a `todos` event and in the session. A list with
+# two items in progress is an error for the model and changes nothing, and the list stays after a restart.
+def test_the_todo_list_is_sent_and_kept() -> Result[Void]
+  setup = H.Setup(replies: ["todo_write.sse", "todo_bad.sse", "text.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Plan it.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    expected = [
+      Protocol.Todo(content: "Write the test", status: "completed"),
+      Protocol.Todo(content: "Fix the bug", status: "in_progress"),
+      Protocol.Todo(content: "Update the docs", status: "pending"),
+    ]
+
+    try Test.eq(todo_lists(a.seen), [expected])
+    failed = a.seen.select { |s| failed_call?(s.event) }
+    try Test.eq(failed.size, 1)
+    try Test.eq((try H.session(h, id)).todos, expected)
+    H.restarted(h, setup, "") do |r| Test.eq((try H.session(r, id)).todos, expected) end
+  end
+end
+
+def todo_lists(seen: List[H.Seen]) -> List[List[Protocol.Todo]]
+  lists: List[List[Protocol.Todo]] = []
+  for s in seen
+    case s.event
+      Protocol.Event.Todos(list) -> lists = lists.push(list.todos)
+      _ -> nil
+    end
+  end
+
+  lists
+end
+
+def failed_call?(event: Protocol.Event) -> Bool
+  case event
+    Protocol.Event.ToolFinished(done) -> not done.ok
+    _ -> false
+  end
+end
+
 # A diff that crashes is only left out: the call still runs, the turn ends, and the file is written.
 def test_a_crashing_diff_never_stops_the_call() -> Result[Void]
   setup = H.Setup(replies: ["write_file.sse", "text.sse"], diff: some(&crashed_diff))

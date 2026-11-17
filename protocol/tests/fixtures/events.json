@@ -26,5 +26,7 @@
   {"name": "turn_finished", "data": {"turn_id": "t5", "stop_reason": "loop_guard"}},
   {"name": "turn_finished", "data": {"turn_id": "t6", "stop_reason": "pause_turn"}},
   {"name": "error", "data": {"kind": "llm.rate_limit", "message": "too many requests"}},
-  {"name": "resync", "data": {}}
+  {"name": "resync", "data": {}},
+  {"name": "todos", "data": {"todos": [{"content": "Write the test", "status": "completed"}, {"content": "Fix the bug", "status": "in_progress"}, {"content": "Update the docs", "status": "pending"}]}},
+  {"name": "todos", "data": {"todos": []}}
 ]
