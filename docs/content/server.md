@@ -35,7 +35,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `GET /v1/auth` | the logins: each provider, where its key comes from, and what a login asks for (`asks`: `key`, or `url` with the `base_url` of `local`) |
 | `PUT /v1/auth` | make an empty key file when there is none, so the first-start login is not offered again |
 | `POST /v1/auth/PROVIDER` | log in: `{"key": "..."}`, checked at the provider, then stored; `local` takes `{"base_url": "..."}`, checked with its `GET /models` |
-| `DELETE /v1/auth/PROVIDER` | remove the stored key of a provider; `DELETE /v1/auth` removes all |
+| `DELETE /v1/auth/PROVIDER` | remove the stored key of a provider (the base URL of `local`); `DELETE /v1/auth` removes all |
 | `POST /v1/sessions` | a new session: `{"cwd": "/path", "model": null}`, plus `provider` and `api` |
 | `GET /v1/sessions` | the sessions, the last changed first |
 | `GET /v1/sessions/ID` | one session: its settings and history |

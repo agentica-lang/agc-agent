@@ -34,8 +34,8 @@ struct Setup
   rebuild: Fn[Map[String, String], Map[String, String], Result[Map[String, Providers.Provider]]]
   ## The base URL of `local` without a stored one (its variable, else the default); empty: no login sets it.
   local_url: String = ""
-  ## Its variable is set, so it wins over a stored one.
-  local_env: Bool = false
+  ## The variable that sets it (`FINN_BASE_URL` or its old name), which wins over a stored one; empty when none is set.
+  local_env: String = ""
   ## `FINN_API_KEY`, sent to the check of a base URL as the turns send it.
   local_key: String = ""
   ## The server's provider was chosen (`FINN_BASE_URL`, `FINN_PROVIDER` or `FINN_API` is set): no login is offered.
@@ -82,11 +82,7 @@ def stop(holder: Holder) -> Void
   _ = Actor.stop(holder.ref, CALL_MS)
 end
 
-## The providers the server offers now.
-def providers(holder: Holder) -> Result[Map[String, Providers.Provider]]
-  Actor.call(holder.ref.address, CALL_MS) do |reply| Msg.Current(reply) end
-end
-
+## The providers the server offers now, and the base URL `local` uses now.
 def current(holder: Holder) -> Result[Current]
   state = try now(holder)
   url = state.setup.map { |setup| local_status(setup, state.stored).map { |l| l.base_url }.join("") }
@@ -180,39 +176,6 @@ def skip(holder: Holder) -> Result[Void]
   inner
 end
 
-## Checks that `GET /models` at `base` answers, once, without a key and without following a redirect.
-def check_url(base: String, key: String) -> Result[Void]
-  headers: List[HTTP.Header] = []
-  if not key.empty?
-    headers = [HTTP.Header(name: "Authorization", value: "Bearer #{key}")]
-  end
-
-  client = try HTTP.client(HTTP.ClientOptions(timeout_ms: CHECK_MS))
-  answer = HTTP.request(client, "GET", "#{base}/models", "".bytes, headers)
-  HTTP.close_client(client)
-  case answer
-    ok(response) if response.status >= 200 and response.status < 300 -> ok()
-    ok(response) -> rejected("the server did not answer GET /models (HTTP #{response.status})")
-    error(_) -> rejected("the server cannot be reached")
-  end
-end
-
-# `http://` or `https://`, a host, and a path at most: the URL goes into requests and the clients show it, so it
-# carries no user or password, query, fragment, space or control character.
-def plain_url?(url: String) -> Bool
-  rest = ""
-  for scheme in ["http://", "https://"]
-    if url.start_with?(scheme)
-      rest = url.slice(scheme.length, url.length - scheme.length)
-    end
-  end
-
-  host = rest.split("/")[0]
-  return false if (host.empty? or host.start_with?(":") or ["@", "?", "#"].any? { |c| url.include?(c) })
-
-  url.bytes.to_a.all? { |b| b > 32 and b != 127 }
-end
-
 ## Checks `key` at the provider's own base URL, once, without following a redirect: `GET /models` of Anthropic, else
 ## `GET` of its `check_path` with the key as a Bearer token. What the provider said goes back only as its status or
 ## kind: a body might quote the request.
@@ -240,7 +203,6 @@ struct State
 end
 
 enum Msg
-  Current(Channel[Map[String, Providers.Provider]])
   Now(Channel[State])
   Store(String, String, Channel[Result[Status]])
   StoreUrl(String, String, Channel[Result[Status]])
@@ -248,11 +210,48 @@ enum Msg
   Skip(Channel[Result[Void]])
 end
 
+# Checks that `GET /models` at `base` answers, once, without following a redirect; with `FINN_API_KEY` (`key`) as a
+# Bearer token when it is set.
+def check_url(base: String, key: String) -> Result[Void]
+  headers: List[HTTP.Header] = []
+  if not key.empty?
+    headers = [HTTP.Header(name: "Authorization", value: "Bearer #{key}")]
+  end
+
+  client = try HTTP.client(HTTP.ClientOptions(timeout_ms: CHECK_MS))
+  answer = HTTP.request(client, "GET", "#{base}/models", "".bytes, headers)
+  HTTP.close_client(client)
+  case answer
+    ok(response) if response.status >= 200 and response.status < 300 -> ok()
+    ok(response) -> rejected("the server did not answer GET /models (HTTP #{response.status})")
+    error(_) -> rejected("the server cannot be reached")
+  end
+end
+
+# `http://` or `https://`, a host, and a path at most: the URL goes into requests and the clients show it, so it
+# carries no user or password, query, fragment, space, control character (C0, C1) or bidi control.
+def plain_url?(url: String) -> Bool
+  rest = ""
+  for scheme in ["http://", "https://"]
+    if url.start_with?(scheme)
+      rest = url.slice(scheme.length, url.length - scheme.length)
+    end
+  end
+
+  host = rest.split("/")[0]
+  return false if (host.empty? or host.start_with?(":") or ["@", "?", "#"].any? { |c| url.include?(c) })
+
+  url.split("").all? { |c| plain_char?(c.code) }
+end
+
+def plain_char?(code: Int) -> Bool
+  return false if code <= 32 or (code >= 127 and code <= 159) or code == 0x061C or code == 0x200E or code == 0x200F
+
+  not ((code >= 0x202A and code <= 0x202E) or (code >= 0x2066 and code <= 0x2069))
+end
+
 def handle(state: State, msg: Msg) -> Actor.Step[State]
   case msg
-    Msg.Current(reply) ->
-      Actor.reply(reply, state.providers)
-      Actor.continue(state)
     Msg.Now(reply) ->
       Actor.reply(reply, state)
       Actor.continue(state)
@@ -309,7 +308,7 @@ def saved(state: State, change: Fn[Auth.Stored, Result[Auth.Stored]]) -> Result[
 
   next = try change.call(now)
   providers = try setup.rebuild.call(next.keys, next.urls)
-  case Auth.save(path, next.keys, setup.owner, next.urls)
+  case Auth.save(path, next.keys, next.urls, setup.owner)
     ok(_) -> ok(state.with(providers: providers, stored: Auth.Stored(keys: next.keys, urls: next.urls, found: true)))
     error(e) -> error("#{path} cannot be written: #{e.message}", kind: Protocol.KIND_LOGIN_STORAGE)
   end
@@ -357,8 +356,10 @@ def local_status(setup: Setup, stored: Auth.Stored) -> List[Status]
     base_url = stored.urls[Providers.LOCAL]
   end
 
-  if setup.local_env
+  key_env = LOCAL_ENV
+  if not setup.local_env.empty?
     from = FROM_ENV
+    key_env = setup.local_env
     base_url = setup.local_url
   end
 
@@ -367,7 +368,7 @@ def local_status(setup: Setup, stored: Auth.Stored) -> List[Status]
     Status(
       name: Providers.LOCAL,
       label: label,
-      key_env: LOCAL_ENV,
+      key_env: key_env,
       from: from,
       asks: Protocol.ASKS_URL,
       base_url: base_url,

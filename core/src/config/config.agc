@@ -157,7 +157,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     read: read,
     rebuild: rebuild,
     local_url: base_url,
-    local_env: env_url.some?,
+    local_env: set_name(read, "FINN_BASE_URL").unwrap_or(""),
     local_key: api_key,
     chosen: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
   )
@@ -303,14 +303,18 @@ def left_behind(read: Fn[String, Result[String]]) -> Result[List[String]]
 end
 
 def set(read: Fn[String, Result[String]], name: String) -> Optional[String]
+  set_name(read, name).map { |each| read.call(each).unwrap_or("") }
+end
+
+# Which of `name` and its old name is set, in that order.
+def set_name(read: Fn[String, Result[String]], name: String) -> Optional[String]
   names = [name]
   if name.start_with?(PREFIX)
     names = [name, "#{OLD_PREFIX}#{name.slice(PREFIX.length, name.length - PREFIX.length)}"]
   end
 
   for each in names
-    value = read.call(each).unwrap_or("")
-    return some(value) if value != ""
+    return some(each) if read.call(each).unwrap_or("") != ""
   end
 
   none
