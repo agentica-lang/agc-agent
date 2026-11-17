@@ -87,7 +87,22 @@ end
 
 ## A new session: its id.
 def create(sessions: Sessions, request: Protocol.NewSession) -> Result[String]
-  created_at(sessions.registry.address, sessions.options, request, none)
+  created: Result[Result[String]] = Actor.call(sessions.registry.address, CALL_MS) do |reply|
+    Msg.Create(request, reply)
+  end
+
+  id = try try created
+  for name in option_list(request.profile)
+    address = try find(sessions, id)
+    found = try Profiles.find(profiles_of(sessions.options, (try SessionActor.snapshot(address)).cwd), name)
+    if not found.model.empty? or not found.thinking.empty?
+      # A model or provider of the request wins over the profile's.
+      change = Protocol.UpdateSession(profile: some(name), provider: request.provider, model: request.model)
+      try SessionActor.update(address, change)
+    end
+  end
+
+  ok(id)
 end
 
 ## The slash commands of a session: the user's and a trusted project's, and those that do not load.
@@ -123,7 +138,7 @@ end
 ## The sessions, the last changed first.
 def list(sessions: Sessions) -> Result[List[Protocol.SessionSummary]]
   registry = sessions.registry.address
-  read = (try entries(sessions)).select { |entry| entry.header.parent.none? }.map { |entry| cached(entry) }
+  read = (try entries(sessions)).map { |entry| cached(entry) }
   _ = Actor.cast(registry, Msg.Listed(read), CALL_MS)
   ok(read.map { |found| summary_now(found) }.sort_by { |s| -s.updated_s })
 end
@@ -185,15 +200,9 @@ end
 
 def compact(sessions: Sessions, id: String) -> Result[Bool] = SessionActor.compact_now(try find(sessions, id))
 
-## Stops the running turn or shell command of a session; with `turn_id`, only that turn while it runs. The turns of
-## its children stop too, and they stay open.
+## Stops the running turn or shell command of a session; with `turn_id`, only that turn while it runs.
 def stop_turn(sessions: Sessions, id: String, turn_id: Optional[String]) -> Result[Bool]
-  stopped = try SessionActor.stop(try find(sessions, id), turn_id)
-  for child in loaded(children(try entries(sessions), id))
-    _ = SessionActor.stop(child, none)
-  end
-
-  ok(stopped)
+  SessionActor.stop(try find(sessions, id), turn_id)
 end
 
 ## The files of the session's folder that its rules do not hide, read in the caller's task.
@@ -260,17 +269,10 @@ struct Chosen
   api: String
 end
 
-# What a session's handle reaches: the registry, and the session itself.
-struct Reach
-  at: Address[Msg]
-  session: String
-end
-
-# The context of a session and its approval, and the registry its handle reaches.
+# The context of a session and its approval.
 struct Opened
   context: Tools.Context
   approver: Optional[Extensions.Approver]
-  registry: Address[Msg]
 end
 
 ## What the task that loads a session read from its file.
@@ -305,8 +307,7 @@ enum Found
 end
 
 enum Msg
-  ## A new session, started by the session of the id when one is given.
-  Create(Protocol.NewSession, Optional[String], Channel[Result[String]])
+  Create(Protocol.NewSession, Channel[Result[String]])
   Find(String, Channel[Result[Found]])
   Delete(String, Channel[Result[Void]])
   List(Channel[List[Entry]])
@@ -336,54 +337,18 @@ def terminate(registry: Registry) -> Void
 end
 
 # `session_started` and `session_ended` reach only the observers: no session stream exists before or after them.
-def lifecycle(header: Store.Header, name: String, data: Map[String, JSON.Value]) -> Extensions.Seen
-  Extensions.Seen(
-    session: header.id,
-    root: header.cwd,
-    name: name,
-    data: JSON.object(data.put("id", JSON.from(header.id))),
-    parent: header.parent,
-  )
-end
-
-# The sessions without a deleted one and its children, whose turns stop first. What a load still running reads finds
-# no entry, and is dropped.
-def dropped(registry: Registry, entry: Entry, reason: String) -> List[Entry]
-  id = entry.summary.id
-  for waiting in entry.waiting
-    Actor.reply(waiting, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
-  end
-
-  Extensions.publish(registry.options.observers, ended_seen(entry, reason))
-  sessions = registry.sessions.select { |e| e.summary.id != id }
-  for child in children(sessions, id)
-    case closed_child(child)
-      ok(gone) -> sessions = dropped(registry.with(sessions: sessions), gone, "parent_ended")
-      error(e) -> IO.warn("session #{child.summary.id} is not deleted with its parent: #{e.message}")
-    end
-  end
-
-  sessions
-end
-
-def closed_child(child: Entry) -> Result[Entry]
-  for session in option_list(child.session)
-    _ = SessionActor.stop(session.address, none)
-  end
-
-  gone = try ended(child)
-  try Store.remove(gone.file)
-  ok(gone)
+def lifecycle(id: String, root: String, name: String, data: Map[String, JSON.Value]) -> Extensions.Seen
+  Extensions.Seen(session: id, root: root, name: name, data: JSON.object(data.put("id", JSON.from(id))))
 end
 
 def ended_seen(entry: Entry, reason: String) -> Extensions.Seen
-  lifecycle(entry.header, "session_ended", {"reason": JSON.from(reason)})
+  lifecycle(entry.summary.id, entry.summary.cwd, "session_ended", {"reason": JSON.from(reason)})
 end
 
 def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
   case msg
-    Msg.Create(request, parent, reply) ->
-      case open_session(registry, request, parent)
+    Msg.Create(request, reply) ->
+      case open_session(registry, request)
         ok(entry) ->
           Actor.reply(reply, ok(entry.summary.id))
           Actor.continue(registry.with(sessions: registry.sessions.push(entry)))
@@ -436,7 +401,13 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
           Actor.reply(reply, removed)
           sessions = registry.sessions.map { |e| replaced(e, entry) }
           if removed.ok?
-            sessions = dropped(registry.with(sessions: sessions), entry, "deleted")
+            # What a load still running reads finds no entry, and is dropped.
+            for waiting in entry.waiting
+              Actor.reply(waiting, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
+            end
+
+            sessions = sessions.select { |e| e.summary.id != id }
+            Extensions.publish(registry.options.observers, ended_seen(entry, "deleted"))
           end
 
           Actor.continue(registry.with(sessions: sessions))
@@ -501,7 +472,7 @@ def summary_now(found: Cached) -> Protocol.SessionSummary
   )
 end
 
-def open_session(registry: Registry, request: Protocol.NewSession, parent: Optional[String]) -> Result[Entry]
+def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]
   options = Config.now(registry.options)
   ctx = case Tools.context(request.cwd, options.env, options.tools, late_of(options), options.diff, wrap_of(options))
     ok(ctx) -> ok(ctx)
@@ -537,11 +508,10 @@ def open_session(registry: Registry, request: Protocol.NewSession, parent: Optio
     api: some(api),
     provider: some(provider),
     profile: some(profile),
-    parent: parent,
   )
 
   file = try Store.create(registry.store, folder(options), header)
-  entry(options, header, opened(context, approver, registry.address), file, none)
+  entry(options, header, opened(context, approver), file, none)
 end
 
 def new_id(count: Int) -> String = "s#{count + 1}-#{OpenSSL.Random.hex(4)}"
@@ -564,7 +534,7 @@ end
 
 # The load always reports, even when it crashes, so the requests that wait for it get an answer.
 def load(job: Load) -> Void
-  reading = Task.spawn do read(job.options, job.entry, job.registry) end
+  reading = Task.spawn do read(job.options, job.entry) end
   loaded = Msg.Load(job.entry.summary.id, Task.await(reading))
   while true
     case Actor.cast(job.registry, loaded, CALL_MS)
@@ -578,7 +548,7 @@ def load(job: Load) -> Void
   end
 end
 
-def read(options: Config.Options, listed: Entry, at: Address[Msg]) -> Result[Loaded]
+def read(options: Config.Options, listed: Entry) -> Result[Loaded]
   for hook in option_list(options.before_load)
     hook.call(listed.summary.id)
   end
@@ -597,7 +567,7 @@ def read(options: Config.Options, listed: Entry, at: Address[Msg]) -> Result[Loa
     wrap_of(options),
   )
 
-  ok(Loaded(saved: saved, opened: opened(context, try approver_of(options, context.root), at)))
+  ok(Loaded(saved: saved, opened: opened(context, try approver_of(options, context.root))))
 end
 
 # Starts the session that a load read, and answers the requests that waited for it. A load of a session deleted since
@@ -673,8 +643,7 @@ def entry(
     ctx: context.with(
       read_roots: Extensions.read_roots(builtins),
       before: before_of(options, header.id),
-      session: header.id,
-      host: some(host_of(opened.registry, options, header)),
+      session: some(header.id),
     ),
     builtins: builtins,
     keep_events: options.keep_events,
@@ -683,8 +652,6 @@ def entry(
     window: options.context_window.unwrap_or(0),
     code_mode: options.code_mode,
     max_tokens: options.max_tokens,
-    parent: header.parent,
-    wakes_max: options.wakes_max,
     catalog: options.catalog,
     take_ms: options.take_ms,
     catalog_wait_ms: options.catalog_wait_ms,
@@ -699,7 +666,7 @@ def entry(
   setup = SessionActor.switched(base, endpoint).with(model: header.model, refused: refusal(options, provider))
   setup = SessionActor.applied(setup, profiles_of(options, context.root), profile)
   # Before the actor starts: a restore can end a cut turn with events of its own.
-  started = lifecycle(header, "session_started", {"new": JSON.from(saved.none?), "parent": JSON.from(header.parent)})
+  started = lifecycle(header.id, context.root, "session_started", {"new": JSON.from(saved.none?)})
   Extensions.publish(options.observers, started)
 
   ok(
@@ -996,10 +963,10 @@ def approver_of(options: Config.Options, root: String) -> Result[Optional[Extens
 end
 
 # A deny rule of `read_file` hides its files from `glob` and `grep` too.
-def opened(context: Tools.Context, approver: Optional[Extensions.Approver], at: Address[Msg]) -> Opened
+def opened(context: Tools.Context, approver: Optional[Extensions.Approver]) -> Opened
   case approver
-    some(a) -> Opened(context: context.with(hidden: some(a.hidden)), approver: approver, registry: at)
-    none -> Opened(context: context, approver: none, registry: at)
+    some(a) -> Opened(context: context.with(hidden: some(a.hidden)), approver: approver)
+    none -> Opened(context: context, approver: none)
   end
 end
 
@@ -1019,107 +986,8 @@ def loaded(all: List[Entry]) -> List[Address[SessionActor.Msg]]
   all.flat_map { |entry| option_list(entry.session).map { |session| session.address } }
 end
 
-def find(sessions: Sessions, id: String) -> Result[Address[SessionActor.Msg]] = find_at(sessions.registry.address, id)
-
-def created_at(
-  at: Address[Msg],
-  options: Config.Options,
-  request: Protocol.NewSession,
-  parent: Optional[String],
-) -> Result[String]
-  created: Result[Result[String]] = Actor.call(at, CALL_MS) do |reply| Msg.Create(request, parent, reply) end
-  id = try try created
-  for name in option_list(request.profile)
-    address = try find_at(at, id)
-    found = try Profiles.find(profiles_of(options, (try SessionActor.snapshot(address)).cwd), name)
-    if not found.model.empty? or not found.thinking.empty?
-      # A model or provider of the request wins over the profile's.
-      change = Protocol.UpdateSession(profile: some(name), provider: request.provider, model: request.model)
-      try SessionActor.update(address, change)
-    end
-  end
-
-  ok(id)
-end
-
-# The children of the session `id`.
-def children(all: List[Entry], id: String) -> List[Entry] = all.select { |entry| entry.header.parent == some(id) }
-
-# The handle of the session of `header` on itself and its children (`Core.Host`), through the registry at `at`.
-def host_of(at: Address[Msg], options: Config.Options, header: Store.Header) -> Extensions.Host
-  reach = Reach(at: at, session: header.id)
-  Extensions.Host(
-    create: ->(child: Extensions.NewChild) { child_created(at, options, header, child) },
-    send: ->(id: String, text: String) { host_send(reach, id, text) },
-    stop: ->(id: String) { host_stop(reach, id) },
-    delete: ->(id: String) { host_delete(reach, id) },
-    snapshot: ->(id: String) { host_snapshot(reach, id) },
-    watch: ->(id: String, names: List[String], handler: Fn[Extensions.Seen, Void]) {
-      host_watch(reach, id, names, handler)
-    },
-  )
-end
-
-# A child on the provider of the request, else on the parent's provider and model now. A child has no children.
-def child_created(
-  at: Address[Msg],
-  options: Config.Options,
-  header: Store.Header,
-  child: Extensions.NewChild,
-) -> Result[String]
-  return error("a child session cannot start sessions", kind: Protocol.KIND_INVALID) if header.parent.some?
-
-  request = Protocol.NewSession(cwd: header.cwd, model: child.model, provider: child.provider, profile: child.profile)
-  if child.provider.none?
-    parent = try SessionActor.snapshot(try find_at(at, header.id))
-    request = request.with(provider: some(parent.provider), model: some(child.model.unwrap_or(parent.model)))
-  end
-
-  created_at(at, options, request, some(header.id))
-end
-
-# A message to the session itself wakes it; one to a child is sent as a user's is.
-def host_send(reach: Reach, id: String, text: String) -> Result[Protocol.MessageAccepted]
-  return SessionActor.wake(try find_at(reach.at, id), text) if id == reach.session
-
-  SessionActor.send(try child_of(reach, id), text)
-end
-
-def host_stop(reach: Reach, id: String) -> Result[Bool] = SessionActor.stop(try child_of(reach, id), none)
-
-# A child's turn stops first: a session with a running turn is not deleted.
-def host_delete(reach: Reach, id: String) -> Result[Void]
-  _ = try SessionActor.stop(try child_of(reach, id), none)
-  deleted: Result[Result[Void]] = Actor.call(reach.at, CALL_MS) do |reply| Msg.Delete(id, reply) end
-  try try deleted
-  ok()
-end
-
-def host_snapshot(reach: Reach, id: String) -> Result[Protocol.Session]
-  SessionActor.snapshot(try own_or_child(reach, id))
-end
-
-def host_watch(reach: Reach, id: String, names: List[String], handler: Fn[Extensions.Seen, Void]) -> Result[Void]
-  SessionActor.watch(try own_or_child(reach, id), names, handler)
-end
-
-def own_or_child(reach: Reach, id: String) -> Result[Address[SessionActor.Msg]]
-  return find_at(reach.at, id) if id == reach.session
-
-  child_of(reach, id)
-end
-
-# Another session than a child of the host's is not found, as if it did not exist.
-def child_of(reach: Reach, id: String) -> Result[Address[SessionActor.Msg]]
-  all: Result[List[Entry]] = Actor.call(reach.at, CALL_MS) do |reply| Msg.List(reply) end
-  ids = children(try all, reach.session).map { |entry| entry.summary.id }
-  return error("no child session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND) if not ids.include?(id)
-
-  find_at(reach.at, id)
-end
-
-def find_at(at: Address[Msg], id: String) -> Result[Address[SessionActor.Msg]]
-  found: Result[Result[Found]] = Actor.call(at, CALL_MS) do |reply| Msg.Find(id, reply) end
+def find(sessions: Sessions, id: String) -> Result[Address[SessionActor.Msg]]
+  found: Result[Result[Found]] = Actor.call(sessions.registry.address, CALL_MS) do |reply| Msg.Find(id, reply) end
   case try try found
     Found.Ready(address) -> ok(address)
     Found.Loading(loaded) ->

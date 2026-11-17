@@ -6,10 +6,6 @@ import LLM from "pkg/llm/llm"
 import Sandbox from "../tools/sandbox"
 import Spec from "../tools/spec"
 
-export Spec.Seen
-export Spec.Host
-export Spec.NewChild
-
 ## How long all the `Message` handlers, or all the `Fold` handlers, of one event may take together: well under the
 ## time a client waits for the session to answer.
 HANDLER_MS = 2000
@@ -38,9 +34,8 @@ struct Call
   root: String
   input: JSON.Value
   resolve: Fn[String, Result[String]]
-  ## The session of the call, and its handle on itself and its child sessions (none in `Core.call`).
-  session: String = ""
-  host: Optional[Spec.Host] = none
+  ## The id of the session of the call; none in `Core.call`.
+  session: Optional[String] = none
 end
 
 ## A tool of an extension. `target` is what the approval shows and its rules match (a path, a command); a tool that
@@ -70,6 +65,18 @@ enum Check
   Stop(String)
 end
 
+## An event of a session as an observer sees it: `name` is the event's name and `data` its JSON, as `GET
+## /v1/sessions/ID/events` sends them, and `root` is the session folder. Two more names have no SSE event:
+## `session_started` (`{"id", "new"}`: created, or loaded from its file), before any event of the session, and
+## `session_ended` (`{"id", "reason"}`: `deleted` or `stopping`), alone for a session deleted before it was loaded.
+## More fields may come.
+struct Seen
+  session: String
+  root: String
+  name: String
+  data: JSON.Value
+end
+
 ## A handler of an event of a session. `Message` gets the text of a user message after the skills it names are
 ## expanded, and gives the text the model gets (the session file keeps what was typed too); a crash or a hang refuses
 ## the message. `Fold` gets the texts of the messages that stay when the history folds, and gives text to add after the
@@ -81,7 +88,7 @@ end
 enum Event
   Message(Fn[String, String])
   Fold(Fn[List[String], String])
-  Seen(List[String], Fn[Spec.Seen, Void])
+  Seen(List[String], Fn[Seen, Void])
   ToolBefore(Fn[Pending, Check])
 end
 
@@ -117,7 +124,7 @@ end
 ## An observer that runs: its inbox, which its task reads, and the events it lost. Not part of `Core`.
 struct Observer
   names: List[String]
-  inbox: Channel[Spec.Seen]
+  inbox: Channel[Seen]
   dropped: ATS[String, Int]
   task: Task[Void]
 end
@@ -281,14 +288,11 @@ end
 ## Starts a task for each `Seen` handler of `registry`, which gets its events one at a time.
 def observe(registry: Registry) -> List[Observer] = registry.events.flat_map { |event| observers_of(event, registry) }
 
-## An observer of one session (`Core.Host.watch`), with the inbox and the time of the default registry.
-def watcher(names: List[String], handler: Fn[Spec.Seen, Void]) -> Observer = observer(names, handler, Registry())
-
 ## Whether an observer wants the events of `name`: publishing an event that none wants costs nothing more.
 def wanted?(observers: List[Observer], name: String) -> Bool = observers.any? { |o| o.names.include?(name) }
 
 ## Gives `seen` to the observers that want it, without waiting: a full inbox drops it and counts the drop.
-def publish(observers: List[Observer], seen: Spec.Seen) -> Void
+def publish(observers: List[Observer], seen: Seen) -> Void
   for observer in (observers.select { |o| o.names.include?(seen.name) })
     if not observer.inbox.send(seen, 0).ok?
       _ = observer.dropped.add(DROPPED, 1)
@@ -532,13 +536,7 @@ def spec_tool(tool: Tool, ms: Int) -> Spec.Tool
 end
 
 def call_of(ctx: Spec.Context, input: JSON.Value) -> Call
-  Call(
-    root: ctx.root,
-    input: input,
-    resolve: ->(path: String) { resolve(ctx, path) },
-    session: ctx.session,
-    host: ctx.host,
-  )
+  Call(root: ctx.root, input: input, resolve: ->(path: String) { resolve(ctx, path) }, session: ctx.session)
 end
 
 def wrapped(wrappers: List[Wrapper], ms: Int, name: String, run: Spec.Run) -> Spec.Run
@@ -591,14 +589,14 @@ def observers_of(event: Event, registry: Registry) -> List[Observer]
   end
 end
 
-def observer(names: List[String], handler: Fn[Spec.Seen, Void], registry: Registry) -> Observer
-  inbox: Channel[Spec.Seen] = Channel.new(registry.observer_inbox)
+def observer(names: List[String], handler: Fn[Seen, Void], registry: Registry) -> Observer
+  inbox: Channel[Seen] = Channel.new(registry.observer_inbox)
   dropped: ATS[String, Int] = ATS.new()
   task = Task.spawn(-> { observed(inbox, dropped, handler, registry.handler_ms) })
   Observer(names: names, inbox: inbox, dropped: dropped, task: task)
 end
 
-def observed(inbox: Channel[Spec.Seen], dropped: ATS[String, Int], handler: Fn[Spec.Seen, Void], ms: Int) -> Void
+def observed(inbox: Channel[Seen], dropped: ATS[String, Int], handler: Fn[Seen, Void], ms: Int) -> Void
   while true
     case inbox.recv(60_000)
       ok(seen) ->
@@ -618,7 +616,7 @@ def observed(inbox: Channel[Spec.Seen], dropped: ATS[String, Int], handler: Fn[S
   end
 end
 
-def handled(handler: Fn[Spec.Seen, Void], seen: Spec.Seen) -> Result[Void]
+def handled(handler: Fn[Seen, Void], seen: Seen) -> Result[Void]
   handler.call(seen)
   ok()
 end

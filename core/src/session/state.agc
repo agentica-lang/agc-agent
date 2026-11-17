@@ -76,9 +76,6 @@ struct Setup
   registry: Optional[Extensions.Registry] = none
   ## The observers of the extensions, which get the events of the session.
   observers: List[Extensions.Observer] = []
-  ## The session that started this one, and how often a session may wake itself per user message (0: no cap).
-  parent: Optional[String] = none
-  wakes_max: Int = 0
   ## Whether the session's profile shows a tool to the model; none shows every tool.
   shows: Optional[Fn[String, Bool]] = none
   ## The session's profile as clients see it, and why it does not load (empty when it does): a turn is refused then,
@@ -94,8 +91,6 @@ enum Msg
   Snapshot(Channel[Protocol.Session])
   Subscribe(Optional[Int], Channel[Channel[Bytes]])
   Send(String, Channel[Result[Protocol.MessageAccepted]])
-  Wake(String, Channel[Result[Protocol.MessageAccepted]])
-  Watch(List[String], Fn[Extensions.Seen, Void], Channel[Bool])
   Answer(String, Protocol.Decision, Channel[Result[Void]])
   Stop(Optional[String], Channel[Bool])
   Place(Channel[Place])
@@ -188,9 +183,6 @@ end
 struct State
   setup: Setup
   counter: Int = 0
-  ## The wakes since the last user message, and the observers of this session alone (`Core.Host.watch`).
-  wakes: Int = 0
-  watchers: List[Extensions.Observer] = []
   log: List[Store.Logged] = []
   subscribers: List[Channel[Bytes]] = []
   history: List[LLM.Message] = []

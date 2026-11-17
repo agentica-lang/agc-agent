@@ -42,8 +42,6 @@ struct Header
   provider: Optional[String] = none
   ## The profile of the session; none is `build`.
   profile: Optional[String] = none
-  ## The session that started this one (`Core.Host`); none for a session of its own.
-  parent: Optional[String] = none
 end
 
 struct Logged
@@ -178,7 +176,6 @@ def create(port: Storage.Port, dir: String, header: Header) -> Result[Ref]
     "api": JSON.from(header.api),
     "provider": JSON.from(header.provider),
     "profile": JSON.from(header.profile),
-    "parent": JSON.from(header.parent),
   }
 
   try port.create.call(file.path, try line(fields))
@@ -846,7 +843,6 @@ def decode_header(json: JSON.Value) -> Result[Header]
       api: optional_string(json, "api"),
       provider: optional_string(json, "provider"),
       profile: optional_string(json, "profile"),
-      parent: optional_string(json, "parent"),
     ),
   )
 end

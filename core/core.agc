@@ -31,8 +31,6 @@ export Extensions.Event
 export Extensions.Seen
 export Extensions.Pending
 export Extensions.Check
-export Extensions.Host
-export Extensions.NewChild
 export Extensions.Service
 
 def registry() -> Extensions.Registry = Extensions.Registry()
