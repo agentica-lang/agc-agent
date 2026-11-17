@@ -566,7 +566,7 @@ class PtyTest(unittest.TestCase):
             self.assertLess(time.monotonic(), deadline, "the thinking stayed")
 
     def test_session_commands(self) -> None:
-        term = self.start([Reply("text.sse"), Reply("text.sse")])
+        term = self.start([Reply("text.sse"), Reply("text.sse"), Reply("summary.sse")])
         first = re.search(r" session (\S+)", text_of(term.screen())).group(1)
         term.type("hi\r")
         term.wait_for(ANSWER)
@@ -578,6 +578,9 @@ class PtyTest(unittest.TestCase):
         term.wait_until(lambda rows: text_of(rows).count(ANSWER) == 2 and "ready" in rows[-1], "the second answer")
         self.fake.requests.get(timeout=1)
         self.assertEqual(self.fake.requests.get(timeout=5)["model"], "other-model")
+        term.type("/compact\r")
+        term.wait_for(" compacted")
+        self.fake.requests.get(timeout=1)
         term.type("/new\r")
         rows = term.wait_for("ready")
         deadline = time.monotonic() + TIMEOUT

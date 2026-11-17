@@ -1,5 +1,4 @@
-## The state of the full screen: the model, its messages, and the small steps every part of `update` takes.
-## Pure.
+## The state of the full screen, pure: the model, its messages, and the small steps every part of `update` takes.
 
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"

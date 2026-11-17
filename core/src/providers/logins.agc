@@ -245,9 +245,9 @@ def plain_url?(url: String) -> Bool
 end
 
 def plain_char?(code: Int) -> Bool
-  return false if code <= 32 or (code >= 127 and code <= 159) or code == 0x061C or code == 0x200E or code == 0x200F
+  return false if code <= 32 or (code >= 127 and code <= 159)
 
-  not ((code >= 0x202A and code <= 0x202E) or (code >= 0x2066 and code <= 0x2069))
+  not Protocol.BIDI.include?(code)
 end
 
 def handle(state: State, msg: Msg) -> Actor.Step[State]

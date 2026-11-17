@@ -12,22 +12,6 @@ import Transcript from "transcript"
 import State from "state"
 import Files from "files"
 
-## The key hints of the status line, most needed first: those that do not fit are left out.
-HINTS = [
-  "Enter send",
-  "Esc stop",
-  "^C quit",
-  "^J newline",
-  "Alt+Enter follow-up",
-  "⇧Tab thinking level",
-  "^T show thinking",
-  "^O show tool output",
-  "@ files",
-  "/ commands (Esc Enter: as typed)",
-  "↑ history",
-  "PgUp/PgDn",
-]
-
 def shown_name(shown: Bool) -> String
   return "shown" if shown
 
@@ -72,6 +56,22 @@ def panel(app: State.Model) -> List[Layout.Row]
 end
 
 private
+
+# The key hints of the status line, most needed first: those that do not fit are left out.
+HINTS = [
+  "Enter send",
+  "Esc stop",
+  "^C quit",
+  "^J newline",
+  "Alt+Enter follow-up",
+  "⇧Tab thinking level",
+  "^T show thinking",
+  "^O show tool output",
+  "@ files",
+  "/ commands (Esc Enter: as typed)",
+  "↑ history",
+  "PgUp/PgDn",
+]
 
 # The first non-empty line of the session's first user message, as the screen can show it.
 def session_name(app: State.Model) -> String

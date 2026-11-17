@@ -9,14 +9,12 @@ import Screen from "screen"
 import Transcript from "transcript"
 import State from "state"
 import Level from "level"
-import Approving from "approving"
+import Answering from "answering"
 import Files from "files"
 import Logins from "logins"
 import Turn from "turn"
 import Commands from "commands"
 import Views from "views"
-
-SCROLL_STEP = 3
 
 def on_key(app: State.Model, event: TUI.Event) -> State.Model
   for name in State.option_list(app.key_for)
@@ -28,7 +26,7 @@ def on_key(app: State.Model, event: TUI.Event) -> State.Model
   end
 
   case Approvals.decision(app.approvals, event, app.now, not Views.panel(app).empty?)
-    some(decision) -> return Approving.answer(app, decision)
+    some(decision) -> return Answering.answer(app, decision)
     none -> nil
   end
 
@@ -42,6 +40,8 @@ def on_key(app: State.Model, event: TUI.Event) -> State.Model
 end
 
 private
+
+SCROLL_STEP = 3
 
 # A typed character, a paste or Backspace replaces a selected prompt; any other key keeps it as text.
 def unselected(app: State.Model, event: TUI.Event) -> State.Model
