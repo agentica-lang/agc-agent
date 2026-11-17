@@ -548,8 +548,13 @@ class PtyTest(unittest.TestCase):
 
     def test_ctrl_g_edits_the_prompt_in_the_editor_and_ctrl_c_there_keeps_the_client(self) -> None:
         editor = self.folder() / "editor"
-        # The editor reads two lines from the terminal, the first a Ctrl+C, and adds the second to the prompt.
-        editor.write_text("printf 'editor> '\nread skipped\nread line\nprintf '\\n%s\\n' \"$line\" >> \"$1\"\n")
+        # The editor reads two lines from the terminal and adds the second to the prompt, with whether the first held the
+        # Ctrl+C byte: with the signal keys on, the terminal would turn it into a signal and drop the line.
+        editor.write_text(
+            "printf 'editor> '\nread first\nread line\nmark=none\n"
+            "case \"$first\" in *\"$(printf '\\003')\"*) mark=ctrl-c;; esac\n"
+            "printf '\\n%s %s\\n' \"$line\" \"$mark\" >> \"$1\"\n"
+        )
         term = self.start([Reply("text.sse")], env={"VISUAL": f"sh {editor}"})
         term.type("draft")
         term.wait_for(" draft")
@@ -558,14 +563,15 @@ class PtyTest(unittest.TestCase):
         term.wait_for_output(b"editor> ", start)
         term.type("\x03\r")
         term.type("more\r")
-        term.wait_for(" more")
+        term.wait_for(" more ctrl-c")
         term.type("\r")
         term.wait_for(ANSWER)
-        self.assertEqual(self.fake.requests.get(timeout=5)["messages"][-1]["content"], "draft\nmore")
+        self.assertEqual(self.fake.requests.get(timeout=5)["messages"][-1]["content"], "draft\nmore ctrl-c")
         term.wait_for("ready")
         term.type("\x04")
         self.assertEqual(term.finish(), 0)
         self.assertEqual(termios.tcgetattr(term.slave), term.modes_before)
+        self.assertEqual(list((term.base / "state" / "edits").iterdir()), [])
 
     def test_the_model_argument_is_listed_from_the_server_and_tab_completes_it(self) -> None:
         term = self.start([Reply("text.sse")])

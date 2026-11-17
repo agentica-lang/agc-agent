@@ -124,6 +124,8 @@ struct Model
   ## The editor of Ctrl+G (`$VISUAL`, else `$EDITOR`), and whether it has the terminal now.
   editor: String = ""
   editing: Bool = false
+  ## The private folder the edits of Ctrl+G go in; "" when there is none.
+  edits: String = ""
   ## The monotonic ms and the wall clock s of the message being handled.
   now: Int = 0
   clock_s: Int = 0

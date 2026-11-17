@@ -92,7 +92,7 @@ The command runs as the `bash` tool would, with a timeout of 10 minutes. It neve
 | Enter | send; during a turn, the turn reads it before its next model call ([Sessions](sessions.md#send-while-a-turn-runs)) |
 | Alt+Enter | send after the running turn ends (a follow-up) |
 | Ctrl+J | a new line |
-| Ctrl+G | edit the prompt in `$VISUAL`, else `$EDITOR` (it may hold arguments, as `code -w`); what the editor saves becomes the prompt. The text goes through a file only you can read, removed afterwards. In the editor, Ctrl+C is a key for it and never quits `finn` |
+| Ctrl+G | edit the prompt in `$VISUAL`, else `$EDITOR` (it may hold arguments, as `code -w`); what the editor saves becomes the prompt, with a large paste as its text. The text goes through a file only you can read in the state folder, removed afterwards. In the editor, Ctrl+C is a key for it and never quits `finn` |
 | Esc | stop the running turn |
 | Ctrl+C; Ctrl+D on an empty prompt while nothing runs and no approval waits | quit |
 | Shift+Tab | the next thinking level |

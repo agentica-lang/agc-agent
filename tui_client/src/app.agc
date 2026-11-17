@@ -52,7 +52,13 @@ def started(
   signals = try System.subscribe([System.Signal.Term, System.Signal.Hup, System.Signal.Int])
   palette = Theme.colors256?(System.env("TERM").unwrap_or(""), System.env("COLORTERM").unwrap_or(""))
   output = TUI.OutputMode.Colors256
-  start = try first.call(State.seed(backend, options, signals, TUI.Raw.width(screen), TUI.Raw.height(screen)))
+  edits = case Client.state_dir(Args.launch(options))
+    ok(dir) -> Editor.folder_of(dir)
+    error(_) -> ""
+  end
+
+  seeded = State.seed(backend, options, signals, TUI.Raw.width(screen), TUI.Raw.height(screen)).with(edits: edits)
+  start = try first.call(seeded)
   if not palette
     output = TUI.OutputMode.Normal
     start = start.with(theme: Theme.basic())
