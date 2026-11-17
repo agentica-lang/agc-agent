@@ -873,5 +873,61 @@ class PtyTest(unittest.TestCase):
         self.assertIn(b"keeps asking to read the session again", after)
 
 
+
+class FinnCommandTest(unittest.TestCase):
+    """`bin/finn` picks the client: the full screen with no command or options alone, the line chat for `chat` and
+    `-p`, and a refusal when plain `finn` has no terminal. A fake AGENTICA writes the arguments it got."""
+
+    def setUp(self) -> None:
+        self.dir = Path(tempfile.mkdtemp(prefix="agc-finn-"))
+        self.addCleanup(shutil.rmtree, self.dir, True)
+        self.args = self.dir / "args"
+        fake = self.dir / "agentica"
+        fake.write_text('#!/bin/sh\nprintf "%s\\n" "$@" > "$FINN_ARGS"\n')
+        fake.chmod(0o755)
+        self.env = {**os.environ, "AGENTICA": str(fake), "FINN_ARGS": str(self.args)}
+
+    def in_terminal(self, args: list[str]) -> list[str]:
+        master, slave = os.openpty()
+        finn = [str(ROOT / "bin" / "finn"), *args]
+        process = subprocess.Popen(finn, stdin=slave, stdout=slave, stderr=slave, env=self.env)
+        os.close(slave)
+        try:
+            while process.poll() is None:
+                if select.select([master], [], [], 0.1)[0]:
+                    try:
+                        os.read(master, 4096)
+                    except OSError:
+                        break
+            self.assertEqual(process.wait(timeout=TIMEOUT), 0)
+        finally:
+            os.close(master)
+        return self.args.read_text().splitlines()
+
+    def test_no_command_and_options_alone_open_the_full_screen(self) -> None:
+        tui = str(ROOT / "tui_client" / "main.agc")
+        self.assertEqual(self.in_terminal([]), [tui])
+        self.assertEqual(self.in_terminal(["--yolo", "--model", "m"]), [tui, "--yolo", "--model", "m"])
+        self.assertEqual(self.in_terminal(["tui", "--yolo"]), [tui, "--yolo"])
+
+    def test_chat_and_a_task_go_to_the_line_client(self) -> None:
+        cli = str(ROOT / "cli" / "main.agc")
+        self.assertEqual(self.in_terminal(["chat", "--yolo"]), [cli, "--yolo"])
+        done = subprocess.run([str(ROOT / "bin" / "finn"), "--yolo", "-p", "fix it"], env=self.env, capture_output=True)
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(self.args.read_text().splitlines(), [cli, "--yolo", "-p", "fix it"])
+
+    def test_plain_finn_without_a_terminal_refuses(self) -> None:
+        done = subprocess.run(
+            [str(ROOT / "bin" / "finn"), "--yolo"],
+            env=self.env,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(done.returncode, 2)
+        self.assertIn("finn chat", done.stderr)
+        self.assertFalse(self.args.exists())
+
 if __name__ == "__main__":
     unittest.main()

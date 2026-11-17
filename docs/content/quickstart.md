@@ -36,7 +36,7 @@ next starts. A key in the environment works too, and wins over a stored one:
 `FIREWORKS_API_KEY`, `GROQ_API_KEY` or `DEEPSEEK_API_KEY`. See
 [Providers](providers.md).
 
-On the first start, with no key anywhere, `finn tui` opens the login list
+On the first start, with no key anywhere, `finn` opens the login list
 itself. Close it with no key and it is not offered again: `/login` sets up a
 provider later.
 
@@ -46,8 +46,8 @@ Go to the folder of your project and start a client:
 
 ```sh
 cd ~/src/my-project
-finn tui        # the full screen
-finn            # or the line-mode client
+finn            # the full screen (finn tui is the same)
+finn chat       # or the line-mode client
 ```
 
 The client starts the server when none runs, and leaves it running when you
@@ -59,11 +59,11 @@ Some things to try:
 - `/model` lists the models of your providers; `/model anthropic/NAME` picks
   one.
 - `@` then part of a name completes a file path of the folder in your message
-  (`finn tui`).
+  (`finn`).
 - `!git status` runs the command and gives its output to the model with your
   next message.
 - `/resume` lists your sessions and switches to one.
-- Esc (`finn tui`) or Ctrl+C (`finn`) stops the running turn.
+- Esc (`finn`) or Ctrl+C (`finn chat`) stops the running turn.
 
 ## One task, then exit
 

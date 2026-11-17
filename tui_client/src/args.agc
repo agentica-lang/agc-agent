@@ -28,7 +28,7 @@ end
 
 def parse(args: List[String]) -> Result[Command]
   parser = OP.new(
-    "finn tui",
+    "finn [tui]",
     "The terminal UI client of Finn Agent: it starts the server when none runs.",
     [],
     [

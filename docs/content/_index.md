@@ -12,7 +12,7 @@ a task in a folder; it reads files, edits them, runs commands and answers.
 ```sh
 make install          # in a clone of agc-agent
 bin/finn login        # set up a provider with its key
-bin/finn tui          # chat on the full screen in this folder
+bin/finn              # chat on the full screen in this folder
 ```
 
 [Quickstart](quickstart.md) · [Providers](providers.md)
@@ -20,7 +20,7 @@ bin/finn tui          # chat on the full screen in this folder
 ## What Finn does
 
 - **One server, several clients.** The agent runs as a server on localhost.
-  The line-mode client (`finn`) and the full-screen client (`finn tui`) talk
+  The full-screen client (`finn`) and the line-mode client (`finn chat`) talk
   to it over HTTP and Server-Sent Events. A session goes on when a client
   closes.
 - **Many model providers.** Anthropic, OpenAI, OpenRouter, Fireworks, Groq,

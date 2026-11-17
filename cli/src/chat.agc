@@ -347,7 +347,7 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Stop -> stop_command(chat)
     Client.Command.Help -> said(chat, Client.help().join("\n"))
     Client.Command.Cost -> said(chat, "[/cost comes with the model catalog]")
-    Client.Command.Login(_) -> said(chat, "[a key is asked for on the full screen: finn login, or /login in finn tui]")
+    Client.Command.Login(_) -> said(chat, "[a key is asked for on the full screen: finn login, or /login in finn]")
     Client.Command.Logout(name) -> logout_command(chat, name)
     Client.Command.New -> switch_command(chat, none)
     Client.Command.Resume(choice) -> resume_command(chat, choice)
