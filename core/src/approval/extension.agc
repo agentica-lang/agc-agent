@@ -6,12 +6,8 @@ import Approval from "approval"
 import Permissions from "permissions"
 import Spec from "../tools/spec"
 
-BASH = "bash"
-
 struct Approvals
   rules: Approval.Rules
-  ## The session folder.
-  root: String
   allows: Permissions.Allows
   asking: Bool = true
 end
@@ -20,47 +16,26 @@ end
 ## `trusted`).
 def open(rules: Approval.Rules, root: String, trusted: Bool, asking: Bool) -> Result[Approvals]
   all = try Permissions.with_project(rules, root, trusted)
-  ok(Approvals(rules: all, root: root, allows: Permissions.Allows(), asking: asking))
+  ok(Approvals(rules: all, allows: Permissions.Allows(), asking: asking))
 end
 
 ## Whether tool calls pass the hook: when it asks, or when a deny rule may refuse one.
 def gated?(a: Approvals) -> Bool = a.asking or not a.rules.deny.empty?
 
-## The hook a tool call passes before it runs. A deny rule wins over every allow rule, in both modes: a `bash` command
-## that a deny rule matches (`Permissions.Denial.Matched`) is refused, and one the deny rules cannot clear asks when
-## the asking is on and is refused when it is off. Else, with the asking off, a call that would ask runs.
+## The hook a tool call passes before it runs. A deny rule wins over every allow rule, in both modes. With the asking
+## off, a call that would ask runs.
 def verdict(a: Approvals, ctx: Spec.Context, name: String, input: JSON.Value) -> Spec.Verdict
   found = Approval.verdict(a.rules, ctx, name, input)
-  return found if found == Spec.Verdict.Deny
-
-  if name == BASH
-    case Permissions.bash_denial(a.rules, a.root, command_of(input))
-      Permissions.Denial.Matched -> return Spec.Verdict.Deny
-      Permissions.Denial.Uncleared -> return unclear(a)
-      Permissions.Denial.Clear -> nil
-    end
-  end
-
-  return found if a.asking
+  return found if a.asking or found == Spec.Verdict.Deny
 
   Spec.Verdict.Allow
 end
 
-## Whether a `!` command of the user is refused: a deny rule matches it or cannot clear it, in both modes.
-def refuses?(a: Approvals, command: String) -> Bool
-  Permissions.bash_denial(a.rules, a.root, command) != Permissions.Denial.Clear
-end
-
 ## Whether the session's answers or mode allow a call that asks.
-def allows?(a: Approvals, tool: String, target: String) -> Bool
-  Permissions.allows?(a.allows, a.rules, tool, target, a.root)
-end
+def allows?(a: Approvals, tool: String, target: String) -> Bool = Permissions.allows?(a.allows, a.rules, tool, target)
 
-## The words an `allow_prefix` answer would allow, joined by spaces; none for `bash` while a deny rule of `read_file`
-## exists, since then only the same call can be allowed.
-def prefix(a: Approvals, tool: String, target: String) -> Optional[String]
-  return none if (tool == "bash" and a.rules.deny.any? { |rule| rule.tool == "read_file" })
-
+## The words an `allow_prefix` answer would allow, joined by spaces.
+def prefix(_a: Approvals, tool: String, target: String) -> Optional[String]
   Permissions.prefix(tool, target).map { |w| w.join(" ") }
 end
 
@@ -74,18 +49,3 @@ def with_accept_edits(a: Approvals, on: Bool) -> Approvals = a.with(allows: a.al
 
 ## Whether a deny rule of `read_file` hides the path, relative to the session folder.
 def hidden?(a: Approvals, path: String) -> Bool = Approval.read_denied?(a.rules, path)
-
-private
-
-def unclear(a: Approvals) -> Spec.Verdict
-  return Spec.Verdict.Ask if a.asking
-
-  Spec.Verdict.Deny
-end
-
-def command_of(input: JSON.Value) -> String
-  case JSON.get(input, "command")
-    ok(value) -> JSON.string(value).unwrap_or("")
-    error(_) -> ""
-  end
-end

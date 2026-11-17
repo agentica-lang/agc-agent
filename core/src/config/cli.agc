@@ -38,13 +38,12 @@ USAGE = <<~TEXT
   project file cannot change them. The deny rules always count; the allow rules, the answers and accept_edits only with
   the approvals on. The rules {"allow": [...], "deny": [...]} come from FINN_CONFIG, else
   $XDG_CONFIG_HOME/finn/config.json, else ~/.config/finn/config.json, and from .finn/config.json of the session folder
-  (its deny rules always; its allow rules under a folder of FINN_TRUSTED_DIRS). A bash command that only reads inside
-  the folder runs without asking. An answer may allow the same call (allow_session), the bash commands with the same
-  first words (allow_prefix) or the whole tool (allow_tool) for the session, until the server restarts; PATCH
-  {"accept_edits": true} runs the edits of files without asking. None of them reaches into .git/. The deny rules are
-  checked first, as far as the parser sees a command (best effort, not a sandbox); while a read_file deny rule exists,
-  only the same bash call is allowed again. Providers: local (FINN_BASE_URL with FINN_API_KEY) and anthropic always;
-  openai, fireworks, openrouter, groq and deepseek when OPENAI_API_KEY, FIREWORKS_API_KEY, OPENROUTER_API_KEY,
+  (its deny rules always; its allow rules under a folder of FINN_TRUSTED_DIRS). An answer may allow the same call
+  (allow_session), the bash commands with the same first words (allow_prefix) or the whole tool (allow_tool) for the
+  session, until the server restarts; PATCH {"accept_edits": true} runs the edits of files without asking. None of them
+  reaches into .git/. The deny rules are checked first; a bash rule matches the whole command text (best effort, not a
+  sandbox), and a file rule covers only the file tools. Providers: local (FINN_BASE_URL with FINN_API_KEY) and anthropic
+  always; openai, fireworks, openrouter, groq and deepseek when OPENAI_API_KEY, FIREWORKS_API_KEY, OPENROUTER_API_KEY,
   GROQ_API_KEY or DEEPSEEK_API_KEY is set; and those of "providers" in the config file ([{"name", "api", "base_url",
   "key_env", "models"}], api openai or openai_responses; one with key_env only when that variable is set).
   FINN_PROVIDER is the provider of a session that names none (finn --provider names one); PATCH {"provider", "model"}

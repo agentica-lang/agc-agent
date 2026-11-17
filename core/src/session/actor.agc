@@ -385,8 +385,7 @@ def run_shell(
   # The user can stop the command, so it may run as long as a `bash` call can.
   input = JSON.object({"command": JSON.from(request.command), "timeout_ms": JSON.from(Tools.MAX_BASH_TIMEOUT_MS)})
   verdict = Turn.gate(state.setup.approver).map { |g| g.call(state.setup.ctx, Tools.BASH, input) }
-  refused = state.setup.approver.map { |a| a.refuses.map { |r| r.call(request.command) }.unwrap_or(false) }
-  if verdict == some(Tools.Verdict.Deny) or refused == some(true)
+  if verdict == some(Tools.Verdict.Deny)
     Actor.reply(reply, error("a rule of the config denies this command", kind: Protocol.KIND_SHELL_DENIED))
     return state
   end

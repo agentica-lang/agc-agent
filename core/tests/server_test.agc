@@ -521,18 +521,17 @@ def foreign_owner(h: H.Harness) -> Result[Void]
   end
 end
 
-# A bash command that only reads runs without asking; a deny rule of one of its commands still refuses it.
-def test_a_read_only_command_runs_without_asking_unless_denied() -> Result[Void]
-  try H.using(H.Setup(replies: ["write_file.sse", "bash_read.sse", "text.sse"])) do |h|
+# With the approvals on, a bash command that only reads asks like any other; a deny rule refuses it without asking.
+def test_a_read_only_command_asks_and_a_deny_rule_refuses_it() -> Result[Void]
+  try H.using(H.Setup(replies: ["bash_read.sse", "text.sse"])) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
-    _ = try H.send(h, id, "Write hello.txt, then show it.")
+    _ = try H.send(h, id, "Show hello.txt.")
     a = try H.until(a, Protocol.EventKind.ApprovalRequested)
-    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Deny)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
-    try Test.eq(H.kinds(a.seen).select { |k| k == "approval_requested" }.size, 1)
-    Test.eq(finished_ok(a), [true, true])
+    Test.eq(H.kinds(a.seen).select { |k| k == "approval_requested" }.size, 1)
   end
 
   H.using(H.Setup(replies: ["bash_read.sse", "text.sse"], deny: ["bash(cat *)"])) do |h|
