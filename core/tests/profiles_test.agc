@@ -186,6 +186,71 @@ def test_a_fork_keeps_the_profile() -> Result[Void]
   end
 end
 
+# `PATCH {"profile": ...}` changes the tools from the next turn on; a restart, a branch and a fork keep the choice, and
+# an unknown name changes nothing.
+def test_a_profile_chosen_later_is_kept() -> Result[Void]
+  setup = H.Setup(replies: ["text.sse", "bash_echo.sse", "text.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hi.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(try patched(h, id, "nope"), 400)
+    try Test.eq(try patched(h, id, "plan"), 200)
+    b = try H.subscribe(h, id, some((try H.session(h, id)).last_event_id))
+    _ = try H.send(h, id, "Echo it.")
+    b = try H.until(b, Protocol.EventKind.TurnFinished)
+    H.close(b)
+    try Test.eq(names(try H.next_request(h)).include?("bash"), true)
+    try Test.eq(names(try H.next_request(h)), ["read_file", "glob", "grep", "todo_write"])
+    H.restarted(h, setup, "") do |r|
+      nodes = (try Protocol.decode_session_tree((try H.get(r, Protocol.tree_path(id))).text)).nodes
+      _ = try H.post(r, Protocol.branch_path(id), Protocol.encode_branch(Protocol.Branch(entry: nodes[0].id)))
+      fork = try H.post(r, Protocol.fork_path(id), Protocol.encode_fork(Protocol.Fork()))
+      forked = (try Protocol.decode_branched(fork.text)).id
+      for session in [id, forked]
+        try Test.eq((try H.session(r, session)).profile.map { |p| p.name }, some("plan"))
+      end
+
+      ok()
+    end
+  end
+end
+
+# A profile's model and thinking level come with it, at the start and on a change; `GET .../profiles` lists every
+# profile, one that does not load with why.
+def test_a_profile_brings_its_model_and_thinking() -> Result[Void]
+  setup = H.Setup(replies: [], profiles: true, providers: ["other"])
+  H.using(setup) do |h|
+    dir = "#{h.base}/config/finn/profiles"
+    try write("#{dir}/fast.md", "---\ndescription: quick\nmodel: other/small\nthinking: high\n---\n")
+    try write("#{dir}/bad.md", "---\nthinking: max\n---\n")
+    id = try H.new_session_in(h, h.work, profile: some("fast"))
+    started = try H.session(h, id)
+    try Test.eq([started.provider, started.model, started.effort.unwrap_or("")], ["other", "small", "high"])
+    try Test.eq(try patched(h, id, "build"), 200)
+    later = try H.session(h, id)
+    try Test.eq([later.model, later.profile.map { |p| p.name }.unwrap_or("")], ["small", "build"])
+    other = try H.new_session(h)
+    try Test.eq(try patched(h, other, "fast"), 200)
+    try Test.eq((try H.session(h, other)).model, "small")
+    listed = try Protocol.decode_profile_list((try H.get(h, Protocol.profiles_path(id))).text)
+    rows = listed.profiles.map { |p| "#{p.name}:#{p.source}:#{p.description}" }
+    try Test.eq(
+      rows,
+      ["bad::", "build:built-in:every tool", "fast:user:quick", "plan:built-in:reads and plans, changes nothing"],
+    )
+
+    Test.assert(listed.profiles[0].warnings.join(" ").include?("thinking"), listed.profiles[0].warnings.join(" "))
+  end
+end
+
+def patched(h: H.Harness, id: String, profile: String) -> Result[Int]
+  change = Protocol.encode_update_session(Protocol.UpdateSession(profile: some(profile)))
+  ok((try H.call(h, "PATCH", Protocol.session_path(id), change, H.auth(h))).status)
+end
+
 def failed[T](result: Result[T], part: String) -> Result[Void]
   case result
     ok(_) -> error("no error with #{part}")

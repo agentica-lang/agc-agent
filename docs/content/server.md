@@ -39,7 +39,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `POST /v1/sessions` | a new session: `{"cwd": "/path", "model": null}`, plus `provider`, `api` and `profile`; it answers its `id` and `profile` |
 | `GET /v1/sessions` | the sessions, the last changed first |
 | `GET /v1/sessions/ID` | one session: its settings, history, the `usage` of its last model call, the model's `todos` and its `profile` (`name`, `source`: `built-in`, `user`, `project` or empty when it does not load, `description`, `warnings`) |
-| `PATCH /v1/sessions/ID` | change `provider`, `model`, `effort` (the thinking level) or `accept_edits` |
+| `PATCH /v1/sessions/ID` | change `provider`, `model`, `effort` (the thinking level), `accept_edits` or `profile` (with the model and thinking level it sets, unless the same request gives them) |
 | `DELETE /v1/sessions/ID` | delete a session and its file |
 | `POST /v1/sessions/ID/messages` | send `{"text": "..."}`; it starts a turn, or joins the running one |
 | `GET /v1/sessions/ID/events` | the event stream of the session |
@@ -49,6 +49,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `GET /v1/sessions/ID/tree` | the user messages of every branch |
 | `POST /v1/sessions/ID/branch` | go on from an earlier message |
 | `POST /v1/sessions/ID/fork` | a new session from an earlier message |
+| `GET /v1/sessions/ID/profiles` | the profiles the session may take: `{"profiles": [{"name", "source", "description", "warnings"}]}`; one that does not load has an empty `source` |
 | `GET /v1/sessions/ID/files` | the files of the session folder that the deny rules do not hide, for the `@` completion: `{"files": [...], "truncated": false}`; `truncated` is true when the walk stopped at 5000 files, 2000 folders or about 2 s |
 | `POST /v1/sessions/ID/shell` | run `{"command": "...", "context": true}` in the session folder |
 

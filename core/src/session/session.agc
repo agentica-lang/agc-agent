@@ -88,8 +88,30 @@ def create(sessions: Sessions, request: Protocol.NewSession) -> Result[String]
     Msg.Create(request, reply)
   end
 
-  inner = try created
-  inner
+  id = try try created
+  for name in option_list(request.profile)
+    address = try find(sessions, id)
+    found = try Profiles.find(profiles_of(sessions.options, (try SessionActor.snapshot(address)).cwd), name)
+    if not found.model.empty? or not found.thinking.empty?
+      # A model or provider of the request wins over the profile's.
+      change = Protocol.UpdateSession(profile: some(name), provider: request.provider, model: request.model)
+      try SessionActor.update(address, change)
+    end
+  end
+
+  ok(id)
+end
+
+## The profiles a session may take: the built-in ones, the user's and a trusted project's, and those that do not load.
+def profiles(sessions: Sessions, id: String) -> Result[Protocol.ProfileList]
+  loaded = profiles_of(sessions.options, (try snapshot(sessions, id)).cwd)
+  shown = loaded.profiles.map do |p|
+    warnings = Profiles.warnings_of(loaded, p, Profile.known_tools())
+    Protocol.Profile(name: p.name, source: p.source, description: p.description, warnings: warnings)
+  end
+
+  broken = loaded.broken.keys.map { |name| Protocol.Profile(name: name, source: "", warnings: [loaded.broken[name]]) }
+  ok(Protocol.ProfileList(profiles: (shown + broken).sort_by { |p| p.name }))
 end
 
 ## The sessions, the last changed first.
@@ -567,9 +589,11 @@ def entry(
   chosen = chosen_of(options, header)
   api = chosen.api
   provider = chosen.provider
+  profile = header.profile.unwrap_or(Profiles.DEFAULT)
   for settings in option_list(saved)
     api = settings.api.unwrap_or(api)
     provider = settings.provider.unwrap_or(provider)
+    profile = settings.profile.unwrap_or(profile)
   end
 
   endpoint = try loaded_endpoint(options, provider, api)
@@ -605,8 +629,7 @@ def entry(
   )
 
   setup = SessionActor.switched(base, endpoint).with(model: header.model, refused: refusal(options, provider))
-  name = header.profile.unwrap_or(Profiles.DEFAULT)
-  setup = Profile.applied(setup, profiles_of(options, context.root), name)
+  setup = Profile.applied(setup, profiles_of(options, context.root), profile)
 
   ok(
     Entry(

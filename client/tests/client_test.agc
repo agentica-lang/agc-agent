@@ -194,3 +194,20 @@ def test_the_lines_of_a_profile() -> Result[Void]
   try Test.eq(Client.profile_lines(some(plan)), ["profile plan (built-in)"])
   Test.eq(Client.profile_lines(some(broken)), ["profile x (does not load)", "warning: x.md: bad [2J"])
 end
+
+# `/profile` with a name changes the profile, alone lists them: `*` before the session's, and why one does not load.
+def test_the_profile_command_and_listing() -> Result[Void]
+  try Test.eq(Client.parse_command("/profile plan"), some(ok(Client.Command.Profile(some("plan")))))
+  try Test.eq(Client.parse_command("/profile"), some(ok(Client.Command.Profile(none))))
+  list = Protocol.ProfileList(
+    profiles: [
+      Protocol.Profile(name: "build", source: "built-in", description: "every tool"),
+      Protocol.Profile(name: "bad", source: "", warnings: ["bad.md: unknown key colour"]),
+    ],
+  )
+
+  Test.eq(
+    Client.profile_listing(list, "build"),
+    ["* build (built-in) every tool", "  bad: does not load: bad.md: unknown key colour"],
+  )
+end

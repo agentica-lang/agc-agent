@@ -1,5 +1,6 @@
 ## The lists under the editor and the keys that pick from them: the files of the session's folder for `@`, the
-## commands for `/`, and the arguments of `/model`, `/resume`, `/tree`, `/fork` and `/thinking`, read from the server.
+## commands for `/`, and the arguments of `/model`, `/resume`, `/tree`, `/fork`, `/thinking` and `/profile`, read from
+## the server.
 
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
@@ -164,8 +165,9 @@ def read_arguments(app: State.Model, command: String) -> State.Model
   State.effect(app.with(reading_arguments: true), read)
 end
 
-# The choices of a command's argument from the server: `provider/model` pairs, sessions by id, or the messages of
-# the tree by number. Each value and row has its control characters as spaces, as the prompt and the list show them.
+# The choices of a command's argument from the server: `provider/model` pairs, profiles by name, sessions by id, or
+# the messages of the tree by number. Each value and row has its control characters as spaces, as the prompt and the
+# list show them.
 def listing(
   backend: Client.Backend,
   id: String,
@@ -177,6 +179,14 @@ def listing(
     "/model" ->
       pairs = Picker.models(try backend.list_providers.call(), serving).models
       ok(Input.Arguments(command: command, choices: pairs.map { |pair| Input.Choice(value: pair, label: pair) }))
+    "/profile" ->
+      listed = (try backend.list_profiles.call(id)).profiles
+      lines = Client.profile_listing(Protocol.ProfileList(profiles: listed), "")
+      choices = (0...listed.size).to_a.map { |i|
+        Input.Choice(value: Client.printable(listed[i].name), label: lines[i].strip)
+      }
+
+      ok(Input.Arguments(command: command, choices: choices))
     "/resume" ->
       sessions = (try backend.list_sessions.call()).sessions
       shown = Picker.shown(Picker.Picker(sessions: sessions), now_s)

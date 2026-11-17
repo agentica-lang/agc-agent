@@ -345,8 +345,26 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Clone -> moved_command(chat, -> { Client.fork(chat.server, chat.id, none) })
     Client.Command.Model(model) -> model_command(chat, model)
     Client.Command.Thinking(level) -> setting_command(chat, "thinking", level, Protocol.UpdateSession(effort: level))
+    Client.Command.Profile(name) -> tried(chat, profile_command(chat, name))
     Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
   end
+end
+
+# `/profile` lists the profiles, `*` before the session's; `/profile NAME` changes it, and says what it changed.
+def profile_command(chat: Chat, name: Optional[String]) -> Result[Chat]
+  for wanted in option_list(name)
+    try Client.update_session(chat.server, chat.id, Protocol.UpdateSession(profile: some(wanted)))
+    session = try Client.session(chat.server, chat.id)
+    done = note(chat, "[profile #{Client.printable(wanted)} from the next turn: #{Client.printable(session.model)}]")
+    for line in (Client.profile_lines(session.profile).select { |l| l.start_with?("warning: ") })
+      done = note(done, "[#{line}]")
+    end
+
+    return ok(done)
+  end
+
+  current = (try Client.session(chat.server, chat.id)).profile.map { |p| p.name }.unwrap_or("")
+  ok(note(chat, Client.profile_listing(try Client.list_profiles(chat.server, chat.id), current).join("\n")))
 end
 
 def logout_command(chat: Chat, name: Optional[String]) -> Result[Step]

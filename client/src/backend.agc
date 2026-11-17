@@ -22,6 +22,7 @@ struct Backend
   fork: Fn[String, Optional[Int], Result[Protocol.Branched]]
   list_sessions: Fn[Result[Protocol.SessionList]]
   list_providers: Fn[Result[Protocol.ProviderList]]
+  list_profiles: Fn[String, Result[Protocol.ProfileList]]
   list_logins: Fn[Result[Protocol.LoginList]]
   login: Fn[String, String, Result[Protocol.LoginStatus]]
   login_url: Fn[String, String, Result[Protocol.LoginStatus]]
@@ -52,6 +53,7 @@ def http_backend(server: Http.Server) -> Backend
     fork: ->(id, entry) { Http.fork(server, id, entry) },
     list_sessions: -> { Http.list_sessions(server) },
     list_providers: -> { Http.list_providers(server) },
+    list_profiles: ->(id) { Http.list_profiles(server, id) },
     list_logins: -> { Http.list_logins(server) },
     login: ->(provider, key) { Http.login(server, provider, key) },
     login_url: ->(provider, url) { Http.login_url(server, provider, url) },
@@ -83,6 +85,7 @@ def unreachable_backend() -> Backend
     fork: ->(_id, _entry) { failed() },
     list_sessions: -> { failed() },
     list_providers: -> { failed() },
+    list_profiles: ->(_id) { failed() },
     list_logins: -> { failed() },
     login: ->(_provider, _key) { failed() },
     login_url: ->(_provider, _url) { failed() },

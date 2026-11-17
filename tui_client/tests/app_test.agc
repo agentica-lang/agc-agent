@@ -184,6 +184,36 @@ def test_a_turn_spins_in_the_rule() -> Result[Void]
 end
 
 # The model's todo list shows as a notice, one item a line, from its event and from the session read after a move.
+# `/profile NAME` changes the profile and the status line names it, with the server's warnings as notices.
+def test_the_profile_command_changes_the_footer() -> Result[Void]
+  warned = Protocol.Profile(name: "ro", source: "user", warnings: ["profile ro: no tool is named gerp"])
+  session = Protocol.Session(
+    id: "s1",
+    cwd: ".",
+    model: "m",
+    last_event_id: 0,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+    provider: "local",
+    profile: some(warned),
+  )
+
+  backend = Client.unreachable_backend().with(
+    session: ->(_id: String) { ok(session) },
+    update_session: ->(_id: String, _change: Protocol.UpdateSession) { ok() },
+  )
+
+  done = App.update(
+    model_of(60, 12).with(backend: backend, id: "s1", prompt: "/profile ro", cursor: 11),
+    enter(),
+  ).model
+
+  drawn = rows(done).join("\n")
+  Test.assert(drawn.include?("ro · (local) m") and drawn.include?("no tool is named gerp"), drawn)
+end
+
 # The status line names the session's profile, unless it is the built-in `build`.
 def test_the_footer_names_the_profile() -> Result[Void]
   for profile in [
@@ -915,7 +945,8 @@ def test_the_command_list_gives_way_to_an_approval_and_to_esc() -> Result[Void]
   Test.eq(App.update(closed, escape()).model.stopping, true)
 end
 
-# The argument of `/model`, `/resume` and `/tree` is listed from the server once its command is typed, in the list
+# The argument of `/model`, `/resume`, `/tree` and `/profile` is listed from the server once its command is typed, in
+# the list
 # under the editor; `/thinking` lists its levels. Tab completes the selected choice; Enter runs the line as typed.
 def test_arguments_complete_from_the_server() -> Result[Void]
   providers = Protocol.ProviderList(
@@ -925,15 +956,23 @@ def test_arguments_complete_from_the_server() -> Result[Void]
 
   summary = Protocol.SessionSummary(id: "s9", cwd: "/w", model: "m", api: "chat", title: "fix the tests")
   tree = Protocol.SessionTree(nodes: [Protocol.TreeNode(id: 1, text: "hello", last: 2)])
+  profiles = Protocol.ProfileList(
+    profiles: [
+      Protocol.Profile(name: "build", source: "built-in"),
+      Protocol.Profile(name: "plan", source: "built-in"),
+    ],
+  )
+
   backend = Client.unreachable_backend().with(
     list_providers: -> { ok(providers) },
     list_sessions: -> { ok(Protocol.SessionList(sessions: [summary])) },
     tree: ->(_id: String) { ok(tree) },
+    list_profiles: ->(_id: String) { ok(profiles) },
   )
 
   model = model_of(80, 20).with(backend: backend, id: "s1")
   completed: List[String] = []
-  for command in ["/model", "/resume", "/tree"]
+  for command in ["/model", "/resume", "/tree", "/profile"]
     asking = App.update(model.with(prompt: command, cursor: command.length), key_char(" "))
     try Test.eq(asking.cmds.size, 1)
     listed = App.update(asking.model, run(asking.cmds[0])[0]).model
@@ -941,7 +980,7 @@ def test_arguments_complete_from_the_server() -> Result[Void]
     completed = completed.push(picked.prompt)
   end
 
-  try Test.eq(completed, ["/model p/large", "/resume s9", "/tree 1"])
+  try Test.eq(completed, ["/model p/large", "/resume s9", "/tree 1", "/profile plan"])
   levels = model.with(prompt: "/thinking h", cursor: 11)
   try Test.assert(rows(levels).any? { |row| row.start_with?("high") }, "#{rows(levels)}")
   try Test.eq(App.update(levels, tab()).model.prompt, "/thinking high")

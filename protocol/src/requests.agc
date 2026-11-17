@@ -49,6 +49,9 @@ struct UpdateSession
   effort: Optional[String] = none
   ## The edits of files in the session folder run without asking.
   accept_edits: Optional[Bool] = none
+  ## The profile from the next turn on, with its model and thinking level when it sets them (`model` and `effort`
+  ## given too win).
+  profile: Optional[String] = none
 end
 
 ## `POST /v1/sessions/ID/compact`: the answer says whether there was history to fold.
@@ -146,6 +149,7 @@ def decode_update_session(text: String) -> Result[UpdateSession]
   body = try Wire.decode_strict(text, UpdateSession.codec)
   try Wire.non_empty_if_present("model", body.model)
   try Wire.non_empty_if_present("provider", body.provider)
+  try Wire.non_empty_if_present("profile", body.profile)
   for effort in Wire.option_list(body.effort)
     known = EFFORTS.include?(effort) or effort == EFFORT_DEFAULT
     return error("unknown effort: #{effort}", kind: Kinds.KIND_UNKNOWN) if not known

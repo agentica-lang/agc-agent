@@ -241,7 +241,13 @@ def busy_reason(state: State) -> String
 end
 
 def choice(setup: Setup) -> Store.Choice
-  Store.Choice(model: setup.model, effort: setup.effort, provider: setup.provider_name, api: setup.api)
+  Store.Choice(
+    model: setup.model,
+    effort: setup.effort,
+    provider: setup.provider_name,
+    api: setup.api,
+    profile: setup.profile.map { |p| p.name },
+  )
 end
 
 def last_todos(events: List[Store.Logged]) -> List[Protocol.Todo]

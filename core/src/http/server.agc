@@ -158,6 +158,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.post("#{one}/fork", ->(conn) { reply(conn, 201, fork(sessions, conn)) })
     |> Bond.post("#{one}/shell", ->(conn) { reply(conn, 202, shell(sessions, conn)) })
     |> Bond.get("#{one}/files", ->(conn) { reply(conn, 200, files(sessions, conn)) })
+    |> Bond.get("#{one}/profiles", ->(conn) { reply(conn, 200, profiles(sessions, conn)) })
     |> Bond.post("#{one}/stop", ->(conn) { reply(conn, 200, stop_turn(sessions, conn)) })
     |> Bond.post("#{one}/approvals/:approval", ->(conn) { reply(conn, 200, approve(sessions, conn)) })
     |> Bond.get("#{one}/events", ->(conn) { events(sessions, conn) })
@@ -345,6 +346,10 @@ def stop_turn(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   request = try Protocol.decode_stop_turn(try String.from_bytes(conn.body))
   stopped = try Sessions.stop_turn(sessions, try Bond.param(conn, "id"), request.turn_id)
   ok(Protocol.encode_stopped(Protocol.Stopped(stopped: stopped)))
+end
+
+def profiles(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  ok(Protocol.encode_profile_list(try Sessions.profiles(sessions, try Bond.param(conn, "id"))))
 end
 
 def files(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]

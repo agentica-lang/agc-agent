@@ -15,6 +15,7 @@
 ## neither, every tool. The body goes after the system prompt. A profile only hides tools: the approval rules still
 ## decide on the calls of the tools it shows.
 
+import Protocol from "pkg/protocol/protocol"
 import Approval from "../approval/approval"
 
 DEFAULT = "build"
@@ -22,7 +23,7 @@ PROJECT_FOLDER = ".finn/profiles"
 PLAN_TOOLS = ["read_file", "glob", "grep", "todo_write", "activate_skill"]
 PLAN_PROMPT = "You are planning: read, search and keep a todo list, but change no file and run no command."
 NAME_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789-_"
-KEYS = ["description", "tools_allow", "tools_deny"]
+KEYS = ["description", "tools_allow", "tools_deny", "model", "thinking"]
 BUILT_IN = "built-in"
 USER = "user"
 PROJECT = "project"
@@ -34,6 +35,10 @@ struct Profile
   allow: Optional[List[String]] = none
   deny: Optional[List[String]] = none
   prompt: String = ""
+  ## The model it takes (`[PROVIDER/]NAME`) and its thinking level (`low`, `medium`, `high` or `default`); empty
+  ## keeps the session's.
+  model: String = ""
+  thinking: String = ""
   ## Where it comes from: `BUILT_IN`, `USER` or `PROJECT`.
   source: String = BUILT_IN
 end
@@ -183,6 +188,14 @@ def parse(path: String, name: String, text: String) -> Result[Profile]
 
     if key == "description"
       profile = profile.with(description: unquoted(value))
+    elsif key == "model"
+      profile = profile.with(model: unquoted(value))
+    elsif key == "thinking"
+      level = unquoted(value)
+      levels = Protocol.EFFORTS.push(Protocol.EFFORT_DEFAULT)
+      return error("#{path}: thinking is one of #{levels.join(", ")}") if not levels.include?(level)
+
+      profile = profile.with(thinking: level)
     else
       profile = try with_names(path, profile, key, try names_of(path, key, value), false)
     end
