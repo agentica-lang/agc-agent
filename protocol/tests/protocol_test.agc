@@ -211,6 +211,11 @@ def test_invalid_input_is_a_typed_error() -> Result[Void]
   try Test.eq(error_kind(Protocol.decode_event("text_delta", "{}")), "protocol.invalid")
   try Test.eq(error_kind(Protocol.decode_event("usage", "{\"input\": \"1\"}")), "protocol.invalid")
   try Test.eq(error_kind(Protocol.decode_event("resync", "[]")), "protocol.invalid")
+  try Test.eq(
+    error_kind(Protocol.decode_event("todos", "{\"todos\": [{\"content\": \"x\", \"status\": \"done\"}]}")),
+    "protocol.invalid",
+  )
+
   try Test.eq(error_kind(Protocol.decode_send_message("not json")), "protocol.invalid")
   try Test.eq(error_kind(Protocol.decode_event("typing", "{}")), "protocol.unknown")
   try Test.eq(error_kind(Protocol.decode_approve("{\"decision\": \"maybe\"}")), "protocol.unknown")

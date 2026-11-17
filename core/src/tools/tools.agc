@@ -1,4 +1,4 @@
-## The six base tools, and what a call touches.
+## The base tools, and what a call touches.
 ##
 ## Security model. The tools keep a call inside the session folder and the approval rules (when the approval extension
 ## is on) decide what asks, but neither is a sandbox:
@@ -21,6 +21,7 @@ import Sandbox from "sandbox"
 import Search from "search"
 import Shell from "shell"
 import Spec from "spec"
+import Todos from "todos"
 
 export Spec.Context
 export Spec.Output
@@ -108,6 +109,7 @@ def all() -> List[Spec.Tool]
       run: &Shell.bash,
       target: &command_target,
     ),
+    Todos.tool(),
   ]
 end
 

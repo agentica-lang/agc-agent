@@ -69,6 +69,7 @@ def moved(state: Session.State, entry: Int) -> Result[Moved]
     marks: saved.marks,
     stripped: saved.stripped,
     context: Session.last_usage(saved.events).context,
+    todos: Session.last_todos(saved.events),
     shells: saved.shells,
     counter: until,
     reserved: until,
