@@ -108,6 +108,11 @@ struct Model
   secret: String = ""
   ## The login of `key_for` asks for a base URL, shown as typed, not a key.
   asking_url: Bool = false
+  ## The device login (ChatGPT) that is waited for: the user types its code at its URL. A new login or Esc bumps
+  ## `device_serial`, so the polls of the one before are dropped.
+  device: Optional[Protocol.DeviceLogin] = none
+  device_for: String = ""
+  device_serial: Int = 0
   ## A login offered at the first start: closing it stores an empty key file, so it is offered once. With
   ## `login_only` (`finn login`), the app ends after the login.
   first_login: Bool = false
@@ -175,6 +180,10 @@ enum Msg
   Moved(Result[Protocol.Branched])
   ## The reply to a login, with no key in it.
   LoggedIn(String, Result[Protocol.LoginStatus])
+  ## The start of the device login of a provider, with its serial.
+  DeviceStarted(String, Int, Result[Protocol.DeviceLogin])
+  ## Where that device login is now.
+  DevicePolled(String, Int, Result[Protocol.DeviceState])
   ## The files of the session's folder, for the `opened` count when they were asked.
   Files(Int, Result[Protocol.FileList])
   ## The choices of a command's argument, for the `opened` count when they were asked.

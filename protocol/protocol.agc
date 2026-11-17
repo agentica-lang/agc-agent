@@ -26,6 +26,10 @@ BIDI = Set.new([0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 
 export Replies.ASKS_KEY
 export Replies.ASKS_URL
 export Replies.ASKS_DEVICE
+export Replies.DEVICE_NONE
+export Replies.DEVICE_WAITING
+export Replies.DEVICE_DONE
+export Replies.DEVICE_FAILED
 export Kinds.KIND_INVALID
 export Kinds.KIND_UNKNOWN
 export Kinds.KIND_UNAUTHORIZED

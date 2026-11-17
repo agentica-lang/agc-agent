@@ -30,6 +30,11 @@ def framed(app: State.Model) -> Screen.Frame
     prompt = Prompt.view(hidden, hidden.length, app.width, app.height)
   end
 
+  for device in State.option_list(app.device)
+    waiting = "login of #{app.device_for}: enter #{device.user_code} at #{device.url} (Esc cancels)"
+    prompt = Prompt.view(waiting, waiting.length, app.width, app.height)
+  end
+
   parts = Screen.Parts(
     prompt: prompt,
     picker: ->(room: Int) { picker_rows(app, room) },

@@ -71,9 +71,7 @@ def presets() -> List[Custom]
   ]
 end
 
-def coming() -> List[Coming]
-  [Coming(name: "claude", label: "Claude Pro/Max"), Coming(name: "chatgpt", label: "ChatGPT and Codex")]
-end
+def coming() -> List[Coming] = [Coming(name: "claude", label: "Claude Pro/Max")]
 
 ## The custom providers of the config file at `path`; none when it has no `providers`.
 def from_file(path: String) -> Result[List[Custom]]

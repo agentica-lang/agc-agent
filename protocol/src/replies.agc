@@ -9,6 +9,11 @@ import Wire from "wire"
 ASKS_KEY = "key"
 ASKS_URL = "url"
 ASKS_DEVICE = "device"
+## Where a device login is (`DeviceState.state`).
+DEVICE_NONE = "none"
+DEVICE_WAITING = "waiting"
+DEVICE_DONE = "done"
+DEVICE_FAILED = "failed"
 
 ## Who wrote a message of the history. The history is display text: an entry of another kind (a tool call) will be a
 ## new type, not a new `Role`, so a `case` on `Role` stays exhaustive.

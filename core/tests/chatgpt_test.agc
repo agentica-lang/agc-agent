@@ -34,9 +34,11 @@ def test_a_device_login_stores_the_tokens_and_each_401_refreshes_them() -> Resul
   setup = H.Setup(replies: replies, api: "openai_responses", chatgpt: true, chatgpt_poll_ms: POLL_MS)
   H.using(setup) do |h|
     path = "#{h.state_dir}/#{Chatgpt.FILE}"
+    try Test.eq(try chatgpt_listed(h), "chatgpt  device false")
     started = try Protocol.decode_device_login((try H.post(h, Protocol.auth_path("chatgpt"), "{}")).text)
     try Test.eq([started.user_code, started.url], ["ABCD-1234", "#{H.fake_root(h.fake)}/auth/codex/device"])
     try Test.eq(try waited(h), Protocol.DeviceState(state: "done", message: ""))
+    try Test.eq(try chatgpt_listed(h), "chatgpt stored device false")
     try Test.eq((try File.stat(path)).mode, 384)
     providers = try Protocol.decode_provider_list((try H.get(h, Protocol.PROVIDERS_PATH)).text)
     codex = providers.providers.select { |p| p.name == "chatgpt" }
@@ -296,6 +298,17 @@ def test_the_chatgpt_provider_brings_its_model_and_its_urls_are_checked() -> Res
 end
 
 private
+
+# How the logins list ChatGPT: a device login, `stored` once signed in.
+def chatgpt_listed(h: H.Harness) -> Result[String]
+  listed = try Protocol.decode_login_list((try H.get(h, Protocol.AUTH_PATH)).text)
+  ok(
+    listed.providers
+      .select { |p| p.name == "chatgpt" }
+      .map { |p| "#{p.name} #{p.from} #{p.asks} #{p.coming}" }
+      .join(","),
+  )
+end
 
 # The state of the device login once it is no longer waiting.
 def waited(h: H.Harness) -> Result[Protocol.DeviceState]

@@ -21,11 +21,6 @@ FROM_FILE = "stored"
 ANTHROPIC_TOKEN_ENV = "ANTHROPIC_AUTH_TOKEN"
 ## The variable of the base URL of `local`, which wins over a stored one.
 LOCAL_ENV = "FINN_BASE_URL"
-## Where a device login is (`device_state`).
-DEVICE_NONE = "none"
-DEVICE_WAITING = "waiting"
-DEVICE_DONE = "done"
-DEVICE_FAILED = "failed"
 
 ## What a login needs, from `Config.from_env`.
 struct Setup
@@ -107,9 +102,15 @@ def list(holder: Holder) -> Result[Listing]
   return ok(Listing(providers: [], first: false)) if state.setup.none?
 
   setup = state.setup.unwrap!
-  shown = local_status(setup, state.stored) + setup.entries.map { |entry| status_of(setup, state.stored, entry) }
+  shown = (
+    local_status(setup, state.stored) +
+    setup.entries.map { |entry| status_of(setup, state.stored, entry) } +
+    chatgpt_status(setup)
+  )
+
   coming = Providers.coming().map { |c| Status(name: c.name, label: c.label, coming: true) }
-  first = not state.stored.found and not setup.chosen and not shown.any? { |s| s.from == FROM_ENV }
+  signed_in = shown.any? { |s| s.from == FROM_ENV or (s.name == Chatgpt.NAME and s.from == FROM_FILE) }
+  first = not state.stored.found and not setup.chosen and not signed_in
   ok(Listing(providers: shown + coming, first: first))
 end
 
@@ -217,10 +218,10 @@ end
 def device_state(holder: Holder) -> Result[DeviceState]
   state = try now(holder)
   case state.device
-    DeviceRun.Idle -> ok(DeviceState(state: DEVICE_NONE))
-    DeviceRun.Waiting(_) -> ok(DeviceState(state: DEVICE_WAITING))
-    DeviceRun.Done -> ok(DeviceState(state: DEVICE_DONE))
-    DeviceRun.Failed(why) -> ok(DeviceState(state: DEVICE_FAILED, message: why))
+    DeviceRun.Idle -> ok(DeviceState(state: Protocol.DEVICE_NONE))
+    DeviceRun.Waiting(_) -> ok(DeviceState(state: Protocol.DEVICE_WAITING))
+    DeviceRun.Done -> ok(DeviceState(state: Protocol.DEVICE_DONE))
+    DeviceRun.Failed(why) -> ok(DeviceState(state: Protocol.DEVICE_FAILED, message: why))
   end
 end
 
@@ -521,6 +522,24 @@ def local_status(setup: Setup, stored: Auth.Stored) -> List[Status]
       base_url: base_url,
     ),
   ]
+end
+
+# ChatGPT, a device login: `stored` once its tokens are saved.
+def chatgpt_status(setup: Setup) -> List[Status]
+  (
+    setup.chatgpt
+      .map { |login|
+        [Status(name: Chatgpt.NAME, label: Chatgpt.LABEL, from: chatgpt_from(login), asks: Protocol.ASKS_DEVICE)]
+      }
+      .unwrap_or([])
+  )
+end
+
+def chatgpt_from(login: Chatgpt.Login) -> String
+  case Chatgpt.load(login)
+    ok(some(_)) -> FROM_FILE
+    _ -> ""
+  end
 end
 
 def env_names(entry: Providers.Custom) -> List[String]

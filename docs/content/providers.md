@@ -19,6 +19,7 @@ A provider is where the model runs: a company's API or a server of your own. The
 | `fireworks` | its key is set or stored | `FIREWORKS_API_KEY` | OpenAI chat completions |
 | `groq` | its key is set or stored | `GROQ_API_KEY` | OpenAI chat completions |
 | `deepseek` | its key is set or stored | `DEEPSEEK_API_KEY` | OpenAI chat completions |
+| `chatgpt` | you signed in with `finn login chatgpt` | your ChatGPT plan ([ChatGPT](#chatgpt-plus-or-pro)) | OpenAI Responses (Codex) |
 
 Your config file can add more, or replace one of these: see [Your own provider](#your-own-provider).
 
@@ -37,7 +38,7 @@ A login checks the key with one call to the provider (`GET /models`, or `/key` f
 
 A key variable in the environment wins over a stored key.
 
-The login list also shows `Claude Pro/Max: coming` and `ChatGPT and Codex: coming`. They are listed but cannot be used: picking one says there is no login for it yet.
+The login list also shows `Claude Pro/Max: coming`. It is listed but cannot be used: picking it says there is no login for it yet.
 
 ## Pick a provider and a model
 
@@ -75,6 +76,16 @@ finn
 4. the token of `ant auth login` (the Anthropic CLI), fetched again after a 401.
 
 Finn asks for the prompt cache on every request. `FINN_API=anthropic` (`finn serve --api anthropic`) makes it the server's provider, with `claude-opus-5-5` as its default model.
+
+## ChatGPT Plus or Pro
+
+`chatgpt` runs the Codex models of your ChatGPT plan, with no API key:
+
+```sh
+finn login chatgpt      # or /login chatgpt in finn
+```
+
+Finn shows a URL and a code. Open the URL, sign in, and enter the code within 15 minutes; Esc stops waiting. Finn then lists the models of your plan and keeps the tokens in `chatgpt.json` in the state folder (`~/.local/state/finn`), mode 0600, apart from `auth.json`. The first of the list is the default model. An expired token is refreshed when a call gets a 401, once for all sessions at a time. `finn logout chatgpt` removes the file.
 
 ## Your own provider
 
