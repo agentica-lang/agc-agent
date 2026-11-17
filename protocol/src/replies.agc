@@ -34,6 +34,8 @@ struct ServerStatus
   running_turns: Int
   stopping: Bool
   approvals: Optional[Bool] = none
+  ## Whether the server offers code mode (`run_script`); none from a server older than this field.
+  code_mode: Optional[Bool] = none
 end
 
 ## The answer of `POST /v1/sessions`.

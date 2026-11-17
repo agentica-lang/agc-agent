@@ -313,8 +313,18 @@ def test_the_server_action_and_its_options_are_parsed() -> Result[Void]
       try Test.assert(options.now and not options.follow, "flags")
       try Test.eq(options.state_dir, some("/s"))
       try Test.eq(options.server_command, some(["agentica", "core.agc"]))
-      Test.eq(options.action == Args.Action.Stop, true)
-    _ -> error("not a server command")
+      try Test.eq(options.action == Args.Action.Stop, true)
+    _ -> return error("not a server command")
+  end
+
+  case try Args.parse(["server", "restart", "--no-codemode"])
+    Args.Command.Server(options) -> try Test.eq(options.code_mode, some(false))
+    _ -> return error("not a server command")
+  end
+
+  case try Args.parse(["--no-codemode", "-p", "hi"])
+    Args.Command.Run(options) -> Test.eq(Args.launch(options).code_mode, false)
+    _ -> error("not a run")
   end
 end
 

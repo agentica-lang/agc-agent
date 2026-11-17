@@ -14,7 +14,13 @@ NOT_RUNNING = 1
 
 ## Does what `options` ask: the exit code.
 def run(options: Args.ServerOptions) -> Result[Int]
-  launch = Client.Launch(main: "cli/main.agc", state_dir: options.state_dir, server_command: options.server_command)
+  launch = Client.Launch(
+    main: "cli/main.agc",
+    state_dir: options.state_dir,
+    server_command: options.server_command,
+    code_mode: options.code_mode != some(false),
+  )
+
   dir = try Client.state_dir(launch)
   case options.action
     Args.Action.Status -> status(dir)
