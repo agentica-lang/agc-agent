@@ -3,7 +3,7 @@
 ## For `bash`, a rule matches the whole command text, best effort: `bash(rm *)` refuses `rm -rf x` and not
 ## `ls && rm -rf x`. An allow rule matches only a plain command (`plain?`), so `git status*` does not allow
 ## `git status; rm x`. A `*` after a word matches only the end or a space and more text, so `git status*` matches
-## `git status --short` and not `git statusx`. The rules of `read_file`, `edit_file` and `write_file` apply to the file
+## `git status --short` and not `git statusx`; a `*` also matches line ends. The rules of `read_file`, `edit_file` and `write_file` apply to the file
 ## tools only, not to what `bash` reads or writes. A rule is a convenience and not a sandbox: see the security model of
 ## `Tools`.
 ##
@@ -182,7 +182,7 @@ def matches?(rule: Rule, tool: String, target: String) -> Bool
 end
 
 def command_matches?(pattern: String, command: String) -> Bool
-  case Regex.compile("\\A#{command_regex(pattern.split(""), 0, "")}\\z")
+  case Regex.compile("(?s)\\A#{command_regex(pattern.split(""), 0, "")}\\z")
     ok(regex) -> Regex.match?(command, regex)
     error(_) -> false
   end
@@ -194,7 +194,7 @@ def command_regex(chars: List[String], at: Int, out: String) -> String
   if chars[at] != "*"
     command_regex(chars, at + 1, "#{out}#{Regex.escape(chars[at])}")
   elsif at > 0 and Regex.match?(chars[at - 1], WORD)
-    command_regex(chars, at + 1, "#{out}(?:[ \\t].*)?")
+    command_regex(chars, at + 1, "#{out}(?:\\s.*)?")
   else
     command_regex(chars, at + 1, "#{out}.*")
   end

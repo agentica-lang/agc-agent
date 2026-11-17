@@ -31,7 +31,6 @@
 - The `openai_responses` and `anthropic` APIs, with thinking and prompt cache.
 - Cost in USD from the models.dev catalog.
 - Approval rules in config files; allow a `bash` prefix, a tool or edits for the session.
-- Read-only `bash` commands in the session folder run without asking.
 - MCP servers on stdio and streamable HTTP.
 - Agent Skills from `.finn/skills`, `.agents/skills` and `.claude/skills`.
 - Code mode (`FINN_CODE_MODE=1`): the model calls tools from a sandboxed Python script.

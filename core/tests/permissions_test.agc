@@ -161,7 +161,7 @@ def test_a_deny_rule_wins_over_an_allow_rule_for_bash() -> Result[Void]
     end
   end
 
-  Test.eq(
+  try Test.eq(
     shown,
     [
       ["Verdict.Deny", "Verdict.Allow", "Verdict.Allow", "Verdict.Allow"],
@@ -170,6 +170,18 @@ def test_a_deny_rule_wins_over_an_allow_rule_for_bash() -> Result[Void]
       ["Verdict.Deny", "Verdict.Ask", "Verdict.Ask", "Verdict.Ask"],
     ],
   )
+
+  # A `*` matches across a line end: a command of two lines is refused in both modes.
+  everything = try Approval.parse_rules([], ["bash(*)"])
+  for asking in [false, true]
+    a = Extension.open(everything, root, false, asking).unwrap!
+    b = Extension.open(bare, root, false, asking).unwrap!
+    found = [bash_verdict(a, ctx, "echo a\necho b"), bash_verdict(b, ctx, "rm -rf x\ntrue")]
+
+    try Test.eq([asking] + found.map { |v| v == Tools.Verdict.Deny }, [asking, true, true])
+  end
+
+  ok()
 end
 
 # A `!` command follows the rules of a `bash` call: one that a deny rule matches is refused in both modes; one the
@@ -267,6 +279,7 @@ def test_the_prefix_of_a_command() -> Result[Void]
   ]
 
   try Test.eq(runners.map { |command| Permissions.prefix("bash", command) }.select { |p| p.some? }, [])
+  try Test.eq(Permissions.prefix("bash", "LANG=C ls"), none)
   Test.eq(Permissions.prefix("bash", "ls | wc"), none)
 end
 
@@ -331,4 +344,8 @@ def env(dir: String, name: String, config: String, switch: String) -> Result[Str
     "HOME" -> ok(dir)
     _ -> error("not set")
   end
+end
+
+def bash_verdict(a: Extension.Approvals, ctx: Tools.Context, command: String) -> Tools.Verdict
+  Extension.verdict(a, ctx, "bash", JSON.object({"command": JSON.from(command)}))
 end

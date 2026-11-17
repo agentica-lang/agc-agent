@@ -90,13 +90,14 @@ def with_project(rules: Approval.Rules, root: String, trusted: Bool) -> Result[A
 end
 
 ## The words a prefix answer would allow for a `bash` command: its first word, or two for `TWO_WORDS`; none for another
-## tool, a command that is not plain (`Approval.plain?`), one of `RUNNERS`, or one of `TWO_WORDS` whose second word is
-## missing or an option (`git -c a=b log`), which an answer allows only as the same call.
+## tool, a command that is not plain (`Approval.plain?`) or starts with an assignment (`LANG=C ls`), one of `RUNNERS`,
+## or one of `TWO_WORDS` whose second word is missing or an option (`git -c a=b log`), which an answer allows only as
+## the same call.
 def prefix(tool: String, target: String) -> Optional[List[String]]
   return none if tool != "bash" or not Approval.plain?(target)
 
   words = words_of(target)
-  return none if words.empty? or RUNNERS.include?(words[0])
+  return none if words.empty? or RUNNERS.include?(words[0]) or words[0].include?("=")
   return some(words.take(1)) if not TWO_WORDS.include?(words[0])
   return none if words.size < 2 or words[1].start_with?("-")
 

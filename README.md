@@ -56,9 +56,9 @@ bin/finn --version
 Tools run without asking by default: the model can run any command and change any file the user can, except what a
 `deny` rule of `~/.config/finn/config.json` refuses. Run Finn in a sandbox or a container, or turn the approvals on
 with `finn serve --approvals`, `FINN_APPROVALS=1` or `"approvals": true` in that file. Coming from an earlier Finn: the
-`deny` rules still apply, while the `allow` rules and `accept_edits` need the approvals on (`finn serve --help`). With
-the approvals off, a `read_file` deny rule hides the file from the tools and refuses the `bash` commands that name it,
-but it cannot confine `bash` (`cat $(printf .env)` still reads `.env`): only a sandbox does.
+`deny` rules still apply, while the `allow` rules and `accept_edits` need the approvals on (`finn serve --help`). A
+`read_file` deny rule hides the file from the file tools only, not from `bash` (`cat .env` still reads it): only a
+sandbox confines `bash`.
 
 `finn server status`, `stop` (waits for the running turns and ends when the server has gone; `--now` cancels them),
 `restart`, `start` and `logs [-f]` manage the server a

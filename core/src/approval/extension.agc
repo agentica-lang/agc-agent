@@ -35,9 +35,7 @@ end
 def allows?(a: Approvals, tool: String, target: String) -> Bool = Permissions.allows?(a.allows, a.rules, tool, target)
 
 ## The words an `allow_prefix` answer would allow, joined by spaces.
-def prefix(_a: Approvals, tool: String, target: String) -> Optional[String]
-  Permissions.prefix(tool, target).map { |w| w.join(" ") }
-end
+def prefix(tool: String, target: String) -> Optional[String] = Permissions.prefix(tool, target).map { |w| w.join(" ") }
 
 def answered(a: Approvals, decision: String, tool: String, target: String) -> Approvals
   a.with(allows: Permissions.answered(a.allows, decision, tool, target))

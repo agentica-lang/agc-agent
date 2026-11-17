@@ -6,9 +6,9 @@
 ##   `bash(git diff*)` allows `git diff --output=../x`, which writes outside the folder, `bash(git *)` allows
 ##   `git -c alias.x=!cmd x`, which runs `cmd`, and `bash(cat src/*)` allows `cat src/../../outside/secret`. Allow only
 ##   what is harmless with every option and argument.
-## - A bash rule matches only a plain command, so a deny rule of `bash` is best effort: `rm x; true` asks and is not
-##   denied. A command that is not plain always asks, never runs on a rule.
-## - A deny rule of `read_file` also denies `edit_file` and hides the file from `glob` and `grep`.
+## - A bash rule matches the whole command text, so a deny rule of `bash` is best effort: `bash(rm *)` refuses
+##   `rm x; true` but not `true; rm x`. An allow rule matches only a plain command.
+## - A deny rule of `read_file` also denies `edit_file` and hides the file from `glob` and `grep`, but not from `bash`.
 ## - Bash runs as the user of the server and can read what the server reads (see `Shell`). A path is checked before it
 ##   is used, and bash is the only way to run something in parallel, so the check can race with a swapped link.
 ## - On a case-insensitive filesystem a rule on `.env` may not match `.ENV`.
