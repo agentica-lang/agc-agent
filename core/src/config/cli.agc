@@ -24,33 +24,33 @@ USAGE = <<~TEXT
   model calls the tools from a Python script in pydantic's Monty sandbox, each call approved as a direct one; the
   worker is FINN_MONTY (a Monty 1.6.0 binary you trust: its hash is not checked), else the pinned Monty 1.6.0 fetched
   from PyPI (sha256 checked) on first use into $XDG_CACHE_HOME/finn, else ~/.cache/finn (a folder open to others is
-  refused). FINN_MCP_CONFIG names a JSON file of MCP servers on stdio ({"mcpServers": {NAME: {"command", "args",
-  "env"}}}): their tools are mcp__NAME__TOOL and ask before each call. A server gets the short environment of bash plus
-  its "env", which is passed on as given (put the keys it needs there); a slow server's tools come once it lists them,
-  from the next turn. Skills (SKILL.md folders under .finn/skills, .agents/skills and .claude/skills) come from the
-  home folder, and from the session folder only when it is under a folder of FINN_TRUSTED_DIRS (separated by :); the
-  model loads one with activate_skill, the user with /name in a message. The catalog of models.dev (FINN_MODELS_URL,
-  "off" for none), loaded at the start and kept a day in models.json of the state folder, gives each usage event its
-  cost in USD (FINN_MODELS_PROVIDER names the provider there; by default anthropic for that API, else openai).
-  Approvals: off by default, so the model runs any command and edits any file that no deny rule refuses, without asking
-  (use a sandbox or a container). FINN_APPROVALS=1 (finn serve --approvals), or "approvals": true in the user's config
-  file, turns them on; FINN_APPROVALS=0 keeps them off over the file, and a project file cannot change them. The deny
-  rules always count; the allow rules, the answers and accept_edits only with the approvals on. The rules {"allow":
-  [...], "deny": [...]} come from FINN_CONFIG, else $XDG_CONFIG_HOME/finn/config.json, else ~/.config/finn/config.json,
-  and from .finn/config.json of the session folder (its deny rules always; its allow rules under a folder of
-  FINN_TRUSTED_DIRS). A bash command that only reads inside the folder runs without asking. An answer may allow the
-  same call (allow_session), the bash commands with the same first words (allow_prefix) or the whole tool (allow_tool)
-  for the session, until the server restarts; PATCH {"accept_edits": true} runs the edits of files without asking. None
-  of them reaches into .git/. The deny rules are checked first, as far as the parser sees a command (best effort, not a
-  sandbox); while a read_file deny rule exists, only the same bash call is allowed again.
-  Providers: local (FINN_BASE_URL with FINN_API_KEY) and anthropic always; openai, fireworks, openrouter, groq and
-  deepseek when OPENAI_API_KEY, FIREWORKS_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY or DEEPSEEK_API_KEY is set; and
-  those of "providers" in the config file ([{"name", "api", "base_url", "key_env", "models"}], api openai or
-  openai_responses; one with key_env only when that variable is set). FINN_PROVIDER is the provider of a session that
-  names none (finn --provider names one); PATCH {"provider", "model"} moves a session to another.
-  Logins: finn login (or /login in finn tui) checks a key with GET /models at the provider and stores it in
-  $XDG_CONFIG_HOME/finn/auth.json (else ~/.config/finn/auth.json), mode 0600; a file others may read, or of another
-  user, is not used. The key variable wins over a stored key. finn logout [NAME] removes stored keys.
+  refused). FINN_MCP_CONFIG names a JSON file of MCP servers ({"mcpServers": {NAME: {"command", "args", "env"} or
+  {"url", "headers"}}}): their tools are mcp__NAME__TOOL and ask before each call. A server on stdio gets the short
+  environment of bash plus its "env", which is passed on as given (put the keys it needs there); a slow server's tools
+  come once it lists them, from the next turn. Skills (SKILL.md folders under .finn/skills, .agents/skills and
+  .claude/skills) come from the home folder, and from the session folder only when it is under a folder of
+  FINN_TRUSTED_DIRS (separated by :); the model loads one with activate_skill, the user with /name in a message. The
+  catalog of models.dev (FINN_MODELS_URL, "off" for none), loaded at the start and kept a day in models.json of the
+  state folder, gives each usage event its cost in USD (FINN_MODELS_PROVIDER names the provider there; by default
+  anthropic for that API, else openai). Approvals: off by default, so the model runs any command and edits any file
+  that no deny rule refuses, without asking (use a sandbox or a container). FINN_APPROVALS=1 (finn serve --approvals),
+  or "approvals": true in the user's config file, turns them on; FINN_APPROVALS=0 keeps them off over the file, and a
+  project file cannot change them. The deny rules always count; the allow rules, the answers and accept_edits only with
+  the approvals on. The rules {"allow": [...], "deny": [...]} come from FINN_CONFIG, else
+  $XDG_CONFIG_HOME/finn/config.json, else ~/.config/finn/config.json, and from .finn/config.json of the session folder
+  (its deny rules always; its allow rules under a folder of FINN_TRUSTED_DIRS). A bash command that only reads inside
+  the folder runs without asking. An answer may allow the same call (allow_session), the bash commands with the same
+  first words (allow_prefix) or the whole tool (allow_tool) for the session, until the server restarts; PATCH
+  {"accept_edits": true} runs the edits of files without asking. None of them reaches into .git/. The deny rules are
+  checked first, as far as the parser sees a command (best effort, not a sandbox); while a read_file deny rule exists,
+  only the same bash call is allowed again. Providers: local (FINN_BASE_URL with FINN_API_KEY) and anthropic always;
+  openai, fireworks, openrouter, groq and deepseek when OPENAI_API_KEY, FIREWORKS_API_KEY, OPENROUTER_API_KEY,
+  GROQ_API_KEY or DEEPSEEK_API_KEY is set; and those of "providers" in the config file ([{"name", "api", "base_url",
+  "key_env", "models"}], api openai or openai_responses; one with key_env only when that variable is set).
+  FINN_PROVIDER is the provider of a session that names none (finn --provider names one); PATCH {"provider", "model"}
+  moves a session to another. Logins: finn login (or /login in finn) checks a key with GET /models at the provider
+  and stores it in $XDG_CONFIG_HOME/finn/auth.json (else ~/.config/finn/auth.json), mode 0600; a file others may read,
+  or of another user, is not used. The key variable wins over a stored key. finn logout [NAME] removes stored keys.
 TEXT
 
 enum Command
