@@ -1,4 +1,6 @@
+import Protocol from "pkg/protocol/protocol"
 import Footer from "../src/footer"
+import Width from "../src/width"
 
 # Counts round to the unit shown and never show four digits of one; a cost under a tenth of a cent says so, and a
 # huge one is capped; home with a trailing slash is still `~`.
@@ -14,4 +16,30 @@ def test_counts_and_costs_round_to_what_is_shown() -> Result[Void]
   )
 
   Test.eq(Footer.place("/home/ana", "/home/ana/", "", "", 20).strip, "~")
+end
+
+# At 80 columns a long model name keeps its place: the counts lose the part cached, the window and the cache read
+# first, then the model is cut; two cells always stand between the left part and the model.
+def test_a_narrow_row_drops_counts_before_the_model() -> Result[Void]
+  used = Protocol.Usage(
+    input: 1200,
+    output: 340,
+    cache_read: 3600,
+    cache_write: 0,
+    context: 4800,
+    session_cost: some(0.0125),
+    window: some(32_000),
+    call_output: some(40),
+  )
+
+  model = Footer.model("anthropic/claude-sonnet-4-5-20250929", some("high"))
+  hints = ["Enter send", "Esc stop"]
+  row = Footer.status(["ready"], some(used), hints, model, 80)
+  try Test.eq(row, " ready · ↑4.8k ↓40 R3.6k $0.013   (anthropic) claude-sonnet-4-5-20250929 · high ")
+  wide = Footer.status(["ready"], some(used), hints, model, 140)
+  try Test.assert(wide.include?("R3.6k 75% cached $0.013 15.0%/32k · Enter send"), wide)
+  narrow = Footer.status(["ready"], some(used), hints, model, 50)
+  try Test.eq(narrow, " ready · ↑4.8k ↓40 $0.013  (anthropic) claude-so… ")
+  try Test.eq(Footer.status(["ready"], none, hints, "(local) m", 31), " ready · Enter send  (local) m ")
+  Test.eq([row, narrow].map { |r| Width.text(r) }, [80, 50])
 end
