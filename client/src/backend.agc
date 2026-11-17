@@ -28,6 +28,9 @@ struct Backend
   list_logins: Fn[Result[Protocol.LoginList]]
   login: Fn[String, String, Result[Protocol.LoginStatus]]
   login_url: Fn[String, String, Result[Protocol.LoginStatus]]
+  ## A device login (ChatGPT): its start, and where it is.
+  device_start: Fn[String, Result[Protocol.DeviceLogin]]
+  device_state: Fn[String, Result[Protocol.DeviceState]]
   logout: Fn[Optional[String], Result[Void]]
   skip_login: Fn[Result[Void]]
   ## The server is still the one of this version, before its stream is read again.
@@ -61,6 +64,8 @@ def http_backend(server: Http.Server) -> Backend
     list_logins: -> { Http.list_logins(server) },
     login: ->(provider, key) { Http.login(server, provider, key) },
     login_url: ->(provider, url) { Http.login_url(server, provider, url) },
+    device_start: ->(provider) { Http.device_start(server, provider) },
+    device_state: ->(provider) { Http.device_state(server, provider) },
     logout: ->(provider) { Http.logout(server, provider) },
     skip_login: -> { Http.skip_login(server) },
     recheck: -> { Discovery.recheck(server) },
@@ -95,6 +100,8 @@ def unreachable_backend() -> Backend
     list_logins: -> { failed() },
     login: ->(_provider, _key) { failed() },
     login_url: ->(_provider, _url) { failed() },
+    device_start: ->(_provider) { failed() },
+    device_state: ->(_provider) { failed() },
     logout: ->(_provider) { failed() },
     skip_login: -> { failed() },
     recheck: -> { failed() },

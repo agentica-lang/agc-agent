@@ -16,7 +16,7 @@ def test_a_login_checks_the_key_stores_it_privately_and_offers_the_provider() ->
     listed = try Protocol.decode_login_list((try H.get(h, Protocol.AUTH_PATH)).text)
     try Test.eq(
       listed.providers.map { |p| "#{p.name} #{p.from} #{p.coming}" },
-      ["paid  false", "claude  true", "chatgpt  true"],
+      ["paid  false", "claude  true"],
     )
 
     try Test.eq(listed.first, true)

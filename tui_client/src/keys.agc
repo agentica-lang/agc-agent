@@ -28,6 +28,8 @@ def keyed(app: State.Model, event: TUI.Event) -> State.Model
     return Logins.on_secret_key(app, name, event) if not State.ctrl_c?(event)
   end
 
+  return Logins.on_device_key(app, event) if app.device.some? and not State.ctrl_c?(event)
+
   for picker in State.option_list(app.picker)
     return Commands.on_picker_key(app, picker, event) if not State.ctrl_c?(event)
   end

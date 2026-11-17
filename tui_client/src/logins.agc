@@ -72,6 +72,48 @@ def on_secret_key(app: State.Model, name: String, event: TUI.Event) -> State.Mod
   end
 end
 
+## While a device login waits, Esc stops waiting for it; other keys do nothing.
+def on_device_key(app: State.Model, event: TUI.Event) -> State.Model
+  case event
+    TUI.Event.Key(TUI.Key.Escape, _) ->
+      stopped = app.with(device: none, device_serial: app.device_serial + 1)
+      login_closed(State.noted(stopped, "the login of #{app.device_for} is cancelled"))
+    _ -> app
+  end
+end
+
+## The device login started: the user opens its URL and types its code, while the server waits; the app asks where
+## it is every `DEVICE_POLL_MS`.
+def device_started(app: State.Model, name: String, serial: Int, result: Result[Protocol.DeviceLogin]) -> State.Model
+  return app if serial != app.device_serial
+
+  case result
+    ok(device) ->
+      minutes = device.expires_in / 60
+      shown = State.noted(
+        app.with(device: some(device), device_for: name),
+        "open #{device.url} and enter the code #{device.user_code} (within #{minutes} min): Esc cancels",
+      )
+
+      State.effect(shown, poll(app, name, serial))
+    error(e) -> ended(State.noted(app, "error: #{e.message}"), false)
+  end
+end
+
+def device_polled(app: State.Model, name: String, serial: Int, result: Result[Protocol.DeviceState]) -> State.Model
+  return app if serial != app.device_serial or app.device.none?
+
+  stopped = app.with(device: none, device_serial: serial + 1)
+  case result
+    ok(state) if state.state == Protocol.DEVICE_WAITING -> State.effect(app, poll(app, name, serial))
+    ok(state) if state.state == Protocol.DEVICE_DONE -> ended(moved(stopped, name, "#{name} is set up"), true)
+    ok(state) if state.state == Protocol.DEVICE_FAILED ->
+      ended(State.noted(stopped, "error: the login of #{name} failed: #{state.message}"), false)
+    ok(_) -> ended(State.noted(stopped, "error: the login of #{name} is no longer waited for"), false)
+    error(e) -> ended(State.noted(stopped, "error: #{e.message}"), false)
+  end
+end
+
 def logged_in(app: State.Model, name: String, result: Result[Protocol.LoginStatus]) -> State.Model
   done = case result
     ok(status) if status.asks == Protocol.ASKS_URL and status.from == "env" ->
@@ -83,8 +125,13 @@ def logged_in(app: State.Model, name: String, result: Result[Protocol.LoginStatu
     error(e) -> State.noted(app, "error: #{e.message}")
   end
 
-  return done.with(first_login: false) if not app.login_only
-  return done.with(exit: some(0)) if result.ok?
+  ended(done, result.ok?)
+end
+
+## The end of a login: `finn login` exits with its status; the first-start offer is not made again.
+def ended(done: State.Model, succeeded: Bool) -> State.Model
+  return done.with(first_login: false) if not done.login_only
+  return done.with(exit: some(0)) if succeeded
 
   done.with(exit: some(1))
 end
@@ -106,6 +153,7 @@ end
 private
 
 LOCAL = "local"
+DEVICE_POLL_MS = 2000
 
 # A session on `local` (the fallback of a first start) is offered the models of the provider just set up, in the
 # picker: Enter moves it there from the next turn, Esc keeps it on `local`, which may be on purpose. Another session
@@ -142,6 +190,8 @@ def named_login(app: State.Model, logins: List[Protocol.LoginStatus], name: Stri
   return login_closed(State.noted(app, "no login has that name: /login lists them")) if found.empty?
   return login_closed(State.noted(app, "#{found[0].label}: coming, there is no login for it yet")) if found[0].coming
 
+  return device_login(app, name) if found[0].asks == Protocol.ASKS_DEVICE
+
   if found[0].asks == Protocol.ASKS_URL
     asked = app.with(key_for: some(name), secret: "", asking_url: true)
     return State.noted(
@@ -151,6 +201,24 @@ def named_login(app: State.Model, logins: List[Protocol.LoginStatus], name: Stri
   end
 
   asking(app, name)
+end
+
+# A new device login drops the polls of one that still waits.
+def device_login(app: State.Model, name: String) -> State.Model
+  backend = app.backend
+  serial = app.device_serial + 1
+  starting = State.noted(app.with(device: none, device_serial: serial), "starting the login of #{name}")
+  State.effect(starting, TUI.Cmd.Run(-> { State.Msg.DeviceStarted(name, serial, backend.device_start.call(name)) }))
+end
+
+def poll(app: State.Model, name: String, serial: Int) -> TUI.Cmd[State.Msg]
+  backend = app.backend
+  TUI.Cmd.Run(
+    -> {
+      Task.sleep(DEVICE_POLL_MS)
+      State.Msg.DevicePolled(name, serial, backend.device_state.call(name))
+    },
+  )
 end
 
 def asking(app: State.Model, name: String) -> State.Model
