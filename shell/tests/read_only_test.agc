@@ -50,6 +50,7 @@ def test_injections_are_never_safe() -> Result[Void]
     "python3 -c x",
     "./script.sh",
     "/bin/ls",
+    "which -a /etc/passwd",
     "l* x",
     # find, sed, sort, uniq, rg, file.
     "find . -delete",
