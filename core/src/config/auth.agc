@@ -55,15 +55,20 @@ end
 ## the same folder, then renamed; an existing one is checked again (its mode may have changed since it was read) and
 ## replaced in one step, keeping its mode.
 def save(path: String, keys: Map[String, String], owner: Optional[Int]) -> Result[Void]
-  text = JSON.encode(JSON.object({"keys": JSON.from(keys)}))
   if File.stat(path).ok?
     for why in option_list(refusal(path, owner))
       return error(why)
     end
 
-    return File.replace(path, text.bytes)
+    return File.replace(path, JSON.encode(JSON.object({"keys": JSON.from(keys)})).bytes)
   end
 
+  create(path, keys)
+end
+
+## Writes `keys` to a new file at `path`, private from the start; `io.exists` when another process made one first.
+def create(path: String, keys: Map[String, String]) -> Result[Void]
+  text = JSON.encode(JSON.object({"keys": JSON.from(keys)}))
   parts = path.split("/")
   dir = parts.take(parts.size - 1).join("/")
   try Dir.mkdir(dir)

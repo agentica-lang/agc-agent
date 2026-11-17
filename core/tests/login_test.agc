@@ -6,7 +6,6 @@ import Protocol from "pkg/protocol/protocol"
 import Auth from "../src/config/auth"
 import Config from "../src/config/config"
 import Logins from "../src/config/logins"
-import Providers from "../src/config/providers"
 import Fake from "support/fake_llm"
 import H from "support/harness"
 
@@ -104,21 +103,20 @@ def test_a_redirect_at_the_check_is_not_followed() -> Result[Void]
   end
 end
 
-# The real setup of `Config.from_env_with`: on a server of the Anthropic API whose token comes from `ant`, a login
-# and a
-# logout build the providers without `ant` (which fails or hangs after the start here); each change reads the key
-# file again, so a key another process stored stays; a file opened to others since the start takes no key; Anthropic
-# takes a key too, and its token variable wins over a stored key.
+# The real setup of `Config.from_env_with`: on a server of the Anthropic API whose token comes from `ant`, a
+# login and a logout build the providers without `ant` (which fails or hangs after the start here); each change
+# reads the key file again, so a key another process stored stays; a file opened to others since the start takes
+# no key; Anthropic takes a key too, and its token variable wins over a stored key. A config entry that replaces
+# the `openrouter` preset keeps its check path. The create of a skip never writes over a file that is there.
 def test_a_login_on_the_real_setup_never_runs_ant_and_keeps_other_keys() -> Result[Void]
   fake = try Fake.start([
     try Fake.json(200, "openai_chat/models_small.json"),
     try Fake.json(200, "anthropic/models.json"),
-    try Fake.json(200, "openai_chat/models_small.json"),
   ])
 
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-logins-#{Random.int(0, 999999999)}"
   try Dir.mkdir("#{dir}/finn")
-  box = "{\"name\": \"box\", \"base_url\": \"#{fake.url}\", \"key_env\": \"BOX_KEY\"}"
+  box = "{\"name\": \"openrouter\", \"base_url\": \"#{fake.url}\", \"key_env\": \"BOX_KEY\"}"
   try File.write_text("#{dir}/finn/config.json", "{\"providers\": [#{box}]}")
   env = {"FINN_API": "anthropic", "ANTHROPIC_BASE_URL": fake.url, "XDG_CONFIG_HOME": dir}
   result = on_real_setup(fake, dir, env)
@@ -144,19 +142,20 @@ def on_real_setup(fake: Fake.Fake, dir: String, env: Map[String, String]) -> Res
   options = try Config.from_env_with(->(n) { from(env, n) }, ant)
   holder = Logins.start(options.providers, options.login)
   file = "#{dir}/finn/#{Auth.FILE}"
-  try Logins.login(holder, "box", "sk-box")
-  try Test.eq((try Logins.providers(holder)).has_key?("box"), true)
-  try File.write_text(file, "{\"keys\": {\"box\": \"sk-box\", \"else\": \"sk-else\"}}")
+  try Logins.login(holder, "openrouter", "sk-box")
+  try Test.eq((try Logins.providers(holder)).has_key?("openrouter"), true)
+  try File.write_text(file, "{\"keys\": {\"openrouter\": \"sk-box\", \"else\": \"sk-else\"}}")
   try Logins.login(holder, "anthropic", "sk-claude")
   try Test.eq((try File.read_text(file)).include?("sk-else"), true)
-  try Logins.logout(holder, some("box"))
-  try Test.eq((try Logins.providers(holder)).has_key?("box"), false)
+  try Logins.logout(holder, some("openrouter"))
+  try Test.eq((try Logins.providers(holder)).has_key?("openrouter"), false)
   try chmod("644", file)
   try Test.eq(error_kind(Logins.logout(holder, some("anthropic"))), Protocol.KIND_LOGIN_STORAGE)
   try Test.eq((try File.read_text(file)).include?("sk-claude"), true)
-  try Logins.check_key(Providers.Custom(name: "or", base_url: fake.url, check_path: "/key"), "sk-or")
-  seen = [try Fake.next_request(fake), try Fake.next_request(fake), try Fake.next_request(fake)]
-  try Test.eq(seen.map { |s| s.path }, ["/v1/models", "/v1/models", "/v1/key"])
+  try Test.eq(error_kind(Auth.create(file, {})), "io.exists")
+  try Test.eq((try File.read_text(file)).include?("sk-claude"), true)
+  seen = [try Fake.next_request(fake), try Fake.next_request(fake)]
+  try Test.eq(seen.map { |s| s.path }, ["/v1/key", "/v1/models"])
   Logins.stop(holder)
   try Test.eq(calls.recv(1000), ok(1))
   try calls.send(1, 0)

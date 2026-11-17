@@ -5,6 +5,7 @@ import Fake from "fake_server"
 
 READ_MS = 10_000
 EXIT_MS = 15_000
+COMPILE_MS = 120_000
 ENTRIES = ["main.agc", "cli/main.agc"]
 CORES = ["../core/main.agc", "core/main.agc"]
 SETTINGS = [
@@ -89,13 +90,36 @@ def start(
   no_color: String = "1",
   chdir: String = ".",
   compiled: Bool = true,
+  extra: Map[String, String] = {},
 ) -> Result[Process]
   program = try program_words(ENTRIES, "CLI_BYTECODE", compiled)
   Process.spawn_captured(
     program[0],
     program.drop(1) + ["--state-dir", dir] + args,
-    Process.Options(env: environment(no_color, dir), chdir: chdir),
+    Process.Options(env: with_extra(environment(no_color, dir), extra), chdir: chdir),
   )
+end
+
+## The environment of a client on `dir` run from source with its own bytecode cache `build`, where the client and the
+## core are compiled first. A run from source with the test's home compiles again and rewrites the entry of the
+## package's `_build/`, which other tests read at the same time; compiled here, the client starts its server at once.
+def own_cache(dir: String, build: String) -> Result[Map[String, String]]
+  extra = {"AGENTICA_BUILD_DIR": build}
+  env = with_extra(environment("1", dir), extra)
+  for entries in [ENTRIES, CORES]
+    source = try Path.resolve(try existing(entries))
+    compile = try Process.spawn_captured(
+      binary(),
+      ["compile", source, "-o", "#{build}/warm.agcb"],
+      Process.Options(env: env),
+    )
+
+    code = try Process.wait(compile, COMPILE_MS)
+    Process.close(compile)
+    return error("compiling #{source} failed with #{code}") if code != 0
+  end
+
+  ok(extra)
 end
 
 ## `finn server ACTION` on `dir`; `command` is the server command it starts a server with (none: the action starts none).

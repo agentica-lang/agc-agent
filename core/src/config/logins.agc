@@ -218,10 +218,13 @@ end
 def skipped(state: State) -> Result[State]
   setup = try usable(state)
   path = try setup.path.to_result("there is no home folder for #{Auth.FILE}")
-  return ok(state.with(stored: state.stored.with(found: true))) if File.stat(path).ok?
+  found = state.with(stored: state.stored.with(found: true))
+  return ok(found) if File.stat(path).ok?
 
-  case Auth.save(path, {}, setup.owner)
-    ok(_) -> ok(state.with(stored: state.stored.with(found: true)))
+  # Never over a file another process made since the check above.
+  case Auth.create(path, {})
+    ok(_) -> ok(found)
+    error(e) if e.kind == "io.exists" -> ok(found)
     error(e) -> error("#{path} cannot be written: #{e.message}", kind: Protocol.KIND_LOGIN_STORAGE)
   end
 end
