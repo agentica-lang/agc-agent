@@ -46,7 +46,7 @@ Both clients show the call: the tool, its path or command, and what it would wri
 
 The [HTTP API](server.md#routes) takes two more answers:
 
-- `allow_prefix` ("always") allows, for each command of the line, the commands that start with the same words: those of OpenCode's table (`git log *`, `npm run dev *`, `docker compose up *`), else the first word (`ls *`). The request shows them. For a program that runs another one (`env`, `xargs`, `sudo`, `timeout`, a shell or an interpreter such as `python`) or an option among those words (`git -c x=y log`), it allows the same command only, and for a line that tree-sitter-bash cannot read clearly, the same call only.
+- `allow_prefix` ("always") allows, for each command of the line, the commands that start with the same words: those of OpenCode's table (`git log *`, `npm run dev *`, `docker compose up *`), else the first word (`ls *`). The request shows them. For a program that runs another one (`env`, `xargs`, `sudo`, `timeout`, a shell or an interpreter such as `python`), an option or a glob character among those words (`git -c x=y log`), or an assignment or a redirection before the name (`FOO=1 rm x`), it allows the same command only, and for a line that tree-sitter-bash cannot read clearly, the same call only.
 - `allow_tool` allows every call of the tool.
 
 The accept-edits mode (`PATCH /v1/sessions/ID` with `{"accept_edits": true}`) runs the calls of `write_file`, `edit_file` and `apply_patch` without asking.
@@ -93,4 +93,4 @@ A `!` command in the clients follows the same rules as a call of `bash`; it neve
 
 ## What rules cannot do
 
-Rules are a convenience, not a sandbox. The rules of `read_file`, `edit_file` and `write_file` do not cover `bash`: `read_file(.env)` does not stop `cat .env`. A `bash` deny rule does not see a command written another way (`sudo rm x`, `/bin/rm x`, `sh -c 'rm x'`), and `bash(git *)` allows `git -c core.fsmonitor=./x.sh status`, which runs `x.sh`. Until the OS sandbox ([#213](https://github.com/agentica-lang/agc-agent/issues/213)) lands, run Finn in a sandbox or a container to keep the model in.
+Rules are a convenience, not a sandbox. The rules of `read_file`, `edit_file` and `write_file` do not cover `bash`: `read_file(.env)` does not stop `cat .env`. "Always" on `git diff` allows `git diff *`, which allows `git diff --output=../x`, which writes outside the folder. A `bash` deny rule does not see a command written another way (`sudo rm x`, `/bin/rm x`, `sh -c 'rm x'`), and `bash(git *)` allows `git -c core.fsmonitor=./x.sh status`, which runs `x.sh`. Until the OS sandbox ([#213](https://github.com/agentica-lang/agc-agent/issues/213)) lands, run Finn in a sandbox or a container to keep the model in.

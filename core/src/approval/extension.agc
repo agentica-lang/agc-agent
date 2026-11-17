@@ -16,7 +16,7 @@ struct Approvals
 end
 
 ## The extension of a session in `root`: `Approval.DEFAULTS`, then the server's `rules`, then those of the project file
-## (its allow rules only when `trusted`).
+## (all of them when `trusted`, else only its deny rules).
 def open(rules: Approval.Rules, root: String, trusted: Bool, asking: Bool) -> Result[Approvals]
   defaults = try Approval.parse_rules(Approval.DEFAULTS)
   all = try Permissions.with_project(Approval.Rules(all: defaults.all + rules.all), root, trusted)

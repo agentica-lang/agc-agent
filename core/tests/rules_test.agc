@@ -84,8 +84,9 @@ def test_a_glob_matches_the_whole_text() -> Result[Void]
   ok()
 end
 
-# The arity table picks the words an "always" answer keeps; a command that runs another program or an option among
-# those words keeps the whole text.
+# The arity table picks the words an "always" answer keeps. A command that runs another program, that does not start
+# with its name (an assignment or a redirection first), or whose words hold an option or a glob character keeps its
+# exact text.
 def test_always_keeps_the_words_of_the_arity_table() -> Result[Void]
   rows = [
     [["git", "checkout", "main"], ["git", "checkout"]],
@@ -103,12 +104,15 @@ def test_always_keeps_the_words_of_the_arity_table() -> Result[Void]
   end
 
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
-  always = ->(command: String) { Shell.scan(root, command).always.map { |r| r.pattern } }
+  always = ->(command: String) { Shell.scan(root, command).always.map { |r| shown(r) } }
   try Test.eq(always.call("git status --short"), ["git status *"])
-  try Test.eq(always.call("LANG=C ls -la | wc -l"), ["ls *", "wc *"])
+  try Test.eq(always.call("LANG=C ls -la | wc -l"), ["exact LANG=C ls -la", "wc *"])
   try Test.eq(always.call("cd sub && make test"), ["make test *"])
-  for command in ["git -c a=b log", "sudo rm x", "env A=1 make", "xargs rm", "timeout 5 make", "export A=1"]
-    try Test.eq(always.call(command), [command])
+  for command in [
+    "git -c a=b log", "sudo rm x", "env A=1 make", "xargs rm", "timeout 5 make", "export A=1", "FOO=1 rm x",
+    ">log rm x", "npm run t?st",
+  ]
+    try Test.eq(always.call(command), ["exact #{command}"])
   end
 
   ok()
@@ -171,4 +175,12 @@ def test_an_untrusted_project_ask_cannot_weaken_a_user_deny() -> Result[Void]
   hidden = Extension.hidden?(a, "key.pem")
   _ = Path.remove(dir)
   Test.eq([rm.to_s, hidden.to_s], ["Verdict.Deny", "true"])
+end
+
+private
+
+def shown(r: Shell.Resource) -> String
+  return "exact #{r.pattern}" if r.literal
+
+  r.pattern
 end

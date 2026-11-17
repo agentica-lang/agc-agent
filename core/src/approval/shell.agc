@@ -1,8 +1,8 @@
-## What a `bash` command asks for, found as OpenCode's shell tool finds it (v1.19.5, packages/opencode/src/tool/shell.ts,
-## MIT, see THIRD_PARTY_NOTICES): each command of the line (tree-sitter-bash, the `bash` package) by its text, and the
-## folders outside the session folder that a command of `FILES` names (`external_directory`, `FOLDER/*`). A path with
-## `$` or a backtick is not followed. `cd` changes nothing for the commands after it: paths are read from the session
-## folder.
+## What a `bash` command asks for, found as OpenCode's shell tool finds it (v1.19.5,
+## packages/opencode/src/tool/shell.ts, MIT, see THIRD_PARTY_NOTICES): each command of the line (tree-sitter-bash, the
+## `bash` package) by its text, and the folders outside the session folder that a command of `FILES` names
+## (`external_directory`, `FOLDER/*`). A path with `$` or a backtick is not followed. `cd` changes nothing for the
+## commands after it: paths are read from the session folder.
 
 import Bash from "pkg/bash/bash"
 import Arity from "arity"
@@ -22,7 +22,8 @@ struct Scan
   clear: Bool
   asked: List[Resource]
   ## What an "always" answer allows: for each command its first words (`Arity`) and ` *`, or its whole text when it
-  ## runs another program (`RUNNERS`) or when those words hold an option (`git -c x=y log`).
+  ## runs another program (`RUNNERS`), when it does not start with its name (`FOO=1 rm x`, which a pattern of the
+  ## words would not match) or when those words hold an option or a glob character (`git -c x=y log`, `npm run t?st`).
   always: List[Resource]
 end
 
@@ -73,10 +74,10 @@ end
 
 def always(text: String, tokens: List[String]) -> Resource
   exact = Resource(tool: "bash", pattern: text, literal: true)
-  return exact if tokens.empty? or RUNNERS.include?(tokens[0])
+  return exact if tokens.empty? or RUNNERS.include?(tokens[0]) or not text.start_with?(tokens[0])
 
   words = Arity.prefix(tokens)
-  return exact if (words.any? { |w| w.start_with?("-") })
+  return exact if (words.any? { |w| w.start_with?("-") or w.include?("*") or w.include?("?") or w.include?("[") })
 
   Resource(tool: "bash", pattern: "#{words.join(" ")} *")
 end
