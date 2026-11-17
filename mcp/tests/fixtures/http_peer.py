@@ -7,8 +7,10 @@ TOKEN` gets 401.
 `initialize` gets JSON and a new session id; every later request needs that id (400 without one, 404 for an unknown
 one) and the protocol version. `tools/list` gets an SSE stream: a notification, a `ping` request of the server, then
 the answer. The tools: `echo` (JSON), `cut` (an SSE stream that closes after one event, resumed by a GET with
-`Last-Event-ID`), `big` (an SSE event of 100000 bytes), `hang` (no answer) and `expire` (answers, then ends the
-session). A GET without `Last-Event-ID` gets 405, and DELETE ends the session.
+`Last-Event-ID`), `big` (an SSE event of 100000 bytes), `hang` (no answer), `expire` (answers, then ends the
+session) and `once` (ends the session, then sends one event with an id and closes the stream: its resume gets 404).
+A GET without `Last-Event-ID` gets 405, and DELETE ends the session. `X-Peer-Version` on `initialize` is the
+protocol version it answers.
 """
 
 import json
@@ -19,7 +21,7 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 VERSION = "2025-06-18"
-TOOLS = ["echo", "cut", "big", "hang", "expire"]
+TOOLS = ["echo", "cut", "big", "hang", "expire", "once"]
 LOCK = threading.Lock()
 SESSIONS = set()
 PENDING = {}
@@ -93,7 +95,7 @@ class Handler(BaseHTTPRequestHandler):
             session = f"session-{COUNTER[0]}"
             SESSIONS.add(session)
         result = {
-            "protocolVersion": VERSION,
+            "protocolVersion": self.headers.get("X-Peer-Version", VERSION),
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "peer", "version": "1"},
         }
@@ -119,6 +121,11 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 SESSIONS.discard(session)
             return self.json(answer(message, text_result("expired")))
+        if name == "once":
+            with LOCK:
+                SESSIONS.discard(session)
+            progress = {"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progress": 1}}
+            return self.events([(f"{session}-once-1", progress)])
         return self.json({"jsonrpc": "2.0", "id": message["id"], "error": {"code": -32602, "message": "no tool"}})
 
     def authorized(self):

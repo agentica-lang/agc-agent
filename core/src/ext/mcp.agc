@@ -19,6 +19,7 @@ CONFIG_ENV = "FINN_MCP_CONFIG"
 NAME = /\A[A-Za-z0-9_-]{1,64}\z/
 ENV_NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/
 HEADER_NAME = /\A[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}\z/
+LOOPBACK_V4 = /\A127(\.[0-9]{1,3}){3}\z/
 ## The headers that the transport sets.
 OWN_HEADERS = [
   "accept", "connection", "content-length", "content-type", "host", "last-event-id", "mcp-protocol-version",
@@ -236,6 +237,9 @@ def remote(name: String, url: String, json: JSON.Value, read: Fn[String, Result[
     return error("#{CONFIG_ENV}: the url of #{name} is not http:// or https://")
   end
 
+  authority = url.split("://")[1].split("/")[0].split("?")[0].split("#")[0]
+  return error("#{CONFIG_ENV}: the url of #{name} has a user (put a key in headers)") if authority.include?("@")
+
   headers: Map[String, String] = {}
   case JSON.node(JSON.get(json, "headers").unwrap_or(JSON.object({})))
     JSON.Node.Object(given) ->
@@ -251,7 +255,24 @@ def remote(name: String, url: String, json: JSON.Value, read: Fn[String, Result[
     _ -> return error("#{CONFIG_ENV}: headers of #{name} is not an object")
   end
 
+  if not headers.empty? and url.start_with?("http://") and not loopback?(authority)
+    return error(
+      "#{CONFIG_ENV}: #{name} sends headers in clear text: its url is http:// to another host than this one",
+    )
+  end
+
   ok(Mcp.Server(name: name, url: url, headers: headers))
+end
+
+def loopback?(authority: String) -> Bool
+  host = authority.downcase
+  if host.start_with?("[")
+    host = host.split("]")[0] + "]"
+  else
+    host = host.split(":")[0]
+  end
+
+  host == "localhost" or host == "[::1]" or Regex.match?(host, LOOPBACK_V4)
 end
 
 # `${NAME}` becomes the variable of that name, which must be set. The value never goes into an error.

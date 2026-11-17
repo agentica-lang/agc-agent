@@ -4,8 +4,8 @@
 ## use and again after it failed.
 ##
 ## Errors: `mcp.unavailable` (the server did not start, exited, could not be reached, answered nothing in time or
-## broke the protocol: it is stopped, and the next use starts it again) and `mcp.rpc` (the server answered with a JSON-RPC error, its code as
-## `code`). A tool that fails says so in `Output.is_error`, not as an error.
+## broke the protocol: it is stopped, and the next use starts it again) and `mcp.rpc` (the server answered with a
+## JSON-RPC error, its code as `code`). A tool that fails says so in `Output.is_error`, not as an error.
 
 import Conn from "src/client"
 import Rpc from "src/rpc"

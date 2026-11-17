@@ -9,10 +9,12 @@ import SSE from "pkg/sse/sse"
 import Rpc from "rpc"
 
 UNAVAILABLE = "mcp.unavailable"
-## The server ended the session (404): a new one starts with `initialize`.
+## The server ended the session (404) before it took the request: a new one starts with `initialize`, and the request
+## can be sent again.
 EXPIRED = "mcp.expired"
 MAX_RESUMES = 3
-MAX_SESSION_ID = 1024
+## The longest session id or event id taken.
+MAX_ID = 1024
 DELETE_MS = 2000
 
 ## A session with one server.
@@ -44,19 +46,20 @@ def open(
   end
 
   result = try answer(link, http, id, "initialize", deadline)
+  ready = link.with(session: session, version: Rpc.PROTOCOL_VERSION)
   version = Rpc.version(result)
-  if version.empty?
-    version = Rpc.PROTOCOL_VERSION
+  if version != Rpc.PROTOCOL_VERSION
+    close(ready)
+    return error("mcp: the server speaks MCP #{version.inspect}, not #{Rpc.PROTOCOL_VERSION}", kind: UNAVAILABLE)
   end
 
-  ready = link.with(session: session, version: version)
   finish(try post(ready, Rpc.notification("notifications/initialized"), "initialized", deadline))
   ok(ready)
 end
 
 ## Sends a request and gives its answer.
 def exchange(link: Link, id: Int, method: String, params: JSON.Value, deadline: Int) -> Result[JSON.Value]
-  answer(link, try post(link, Rpc.request(id, method, params), method, deadline), id, method, deadline)
+  answer(link, try post(link, Rpc.request(id, method, params), method, deadline, true), id, method, deadline)
 end
 
 ## Ends the session, if the server gave one; a failure is ignored.
@@ -90,26 +93,36 @@ def own(link: Link, accept: String) -> List[HTTP.Header]
   headers
 end
 
-def post(link: Link, body: String, method: String, deadline: Int) -> Result[HTTP.Stream]
+# `own_request`: the body is the request whose answer is awaited, so a 404 means that the server did not take it.
+def post(link: Link, body: String, method: String, deadline: Int, own_request: Bool = false) -> Result[HTTP.Stream]
   headers = link.headers + own(link, "application/json, text/event-stream")
   headers = headers.push(HTTP.Header(name: "Content-Type", value: "application/json"))
-  opened(link, HTTP.open("POST", link.url, body.bytes, headers, options(try left(deadline, method))), method)
+  opened(
+    link,
+    HTTP.open("POST", link.url, body.bytes, headers, options(try left(deadline, method))),
+    method,
+    own_request,
+  )
 end
 
 # A GET that resumes the stream after the event `last`.
 def resume(link: Link, last: String, method: String, deadline: Int) -> Result[HTTP.Stream]
   headers = link.headers + own(link, "text/event-stream")
   headers = headers.push(HTTP.Header(name: "Last-Event-ID", value: last))
-  opened(link, HTTP.open("GET", link.url, "".bytes, headers, options(try left(deadline, method))), method)
+  opened(link, HTTP.open("GET", link.url, "".bytes, headers, options(try left(deadline, method))), method, false)
 end
 
-def opened(link: Link, result: Result[HTTP.Stream], method: String) -> Result[HTTP.Stream]
-  http = try down(result, method)
+def opened(link: Link, result: Result[HTTP.Stream], method: String, own_request: Bool) -> Result[HTTP.Stream]
+  http = try down(link, result, method)
   status = http.status
   return ok(http) if status >= 200 and status < 300
 
   finish(http)
-  return error("mcp: the session ended (#{method})", kind: EXPIRED) if status == 404 and not link.session.empty?
+  if status == 404 and not link.session.empty?
+    return error("mcp: the session ended (#{method})", kind: EXPIRED) if own_request
+
+    return error("mcp: the session ended while #{method} ran", kind: UNAVAILABLE)
+  end
 
   error("mcp: the server answered HTTP #{status} (#{method})", kind: UNAVAILABLE)
 end
@@ -159,13 +172,14 @@ def events_answer(link: Link, http: HTTP.Stream, id: Int, method: String, deadli
       stream = try resume(link, last, method, deadline)
     end
 
-    read = read_events(link, stream, id, method, deadline)
+    read = read_events(link, stream, id, method, last, deadline)
     finish(stream)
     case try read
       Read.Answer(incoming) -> return Rpc.outcome(incoming)
-      Read.Ended(id_seen) if not id_seen.empty? -> last = id_seen
-      Read.Ended(_) -> break
+      Read.Ended(seen) -> last = seen
     end
+
+    break if last.empty?
   end
 
   error("mcp: the stream of #{method} ended before its answer", kind: UNAVAILABLE)
@@ -173,9 +187,10 @@ end
 
 # One stream up to the answer or its end: a request of the server gets its answer in a POST of its own, and a
 # notification is skipped.
-def read_events(link: Link, http: HTTP.Stream, id: Int, method: String, deadline: Int) -> Result[Read]
+# `before` is the event id of the streams before, kept until an event gives another.
+def read_events(link: Link, http: HTTP.Stream, id: Int, method: String, before: String, deadline: Int) -> Result[Read]
   parser = SSE.parser(link.max_bytes)
-  last = ""
+  last = before
   while true
     piece = try next_piece(http, method, deadline)
     return ok(Read.Ended(last)) if piece.none?
@@ -183,7 +198,10 @@ def read_events(link: Link, http: HTTP.Stream, id: Int, method: String, deadline
     fed = try protocol(SSE.feed(parser, piece.unwrap!), method)
     parser = fed.parser
     for event in fed.events
-      last = event.id
+      if not event.id.empty? and event.id.bytesize <= MAX_ID
+        last = event.id
+      end
+
       case Rpc.parse(event.data)
         ok(incoming) if Rpc.answers?(incoming, id) -> return ok(Read.Answer(incoming))
         ok(incoming) if not incoming.method.empty? and incoming.id.some? -> try reply(link, incoming, method, deadline)
@@ -238,17 +256,22 @@ def options(wait: Int) -> HTTP.ClientOptions = HTTP.ClientOptions(timeout_ms: wa
 
 # Visible ASCII only, as the spec asks, or none at all.
 def session_id?(session: String) -> Bool
-  return false if session.bytesize > MAX_SESSION_ID
+  return false if session.bytesize > MAX_ID
 
   session.bytes.to_a.all? { |b| b >= 33 and b <= 126 }
 end
 
-def down[T](result: Result[T], method: String) -> Result[T]
+# The error of std/http, without the query of the url, which can hold a key.
+def down[T](link: Link, result: Result[T], method: String) -> Result[T]
   case result
     ok(value) -> ok(value)
-    error(e) -> error("mcp: the server cannot be reached (#{method}): #{e.message}", kind: UNAVAILABLE, cause: e)
+    error(e) ->
+      message = e.message.replace(link.url, shown(link.url))
+      error("mcp: the server cannot be reached (#{method}): #{message}", kind: UNAVAILABLE)
   end
 end
+
+def shown(url: String) -> String = url.split("#")[0].split("?")[0]
 
 def protocol[T](result: Result[T], method: String) -> Result[T]
   case result

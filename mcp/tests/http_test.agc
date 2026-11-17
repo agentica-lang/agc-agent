@@ -15,7 +15,7 @@ def test_lists_and_calls_tools_over_http() -> Result[Void]
     expired = Mcp.call(client, "expire", JSON.object({}))
     again = Mcp.call(client, "echo", JSON.object({"text": JSON.from("again")}))
     Mcp.stop(client)
-    try Test.eq(names, ["echo", "cut", "big", "hang", "expire"])
+    try Test.eq(names, ["echo", "cut", "big", "hang", "expire", "once"])
     try Test.eq(echo, ok(Mcp.Output(text: "hello", is_error: false)))
     try Test.eq(resumed, ok(Mcp.Output(text: "resumed", is_error: false)))
     try Test.eq(expired, ok(Mcp.Output(text: "expired", is_error: false)))
@@ -70,6 +70,40 @@ def test_limits_and_refusals_over_http() -> Result[Void]
     try Test.eq(again, ok(Mcp.Output(text: "back", is_error: false)))
     try Test.assert(refused.message.include?("401"), refused.message)
     Test.assert(not refused.message.include?(TOKEN), "the token is in the error")
+  end
+end
+
+# A session that ends after the server took the call fails the call and is not sent again: the next use starts a new
+# session. Another protocol version is refused, and the query of the url, which can hold a key, is in no error.
+def test_a_call_the_server_took_is_never_sent_twice() -> Result[Void]
+  within_peer do |peer|
+    client = Mcp.start(server(peer, TOKEN))
+    once = Mcp.call(client, "once", JSON.object({}))
+    again = Mcp.call(client, "echo", JSON.object({"text": JSON.from("back")}))
+    Mcp.stop(client)
+    other = Mcp.start(
+      Mcp.Server(
+        name: "web",
+        url: peer.url,
+        headers: {"Authorization": "Bearer #{TOKEN}", "X-Peer-Version": "2099-01-01"},
+      ),
+    )
+
+    version = Mcp.tools(other)
+    Mcp.stop(other)
+    hidden = Mcp.start(Mcp.Server(name: "web", url: "http://127.0.0.1:1/mcp?key=#{TOKEN}"))
+    unreachable = Mcp.tools(hidden)
+    Mcp.stop(hidden)
+    seen = try requests(peer)
+    calls = seen.select { |r| r.method == "tools/call" and JSON.encode(r.body).include?("\"once\"") }
+    try Test.eq(kind_of(once), "mcp.unavailable")
+    try Test.eq(calls.size, 1)
+    try Test.eq(seen.select { |r| r.verb == "GET" }.map { |r| r.last_event_id }, ["session-1-once-1"])
+    try Test.eq(again, ok(Mcp.Output(text: "back", is_error: false)))
+    try Test.assert(kind_of(version) == "mcp.unavailable" and version.message.include?("2099-01-01"), version.message)
+    try Test.eq(seen.last.verb, "DELETE")
+    try Test.eq(kind_of(unreachable), "mcp.unavailable")
+    Test.assert(not unreachable.message.include?(TOKEN), unreachable.message)
   end
 end
 

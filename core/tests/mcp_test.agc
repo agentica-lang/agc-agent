@@ -176,6 +176,12 @@ def test_the_config_refuses_odd_http_servers() -> Result[Void]
       JSON.object({"url": url, "headers": JSON.object({"Authorization": JSON.from("Bearer ${UNSET_TOKEN}")})}),
       JSON.object({"url": url, "headers": JSON.object({"X-Key": JSON.from("#{TOKEN}\r\nX-Other: 1")})}),
       JSON.object({"url": url, "command": JSON.from("true")}),
+      JSON.object({"url": JSON.from("http://user:#{TOKEN}@127.0.0.1:1/mcp")}),
+      JSON.object({"url": JSON.from("http://example.com/mcp"), "headers": JSON.object({"X-Key": JSON.from("k")})}),
+      JSON.object({
+        "url": JSON.from("http://127.0.0.1.example.com/mcp"),
+        "headers": JSON.object({"X-Key": JSON.from("k")}),
+      }),
     ]
 
     for entry in odd
@@ -183,6 +189,16 @@ def test_the_config_refuses_odd_http_servers() -> Result[Void]
       listed = McpTools.servers(->(n) { config_env(dir, n) }, dir)
       try Test.assert(not listed.ok?, "taken: #{JSON.encode(entry)}")
       try Test.assert(not listed.message.include?(TOKEN), "the error shows the value")
+    end
+
+    allowed = ["https://example.com/mcp", "http://localhost:8080/mcp", "http://[::1]:1/mcp"]
+    for each in allowed
+      try write_config(
+        dir,
+        {"web": JSON.object({"url": JSON.from(each), "headers": JSON.object({"X-Key": JSON.from("k")})})},
+      )
+
+      try Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok?, "refused: #{each}")
     end
 
     ok()
@@ -218,7 +234,7 @@ def with_peer(dir: String, process: Process) -> Result[Void]
   McpTools.stop(started)
   try Test.eq(
     started.tools.map { |t| t.name },
-    ["mcp__web__echo", "mcp__web__cut", "mcp__web__big", "mcp__web__hang", "mcp__web__expire"],
+    ["mcp__web__echo", "mcp__web__cut", "mcp__web__big", "mcp__web__hang", "mcp__web__expire", "mcp__web__once"],
   )
 
   try Test.eq(verdicts, [Tools.Verdict.Allow, Tools.Verdict.Ask])
