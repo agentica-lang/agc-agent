@@ -161,6 +161,29 @@ def test_sessions_round_trip_idle_and_mid_turn() -> Result[Void]
   try Test.eq(Protocol.decode_session(Protocol.encode_session(idle)), ok(idle))
   shell = idle.with(shell_id: some("shell-1"))
   try Test.eq(Protocol.decode_session(Protocol.encode_session(shell)), ok(shell))
+  used = Protocol.Usage(
+    input: 9,
+    output: 4,
+    cache_read: 7,
+    cache_write: 1,
+    context: 17,
+    session_cost: some(0.5),
+    window: some(100),
+  )
+
+  try Test.eq(
+    Protocol.decode_session(Protocol.encode_session(idle.with(usage: some(used)))),
+    ok(idle.with(usage: some(used))),
+  )
+
+  plain = used.with(session_cost: none, window: none)
+  try Test.eq(
+    Protocol.decode_session(Protocol.encode_session(idle.with(usage: some(plain)))),
+    ok(idle.with(usage: some(plain))),
+  )
+
+  event = Protocol.Event.Usage(used)
+  try Test.eq(Protocol.decode_event("usage", Protocol.encode_event(event)), ok(event))
 
   running = try decode_fixture("session_mid_turn", &Protocol.decode_session, &Protocol.encode_session)
   try Test.eq(running.turn_id, some("t2"))
@@ -224,6 +247,8 @@ end
 def test_negative_numbers_are_refused() -> Result[Void]
   usage = "{\"input\": 1, \"output\": 1, \"cache_read\": 1, \"cache_write\": 1, \"context\": -1}"
   try Test.eq(error_kind(Protocol.decode_event("usage", usage)), "protocol.invalid")
+  windowed = "{\"input\": 1, \"output\": 1, \"cache_read\": 1, \"cache_write\": 1, \"context\": 1, \"window\": -1}"
+  try Test.eq(error_kind(Protocol.decode_event("usage", windowed)), "protocol.invalid")
   finished = "{\"call_id\": \"c\", \"ok\": true, \"summary\": \"\", \"duration_ms\": -5}"
   try Test.eq(error_kind(Protocol.decode_event("tool_finished", finished)), "protocol.invalid")
   started = "{\"turn_id\": \"t\", \"history_size\": -1}"

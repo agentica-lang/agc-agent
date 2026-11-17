@@ -1,5 +1,6 @@
 ## What the screen shows, top to bottom, each region apart: the transcript, the follow-ups waiting, the prompt between
-## two rules (or the session picker in its place), the panel under it (an approval) and the status line. `frame` places them on a screen of a size, `view` draws a
+## two rules (or the session picker in its place), the panel under it (an approval), the place row (folder, branch,
+## session) and the status line. `frame` places them on a screen of a size, `view` draws a
 ## frame as a view tree, and `hit` tells what a click at a cell of the same frame is on, so a click meets what was
 ## drawn. Pure.
 
@@ -11,8 +12,8 @@ import Theme from "theme"
 import Transcript from "transcript"
 import Width from "width"
 
-## The rows around the transcript: the editor between two rules, the panel under it, then the status line.
-CHROME = 3
+## The rows around the transcript: the editor between two rules, the panel under it, then the place and the status.
+CHROME = 4
 RULE = "─"
 LEAD = "── "
 
@@ -29,10 +30,12 @@ struct Parts
   status: String
   ## The messages waiting for the end of the turn, one row each above the editor.
   queued: List[String] = []
+  ## The row above the status: where the session is.
+  place: String = ""
 end
 
 ## Where each region is: `area` transcript rows (the `transcript` lines shown, from the top), the top rule, the
-## picker or else the prompt, the bottom rule, the `panel` rows and the status line.
+## picker or else the prompt, the bottom rule, the `panel` rows, the place and the status line.
 struct Frame
   width: Int
   height: Int
@@ -44,6 +47,7 @@ struct Frame
   picker: List[Layout.Row]
   prompt: Prompt.View
   panel: List[Layout.Row]
+  place: String
   status: String
 end
 
@@ -86,6 +90,7 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
     picker: picker,
     prompt: parts.prompt,
     panel: asked,
+    place: parts.place,
     status: parts.status,
   )
 end
@@ -102,9 +107,9 @@ def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
   top = TUI.line([TUI.span(rule_text(frame.label, frame.width), rule)])
   bottom = TUI.line([TUI.span(rule_text("", frame.width), rule)])
   panel = frame.panel.map { |row| panel_row(row, theme.panel) }
-  footer = TUI.line([TUI.span(frame.status, theme.footer.status)])
+  footer = [frame.place, frame.status].map { |text| TUI.line([TUI.span(text, theme.footer.status)]) }
   queued = frame.queued.map { |text| TUI.line([TUI.span(text, theme.transcript.notice)]) }
-  TUI.col(rows + blank + queued + [top] + editor + [bottom] + panel + [footer])
+  TUI.col(rows + blank + queued + [top] + editor + [bottom] + panel + footer)
 end
 
 def hit(frame: Frame, x: Int, y: Int) -> Hit

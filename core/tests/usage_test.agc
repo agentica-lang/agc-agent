@@ -1,8 +1,8 @@
 import Protocol from "pkg/protocol/protocol"
 import H from "support/harness"
 
-# Each `usage` has the call's input and cache counts, their sum as the context, and the session's output so far, which
-# goes on after a restart.
+# Each `usage` has the call's input and cache counts, their sum as the context, the session's output so far, which
+# goes on after a restart, and the model's window. The session keeps the last one for a client that attaches later.
 def test_usage_sums_the_output_of_the_session() -> Result[Void]
   setup = H.Setup(replies: ["write_file.sse", "text.sse", "text_cached.sse", "text.sse"])
   H.using(setup) do |h|
@@ -16,7 +16,10 @@ def test_usage_sums_the_output_of_the_session() -> Result[Void]
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
     try Test.eq(usages(a.seen), ["100 20 0 0 100", "22 31 0 0 22", "30 38 120 0 150"])
+    last = (try H.session(h, id)).usage
+    try Test.eq(last.map { |u| "#{u.input} #{u.output} #{u.cache_read} #{u.window}" }, some("30 38 120 some(1000000)"))
     H.restarted(h, setup, "") do |r|
+      try Test.eq((try H.session(r, id)).usage, last)
       b = try H.subscribe(r, id)
       _ = try H.send(r, id, "Once more.")
       b = try H.until(b, Protocol.EventKind.TurnFinished)

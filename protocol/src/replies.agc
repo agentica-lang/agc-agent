@@ -130,6 +130,8 @@ struct Session
   api: String = ""
   ## The `!` command that runs, none when none does.
   shell_id: Optional[String] = none
+  ## The `usage` of the last model call, none before one.
+  usage: Optional[Events.Usage] = none
 end
 
 ## A user message of `SessionTree`. `id` is its entry: a branch from it goes back before the message. `last` is the
@@ -270,6 +272,7 @@ def encode_session(reply: Session) -> String
       provider: some(reply.provider),
       api: some(reply.api),
       shell_id: reply.shell_id,
+      usage: Wire.field(reply.usage),
     ),
   )
 end
@@ -279,6 +282,10 @@ def decode_session(text: String) -> Result[Session]
   try Wire.non_negative("last_event_id", wire.last_event_id)
   try Wire.non_negative("turn_from_event_id", wire.turn_from_event_id.unwrap_or(0))
   try check_turn(wire)
+  for usage in Wire.option_list(Wire.optional(wire.usage))
+    try Events.check_usage(usage)
+  end
+
   history: List[Message] = []
   for item in wire.history
     history = history.push(Message(role: try parse_role(item.role), text: item.text))
@@ -300,6 +307,7 @@ def decode_session(text: String) -> Result[Session]
       provider: wire.provider.unwrap_or(""),
       api: wire.api.unwrap_or(""),
       shell_id: wire.shell_id,
+      usage: Wire.optional(wire.usage),
     ),
   )
 end
@@ -355,6 +363,7 @@ struct SessionWire
   provider: Optional[String] = none
   api: Optional[String] = none
   shell_id: Optional[String] = none
+  usage: JSON.Field[Events.Usage]
 end
 
 def check_turn(wire: SessionWire) -> Result[Void]

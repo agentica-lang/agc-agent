@@ -121,6 +121,8 @@ struct Usage
   cost: Optional[Float] = none
   turn_cost: Optional[Float] = none
   session_cost: Optional[Float] = none
+  ## The model's window in tokens, none while it is not known.
+  window: Optional[Int] = none
 end
 
 ## A message sent while the turn `turn_id` runs: the turn reads it before its next model call. `message_id` is the one
@@ -287,6 +289,7 @@ def encode_event(event: Event) -> String
         cost: Wire.field(data.cost),
         turn_cost: Wire.field(data.turn_cost),
         session_cost: Wire.field(data.session_cost),
+        window: Wire.field(data.window),
       )
 
       JSON.encode(wire)
@@ -369,6 +372,22 @@ def shape() -> List[String]
   records + values
 end
 
+## No count of `usage` is negative.
+def check_usage(usage: Usage) -> Result[Void]
+  for value in [
+    usage.input,
+    usage.output,
+    usage.cache_read,
+    usage.cache_write,
+    usage.context,
+    usage.window.unwrap_or(0),
+  ]
+    try Wire.non_negative("usage", value)
+  end
+
+  ok()
+end
+
 private
 
 struct ResolvedWire
@@ -386,6 +405,7 @@ struct UsageWire
   cost: JSON.Field[Float]
   turn_cost: JSON.Field[Float]
   session_cost: JSON.Field[Float]
+  window: JSON.Field[Int]
 end
 
 struct TurnStartedWire
@@ -461,13 +481,10 @@ def decode_usage(data: String) -> Result[Event]
     cost: Wire.optional(wire.cost),
     turn_cost: Wire.optional(wire.turn_cost),
     session_cost: Wire.optional(wire.session_cost),
+    window: Wire.optional(wire.window),
   )
 
-  try Wire.non_negative("input", usage.input)
-  try Wire.non_negative("output", usage.output)
-  try Wire.non_negative("cache_read", usage.cache_read)
-  try Wire.non_negative("cache_write", usage.cache_write)
-  try Wire.non_negative("context", usage.context)
+  try check_usage(usage)
   ok(Event.Usage(usage))
 end
 

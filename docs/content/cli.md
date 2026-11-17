@@ -106,4 +106,13 @@ The command runs as the `bash` tool would, with a timeout of 10 minutes. It neve
 
 The mouse answers the keys of a panel, opens a tool call or the thinking, and moves the cursor in the prompt.
 
+## Footer of the full screen
+
+The two rows under the prompt:
+
+- the session folder (`~` for your home), its git branch and the session's first message;
+- the status (`ready`, `YOLO`, `approval waiting`), the last model call and the key hints that fit, then the model and thinking level on the right.
+
+The last model call shows as `↑1.2k ↓340 R3.6k 75% cached $0.013 15.0%/32k`: the call's input tokens, the session's output tokens, the tokens read from the prompt cache and the part of the prompt they were, the session's cost (when the [catalog](providers.md) has prices), and the prompt as a part of the model's window (its size in tokens while the window is not known).
+
 In `finn chat`, answer an approval with `y`, `n` or `a` and Enter. The answers are on [Approvals and security](security.md#answer).
