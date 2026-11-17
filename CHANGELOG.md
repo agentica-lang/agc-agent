@@ -54,6 +54,9 @@
 
 ### Fixed
 
+- `finn`: Enter on the list after `/model `, `/resume `, `/tree `, `/fork `, `/profile ` or `/thinking ` runs the command with the row moved to, instead of opening a second list whose pick won; the list starts on the session's model or level.
+- A login offers a session on `local` the models of the provider it set up, so a first start no longer stays on a local server that does not answer; Esc keeps `local`.
+- `/model NAME` with a name only another provider lists names that provider's models instead of keeping the session on its provider with a wrong name.
 - A `!` command that a server restart cut ends as failed instead of running forever.
 - Esc stops the turn it was pressed for, never the next one.
 - `finn` stays fast with long pasted lines and long transcripts.

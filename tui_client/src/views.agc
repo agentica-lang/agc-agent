@@ -102,7 +102,7 @@ def approval_rows(app: State.Model, room: Int) -> List[Layout.Row]
   case Files.mention_list(app)
     some(found) ->
       choices = Files.mention_choices(app, found)
-      selected = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
+      selected = Files.selected_row(app, found, choices)
       Input.rows(choices, selected, Input.window(app.mention_top, selected, room, choices.size), app.width, room)
     none -> []
   end
