@@ -42,6 +42,7 @@ HINTS = [
   "^T show thinking",
   "^O show tool output",
   "@ files",
+  "/ commands (Esc Enter: as typed)",
   "↑ history",
   "PgUp/PgDn",
 ]
@@ -94,10 +95,12 @@ struct Model
   recall: Optional[Int] = none
   ## The large pastes behind the tokens of the prompt, until it is sent.
   pastes: List[String] = []
-  ## The files of the session's folder once read, the selected one of the `@` list, and the `@` that Esc closed.
+  ## The files of the session's folder once read, the selected one of the `@` or `/` list, the first one it shows, and
+  ## the word that Esc closed.
   files: Optional[List[String]] = none
   reading_files: Bool = false
   mention_selected: Int = 0
+  mention_top: Int = 0
   mention_closed: Optional[Int] = none
   ## Esc came before the turn of a message sent started: the turn stops once the reply says it did.
   stop_wanted: Bool = false
@@ -530,7 +533,7 @@ def on_key(app: Model, event: TUI.Event) -> Model
   return app if Approvals.captures?(app.approvals, event)
 
   for found in option_list(mention_list(app))
-    return on_mention_key(app, found, event) if mention_key?(event)
+    return on_mention_key(app, found, event) if mention_key?(app, found, event)
   end
 
   on_prompt_key(unselected(app, event), event)
@@ -590,6 +593,11 @@ def cursor(app: Model) -> Int = Prompt.clamp(app.prompt, app.cursor)
 def typed(app: Model, piece: String) -> Model
   at = cursor(app)
   edited = app.with(prompt: Prompt.insert(app.prompt, at, piece), cursor: at + piece.length, recall: none)
+  # A list Esc closed opens again for a new prompt.
+  if app.prompt == ""
+    edited = edited.with(mention_closed: none, mention_selected: 0, mention_top: 0)
+  end
+
   return edited if piece != "@" or edited.files.some? or edited.reading_files
 
   read_files(edited)
@@ -702,44 +710,79 @@ def under(root: String, path: String) -> String
   "#{root}/#{path}"
 end
 
-# The `@` list while the cursor ends an `@` word, the files are read and Esc did not close it.
+# The list under the editor: the commands while the prompt is `/` and part of a name that some command starts with,
+# else the files while the cursor ends an `@` word and the files are read; none once Esc closed it.
 def mention_list(app: Model) -> Optional[Input.Mention]
-  return none if app.files.none? or app.picker.some?
+  # A prompt Up recalled shows none: Up and Down go on through the history. Nor does a list without room, or under an
+  # approval, which takes the panel.
+  return none if app.picker.some? or app.recall.some? or not app.approvals.pending.empty? or list_room(app) <= 0
 
-  found = Input.mention(app.prompt, cursor(app))
+  found = Input.command_word(app.prompt, cursor(app))
+  if found.none? or mention_choices(app, found.unwrap!).empty?
+    found = none
+    if app.files.some?
+      found = Input.mention(app.prompt, cursor(app))
+    end
+  end
+
   return none if found.none? or app.mention_closed == some(found.unwrap!.start)
 
   found
 end
 
-def mention_key?(event: TUI.Event) -> Bool
+def mention_key?(app: Model, found: Input.Mention, event: TUI.Event) -> Bool
   case event
     TUI.Event.Key(TUI.Key.Tab, _) -> true
     TUI.Event.Key(TUI.Key.Up, _) -> true
     TUI.Event.Key(TUI.Key.Down, _) -> true
     TUI.Event.Key(TUI.Key.Escape, _) -> true
+    TUI.Event.Key(TUI.Key.Enter, mods) -> not mods.alt and completes?(app, found)
     _ -> false
   end
 end
 
-def mention_matches(app: Model, found: Input.Mention) -> List[String]
-  Input.matches(app.files.unwrap_or([]), found.query)
+# Enter on part of a command's name completes it as Tab does; on a whole name it runs the command, and after `/` alone
+# or under the file list it sends the prompt.
+def completes?(app: Model, found: Input.Mention) -> Bool
+  return false if found.source != Input.Source.Commands or found.query == ""
+
+  word = "/#{found.query}"
+  not mention_choices(app, found).any? { |choice| choice.value.strip == word }
 end
 
-# Tab puts the selected file in place of the `@` word, Up and Down move, Esc closes the list.
+# The rows under the editor that the list may take.
+def list_room(app: Model) -> Int
+  Screen.panel_room(app.height, Prompt.view(app.prompt, cursor(app), app.width, app.height).rows.size)
+end
+
+def mention_choices(app: Model, found: Input.Mention) -> List[Input.Choice]
+  case found.source
+    Input.Source.Commands -> Input.commands(Client.listed(), found.query)
+    Input.Source.Files ->
+      Input.matches(app.files.unwrap_or([]), found.query).map { |p| Input.Choice(value: p, label: p) }
+  end
+end
+
+# Tab, or Enter on part of a command name, puts the selected choice in place of the word; Up and Down move, Esc closes
+# the list.
 def on_mention_key(app: Model, found: Input.Mention, event: TUI.Event) -> Model
-  files = mention_matches(app, found)
-  selected = [[app.mention_selected, files.size - 1].min.unwrap!, 0].max.unwrap!
+  choices = mention_choices(app, found)
+  selected = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
   case event
-    TUI.Event.Key(TUI.Key.Up, _) -> app.with(mention_selected: [selected - 1, 0].max.unwrap!)
-    TUI.Event.Key(TUI.Key.Down, _) -> app.with(mention_selected: [selected + 1, files.size - 1].min.unwrap!)
+    TUI.Event.Key(TUI.Key.Up, _) -> selected_choice(app, [selected - 1, 0].max.unwrap!, choices.size)
+    TUI.Event.Key(TUI.Key.Down, _) -> selected_choice(app, [selected + 1, choices.size - 1].min.unwrap!, choices.size)
     TUI.Event.Key(TUI.Key.Escape, _) -> app.with(mention_closed: some(found.start))
-    _ if files.empty? -> app
+    _ if choices.empty? -> app
     _ ->
       at = cursor(app)
-      text = Input.completed(app.prompt, at, found, files[selected])
-      app.with(prompt: text, cursor: at + text.length - app.prompt.length, mention_selected: 0)
+      text = Input.completed(app.prompt, at, found, choices[selected].value)
+      app.with(prompt: text, cursor: at + text.length - app.prompt.length, mention_selected: 0, mention_top: 0)
   end
+end
+
+def selected_choice(app: Model, selected: Int, size: Int) -> Model
+  top = Input.window(app.mention_top, selected, list_room(app), size)
+  app.with(mention_selected: selected, mention_top: top)
 end
 
 # A click on the transcript opens or closes a thinking block or a tool call; on a key of the approval panel it is
@@ -906,7 +949,7 @@ def on_command(app: Model, command: Client.Command) -> Model
   case command
     Client.Command.Quit -> app.with(exit: some(0))
     Client.Command.Stop -> stop_command(app)
-    Client.Command.Help -> app.with(entries: app.entries + Client.HELP.map { |line| note_entry(line) })
+    Client.Command.Help -> app.with(entries: app.entries + Client.help().map { |line| note_entry(line) })
     Client.Command.Cost -> noted(app, "/cost comes with the model catalog")
     Client.Command.New -> switch_command(app, none)
     Client.Command.Resume(none) -> tried(app, picking(app))
@@ -1283,10 +1326,13 @@ def on_event(app: Model, id: Optional[Int], event: Protocol.Event) -> Model
         aside = "not sent to the model"
       end
 
-      entries = Transcript.tool_finished(Transcript.tool_started(shown.entries, start), tool, aside)
+      # A command that a restart cut has no duration.
+      timed = done.duration_ms > 0
+      entries = Transcript.tool_finished(Transcript.tool_started(shown.entries, start), tool, aside, timed)
       shown.with(shell: false, stopping: false, entries: entries)
+    # An error (a write of `shell_finished` that failed) also ends a command: no other event of it comes.
     Protocol.Event.Error(failure) ->
-      failed = noted(shown, "error: #{failure.kind}: #{failure.message}")
+      failed = noted(shown.with(shell: false), "error: #{failure.kind}: #{failure.message}")
       case shown.new_model
         some(model) -> noted(failed.with(new_model: none), "warning: #{Client.model_warning(model)}")
         none -> failed
@@ -1393,9 +1439,9 @@ def approval_rows(app: Model, room: Int) -> List[Layout.Row]
 
   case mention_list(app)
     some(found) ->
-      files = mention_matches(app, found)
-      selected = [[app.mention_selected, files.size - 1].min.unwrap!, 0].max.unwrap!
-      Input.rows(files, selected, app.width).take([room, 0].max.unwrap!)
+      choices = mention_choices(app, found)
+      selected = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
+      Input.rows(choices, selected, Input.window(app.mention_top, selected, room, choices.size), app.width, room)
     none -> []
   end
 end

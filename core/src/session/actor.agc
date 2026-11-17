@@ -119,6 +119,8 @@ enum Msg
   Copy(Optional[Int], Copying, Channel[Result[Copied]])
   Shell(Protocol.RunShell, Channel[Result[Protocol.ShellAccepted]])
   ShellDone(String, Tools.Output, Int)
+  ## The task of the command ended; after its `ShellDone`, if that came.
+  ShellDown(String, TaskDown)
   Load(Channel[Load])
 end
 
@@ -430,6 +432,7 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
       Actor.continue(state)
     Msg.Shell(request, reply) -> Actor.continue(run_shell(state, request, reply))
     Msg.ShellDone(id, output, duration_ms) -> Actor.continue(shell_done(state, id, output, duration_ms))
+    Msg.ShellDown(id, down) -> Actor.continue(shell_down(state, id, down))
   end
 end
 
@@ -1249,13 +1252,11 @@ def run_shell(state: State, request: Protocol.RunShell, reply: Channel[Result[Pr
   task = Task.spawn(
     -> {
       output = Tools.run(ctx, Tools.BASH, input)
-      done = Msg.ShellDone(id, output, Time.monotonic_ms - started_ms)
-      # A full inbox would leave the session waiting for the command; a session that is gone needs nothing.
-      for _attempt in 1..3
-        break if Actor.cast(address, done, CALL_MS).ok?
-      end
+      _ = Actor.cast(address, Msg.ShellDone(id, output, Time.monotonic_ms - started_ms), CALL_MS)
     },
   )
+
+  Task.monitor(task, inbox) do |down| Msg.ShellDown(id, down) end
 
   run = ShellRun(id: id, command: request.command, context: request.context, task: task, started_ms: started_ms)
   Actor.reply(reply, ok(Protocol.ShellAccepted(shell_id: id)))
@@ -1284,7 +1285,7 @@ def shell_done(state: State, id: String, output: Tools.Output, duration_ms: Int,
       end
 
       if run.context and not stopped and not fits
-        note = "[not given to the model: #{MAX_SHELLS} outputs or #{MAX_SHELL_BYTES} bytes wait for the next message]"
+        note = "[#{MAX_SHELLS} outputs or #{MAX_SHELL_BYTES} bytes already wait for the next message]"
         finished = finished.with(output: "#{output.text}\n#{note}")
       end
 
@@ -1294,6 +1295,18 @@ def shell_done(state: State, id: String, output: Tools.Output, duration_ms: Int,
       done.with(shells: done.shells.push(text))
     _ -> state
   end
+end
+
+# A command whose task ended without its output (a crash, or an inbox too full for it) ends as failed.
+def shell_down(state: State, id: String, down: TaskDown) -> State
+  for run in option_list(state.shell)
+    if run.id == id
+      lost = Tools.Output(text: "the command ended without its output", is_error: true)
+      return shell_done(state, id, lost, Time.monotonic_ms - run.started_ms, true)
+    end
+  end
+
+  state
 end
 
 def stop_shell(state: State) -> State
@@ -1367,7 +1380,8 @@ def ended_shell(state: State, events: List[Store.Logged]) -> State
   for logged in events
     case logged.event
       Protocol.Event.ShellStarted(started) -> cut = some(started)
-      Protocol.Event.ShellFinished(_) -> cut = none
+      # A turn starts only once no command runs: one before it ended unseen (a file of an older server).
+      Protocol.Event.ShellFinished(_), Protocol.Event.TurnStarted(_) -> cut = none
       _ -> nil
     end
   end

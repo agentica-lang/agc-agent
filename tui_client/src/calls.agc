@@ -25,6 +25,8 @@ struct Call
   duration_ms: Int = 0
   ## A muted line after the output, shown folded too.
   aside: String = ""
+  ## "Took" shows the duration.
+  timed: Bool = true
 end
 
 ## The rows of `call` in `width` columns; `open` shows the whole body.
@@ -46,6 +48,8 @@ def rows(call: Call, width: Int, open: Bool) -> List[List[Markdown.Span]]
   if call.aside != ""
     shown = shown.push([span(BODY + call.aside, Markdown.Look.Muted)])
   end
+
+  return head + shown if not call.timed
 
   head + shown + [[span("#{BODY}Took #{seconds(call.duration_ms)}", Markdown.Look.Muted)]]
 end
