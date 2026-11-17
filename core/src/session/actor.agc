@@ -19,6 +19,8 @@ import Agent from "../agent/agent"
 import Compaction from "../agent/compaction"
 import Branch from "branch"
 import Export from "export"
+import Profile from "profile"
+import Profiles from "../config/profiles"
 import Session from "state"
 import Store from "store"
 import Stream from "stream"
@@ -334,6 +336,7 @@ def session(state: Session.State) -> Protocol.Session
     shell_id: state.shell.map { |run| run.id },
     usage: state.usage,
     todos: state.todos,
+    profile: state.setup.profile,
   )
 end
 
@@ -346,6 +349,15 @@ def update_setup(state: Session.State, change: Protocol.UpdateSession, reply: Ch
   end
 
   setup = state.setup
+  for name in option_list(change.profile)
+    case profiled(setup, name)
+      ok(found) -> setup = found
+      error(e) ->
+        Actor.reply(reply, error(e.message, kind: Protocol.KIND_INVALID))
+        return state
+    end
+  end
+
   for name in option_list(change.provider)
     case resolve_endpoint(setup, name)
       ok(endpoint) -> setup = switched(setup, endpoint)
@@ -378,6 +390,29 @@ def update_setup(state: Session.State, change: Protocol.UpdateSession, reply: Ch
 
       state.with(broken: some(e.message))
   end
+end
+
+# `setup` with the profile `name`, and its model and thinking level when it sets them: `PROVIDER/NAME` moves to that
+# provider when the session can, else the whole text is the model.
+def profiled(setup: Session.Setup, name: String) -> Result[Session.Setup]
+  loaded = setup.profiles.map { |read| read.call() }.unwrap_or(Profiles.Loaded(profiles: Profiles.builtins()))
+  found = try Profiles.find(loaded, name)
+  done = Profile.applied(setup, loaded, name)
+  if not found.model.empty?
+    done = done.with(model: found.model)
+    for at in option_list(found.model.index_of("/"))
+      case resolve_endpoint(done, found.model.slice(0, at))
+        ok(endpoint) ->
+          done = switched(done, endpoint).with(model: found.model.slice(at + 1, found.model.length - at - 1))
+        error(_) -> nil
+      end
+    end
+  end
+
+  return ok(done) if found.thinking.empty?
+  return ok(done.with(effort: none)) if found.thinking == Protocol.EFFORT_DEFAULT
+
+  ok(done.with(effort: some(found.thinking)))
 end
 
 def resolve_endpoint(setup: Session.Setup, name: String) -> Result[Session.Endpoint]

@@ -73,6 +73,8 @@ struct Saved
   effort: Optional[String] = none
   provider: Optional[String] = none
   api: Optional[String] = none
+  ## The profile of the last `settings` record that names one.
+  profile: Optional[String] = none
   ## The last event id of the whole file, the number of its approval requests and of its turns, and its last `usage`.
   last_id: Int = 0
   approvals: Int = 0
@@ -95,6 +97,7 @@ struct Choice
   effort: Optional[String]
   provider: String
   api: String
+  profile: Optional[String] = none
 end
 
 ## A record of the file: its line number is its entry, `parent` the entry it follows (the session's line for the
@@ -261,7 +264,8 @@ def append_settings(file: Ref, settings: Choice) -> Result[Void]
     "api": JSON.from(settings.api),
   }
 
-  try append(file, chosen.put("type", JSON.from("settings")).put("effort", JSON.from(settings.effort)))
+  fields = chosen.put("type", JSON.from("settings")).put("effort", JSON.from(settings.effort))
+  try append(file, fields.put("profile", JSON.from(settings.profile)))
   _ = file.port.replace.call(settings_file(file.path), JSON.encode(JSON.object(chosen)))
   ok()
 end
@@ -425,6 +429,7 @@ struct Settings
   effort: Optional[String] = none
   provider: Optional[String] = none
   api: Optional[String] = none
+  profile: Optional[String] = none
 end
 
 # Every record of the file with its JSON and its line, for a load or a copy.
@@ -604,6 +609,7 @@ def totals(saved: Saved, entries: Entries) -> Saved
     effort: settings.effort,
     provider: settings.provider,
     api: settings.api,
+    profile: settings.profile,
   )
 end
 
@@ -853,6 +859,7 @@ def settings_of(json: JSON.Value) -> Result[Settings]
       effort: effort,
       provider: optional_string(json, "provider"),
       api: optional_string(json, "api"),
+      profile: optional_string(json, "profile"),
     ),
   )
 end

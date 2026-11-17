@@ -36,6 +36,8 @@ def shell_path(session_id: String) -> String = "#{session_path(session_id)}/shel
 
 def files_path(session_id: String) -> String = "#{session_path(session_id)}/files"
 
+def profiles_path(session_id: String) -> String = "#{session_path(session_id)}/profiles"
+
 ## A login to a provider (`POST`), or its logout (`DELETE`). `AUTH_PATH` lists the logins (`GET`), removes every
 ## stored key (`DELETE`), or makes an empty key file when there is none (`PUT`: a first-start login skipped).
 def auth_path(provider: String) -> String = "#{AUTH_PATH}/#{provider}"
@@ -62,6 +64,7 @@ def shape() -> List[String]
     fork_path("ID"),
     shell_path("ID"),
     files_path("ID"),
+    profiles_path("ID"),
     auth_path("P"),
   ]
 end

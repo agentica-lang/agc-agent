@@ -35,6 +35,7 @@ def on_command(app: State.Model, command: Client.Command) -> State.Model
     Client.Command.Export(path, force) -> export_command(app, path, force)
     Client.Command.Model(model) -> model_command(app, model)
     Client.Command.Thinking(level) -> thinking_command(app, level)
+    Client.Command.Profile(name) -> State.tried(app, profile_command(app, name))
     Client.Command.Compact -> compact_command(app)
     Client.Command.Login(name) -> Logins.login_command(app, name)
     Client.Command.Logout(name) -> State.tried(app, Logins.logout_command(app, name))
@@ -162,6 +163,28 @@ end
 
 def switched(app: State.Model, choice: String) -> Result[State.Model]
   Session.resume(Session.fresh(app), try Client.pick(try app.backend.list_sessions.call(), choice))
+end
+
+# `/profile` lists the profiles, `*` before the session's; `/profile NAME` changes it, with the model and thinking
+# level it brings, and shows the server's warnings about it.
+def profile_command(app: State.Model, name: Optional[String]) -> Result[State.Model]
+  for wanted in State.option_list(name)
+    try app.backend.update_session.call(app.id, Protocol.UpdateSession(profile: some(wanted)))
+    session = try app.backend.session.call(app.id)
+    shown = app.with(
+      serving: State.serving_of(session),
+      profile: Session.profile_name(session),
+      effort: session.effort,
+      confirmed: session.effort,
+    )
+
+    done = State.noted(shown, "profile #{Client.printable(wanted)} from the next turn")
+    return ok(Session.profile_notices(done, session))
+  end
+
+  current = (try app.backend.session.call(app.id)).profile.map { |p| p.name }.unwrap_or("")
+  lines = Client.profile_listing(try app.backend.list_profiles.call(app.id), current)
+  ok(app.with(entries: app.entries + lines.map { |line| State.note_entry(line) }))
 end
 
 def thinking_command(app: State.Model, level: Optional[String]) -> State.Model

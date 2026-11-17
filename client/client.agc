@@ -36,6 +36,7 @@ export Http.stop
 export Http.files
 export Http.list_sessions
 export Http.list_providers
+export Http.list_profiles
 export Http.update_session
 export Http.list_logins
 export Http.login
@@ -72,6 +73,8 @@ export Events.start
 
 export Commands.Command
 export Commands.help
+export Commands.profile_lines
+export Commands.profile_listing
 export Commands.listed
 export Commands.Usage
 export Commands.COMMANDS

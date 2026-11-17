@@ -15,6 +15,7 @@
 ## neither, every tool. The body goes after the system prompt. A profile only hides tools: the approval rules still
 ## decide on the calls of the tools it shows.
 
+import Protocol from "pkg/protocol/protocol"
 import Approval from "../approval/approval"
 
 DEFAULT = "build"
@@ -22,7 +23,11 @@ PROJECT_FOLDER = ".finn/profiles"
 PLAN_TOOLS = ["read_file", "glob", "grep", "todo_write", "activate_skill"]
 PLAN_PROMPT = "You are planning: read, search and keep a todo list, but change no file and run no command."
 NAME_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789-_"
-KEYS = ["description", "tools_allow", "tools_deny"]
+KEYS = ["description", "tools_allow", "tools_deny", "model", "thinking"]
+BUILT_IN = "built-in"
+USER = "user"
+PROJECT = "project"
+BOM = 0xFEFF
 
 struct Profile
   name: String
@@ -30,6 +35,27 @@ struct Profile
   allow: Optional[List[String]] = none
   deny: Optional[List[String]] = none
   prompt: String = ""
+  ## The model it takes (`[PROVIDER/]NAME`) and its thinking level (`low`, `medium`, `high` or `default`); empty
+  ## keeps the session's.
+  model: String = ""
+  thinking: String = ""
+  ## Where it comes from: `BUILT_IN`, `USER` or `PROJECT`.
+  source: String = BUILT_IN
+end
+
+## A warning of a load, about the profile `name`, or about a file that is not one when `name` is empty.
+struct Warning
+  name: String = ""
+  text: String
+end
+
+## The profiles of a session's folders. A file that does not load is in `broken` (its name to the error), so only a
+## choice of that name fails; `untrusted` names the profiles of a project that is not trusted, which are not read.
+struct Loaded
+  profiles: List[Profile]
+  broken: Map[String, String] = {}
+  warnings: List[Warning] = []
+  untrusted: List[String] = []
 end
 
 def builtins() -> List[Profile]
@@ -44,22 +70,21 @@ def builtins() -> List[Profile]
   ]
 end
 
-## The built-in profiles, then those of `user_dir`, then those of the project at `root` when it is `trusted`; a bad
-## file is an error that names it.
-def load(user_dir: String, root: String, trusted: Bool) -> Result[List[Profile]]
-  found = builtins()
-  folders = [user_dir].select { |dir| not dir.empty? }
-  if trusted
-    folders = folders.push("#{root}/#{PROJECT_FOLDER}")
+## The built-in profiles, then those of `user_dir`, then those of the project at `root` (none when empty) when it is
+## `trusted`: a later one replaces a profile of the same name, a broken one too. A file whose name is not a profile
+## name is skipped with a warning.
+def load(user_dir: String, root: String, trusted: Bool) -> Loaded
+  loaded = Loaded(profiles: builtins())
+  if not user_dir.empty?
+    loaded = in_folder(loaded, user_dir, USER)
   end
 
-  for dir in folders
-    for profile in try in_folder(dir)
-      found = found.select { |p| p.name != profile.name }.push(profile)
-    end
-  end
+  return loaded if root.empty?
 
-  ok(found)
+  project = "#{root}/#{PROJECT_FOLDER}"
+  return in_folder(loaded, project, PROJECT) if trusted
+
+  loaded.with(untrusted: md_files(project).map { |file| file.slice(0, file.length - 3) }.select { |n| named?(n) })
 end
 
 ## `$XDG_CONFIG_HOME/finn/profiles`, else `~/.config/finn/profiles`; empty without a home folder.
@@ -75,12 +100,27 @@ def user_folder(read: Fn[String, Result[String]]) -> String
   "#{base}/finn/profiles"
 end
 
-## The profile of that name.
-def find(profiles: List[Profile], name: String) -> Result[Profile]
-  case (profiles.find { |p| p.name == name })
-    ok(found) -> ok(found)
-    error(_) -> error("unknown profile #{name}: one of #{profiles.map { |p| p.name }.join(", ")}")
+## The profile of that name: an error when its file does not load, or when only an untrusted project has it.
+def find(loaded: Loaded, name: String) -> Result[Profile]
+  return error(loaded.broken[name]) if loaded.broken.has_key?(name)
+
+  case (loaded.profiles.find { |p| p.name == name })
+    ok(found) -> return ok(found)
+    error(_) -> nil
   end
+
+  if loaded.untrusted.include?(name)
+    return error("profile #{name} is in #{PROJECT_FOLDER} of a folder that is not trusted (FINN_TRUSTED_DIRS)")
+  end
+
+  error("unknown profile #{name}: one of #{loaded.profiles.map { |p| p.name }.join(", ")}")
+end
+
+## What a client hears about `profile`: the warnings of its file, and the names of its lists that no tool of `known`
+## has.
+def warnings_of(loaded: Loaded, profile: Profile, known: List[String]) -> List[String]
+  own = loaded.warnings.select { |w| w.name == profile.name }.map { |w| w.text }
+  own + unknown(profile, known).map { |tool| "profile #{profile.name}: no tool is named #{tool}" }
 end
 
 ## Whether the model sees `tool` under the profile.
@@ -113,7 +153,7 @@ end
 
 ## A profile from its file: front matter between `---` lines, then the text for the system prompt.
 def parse(path: String, name: String, text: String) -> Result[Profile]
-  lines = text.split("\n").map { |line| without_cr(line) }
+  lines = without_bom(text).split("\n").map { |line| without_cr(line) }
   return error("#{path}: the front matter starts with a --- line") if lines.empty? or lines[0].strip != "---"
 
   end_at = 0
@@ -148,6 +188,14 @@ def parse(path: String, name: String, text: String) -> Result[Profile]
 
     if key == "description"
       profile = profile.with(description: unquoted(value))
+    elsif key == "model"
+      profile = profile.with(model: unquoted(value))
+    elsif key == "thinking"
+      level = unquoted(value)
+      levels = Protocol.EFFORTS.push(Protocol.EFFORT_DEFAULT)
+      return error("#{path}: thinking is one of #{levels.join(", ")}") if not levels.include?(level)
+
+      profile = profile.with(thinking: level)
     else
       profile = try with_names(path, profile, key, try names_of(path, key, value), false)
     end
@@ -160,20 +208,62 @@ end
 
 private
 
-def in_folder(dir: String) -> Result[List[Profile]]
-  out: List[Profile] = []
-  return ok(out) if not File.stat(dir).ok?
-
-  files = (try Dir.list(dir)).select { |f| f.end_with?(".md") }.sort
-  for file in files
+def in_folder(before: Loaded, dir: String, source: String) -> Loaded
+  loaded = before
+  for file in md_files(dir)
     name = file.slice(0, file.length - 3)
     path = "#{dir}/#{file}"
-    return error("#{path}: a profile name is lowercase letters, digits, - and _") if not named?(name)
+    kind = case File.stat(path)
+      ok(info) -> info.kind
+      error(_) -> ""
+    end
 
-    out = out.push(try parse(path, name, try File.read_text(path)))
+    if not named?(name) or kind != "file"
+      skipped = Warning(text: "#{path}: skipped, not a profile (a file NAME.md, NAME of a-z, 0-9, - and _)")
+      loaded = loaded.with(warnings: loaded.warnings.push(skipped))
+      next
+    end
+
+    loaded = with_file(loaded, path, name, source)
   end
 
-  ok(out)
+  loaded
+end
+
+# `loaded` with the profile of one file, or with its error in `broken`; either replaces a profile of that name.
+def with_file(loaded: Loaded, path: String, name: String, source: String) -> Loaded
+  warnings = loaded.warnings
+  for replaced in (loaded.profiles.select { |p| p.name == name and source == PROJECT })
+    warnings = warnings.push(Warning(name: name, text: "#{path} replaces the #{replaced.source} profile #{name}"))
+  end
+
+  others = loaded.profiles.select { |p| p.name != name }
+  read = case File.read_text(path)
+    ok(text) -> parse(path, name, text)
+    error(e) -> error("#{path}: #{e.message}")
+  end
+
+  case read
+    ok(profile) ->
+      if profile.allow == some([])
+        warnings = warnings.push(Warning(name: name, text: "#{path}: tools_allow is empty, so the model sees no tool"))
+      end
+
+      broken = loaded.broken.select { |key, _| key != name }
+      loaded.with(profiles: others.push(profile.with(source: source)), broken: broken, warnings: warnings)
+    error(e) -> loaded.with(profiles: others, broken: loaded.broken.put(name, e.message), warnings: warnings)
+  end
+end
+
+def md_files(dir: String) -> List[String]
+  nothing: List[String] = []
+  Dir.list(dir).unwrap_or(nothing).select { |f| f.end_with?(".md") }.sort
+end
+
+def without_bom(text: String) -> String
+  return text.slice(1, text.length - 1) if text.start_with?(String.from_code(BOM))
+
+  text
 end
 
 # `[a, b]`, or nothing when a block list (`- a` lines) follows.

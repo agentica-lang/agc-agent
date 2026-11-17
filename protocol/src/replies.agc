@@ -37,6 +37,7 @@ end
 ## The answer of `POST /v1/sessions`.
 struct SessionCreated
   id: String
+  profile: Optional[Profile] = none
 end
 
 ## The `202` answer of `POST /v1/sessions/ID/messages`. A message queued into the running turn `turn_id` has the
@@ -75,6 +76,22 @@ end
 struct ProviderList
   provider: String
   providers: List[ProviderInfo]
+end
+
+## A profile a session may take: the tools its model sees. `source` is `built-in`, `user` or `project`; `warnings` says
+## what the server noticed about its file (a name that no tool has, a project file that replaces a profile) or, for a
+## session's profile that does not load now, why: the session then shows no tool and refuses turns.
+struct Profile
+  name: String
+  source: String
+  description: String = ""
+  warnings: List[String] = []
+end
+
+## The answer of `GET /v1/sessions/ID/profiles`: the profiles the session may take, by name; one whose file does not
+## load has an empty `source` and says why in `warnings`.
+struct ProfileList
+  profiles: List[Profile]
 end
 
 ## A provider a login can set up. `asks` is what a login gives: `key`, or `url` (a local server: its base URL, no
@@ -134,6 +151,7 @@ struct Session
   usage: Optional[Events.Usage] = none
   ## The model's todo list, as its last `todos` event on this branch gave it.
   todos: List[Events.Todo] = []
+  profile: Optional[Profile] = none
 end
 
 ## A user message of `SessionTree`. `id` is its entry: a branch from it goes back before the message. `last` is the
@@ -257,6 +275,10 @@ def encode_provider_list(reply: ProviderList) -> String = JSON.encode(reply)
 
 def decode_provider_list(text: String) -> Result[ProviderList] = Wire.decode(text, ProviderList.codec)
 
+def encode_profile_list(reply: ProfileList) -> String = JSON.encode(reply)
+
+def decode_profile_list(text: String) -> Result[ProfileList] = Wire.decode(text, ProfileList.codec)
+
 def encode_shell_accepted(reply: ShellAccepted) -> String = JSON.encode(reply)
 
 def encode_login_status(reply: LoginStatus) -> String = JSON.encode(reply)
@@ -299,6 +321,7 @@ def encode_session(reply: Session) -> String
       shell_id: reply.shell_id,
       usage: Wire.field(reply.usage.map { |u| Events.usage_wire(u) }),
       todos: some(reply.todos),
+      profile: Wire.field(reply.profile),
     ),
   )
 end
@@ -337,6 +360,7 @@ def decode_session(text: String) -> Result[Session]
       shell_id: wire.shell_id,
       usage: usage,
       todos: wire.todos.unwrap_or([]),
+      profile: Wire.optional(wire.profile),
     ),
   )
 end
@@ -351,6 +375,8 @@ def shape() -> List[String]
     Wire.record("SessionList", SessionList.members),
     Wire.record("ProviderInfo", ProviderInfo.members),
     Wire.record("ProviderList", ProviderList.members),
+    Wire.record("Profile", Profile.members),
+    Wire.record("ProfileList", ProfileList.members),
     Wire.record("Message", Message.members),
     Wire.record("Session", Session.members),
     Wire.record("ServerInfo", ServerInfo.members),
@@ -396,6 +422,7 @@ struct SessionWire
   shell_id: Optional[String] = none
   usage: JSON.Field[Events.UsageWire]
   todos: Optional[List[Events.Todo]] = none
+  profile: JSON.Field[Profile]
 end
 
 def check_turn(wire: SessionWire) -> Result[Void]

@@ -68,6 +68,7 @@ Type them in either client:
 | `/export [--force] [PATH]` | write the session to a Markdown file ([Sessions](sessions.md#export)) |
 | `/model [PROVIDER/]NAME` | change the model (and provider) from the next turn on; alone, pick or show it |
 | `/thinking [low\|medium\|high\|default]` | show or change the thinking level |
+| `/profile [NAME]` | change the [profile](tools.md#profiles) from the next turn on (Tab completes it in `finn`); alone, list them |
 | `/compact` | fold the history into a summary now |
 | `/login [PROVIDER]` | set up a provider (`finn`) |
 | `/logout [PROVIDER]` | remove a stored key; alone, every one |
@@ -120,7 +121,7 @@ The mouse answers the keys of a panel, opens a tool call or the thinking, and mo
 The two rows under the prompt:
 
 - the session folder (`~` for your home), its git branch and the first line of the session's first message;
-- the status (`ready`, `YOLO`, `approval waiting`), the counts and the key hints that fit, then the model and thinking level on the right.
+- the status (`ready`, `YOLO`, `approval waiting`), the counts and the key hints that fit, then the profile (unless it is `build`), the model and the thinking level on the right.
 
 On a short screen the first row goes first, so an approval keeps its rows.
 

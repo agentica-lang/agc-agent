@@ -3,6 +3,8 @@
 import Protocol from "pkg/protocol/protocol"
 
 KIND_COMMAND = "client.command"
+DEFAULT_PROFILE = "build"
+BUILT_IN = "built-in"
 ## The commands of both clients, in the order `/help` lists them: the one table that the parser, the help and the
 ## suggestions of the full screen read.
 COMMANDS = [
@@ -28,6 +30,11 @@ COMMANDS = [
     more: "a model the session's provider lists stays on it: openrouter/anthropic/x forces one",
   ),
   Usage(name: "/thinking", args: "[low|medium|high|default]", about: "the thinking level, or change it"),
+  Usage(
+    name: "/profile",
+    args: "[NAME]",
+    about: "change the tools the model sees (and its model) from the next turn on; alone: list the profiles",
+  ),
   Usage(name: "/compact", about: "fold the history into a summary now"),
   Usage(
     name: "/login",
@@ -68,6 +75,8 @@ enum Command
   Model(Optional[String])
   ## Shows the thinking level without an argument.
   Thinking(Optional[String])
+  ## Lists the profiles without an argument.
+  Profile(Optional[String])
   Compact
   Stop
   ## The cost of the session, once the model catalog gives prices (#88).
@@ -192,6 +201,46 @@ def printable(text: String) -> String = text.split("").map { |c| shown(c) }.join
 ## A control character (C0, C1) or a bidi control, which could reorder what a screen shows.
 def control?(code: Int) -> Bool = code < 0x20 or (code >= 0x7f and code < 0xa0) or Protocol.BIDI.include?(code)
 
+## What a client says of a session's profile: its name and where it comes from, unless it is the built-in `build`,
+## then each warning of the server about it, printable.
+def profile_lines(profile: Optional[Protocol.Profile]) -> List[String]
+  case profile
+    some(p) ->
+      lines = p.warnings.map { |w| "warning: #{printable(w)}" }
+      return lines if p.name == DEFAULT_PROFILE and p.source == BUILT_IN
+
+      source = p.source
+      if source.empty?
+        source = "does not load"
+      end
+
+      ["profile #{printable(p.name)} (#{source})"] + lines
+    none -> []
+  end
+end
+
+## The profiles for `/profile`, one line each: `*` before the session's, its name, where it comes from and what it is
+## for, or why it does not load; printable.
+def profile_listing(list: Protocol.ProfileList, current: String) -> List[String]
+  list.profiles.map do |p|
+    mark = "  "
+    if p.name == current
+      mark = "* "
+    end
+
+    line = "#{mark}#{p.name} (#{p.source})"
+    if not p.description.empty?
+      line = "#{line} #{p.description}"
+    end
+
+    if p.source.empty?
+      line = "#{mark}#{p.name}: does not load: #{p.warnings.join("; ")}"
+    end
+
+    printable(line)
+  end
+end
+
 ## The model's todo list, one line an item: `[x]` completed, `[>]` in progress, `[ ]` pending, then its printable text.
 def todo_lines(todos: List[Protocol.Todo]) -> List[String]
   todos.map do |todo|
@@ -224,6 +273,7 @@ def command(name: String, argument: String) -> Result[Command]
     "/export" -> exporting(argument)
     "/model" -> model(argument)
     "/thinking" -> thinking(argument)
+    "/profile" -> ok(Command.Profile(given(argument)))
     "/compact" -> bare(Command.Compact, name, argument)
     "/stop" -> bare(Command.Stop, name, argument)
     "/cost" -> bare(Command.Cost, name, argument)
