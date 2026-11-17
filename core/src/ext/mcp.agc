@@ -19,7 +19,8 @@ CONFIG_ENV = "FINN_MCP_CONFIG"
 NAME = /\A[A-Za-z0-9_-]{1,64}\z/
 ENV_NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/
 HEADER_NAME = /\A[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}\z/
-LOOPBACK_V4 = /\A127(\.[0-9]{1,3}){3}\z/
+# 127.0.0.0/8: each octet 0 to 255.
+LOOPBACK_V4 = /\A127(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}\z/
 ## The headers that the transport sets.
 OWN_HEADERS = [
   "accept", "connection", "content-length", "content-type", "host", "last-event-id", "mcp-protocol-version",

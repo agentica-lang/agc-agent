@@ -182,6 +182,8 @@ def test_the_config_refuses_odd_http_servers() -> Result[Void]
         "url": JSON.from("http://127.0.0.1.example.com/mcp"),
         "headers": JSON.object({"X-Key": JSON.from("k")}),
       }),
+      JSON.object({"url": JSON.from("http://127.999.0.1/mcp"), "headers": JSON.object({"X-Key": JSON.from("k")})}),
+      JSON.object({"url": JSON.from("http://127.0.0.256/mcp"), "headers": JSON.object({"X-Key": JSON.from("k")})}),
     ]
 
     for entry in odd
@@ -191,7 +193,10 @@ def test_the_config_refuses_odd_http_servers() -> Result[Void]
       try Test.assert(not listed.message.include?(TOKEN), "the error shows the value")
     end
 
-    allowed = ["https://example.com/mcp", "http://localhost:8080/mcp", "http://[::1]:1/mcp"]
+    allowed = [
+      "https://example.com/mcp", "http://localhost:8080/mcp", "http://[::1]:1/mcp", "http://127.255.249.0:1/mcp",
+    ]
+
     for each in allowed
       try write_config(
         dir,

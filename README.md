@@ -5,15 +5,38 @@ A coding agent for the terminal, like Claude Code or OpenCode, written in
 
 - The agent runs as a server on localhost; clients connect to it over HTTP and
   Server-Sent Events: a full-screen client (`finn`) and a line-mode one (`finn chat`).
-- The `llm` package is the client for LLM APIs: one provider-neutral API with
-  providers underneath: `openai_chat` and `openai_responses` (OpenAI, llama.cpp's
-  `llama-server`, Fireworks and other compatible APIs) and `anthropic` (the
-  Anthropic Messages API); Codex comes later.
+- The `llm` package is the client for LLM APIs: `openai_chat` and `openai_responses` (OpenAI, llama.cpp's
+  `llama-server`, Fireworks and other compatible APIs) and `anthropic` (the Anthropic Messages API).
 - Extensions are Agentica packages that your own `main.agc` registers, or MCP
   servers on stdio or streamable HTTP.
 
-To start, run `make install`, then `finn` opens the full screen, `finn chat` is the line chat and `finn -p "task"` runs
-one prompt. The rest is in [docs/content](docs/content/quickstart.md).
+## Try it
+
+Needs Agentica 0.32.0 or later (`agentica` on PATH, or `AGENTICA` set to it). Run `make install`, then use `bin/finn`
+from any folder (link it into your PATH if you like):
+
+```sh
+bin/finn                               # the full screen in this folder; starts the server when none runs
+bin/finn chat                          # the same as a line chat
+bin/finn -p "fix the failing test"     # one task, then exit with its status
+bin/finn login                         # set up a provider with its key
+bin/finn --help
+```
+
+Tools run without asking by default: the model can run any command and change any file you can, except what a `deny`
+rule refuses. Run Finn in a sandbox or a container, or turn the approvals on with `finn serve --approvals`.
+
+## Docs
+
+| Page | What |
+|---|---|
+| [Quickstart](docs/content/quickstart.md) | install, a provider, a first session |
+| [CLI and TUI](docs/content/cli.md) | commands, options, slash and shell commands, keys, the server commands |
+| [Providers](docs/content/providers.md) | APIs, presets, logins and keys |
+| [Configuration](docs/content/config.md) | environment variables and config files |
+| [Approvals and security](docs/content/security.md) | what asks, the rules, and what they cannot do |
+| [Tools](docs/content/tools.md), [Sessions](docs/content/sessions.md), [Skills](docs/content/skills.md), [MCP](docs/content/mcp.md) | what the agent can use and keep |
+| [Extensions](docs/content/extensions.md), [Server API](docs/content/server.md), [Architecture](docs/content/architecture.md) | building on Finn |
 
 ## Packages
 
@@ -32,41 +55,8 @@ The repo is an Agentica workspace (`agentica.toml`): one folder per package.
 | `tui_client` | the full-screen client on [agentica-tui](https://github.com/agentica-lang/agentica-tui): markdown transcript, tool notices, approvals |
 | `examples/extension` | how to extend Finn: a program that serves `core` with its own tool, a wrapper of every tool and a service (`Core.serve`) |
 
-## Try it
+## Development
 
-Needs Agentica 0.32.0 or later (`agentica` on PATH, or `AGENTICA` set to it). One command, `bin/finn`, from any
-folder (link it into your PATH if you like):
-
-```sh
-bin/finn --help
-bin/finn                               # the full screen in this folder (also `finn tui`); starts the server when none runs: Enter sends, Alt+Enter after the turn, Ctrl+J newline, Ctrl+T thinking, Ctrl+O tools, Shift+Tab level, @ files, / commands (Esc then Enter sends the text as typed), Up history, Esc stops
-# (the mouse answers panel keys, opens tool calls and thinking, and moves the prompt cursor; --yolo allows its own turns)
-bin/finn chat                          # the same as a line chat
-# in both: /new, /resume, /tree, /fork, /clone, /model, /thinking, /compact, /stop, /help, /quit
-# in both: !CMD runs CMD in the folder and the model gets its output with the next message; !!CMD does not give it
-bin/finn -p "fix the failing test"    # one task, then exit with its status
-bin/finn serve --approvals             # ask before a tool call no rule allows (-p denies them; --yolo allows own turns)
-bin/finn serve                         # the server in the foreground, on a llama-server at http://127.0.0.1:8080/v1
-bin/finn serve --api openai_responses  # the same on /v1/responses
-bin/finn serve --api anthropic         # Anthropic: ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN or `ant auth login`
-FIREWORKS_API_KEY=... bin/finn serve  # a preset provider once its key is set: /model fireworks/MODEL in a session
-bin/finn login                         # set up a provider with its key, checked and stored for the next starts
-bin/finn --version
-```
-
-Tools run without asking by default: the model can run any command and change any file the user can, except what a
-`deny` rule of `~/.config/finn/config.json` refuses. Run Finn in a sandbox or a container, or turn the approvals on
-with `finn serve --approvals`, `FINN_APPROVALS=1` or `"approvals": true` in that file. Coming from an earlier Finn: the
-rules are now one `permission` list (`"deny bash(rm *)"`), where the last that matches wins. A `read_file` deny rule
-hides the file from the file tools, and from `cat .env` and the like only best effort: only a sandbox confines `bash`.
-
-`finn server status`, `stop` (waits for the running turns and ends when the server has gone; `--now` cancels them),
-`restart`, `start` and `logs [-f]` manage the server a
-client started in the background.
-
-The flags of `finn serve` (`--api`, `--model`, `--base-url`) override their environment variables (`FINN_API`,
-`FINN_MODEL`, `FINN_BASE_URL`); `finn serve --help` lists them all.
-
-Development: `make test` and `make smoke-llama` (the second fetches llama.cpp and a 0.5B model, about 500 MB, into
-`.tools/`). The tests against a real model (`make smoke-llama` and the targets that call a paid API) run only on your
-machine, never in CI.
+`make test` and `make smoke-llama` (the second fetches llama.cpp and a 0.5B model, about 500 MB, into `.tools/`). The
+tests against a real model (`make smoke-llama` and the targets that call a paid API) run only on your machine, never in
+CI.
