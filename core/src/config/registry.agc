@@ -45,8 +45,9 @@ end
 
 ## An event of a session as an observer sees it: `name` is the event's name and `data` its JSON, as `GET
 ## /v1/sessions/ID/events` sends them, and `root` is the session folder. Two more names have no SSE event:
-## `session_started` (`{"id", "new"}`: created, or loaded from its file) and `session_ended` (`{"id", "reason"}`:
-## `deleted` or `stopping`). More fields may come.
+## `session_started` (`{"id", "new"}`: created, or loaded from its file), before any event of the session, and
+## `session_ended` (`{"id", "reason"}`: `deleted` or `stopping`), alone for a session deleted before it was loaded.
+## More fields may come.
 struct Seen
   session: String
   root: String
@@ -253,7 +254,7 @@ def wanted?(observers: List[Observer], name: String) -> Bool = observers.any? { 
 def publish(observers: List[Observer], seen: Seen) -> Void
   for observer in (observers.select { |o| o.names.include?(seen.name) })
     if not observer.inbox.send(seen, 0).ok?
-      observer.dropped.put(DROPPED, observer.dropped.get(DROPPED).unwrap_or(0) + 1)
+      _ = observer.dropped.add(DROPPED, 1)
     end
   end
 end
@@ -524,9 +525,9 @@ def observed(inbox: Channel[Seen], dropped: ATS[String, Int], handler: Fn[Seen, 
   while true
     case inbox.recv(60_000)
       ok(seen) ->
-        lost = dropped.get(DROPPED).unwrap_or(0)
+        lost = dropped.add(DROPPED, 0)
         if lost > 0
-          dropped.put(DROPPED, 0)
+          _ = dropped.add(DROPPED, -lost)
           IO.warn("an observer of extensions: #{lost} events dropped (behind)")
         end
 

@@ -331,24 +331,18 @@ def terminate(registry: Registry) -> Void
   for entry in registry.sessions
     for session in option_list(entry.session)
       _ = Actor.stop(session, CALL_MS)
-      lifecycle(registry.options, entry, "session_ended", {"reason": JSON.from("stopping")})
+      Extensions.publish(registry.options.observers, ended_seen(entry, "stopping"))
     end
   end
 end
 
-# `session_started` and `session_ended` reach the observers that want them; nothing else sees them.
-def lifecycle(options: Config.Options, entry: Entry, name: String, data: Map[String, JSON.Value]) -> Void
-  return if not Extensions.wanted?(options.observers, name)
+# `session_started` and `session_ended` reach only the observers: no session stream exists before or after them.
+def lifecycle(id: String, root: String, name: String, data: Map[String, JSON.Value]) -> Extensions.Seen
+  Extensions.Seen(session: id, root: root, name: name, data: JSON.object(data.put("id", JSON.from(id))))
+end
 
-  id = entry.summary.id
-  seen = Extensions.Seen(
-    session: id,
-    root: entry.summary.cwd,
-    name: name,
-    data: JSON.object(data.put("id", JSON.from(id))),
-  )
-
-  Extensions.publish(options.observers, seen)
+def ended_seen(entry: Entry, reason: String) -> Extensions.Seen
+  lifecycle(entry.summary.id, entry.summary.cwd, "session_ended", {"reason": JSON.from(reason)})
 end
 
 def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
@@ -357,7 +351,6 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
       case open_session(registry, request)
         ok(entry) ->
           Actor.reply(reply, ok(entry.summary.id))
-          lifecycle(registry.options, entry, "session_started", {"new": JSON.from(true)})
           Actor.continue(registry.with(sessions: registry.sessions.push(entry)))
         error(e) ->
           Actor.reply(reply, error(e))
@@ -414,7 +407,7 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
             end
 
             sessions = sessions.select { |e| e.summary.id != id }
-            lifecycle(registry.options, entry, "session_ended", {"reason": JSON.from("deleted")})
+            Extensions.publish(registry.options.observers, ended_seen(entry, "deleted"))
           end
 
           Actor.continue(registry.with(sessions: sessions))
@@ -590,8 +583,6 @@ def registered(registry: Registry, id: String, read: Result[Loaded]) -> Registry
         Actor.reply(waiting, entry.session.map { |session| session.address }.to_result("not started"))
       end
 
-      lifecycle(registry.options, entry, "session_started", {"new": JSON.from(false)})
-
       registry.with(sessions: registry.sessions.map { |e| replaced(e, entry) })
     error(e) ->
       IO.warn("session #{id} cannot be loaded now: #{e.message}")
@@ -670,6 +661,9 @@ def entry(
 
   setup = SessionActor.switched(base, endpoint).with(model: header.model, refused: refusal(options, provider))
   setup = SessionActor.applied(setup, profiles_of(options, context.root), profile)
+  # Before the actor starts: a restore can end a cut turn with events of its own.
+  started = lifecycle(header.id, context.root, "session_started", {"new": JSON.from(saved.none?)})
+  Extensions.publish(options.observers, started)
 
   ok(
     Entry(

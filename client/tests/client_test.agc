@@ -302,6 +302,7 @@ def test_an_export_over_the_limit_is_too_large() -> Result[Void]
   over = Http.exported(server, "s1", 1_048_576)
   whole = Http.exported(server, "s1")
   HTTP.close_server(listening)
+  _ = HTTP.wait(listening)
   try Test.eq(
     [message_of_export(over), kind_of(over)],
     ["the export of the session is over 1 MiB", Http.KIND_TOO_LARGE],

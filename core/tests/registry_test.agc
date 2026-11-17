@@ -67,6 +67,28 @@ def test_observers_see_the_events_in_order_and_never_slow_a_turn() -> Result[Voi
   end
 end
 
+# The events a broken session file could not save reach the observers as they reach the clients, and a server that
+# stops ends its sessions.
+def test_observers_see_the_unsaved_end_of_a_turn_and_the_stop() -> Result[Void]
+  got: Channel[String] = Channel.new(32)
+  names = ["turn_started", "error", "turn_finished", "session_ended"]
+  registry = Core.registry() |> Core.on(Core.Event.Seen(names, ->(seen: Core.Seen) { observed_as(got, seen) }))
+  try H.using(H.Setup(replies: ["write_file.sse", "text.sse"], registry: some(registry))) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    try Test.eq(try H.run("chmod", ["400", H.session_file(h, id)]), 0)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    Test.eq(try H.run("chmod", ["600", H.session_file(h, id)]), 0)
+  end
+
+  seen = (1..4).to_a.map { |_| got.recv(5000).unwrap_or("none") }
+  Test.eq(seen, ["turn_started", "error", "turn_finished", "session_ended stopping"])
+end
+
 # A message handler that hangs refuses its message too.
 def test_a_message_handler_that_hangs_refuses_the_message() -> Result[Void]
   registry = Core.registry().with(handler_ms: 50) |> Core.on(Core.Event.Message(&hang))

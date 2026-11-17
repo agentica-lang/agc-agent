@@ -140,7 +140,7 @@ def broke(state: Session.State, e: Error) -> Session.State
   message = "the session file cannot be written: #{e.message}"
   IO.warn("session #{state.setup.id}: #{message}")
   failure = Protocol.Failure(kind: Protocol.KIND_SESSION_STORAGE, message: message)
-  error_frame = frame("", Protocol.Event.Error(failure))
+  error_frame = unsaved(state, Protocol.Event.Error(failure))
   out = state.with(broken: some(message), subscribers: broadcast(state, error_frame))
   case out.turn
     some(turn) ->
@@ -157,8 +157,8 @@ def broke(state: Session.State, e: Error) -> Session.State
         history_size: some(out.display.size),
       )
 
-      end_frame = frame("", Protocol.Event.TurnFinished(cancelled))
-      frames = [error_frame] + drop_frames(out) + [end_frame]
+      events = drop_events(out) + [Protocol.Event.TurnFinished(cancelled)]
+      frames = [error_frame] + events.map { |event| unsaved(out, event) }
       lost = Session.Lost(to: out.counter, frames: frames)
       live = out.subscribers
       for each in frames.drop(1)
@@ -173,8 +173,8 @@ end
 ## The queue of a session whose file cannot be written goes: an `error` event without an id says so.
 def unsent(state: Session.State) -> Session.State
   live = state.subscribers
-  for each in drop_frames(state)
-    live = broadcast(state.with(subscribers: live), each)
+  for event in drop_events(state)
+    live = broadcast(state.with(subscribers: live), unsaved(state, event))
   end
 
   state.with(queued: [], subscribers: live)
@@ -233,11 +233,17 @@ def trim(log: List[Store.Logged], state: Session.State) -> List[Store.Logged]
   log.drop(drop)
 end
 
-def drop_frames(state: Session.State) -> List[String]
+def drop_events(state: Session.State) -> List[Protocol.Event]
   return [] if state.queued.empty?
 
   message = "#{state.queued.size} queued message(s) were not sent: the session file cannot be written"
-  [frame("", Protocol.Event.Error(Protocol.Failure(kind: Protocol.KIND_QUEUE_DROPPED, message: message)))]
+  [Protocol.Event.Error(Protocol.Failure(kind: Protocol.KIND_QUEUE_DROPPED, message: message))]
+end
+
+# An event that could not be saved: the clients get it without an id, and the observers as any other.
+def unsaved(state: Session.State, event: Protocol.Event) -> String
+  seen(state, event)
+  frame("", event)
 end
 
 def option_list[T](value: Optional[T]) -> List[T]
