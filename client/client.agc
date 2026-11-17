@@ -58,6 +58,9 @@ export Discovery.KIND_SERVER
 export Discovery.KIND_VERSION
 export Discovery.state_dir
 export Discovery.connect
+export Discovery.code_mode_wanted
+export Discovery.code_mode_asked
+export Discovery.code_mode_note
 export Discovery.Found
 export Discovery.find
 export Discovery.log_file

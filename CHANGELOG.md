@@ -19,6 +19,7 @@
 - `read_file` rules also check, best effort, the files `cat`, `head`, `tail`, `grep`, `wc`, `diff` and `cp` name in `bash` (`cat .env` asks); "always" on these programs allows the same command only.
 - The first start builds the bash parser; clients wait up to a minute and say so.
 - `finn chat` and `finn tui` refuse a server of another version and say how to stop it.
+- **Breaking:** code mode (`run_script`) is on by default; `--no-codemode` or `FINN_CODE_MODE=0` turns it off, and a client says when the running server's differs.
 
 ### Added
 

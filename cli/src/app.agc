@@ -7,6 +7,11 @@ import Render from "render"
 def run(options: Args.Options) -> Result[Int]
   launch = Args.launch(options)
   server = try Client.connect(launch, try Client.state_dir(launch))
+  note = Client.code_mode_note(server, options.code_mode)
+  if not note.empty?
+    IO.warn(note)
+  end
+
   Chat.run(server, options, Render.Style(thinking: options.thinking, color: not no_color?()))
 end
 

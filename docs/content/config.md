@@ -76,7 +76,7 @@ The server makes the state and data folders with mode 0700, and refuses one that
 | `FINN_CONFIG` | the user's config file |
 | `FINN_TRUSTED_DIRS` | the [trusted folders](#trusted-folders) |
 | `FINN_MCP_CONFIG` | the JSON file of MCP servers ([MCP](mcp.md)) |
-| `FINN_CODE_MODE` | `1` adds the `run_script` tool ([Tools](tools.md#code-mode)) |
+| `FINN_CODE_MODE` | `0` turns off code mode, the `run_script` tool, as `--no-codemode` does; on by default ([Tools](tools.md#code-mode)) |
 | `FINN_MONTY` | a Monty 1.6.0 binary you trust, for code mode |
 | `FINN_CONTEXT_WINDOW` | the model's context window in tokens, for compaction |
 | `FINN_COMPACT_MODEL` | the model that writes the summary of a compaction ([Sessions](sessions.md#compaction)) |

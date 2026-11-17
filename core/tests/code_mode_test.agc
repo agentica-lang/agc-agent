@@ -3,6 +3,7 @@
 # own: the same events, the same approval, and a denial raises PermissionError in the script.
 
 import Protocol from "pkg/protocol/protocol"
+import Config from "../src/config/config"
 import H from "support/harness"
 
 def test_a_script_calls_tools_and_a_denied_call_raises_in_it() -> Result[Void]
@@ -53,3 +54,45 @@ def test_a_rule_denies_a_call_of_a_script_and_arguments_go_by_keyword() -> Resul
     Test.eq(JSON.get(second.last, "content"), ok(JSON.from(content)))
   end
 end
+
+# Code mode is on by default where a Monty worker exists (a pinned wheel for the platform, or FINN_MONTY), off with
+# FINN_CODE_MODE=0 and where there is none; a worker that cannot be fetched says how to turn code mode off.
+def test_code_mode_is_on_by_default_where_a_worker_exists() -> Result[Void]
+  base = "#{System.env("TMPDIR").unwrap_or("/tmp")}/agc-code-mode-#{Random.int(0, 999_999_999)}"
+  try Dir.mkdir_private(base)
+  try Dir.mkdir("#{base}/finn")
+  result = defaults_in(base)
+  _ = Path.remove(base)
+  result
+end
+
+private
+
+def defaults_in(base: String) -> Result[Void]
+  env = {"XDG_CACHE_HOME": base}
+  on = try Config.code_mode_on(->(n) { env.get(n).to_result("not set") }, &linux)
+  off = env.put("FINN_CODE_MODE", "0")
+  monty = env.put("FINN_MONTY", "/opt/monty")
+  bad = env.put("FINN_CODE_MODE", "2")
+  try Test.eq(
+    [
+      on.some?,
+      (try Config.code_mode_on(->(n) { off.get(n).to_result("not set") }, &linux)).some?,
+      (try Config.code_mode_on(->(n) { env.get(n).to_result("not set") }, &elsewhere)).some?,
+      (try Config.code_mode_on(->(n) { monty.get(n).to_result("not set") }, &elsewhere)).some?,
+      Config.code_mode_on(->(n) { bad.get(n).to_result("not set") }, &linux).ok?,
+    ],
+    [true, false, false, true, false],
+  )
+
+  # The cache folder is open to others, so the fetch stops before any download.
+  try Test.eq(try H.run("chmod", ["755", "#{base}/finn"]), 0)
+  case on.unwrap!.worker.call()
+    ok(_) -> error("expected the worker to be refused")
+    error(e) -> Test.eq(e.message.include?("finn --no-codemode (or FINN_CODE_MODE=0) turns code mode off"), true)
+  end
+end
+
+def linux() -> Result[String] = ok("linux x86_64")
+
+def elsewhere() -> Result[String] = ok("plan9 mips")

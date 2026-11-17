@@ -244,6 +244,38 @@ def test_an_export_over_the_limit_is_too_large() -> Result[Void]
   Test.eq((try whole).entries[0].text.length, 1_100_000)
 end
 
+# The code mode a client asks for comes from --no-codemode, else FINN_CODE_MODE; when the running server's differs, one
+# line says how to apply it, and nothing is said when nothing is asked or the two agree.
+def test_a_code_mode_not_the_servers_is_noted() -> Result[Void]
+  try Test.eq(
+    [
+      Client.code_mode_wanted(true, some("1")),
+      Client.code_mode_wanted(false, some("0")),
+      Client.code_mode_wanted(false, some("1")),
+      Client.code_mode_wanted(false, none),
+    ],
+    [some(false), some(false), some(true), none],
+  )
+
+  status = Protocol.ServerStatus(
+    pid: 1,
+    version: "0",
+    started_s: 0,
+    sessions: 0,
+    running_turns: 0,
+    stopping: false,
+    code_mode: some(false),
+  )
+
+  body = Protocol.encode_server_status(status)
+  app = HTTP.app(->(_request) { ok(HTTP.Response(status: 200, headers: [], body: body.bytes)) })
+  listening = try HTTP.serve("127.0.0.1", 0, app)
+  server = Http.Server(url: "http://127.0.0.1:#{HTTP.local_port(listening)}", token: "t")
+  notes = [some(true), some(false), none].map { |wanted| Client.code_mode_note(server, wanted) }
+  HTTP.close_server(listening)
+  Test.eq(notes, ["the running server has code mode off; `finn server restart` applies it", "", ""])
+end
+
 # A file that appears before the export is made is an error and is left as it is.
 def test_an_export_never_removes_a_file_it_did_not_make() -> Result[Void]
   path = "#{System.env("TMPDIR").unwrap_or("/tmp")}/finn-export-#{Random.int(0, 999_999_999)}.md"

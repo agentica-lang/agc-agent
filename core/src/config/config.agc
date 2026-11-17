@@ -4,9 +4,9 @@
 ## local llama-server by default), `FINN_API_KEY` and `FINN_MODEL`; `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for
 ## compaction; `FINN_DRAIN_MS` (how long a stop waits for the turns, 60000); `FINN_MODELS_URL` (the models.dev catalog
 ## of prices and windows, `off` for none) and `FINN_MODELS_PROVIDER` (the provider of the model there).
-## `FINN_CODE_MODE=1` adds code mode, whose Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0 binary: its hash is not
-## checked), else the pinned one fetched on first use into `$XDG_CACHE_HOME/finn` (else `~/.cache/finn`, which must be
-## private to the user). Skills: those of the home folder always, those of a session folder only under a folder of
+## Code mode is on unless `FINN_CODE_MODE=0` (`--no-codemode`); its Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0
+## binary: its hash is not checked), else the pinned one fetched at the first script into `$XDG_CACHE_HOME/finn` (else
+## `~/.cache/finn`, which must be private to the user). With neither for this platform, there is no code mode. Skills: those of the home folder always, those of a session folder only under a folder of
 ## `FINN_TRUSTED_DIRS` (separated by `:`). Approval rules: the user's config file (`FINN_CONFIG`, else
 ## `$XDG_CONFIG_HOME/finn/config.json`, else `~/.config/finn/config.json`) and the project file `.finn/config.json`
 ## (`Permissions`); the deny rules always count, and a call no rule allows asks only when `FINN_APPROVALS=1`, or the
@@ -47,6 +47,8 @@ DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
 DEFAULT_MODEL = "default"
 ## The names `FINN_API` takes: OpenAI chat completions, the OpenAI Responses format, and Anthropic Messages.
 APIS = ["openai", "openai_responses", "anthropic"]
+## What a failed fetch of the worker says: how to go on without code mode.
+NO_CODE_MODE = "finn --no-codemode (or FINN_CODE_MODE=0) turns code mode off"
 
 struct Options
   state_dir: String
@@ -261,23 +263,43 @@ def files_command(read: Fn[String, Result[String]]) -> Result[List[String]]
   ok([])
 end
 
-## Code mode when `FINN_CODE_MODE` is `1`: the worker is found when the first script runs.
+## Code mode unless `FINN_CODE_MODE` is `0`, when there is a worker for this machine: `FINN_MONTY`, or a pinned wheel
+## for `platform` (`Monty.platform`), which is fetched only when the first script runs.
 def code_mode(read: Fn[String, Result[String]]) -> Result[Optional[CodeMode.Settings]]
-  switch = set(read, "FINN_CODE_MODE").unwrap_or("0")
+  code_mode_on(read, &Monty.platform)
+end
+
+## `code_mode` on a machine whose platform `platform` says.
+def code_mode_on(read: Fn[String, Result[String]], platform: Fn[Result[String]]) -> Result[Optional[CodeMode.Settings]]
+  switch = set(read, "FINN_CODE_MODE").unwrap_or("1")
   return ok(none) if switch == "0"
   return error("FINN_CODE_MODE must be 0 or 1, not #{switch.inspect}") if switch != "1"
 
   binary = set(read, "FINN_MONTY")
-  cache = try cache_dir(read)
-  worker = -> { worker_command(binary, cache) }
+  if binary.none?
+    case platform.call()
+      ok(found) if Monty.wheel(found).ok? -> nil
+      _ -> return ok(none)
+    end
+  end
+
+  worker = -> { worker_command(binary, read) }
   ok(some(CodeMode.Settings(worker: worker, limits: Monty.Limits())))
 end
 
-def worker_command(binary: Optional[String], cache: String) -> Result[List[String]]
+def worker_command(binary: Optional[String], read: Fn[String, Result[String]]) -> Result[List[String]]
   for path in option_list(binary)
     return ok(Monty.command(path))
   end
 
+  case fetched_worker(read)
+    ok(command) -> ok(command)
+    error(e) -> error("#{e.message}; #{NO_CODE_MODE}", kind: e.kind)
+  end
+end
+
+def fetched_worker(read: Fn[String, Result[String]]) -> Result[List[String]]
+  cache = try cache_dir(read)
   wheel = try Monty.wheel(try Monty.platform())
   ok(Monty.command(try Monty.binary(cache, wheel)))
 end
