@@ -126,7 +126,7 @@ end
 
 private
 
-## How many parts `counts` drops at most.
+# How many parts `counts` drops at most.
 MOST_DROPPED = 3
 
 def left(state: List[String], usage: Optional[Protocol.Usage], detail: Int) -> String

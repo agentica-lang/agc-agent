@@ -496,8 +496,8 @@ def compact_command(chat: Chat) -> Chat
 end
 
 def compacted(server: Client.Server, id: String) -> String
-  case Client.compacted(Client.compact(server, id))
-    ok(text) -> "[#{text}]"
+  case Client.compact(server, id)
+    ok(folded) -> "[#{Client.compacted(folded)}]"
     error(e) -> "[error] #{e.message}"
   end
 end

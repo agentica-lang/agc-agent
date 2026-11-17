@@ -19,6 +19,9 @@ import Requests from "src/requests"
 import Routes from "src/routes"
 
 VERSION = "0.0.1"
+## The bidi controls, which reorder the text around them on a screen: what a client shows of another's text, and
+## a session title, has none.
+BIDI = Set.new([0x061C, 0x200E, 0x200F, 0x202A, 0x202B, 0x202C, 0x202D, 0x202E, 0x2066, 0x2067, 0x2068, 0x2069])
 
 export Replies.ASKS_KEY
 export Replies.ASKS_URL

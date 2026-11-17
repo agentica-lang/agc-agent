@@ -29,11 +29,9 @@ end
 ## The thinking level of `session`, as a client says it.
 def thinking(session: Protocol.Session) -> String = "thinking #{session.effort.unwrap_or("as the model's default")}"
 
-## What a compaction did, or why it failed.
-def compacted(result: Result[Bool]) -> Result[String]
-  case result
-    ok(folded) if folded -> ok("compacted")
-    ok(_) -> ok("nothing to compact yet")
-    error(e) -> error(e)
-  end
+## What a compaction did: `folded` the history, or found nothing to fold.
+def compacted(folded: Bool) -> String
+  return "compacted" if folded
+
+  "nothing to compact yet"
 end
