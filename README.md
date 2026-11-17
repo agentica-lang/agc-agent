@@ -4,15 +4,16 @@ A coding agent for the terminal, like Claude Code or OpenCode, written in
 [Agentica](https://github.com/agentica-lang/agentica).
 
 - The agent runs as a server on localhost; clients connect to it over HTTP and
-  Server-Sent Events. A line-mode client comes first, then a TUI.
+  Server-Sent Events: a full-screen client (`finn`) and a line-mode one (`finn chat`).
 - The `llm` package is the client for LLM APIs: one provider-neutral API with
   providers underneath: `openai_chat` and `openai_responses` (OpenAI, llama.cpp's
   `llama-server`, Fireworks and other compatible APIs) and `anthropic` (the
   Anthropic Messages API); Codex comes later.
 - Extensions are Agentica packages that your own `main.agc` registers, or MCP
-  servers on stdio.
+  servers on stdio or streamable HTTP.
 
-Nothing works yet. The plan and its phases are in issue #1.
+To start, run `make install`, then `finn` opens the full screen, `finn chat` is the line chat and `finn -p "task"` runs
+one prompt. The rest is in [docs/content](docs/content/quickstart.md).
 
 ## Packages
 

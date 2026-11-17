@@ -2,95 +2,41 @@
 
 ## [Unreleased]
 
-- **Breaking:** `finn` alone (or with options) opens the full screen, as `finn tui` does; `finn chat` is the line chat. Without a terminal, plain `finn` refuses and points to `finn chat` and `finn -p`.
-- MCP servers on streamable HTTP: an entry of `FINN_MCP_CONFIG` with `url` and `headers` (`"Authorization": "Bearer ${TOKEN}"` takes the token from the environment, and no error or log shows it). Answers come as JSON or SSE; the client keeps the session id, resumes a cut stream with `Last-Event-ID`, starts a session the server ended again for the same call, and ends the session with a DELETE. Its tools follow the approvals and deny rules as the stdio ones do.
-- Approvals: an approval request for `bash` offers no prefix while a `read_file` deny rule exists, since only the same call can be allowed then.
-- Approvals: `stdbuf`, `chrt`, `ionice`, `setsid`, `doas`, `flock`, `watch`, `script`, `dash`, `ksh` and `fish` run other programs, so an answer for one allows only the same call, not its first word.
-- Extensions: a program of your own can serve Finn's core with its tools, wrappers of the runs of every tool but `activate_skill` and `run_script` (the approval decides first), prompts, `message` and `fold` handlers and services (`Core.serve`; see `examples/extension`); a crash or a hang of their code fails only that call, and `Core.call` builds a call for their tests.
-- A read-only `bash` command that runs without asking finds its programs in `/usr/local/bin`, `/usr/bin` and `/bin` when only root can change them; a program found only elsewhere (`~/.cargo/bin`) makes the command ask, and `which` checks its operands as paths.
-- **Breaking:** tools run without asking by default; `finn serve --approvals`, `FINN_APPROVALS=1` or `"approvals": true` in the config file turns the approvals on. Deny rules still apply; allow rules and `accept_edits` need the approvals on. With the approvals off, a `read_file` deny rule hides the file from the tools and refuses `bash` commands that name it, but cannot confine `bash` (`cat $(printf .env)`): use a sandbox.
-- `!` commands: a command whose task ends without its output ends as failed instead of running forever, and `finn tui` shows no duration for one a restart cut.
-- `finn tui`: `@` lists the session folder through the server (`GET /v1/sessions/ID/files`: read again each time `@` is typed, without what a `read_file` deny rule hides, cut at 5000 files or about 2 s, which the TUI then says); Esc stops the running turn by its id, so it never stops the turn after it (`POST /v1/sessions/ID/stop` takes an optional `turn_id` and answers whether it stopped one; the TUI says when the turn or command had already ended); and a paste that holds the token of another paste keeps it as text.
-- `finn tui` lists the commands while `/` and part of a name are typed, each with what it does: Tab or Enter completes the selected one, Enter on a whole name runs it, Up/Down select, and Esc closes the list so that Enter sends the text as typed. `/help` reads the same table and shows `/resume [N|ID]`.
-- `finn login` and `/login` in `finn tui` check a provider key and store it in `~/.config/finn/auth.json` (0600); `finn logout` and `/logout` remove it.
-- `!` commands: `finn tui` marks an output the model does not get, the session snapshot names a running command (`shell_id`), and a command that a server restart cut ends as failed, so the clients stop waiting for it.
-- `finn chat` and `finn tui` run `!CMD` in the session folder and give its output to the model with the next message, and `!!CMD` without giving it: `POST /v1/sessions/ID/shell` runs the command as the `bash` tool does, for up to 10 minutes (a deny rule refuses it, `shell.denied`), not while a turn runs, and sends `shell_started` and `shell_finished`; up to 20 outputs (1 MiB) wait for the next message.
-- `finn tui` shows a tool call as a shell line (`$ ls`, `read x`, `edit x`) tinted by how it went, with its output, a numbered diff of an edit and "Took 1.2s"; Ctrl+O shows or folds every tool output and Ctrl+T every thinking block, with a note. `tool_finished` has `output` and `diff`.
-- `finn tui`: Alt+Enter keeps a message for the end of the turn (listed above the prompt; Esc puts it back), Up on an empty prompt recalls earlier prompts, `@` lists the files of the session's folder (Tab completes one), and a large paste stays one `[paste #1 +31 lines]` token.
-- `finn tui` says a send that timed out "may not have been sent", stops another client's turn when Esc came before the reply, and keeps the thinking level it is setting across a new read of the session.
-- `message_queued` events without `message_id` load again.
-- `finn server logs` shows a byte that is not UTF-8 as U+FFFD and goes on; `finn server stop` and `restart` wait as long as the server says it is stopping (`FINN_DRAIN_MS`), a second SIGTERM or SIGINT cancels the turns of a stop that waits, and a failed `restart` says whether an old server was stopped.
-- `finn server status|start|stop|restart|logs` manages the server of the state folder: `status` shows the pid, version, uptime, sessions, running turns and whether a stop waits (exit 1 when none runs); `stop` makes the server stop starting work (new sessions, messages and shell commands get `503`, `server.stopping`) and waits until it has gone: it waits for the running turns and shell commands (`--now`, also as a second `stop` while the first waits, cancels them; a turn that only waits for an approval does not make it wait: it is cancelled; `FINN_DRAIN_MS`, 60000, is the longest wait), flushes the sessions, which ends the event streams after `turn_finished`, and removes `server.json`; `restart` stops and starts one the way a client does; `logs [-f]` shows the last 100 lines of `server.log` (it follows by byte offset and ends when the server goes away); a start keeps one `server.log.1` of a log over 10 MiB. The server has `GET /v1/server` and `POST /v1/server/stop` (`{}` is `now: false`) for it, and SIGTERM or SIGINT stops it as `stop --now` does.
-- `finn tui` reads Alt+Enter as one key (it was Escape, which stopped the turn, then Enter).
-- Providers by name: `local` (FINN_BASE_URL) and `anthropic`, the presets openai, fireworks, openrouter, groq and deepseek once their key variable is set, and custom ones under `providers` in the config file; `FINN_PROVIDER` or `finn serve --provider` picks the default, `finn --provider` and `finn tui --provider` a new session's, and a session keeps its provider (`GET /v1/providers`, `provider` in `POST` and `PATCH /v1/sessions`); one whose provider is no longer offered still opens and names the key to set.
-- `/model provider/model` moves the session to another provider; in `finn tui`, `/model` alone opens a picker of every provider's models, and the status line shows `(provider) model`.
-- `finn chat` and `finn tui` have `/tree` (go back before an earlier message, or on after an answer, in the same session), `/fork` (a new session from a message) and `/clone` (a copy of the session); `finn tui` picks from a list, and the message gone back before waits in the prompt.
-- `finn chat` and `finn tui` have `/tree` (go back before an earlier message, or on after an answer, in the same session), `/fork` (a new session from a message) and `/clone` (a copy of the session); `/tree N` and `/fork N` name a message of the last list; `finn tui` picks from a list, and the message gone back before waits in the prompt, selected, so typing replaces it.
-- A session file is a tree: `GET /v1/sessions/ID/tree` lists the user messages of every branch, `POST /v1/sessions/ID/branch` goes on from an earlier message in the same session, and `POST /v1/sessions/ID/fork` starts a new session from one (or copies the session); older session files still load.
-- `finn tui` looks like pi: the prompt sits between two rules whose color shows the thinking level (Shift+Tab sets the next one), a spinner and "Working" sit in the top rule during a turn, the transcript has no `>` or `·` marks, the `/resume` picker takes the prompt's place and an approval shows under it.
-- The core server runs on Bond 0.13.1 (a router with filters and `Bond.sse`) and no longer on `std/http` directly: the paths, status codes, JSON and event stream are the same. `agentica install` in `core/` fetches Bond, as `make install` does.
-- `finn tui` keeps reading keys while a message or a stop is sent, and an answer that only called tools draws no empty row.
-- `finn tui` keeps the wrapped rows of each transcript entry, so a key costs about the same on a long transcript as on a short one.
-- Approval rules come from a config file (`FINN_CONFIG`, else `~/.config/finn/config.json`) and the project's `.finn/config.json` (its allow rules only under `FINN_TRUSTED_DIRS`); an approval may allow a `bash` prefix (`allow_prefix`) or a whole tool (`allow_tool`) for the session, and `PATCH /v1/sessions/ID` with `accept_edits` runs file edits without asking (until the server restarts; the deny rules are checked first, as far as the parser sees a command, and nothing reaches into `.git/`).
-- `finn tui` draws a view tree and writes only the cells that change; the prompt cursor is a reversed cell, and a long pasted line no longer slows each key.
-- `finn tui --yolo` allows the tool calls of the turns it starts; the status line shows YOLO all the time, and a turn another client started is still asked.
-- `finn tui` takes pasted text whole (bracketed paste) into the prompt or the `/resume` filter.
-- **Breaking:** `finn --yolo` allows only the tool calls of the turns it starts, as `finn tui --yolo` does; both ask the rest of a turn another client queued a message into (`message_id` in the `202` and in `message_queued`), or whose events a resync did not replay.
-- `finn chat` and `finn tui` refuse a running server of another version (its wire records differ) and say how to stop it, instead of failing on its replies.
-- Turn ids have a random part, so a server that lost the last records of a session never gives a new turn an old id.
-- `finn chat` and `finn tui` check the server's version again before they read its event stream again; the version also covers the error kinds and the paths.
-- A long pasted text in the `finn tui` prompt no longer slows down each key.
+### Changed
 
-- The repo skeleton: a workspace with the `llm` and `core` packages, and CI.
-- The `sse` package: a Server-Sent Events parser and writer.
-- The `protocol` package: the records of the commands and events between the server and its clients, with JSON codecs.
-- The `llm` common API (messages, tools, a stream of events, usage, stop reasons, errors, retry) and its first provider, `openai_chat`.
-- The six base tools of `core` (`read_file`, `write_file`, `edit_file`, `glob`, `grep`, `bash`), the path rule, the approval rules and the bash environment.
-- `protocol`: `decode_session` checks that `turn_id` and `turn_from_event_id` come together and agree with `last_event_id`; `StopReason.Other` is never a known name.
-- `make smoke-llama` runs the `llm` tests against a real llama-server; `make live-fireworks` makes one real Fireworks call.
-- The `openai_responses` provider (the OpenAI Responses format: reasoning items, custom tools and item ids sent back unchanged); llama.cpp for the smoke tests is now `b12426`.
-- The `cli` package: the line-mode client. It starts the server when none runs, prints the events of a session, answers approvals with y, n or a, and stops a turn with Ctrl+C.
-- `core serve`: the agent loop (tool calls, approvals, stop, loop guard) behind the HTTP and SSE API on 127.0.0.1, with a Bearer token in `server.json`, `Host` and `Origin` checks, and every event of the running turn kept for a client that attaches mid-turn.
-- `protocol`: `ServerInfo`, the record of `server.json`; `ApprovalRequested.detail`, the content a call would write.
-- `read_file`: a line over 1 MiB in a file over 1 MiB keeps the lines before it and adds a note; a clamped `limit` adds the "continue with offset" note.
-- `cli`: the state folder is resolved with its symlinks, and a symlink that is not yours is refused.
-- `core serve` keeps each session in a JSON Lines file of the data folder (`FINN_DATA_DIR`): a session resumes after a restart with its history and event ids, and a turn the restart cut ends as `cancelled`. The files are plain text (tool output and file contents included), keep the events and messages until the session is deleted. When a file cannot be written, the turn stops with a `session.storage` error.
-- `usage` events: `output` is the sum over the session (kept across a restart), and `context` is the prompt size of the call (input and cache counts, without the output).
-- Session files no longer keep text and thinking deltas; after a restart, a `Last-Event-ID` that would need one gets `resync`, and ids may skip.
-- `core serve` lists the sessions from the first line of their files at start and loads a session on its first request; one that cannot be loaded now answers 503 `session.unavailable`.
-- `DELETE /v1/sessions/ID` deletes a session and its file (`session.busy` while a turn runs); `finn --delete ID` does it from the cli.
-- Compaction: past 80 % of the model's window (`FINN_CONTEXT_WINDOW`, else llama-server's `/props`, else `GET /models`), the history between the first task and the running turn becomes a summary by `FINN_COMPACT_MODEL` (else the session's model), saved in the session file; the system prompt and tools stay the same. The running turn is never compacted, the summary's tokens are not in `usage`, and a failed summary or an unknown window is an `error` event.
-- `protocol`: `turn_started` and `turn_finished` carry `history_size`, the size of the session's history after the event. `cli`: after a resync, the client prints the part of the history it missed (the end of a turn a restart cut, a later turn), and says when the turn ended while the stream was away.
-- `core serve` loads a session file in a task of its own: a big file no longer holds up the list, new sessions or other sessions while it loads.
-- `core serve`: the 503 of a session that cannot load no longer shows the error behind it (a path, a crash); the server logs it.
-- Compaction folds the older tool rounds of the running turn too, so the first turn or one long turn is compacted; the last round stays whole.
-- Compaction stops for the rest of a turn when a fold leaves the context past the limit (an `error` event), instead of folding again every round.
-- A turn that a restart cuts after a compaction keeps the text of its folded rounds in its answer.
-- `core serve` speaks the OpenAI Responses format too: `FINN_API=openai_responses` (`openai`, chat completions, stays the default); it sends `store: false` and asks for the encrypted reasoning to replay it.
-- `llm` `openai_responses`: with `store: false`, replayed items go back without their ids (the API refuses ids it did not keep).
-- `bin/finn`: one command for everything, from any folder: `finn` (chat), `finn serve` (with `--api`, `--model`, `--base-url`), `finn --version`, `finn --help`.
-- A session names its model API (`finn --api openai_responses`, `api` of `POST /v1/sessions`) and keeps it in its file; an older session uses the server's.
-- Sessions made before the API choice keep no API in their file: one made with `FINN_API=openai_responses` follows the server's current default. `GET /v1/sessions` shows the API of each session.
-- **Breaking:** the command is `finn` (`bin/finn`), the product Finn Agent: variables are `FINN_*` and folders `finn`; the `AGC_AGENT_*` names and an existing `agc-agent` folder still work.
-- The approval of an `edit_file` call marks each old line `-` and each new line `+`.
-- The `tui_client` package: a full-screen client on agentica-tui with a scrolling transcript of the streamed answer, a multiline prompt (Enter sends, Ctrl+J adds a line) and Esc to stop the turn.
-- The `client` package: what the cli and the TUI share (finding or starting the server, the HTTP calls, the event reader).
-- `tui_client`: the answer is drawn as markdown (headings, lists, code blocks, bold), and Ctrl+T (or `--thinking` at the start) shows or hides the model's thinking.
-- `finn tui` starts the TUI. It shows each tool call as it runs and ends, and asks each approval in a panel with the call's detail: Ctrl+Y allows, Ctrl+N denies, and Tab then y, n or a (allow that tool on that exact target for the session), so typing or pasting never answers.
-- Code mode (`FINN_CODE_MODE=1`): `run_script` runs a Python script in pydantic's Monty sandbox that calls the tools as functions, each call approved as a direct one; the pinned worker is fetched on first use with its sha256 checked (`FINN_MONTY` names another). The `monty` package drives it.
-- The `anthropic` provider (the Anthropic Messages API: adaptive thinking sent back with its signature, cache breakpoints on the system prompt or tools and the conversation, the models list), with an API key or an OAuth token; the llama smoke tests run it too, and `make smoke-anthropic` makes a few real calls.
-- MCP servers on stdio (`FINN_MCP_CONFIG`, the `mcp` package): their tools are `mcp__SERVER__TOOL`, ask like the other tools, and a server that crashed or hung gives an error result and starts again on the next call. A server gets a short environment plus the `env` of its config, and a stop ends what it started. Servers list their tools in the background, so a slow one does not hold up the start.
-- `finn -p TASK` runs one task (`-p -` reads it from stdin): the answer on stdout, the rest on stderr; it exits 0 when the turn ends normally, 130 when cancelled, 1 otherwise, and denies approvals; `--yolo` allows the tool calls of the run, in one-shot and in chat.
-- The models.dev catalog (`FINN_MODELS_URL`, kept a day in the state folder, read offline): `usage` events carry `cost`, `turn_cost` and `session_cost` in USD, the session snapshot its `cost`, and the model's window comes from it when `FINN_CONTEXT_WINDOW` is unset.
-- A `bash` command that only reads inside the session folder (`ls`, `cat`, `grep`, `rg`, `sed -n`, `find`, ... with the options of an allow-list, in pipelines and lists, its paths resolved, no unquoted glob; checked by the new `shell` package) runs without asking and with PATH `/usr/bin:/bin`, unless a deny rule of `read_file` or `bash` exists.
-- Core on Anthropic (`FINN_API=anthropic` or a session's `--api anthropic`): `ANTHROPIC_API_KEY`, else `ANTHROPIC_AUTH_TOKEN`, else the token of `ant auth login` (fetched again after a 401); the prompt cache is asked for, thinking blocks go back with their signatures, the history folds only between turns and drops the thinking of the kept messages; `make live-anthropic-core`.
-- Agent Skills: `SKILL.md` folders under `.finn/skills`, `.agents/skills` and `.claude/skills` of the home folder, and of the session folder when it is under `FINN_TRUSTED_DIRS`; a catalog in the system prompt, the `activate_skill` tool, `/name` in a message, and compaction keeps loaded skills.
-- Session commands in `finn chat` and `finn tui`: `/new`, `/resume` (lists the sessions; `/resume N` or an id switches), `/model`, `/thinking low|medium|high`, `/compact`, `/stop`, `/help`, `/quit`.
-- `finn tui`: character widths follow glibc's wcwidth, as the terminal library draws them (emoji, flags, combining marks; a ZWJ sequence takes the columns of each emoji), and long code lines wrap instead of being cut.
-- `finn tui` takes the mouse: a click on a key of the approval panel answers as that key, a click on a tool call or a thinking block opens or closes it, and a click in the prompt moves the cursor (also Left, Right, Home and End); Shift+drag still selects text.
-- `core serve`: `PATCH /v1/sessions/ID` changes a session's model and thinking level (kept in its file), and `POST /v1/sessions/ID/compact` folds the history into a summary on demand; the session snapshot has `effort`.
-- Session commands in `finn chat` and `finn tui`: `/new`, `/resume` (a picker in the TUI, a numbered list in chat; `/resume N` or an id switches), `/model`, `/thinking low|medium|high|default`, `/compact`, `/stop`, `/help`, `/quit`. Any other `/name` goes to the agent as a message.
-- `core serve`: `PATCH /v1/sessions/ID` changes a session's model and thinking level (kept in its file), and `POST /v1/sessions/ID/compact` folds the history into a summary on demand; the session snapshot has `effort`, and the session list has the current model, the last change and the first message, newest first.
-- `apply_patch` (the Codex patch format) for models on `openai_responses`, as a custom tool with its grammar; each path it touches is approved as an `edit_file`, and a patch applies whole or not at all.
-- `apply_patch` rollback: a failed step puts back every file it can and names the ones it could not, removes the folders the patch made, and gives a deleted file back with its mode (deletes run last); the search of a patch takes at most 2,000,000 line comparisons in total, and a patch has at most 1000 changes.
-- Steering: a message sent while a turn runs is queued (`202`, a `message_queued` event) and read before the turn's next model call; one that comes after the last read starts the next turn, and a stopped turn drops its queue with an `error` event. `finn chat` and `finn tui` show it as queued.
+- **Breaking:** `finn` opens the full screen, as `finn tui` does; `finn chat` is the line chat.
+- **Breaking:** tools run without asking by default; turn approvals on with `finn serve --approvals`.
+- **Breaking:** `finn --yolo` allows only the tool calls of the turns it starts.
+- **Breaking:** the command is `finn` and variables are `FINN_*`; the `AGC_AGENT_*` names still work.
+- `finn chat` and `finn tui` refuse a server of another version and say how to stop it.
+
+### Added
+
+- Finn Agent, a coding agent: `finn` (full screen) and `finn chat` (lines) talk to a local server.
+- Tools: read, write and edit files, `glob`, `grep`, `bash`, and `apply_patch` for models that use it.
+- `finn -p TASK` runs one task and prints the answer.
+- Sessions are kept on disk and resume after a restart; `finn --delete ID` removes one.
+- Long histories are compacted into a summary before the context window fills.
+- Session commands: `/new`, `/resume`, `/model`, `/thinking`, `/compact`, `/stop`, `/help` and `/quit`.
+- `/tree`, `/fork` and `/clone` go back in a session, branch it into a new one, or copy it.
+- A message sent while a turn runs is queued and read before the next model call.
+- `!CMD` runs a shell command in the session folder; `!!CMD` keeps its output from the model.
+- `finn` keys: `@` completes files, `/` lists commands, Alt+Enter queues a follow-up, Up recalls prompts.
+- `finn` shows tool output and diffs, takes the mouse, and keeps a large paste as one token.
+- Providers: local, anthropic, openai, fireworks, openrouter, groq, deepseek and custom; `/model provider/model` switches.
+- `finn login` and `finn logout` store and remove a provider key.
+- The `openai_responses` and `anthropic` APIs, with thinking and prompt cache.
+- Cost in USD from the models.dev catalog.
+- Approval rules in config files; allow a `bash` prefix, a tool or edits for the session.
+- Read-only `bash` commands in the session folder run without asking.
+- MCP servers on stdio and streamable HTTP.
+- Agent Skills from `.finn/skills`, `.agents/skills` and `.claude/skills`.
+- Code mode (`FINN_CODE_MODE=1`): the model calls tools from a sandboxed Python script.
+- Extensions: your own program serves Finn's core with its tools, wrappers and prompts.
+- `finn server status|start|stop|restart|logs` manages the server.
+
+### Fixed
+
+- A `!` command that a server restart cut ends as failed instead of running forever.
+- Esc stops the turn it was pressed for, never the next one.
+- `finn` stays fast with long pasted lines and long transcripts.
