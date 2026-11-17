@@ -5,6 +5,7 @@ import App from "../src/app"
 import Approvals from "../src/approvals"
 import Args from "../src/args"
 import Picker from "../src/picker"
+import Session from "../src/session"
 import Transcript from "../src/transcript"
 
 def test_keys_edit_the_prompt_and_the_view_draws_it() -> Result[Void]
@@ -157,12 +158,17 @@ def test_the_session_commands_change_the_session() -> Result[Void]
     ],
   )
 
-  try Test.eq([model.prompt, "#{model.effort}", model.serving], ["/thinking max", "some(\"high\")", "p/other-model"])
+  try Test.eq([model.prompt, model.serving], ["/thinking max", "p/other-model"])
+  try Test.assert(model.effort == some("high"), "the level is high")
   try Test.eq([(try changes.recv(0)).effort, (try changes.recv(0)).model], [some("high"), some("other-model")])
   compacting = App.update(model.with(prompt: "/compact", cursor: 8), enter())
   try Test.eq(compacting.model.entries.last.text, "compacting the history")
   done = App.update(compacting.model, run(compacting.cmds[0])[0]).model
-  Test.eq(done.entries.last.text, "compacted")
+  try Test.eq(done.entries.last.text, "compacted")
+  down = model.with(backend: backend.with(compact: ->(_id: String) { error("busy", kind: "session.busy") }))
+  failing = App.update(down.with(prompt: "/compact", cursor: 8), enter())
+  failed = App.update(failing.model, run(failing.cmds[0])[0]).model
+  Test.eq(failed.entries.last.text, "error: busy")
 end
 
 # A running turn spins in the top rule.
@@ -424,28 +430,32 @@ def test_resyncs_in_a_row_end_the_client() -> Result[Void]
     history: [],
   )
 
-  froms: Channel[Int] = Channel.new(4)
+  froms: Channel[Int] = Channel.new(Session.MAX_RESYNCS + 2)
   backend = Client.unreachable_backend().with(
     session: ->(_id: String) { ok(session) },
     subscribe: ->(_id: String, from: Int, _sink: Fn[Client.Item, Result[Void]]) {
       _ = froms.send(from, 0)
-      Task.spawn(
-        -> {
-        },
-      )
+      idle()
     },
   )
 
   model = model_of(30, 8).with(backend: backend, id: "s1", turn: true, generation: 1)
   quits: List[Bool] = []
-  for _ in 0...3
+  for _ in 0..Session.MAX_RESYNCS
     step = App.update(model, App.Msg.Stream(model.generation, [Client.Item.Event(some(5), Protocol.Event.Resync)]))
     model = step.model
     quits = quits.push(step.cmds.any? { |cmd| quit?(cmd) })
   end
 
-  try Test.eq([try froms.recv(0), try froms.recv(0)], [2, 9])
-  try Test.eq(quits, [false, false, true])
+  reads: List[Int] = []
+  got = froms.recv(0)
+  while got.ok?
+    reads = reads.push(got.unwrap!)
+    got = froms.recv(0)
+  end
+
+  try Test.eq(reads, [2] + (1...Session.MAX_RESYNCS).map { |_| 9 })
+  try Test.eq(quits, (0..Session.MAX_RESYNCS).map { |i| i == Session.MAX_RESYNCS })
   Test.eq(model.failure, some("the server keeps asking to read the session again"))
 end
 
@@ -942,6 +952,14 @@ def branch?(msg: App.Msg) -> Bool
     App.Msg.Branch(_, _) -> true
     _ -> false
   end
+end
+
+# A stream reader that reads nothing.
+def idle() -> Task[Void]
+  Task.spawn(
+    -> {
+    },
+  )
 end
 
 def run(cmd: TUI.Cmd[App.Msg]) -> List[App.Msg]

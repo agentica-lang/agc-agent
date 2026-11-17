@@ -4,9 +4,9 @@
 ## A word of a command: its tree-sitter node type and its text as written, quotes and escapes kept. The name of a
 ## command is always `command_name`; an argument is `word`, `string`, `raw_string`, `concatenation`,
 ## `simple_expansion`, `command_substitution` and so on. A statement that is not a simple command (`export`,
-## `declare`, `local`, `readonly`, `typeset`, `unset`, `[ ]`, `[[ ]]`, a bare `x=1`) is one word whose kind is its
-## node type (`declaration_command`, `unset_command`, `test_command`, `variable_assignment`, `variable_assignments`)
-## and whose text is the whole statement.
+## `declare`, `local`, `readonly`, `typeset`, `unset`, `[ ]`, `[[ ]]`, or assignments with no command, `x=1`) is
+## one word whose kind is its node type (`declaration_command`, `unset_command`, `test_command`, `variable_assignment`,
+## `variable_assignments`) and whose text is the whole statement. An assignment before a command's name is not one.
 struct Word
   kind: String
   text: String

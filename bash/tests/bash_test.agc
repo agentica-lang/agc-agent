@@ -42,7 +42,8 @@ def test_words_after_a_redirection_are_words() -> Result[Void]
   try Test.eq(try words("git <in push --force"), [["command_name git", "word push", "word --force"]])
   try Test.eq(try words("cat <<EOF x y\nbody\nEOF"), [["command_name cat", "word x", "word y"]])
   try Test.eq(try words("cat <<< w x"), [["command_name cat", "word x"]])
-  Test.eq(try words("a | zq 2>/dev/null x"), [["command_name a"], ["command_name zq", "word x"]])
+  try Test.eq(try words("a | zq 2>/dev/null x"), [["command_name a"], ["command_name zq", "word x"]])
+  Test.eq(try words("git <<EOF 2>/dev/null push --force\nb\nEOF"), [["command_name git", "word push", "word --force"]])
 end
 
 # A statement that runs no program by name is a command of one word, its node type.
@@ -76,6 +77,8 @@ def test_a_broken_unclear_or_long_line() -> Result[Void]
   try Test.eq([(try Bash.parse("echo (")).error, (try Bash.parse("echo ok")).error], [true, false])
   for line in [
     "a `b` `c`", "cat <<EOF\n`id`\nEOF", "echo \"`b` `c`\"", "a - 2>x", "a | b | c x\nd <<EOF\nEOF", "a\\\nb",
+    "V=1 <<EOF rm -rf x\nb\nEOF", "a | V=1 <<E rm x\nE", "( V=1 <<E rm x\nE\n)",
+    "a | b | export V\nrm -rf x <<EOF\nEOF", "a `V=`b` c`|d",
   ]
     try Test.eq([line, (try Bash.parse(line)).unclear.to_s], [line, "true"])
   end
@@ -87,10 +90,14 @@ def test_a_broken_unclear_or_long_line() -> Result[Void]
   Test.error?(Bash.parse("x" * (Bash.MAX_LINE + 1)))
 end
 
-# A deep nesting is read, or refused, within the limit.
-def test_a_deep_nesting_ends_within_the_limit() -> Result[Void]
-  started = Time.monotonic_ms
-  _ = Bash.parse("#{"$(" * 10000}x#{")" * 10000}")
-  elapsed = Time.monotonic_ms - started
-  Test.assert(elapsed < Bash.LIMIT_MS + 800, "the parse took #{elapsed} ms")
+# A parse over LIMIT_MS gives an error, and so does a nesting whose commands would hold too much text; both end soon.
+def test_a_slow_or_deep_line_ends_with_an_error() -> Result[Void]
+  for line in ["a|" * 32000, "#{"$(" * 10000}x#{")" * 10000}"]
+    started = Time.monotonic_ms
+    try Test.error?(Bash.parse(line))
+    elapsed = Time.monotonic_ms - started
+    try Test.assert(elapsed < Bash.LIMIT_MS + 800, "the parse took #{elapsed} ms")
+  end
+
+  ok()
 end

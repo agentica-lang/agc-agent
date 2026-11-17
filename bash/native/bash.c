@@ -74,7 +74,7 @@ static bool stray_backtick(ng_str line, TSNode word) {
    word (`a\` and a line end then `b` is the word `ab` to bash, two words to it). A here-document body is text. */
 static void gap(reading *r, TSNode parent, uint32_t from, uint32_t to) {
   if (from >= to || is(parent, "heredoc_body")) return;
-  bool command = is(parent, "command");
+  bool command = is(parent, "command") || is(parent, "declaration_command") || is(parent, "unset_command");
   const char *s = r->line.data;
   for (uint32_t i = from; i < to; i++) {
     if (s[i] == ' ' || s[i] == '\t' || s[i] == '\r' || (s[i] == '\n' && !command)) continue;
@@ -88,34 +88,59 @@ static void gap(reading *r, TSNode parent, uint32_t from, uint32_t to) {
   }
 }
 
+/* A word of a command; with no builder (`b` NULL) only checked, for a statement that has no words. */
 static void push_word(an_env *env, reading *r, bash_list_Word_builder *b, TSNode node) {
   if (stray_backtick(r->line, node)) r->unclear = true;
+  if (b == NULL) return;
   bash_Word word = {{ts_node_type(node), strlen(ts_node_type(node))}, counted(r, slice(r->line, node))};
   bash_list_Word_push(env, b, word);
 }
 
 /* The words a redirection gives its command: the destinations of `>` after the first (`cmd >out x`), the arguments
-   after a here-document's start (`cat <<EOF x`), and those after a here-string's word (`cat <<< w x`). Its first
-   destination, not a word, is checked for a stray backtick too. */
-static void redirect_words(an_env *env, reading *r, bash_list_Word_builder *b, TSNode redirect) {
+   after a here-document's start (`cat <<EOF x`), with those of a redirection it holds (`git <<EOF 2>x push`), and
+   those after a here-string's word (`cat <<< w x`); how many. Its first destination, not a word, is checked for a
+   stray backtick too. */
+static int redirect_words(an_env *env, reading *r, bash_list_Word_builder *b, TSNode redirect) {
   bool file = is(redirect, "file_redirect");
   bool here = is(redirect, "heredoc_redirect");
   bool string = is(redirect, "herestring_redirect");
-  if (!file && !here && !string) return;
+  if (!file && !here && !string) return 0;
   TSTreeCursor cursor = ts_tree_cursor_new(redirect);
   int destinations = 0;
   int named = 0;
+  int count = 0;
   if (ts_tree_cursor_goto_first_child(&cursor)) {
     do {
       TSNode child = ts_tree_cursor_current_node(&cursor);
       const char *field = ts_tree_cursor_current_field_name(&cursor);
-      if (stray_backtick(r->line, child)) r->unclear = true;
-      if (file && field_is(field, "destination") && destinations++ > 0) push_word(env, r, b, child);
-      if (here && field_is(field, "argument")) push_word(env, r, b, child);
-      if (string && ts_node_is_named(child) && named++ > 0) push_word(env, r, b, child);
+      bool word = (file && field_is(field, "destination") && destinations++ > 0) ||
+                  (here && field_is(field, "argument")) || (string && ts_node_is_named(child) && named++ > 0);
+      if (word) {
+        push_word(env, r, b, child);
+        count++;
+      } else if (stray_backtick(r->line, child)) {
+        r->unclear = true;
+      }
+      if (here && field_is(field, "redirect")) count += redirect_words(env, r, b, child);
     } while (ts_tree_cursor_goto_next_sibling(&cursor));
   }
   ts_tree_cursor_delete(&cursor);
+  return count;
+}
+
+/* The words of the redirections of a statement (`statement`, a null node when there is none); how many. */
+static int statement_words(an_env *env, reading *r, bash_list_Word_builder *b, TSNode statement) {
+  if (ts_node_is_null(statement)) return 0;
+  int count = 0;
+  TSTreeCursor cursor = ts_tree_cursor_new(statement);
+  if (ts_tree_cursor_goto_first_child(&cursor)) {
+    do {
+      if (field_is(ts_tree_cursor_current_field_name(&cursor), "redirect"))
+        count += redirect_words(env, r, b, ts_tree_cursor_current_node(&cursor));
+    } while (ts_tree_cursor_goto_next_sibling(&cursor));
+  }
+  ts_tree_cursor_delete(&cursor);
+  return count;
 }
 
 /* The name and arguments of a command in source order, with those of its redirections and of the redirections of
@@ -133,16 +158,7 @@ static an_term command_words(an_env *env, reading *r, TSNode command, TSNode sta
     } while (ts_tree_cursor_goto_next_sibling(&cursor));
   }
   ts_tree_cursor_delete(&cursor);
-  if (!ts_node_is_null(statement)) {
-    cursor = ts_tree_cursor_new(statement);
-    if (ts_tree_cursor_goto_first_child(&cursor)) {
-      do {
-        if (field_is(ts_tree_cursor_current_field_name(&cursor), "redirect"))
-          redirect_words(env, r, &b, ts_tree_cursor_current_node(&cursor));
-      } while (ts_tree_cursor_goto_next_sibling(&cursor));
-    }
-    ts_tree_cursor_delete(&cursor);
-  }
+  statement_words(env, r, &b, statement);
   return bash_list_Word_end(env, &b);
 }
 
@@ -155,8 +171,10 @@ static bool other_statement(TSNode node, TSNode parent) {
          !(is(parent, "command") || is(parent, "declaration_command") || is(parent, "variable_assignments"));
 }
 
-/* The one word of such a statement: its node type and its text. */
-static an_term single_word(an_env *env, reading *r, TSNode node) {
+/* The one word of such a statement: its node type and its text. Words its redirections carry (`V=1 <<EOF rm x`) run
+   as a command to bash: the line is then unclear. */
+static an_term single_word(an_env *env, reading *r, TSNode node, TSNode statement) {
+  if (statement_words(env, r, NULL, statement) > 0) r->unclear = true;
   bash_list_Word_builder b;
   bash_list_Word_begin(env, &b, 1);
   bash_Word word = {{ts_node_type(node), strlen(ts_node_type(node))}, counted(r, slice(r->line, node))};
@@ -168,19 +186,35 @@ static an_term single_word(an_env *env, reading *r, TSNode node) {
    the root each time). */
 typedef struct {
   TSNode *nodes;
+  /* How many backtick substitutions are among nodes[0..i]. */
+  uint32_t *ticks;
   size_t len;
   size_t cap;
 } path;
 
-static bool path_push(path *p, TSNode node) {
+static bool backtick_substitution(ng_str line, TSNode node) {
+  return is(node, "command_substitution") && line.data[ts_node_start_byte(node)] == '`';
+}
+
+/* Sets the node at `p->len - 1`, after the node above it. */
+static void path_set(path *p, ng_str line, TSNode node) {
+  size_t i = p->len - 1;
+  p->nodes[i] = node;
+  p->ticks[i] = (i > 0 ? p->ticks[i - 1] : 0) + (backtick_substitution(line, node) ? 1 : 0);
+}
+
+static bool path_push(path *p, ng_str line, TSNode node) {
   if (p->len == p->cap) {
     size_t cap = p->cap == 0 ? 64 : p->cap * 2;
     TSNode *nodes = realloc(p->nodes, cap * sizeof(TSNode));
-    if (nodes == NULL) return false;
-    p->nodes = nodes;
+    if (nodes != NULL) p->nodes = nodes;
+    uint32_t *ticks = realloc(p->ticks, cap * sizeof(uint32_t));
+    if (ticks != NULL) p->ticks = ticks;
+    if (nodes == NULL || ticks == NULL) return false;
     p->cap = cap;
   }
-  p->nodes[p->len++] = node;
+  p->len++;
+  path_set(p, line, node);
   return true;
 }
 
@@ -246,8 +280,8 @@ an_term bash_commands(an_env *env, ng_str line, int64_t limit_ms) {
 
   TSNode root = ts_tree_root_node(tree);
   reading r = {line, false, 0};
-  path p = {NULL, 0, 0};
-  bool walking = path_push(&p, root);
+  path p = {NULL, NULL, 0, 0};
+  bool walking = path_push(&p, line, root);
   bash_list_Command_builder b;
   bash_list_Command_begin(env, &b, 0);
   TSTreeCursor cursor = ts_tree_cursor_new(root);
@@ -258,17 +292,20 @@ an_term bash_commands(an_env *env, ng_str line, int64_t limit_ms) {
       TSNode statement = statement_of(&p);
       bool whole = !ts_node_is_null(statement) && ts_node_eq(statement, parent);
       ng_str text = counted(&r, slice(line, whole ? parent : node));
-      an_term words = is(node, "command") ? command_words(env, &r, node, statement) : single_word(env, &r, node);
+      an_term words =
+          is(node, "command") ? command_words(env, &r, node, statement) : single_word(env, &r, node, statement);
       bash_Command command = {text, words};
       bash_list_Command_push(env, &b, command);
     } else if (is(node, "heredoc_body") && has_backtick(line, node)) {
       r.unclear = true;
     }
+    /* Backticks do not nest unescaped: bash ends the outer substitution at the inner one's first backtick. */
+    if (p.ticks[p.len - 1] > 1) r.unclear = true;
 
     if (ts_tree_cursor_goto_first_child(&cursor)) {
       TSNode child = ts_tree_cursor_current_node(&cursor);
       gap(&r, node, ts_node_start_byte(node), ts_node_start_byte(child));
-      walking = path_push(&p, child);
+      walking = path_push(&p, line, child);
       continue;
     }
     uint32_t end = ts_node_end_byte(node);
@@ -281,12 +318,13 @@ an_term bash_commands(an_env *env, ng_str line, int64_t limit_ms) {
     if (walking) {
       TSNode next = ts_tree_cursor_current_node(&cursor);
       gap(&r, p.nodes[p.len - 2], end, ts_node_start_byte(next));
-      p.nodes[p.len - 1] = next;
+      path_set(&p, line, next);
     }
   }
   bool complete = p.len == 0;
   ts_tree_cursor_delete(&cursor);
   free(p.nodes);
+  free(p.ticks);
 
   an_term commands = bash_list_Command_end(env, &b);
   bool error = ts_node_has_error(root);

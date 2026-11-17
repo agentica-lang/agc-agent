@@ -103,8 +103,10 @@ end
 ## The environment of a client on `dir` run from source with its own bytecode cache `build`, where the client and the
 ## core are compiled first. A run from source with the test's home compiles again and rewrites the entry of the
 ## package's `_build/`, which other tests read at the same time; compiled here, the client starts its server at once.
+## The package cache is the caller's, which holds the native module of `bash` that a compile of the core builds.
 def own_cache(dir: String, build: String) -> Result[Map[String, String]]
-  extra = {"AGENTICA_BUILD_DIR": build}
+  home = System.env("HOME").unwrap_or("/nonexistent")
+  extra = {"AGENTICA_BUILD_DIR": build, "XDG_CACHE_HOME": System.env("XDG_CACHE_HOME").unwrap_or("#{home}/.cache")}
   env = with_extra(environment("1", dir), extra)
   for entries in [ENTRIES, CORES]
     source = try Path.resolve(try existing(entries))

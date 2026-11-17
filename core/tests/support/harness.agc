@@ -232,7 +232,11 @@ end
 def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
   work = "#{base}/work"
   try Dir.mkdir(work)
-  user = Permissions.User(rules: try Approval.parse_rules(setup.allow, setup.deny), asking: setup.approvals)
+  user = Permissions.User(
+    rules: try Approval.parse_rules(setup.allow.map { |r| "allow #{r}" } + setup.deny.map { |r| "deny #{r}" }),
+    asking: setup.approvals,
+  )
+
   for read in option_list(setup.approvals_env)
     user = try Permissions.user_rules(read, try Config.approvals_switch(read))
   end

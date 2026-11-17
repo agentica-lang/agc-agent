@@ -213,14 +213,14 @@ end
 # Each path decides as `edit_file` would: a path out of the folder or denied refuses the patch, `.git` asks.
 def test_each_path_of_a_patch_is_approved_as_an_edit() -> Result[Void]
   dir = try fresh()
-  rules = try Approval.parse_rules(["edit_file(*.txt)", "apply_patch(*)"], ["read_file(.env)"])
+  rules = try Approval.parse_rules(["allow edit_file(*.txt)", "allow apply_patch(*)", "deny read_file(.env)"])
   ctx = try plain(dir)
   add = ->(path: String) { input("*** Begin Patch\n*** Add File: #{path}\n+x\n*** End Patch") }
   try Test.eq(Approval.verdict(rules, ctx, "apply_patch", add.call("a.txt")), Tools.Verdict.Allow)
   try Test.eq(Approval.verdict(rules, ctx, "apply_patch", add.call(".env")), Tools.Verdict.Deny)
   try Test.eq(Approval.verdict(rules, ctx, "apply_patch", add.call(".git/config")), Tools.Verdict.Ask)
   try Test.eq(Approval.verdict(rules, ctx, "apply_patch", add.call("../out.txt")), Tools.Verdict.Deny)
-  asked = Approval.verdict(Approval.Rules(allow: [], deny: []), ctx, "apply_patch", add.call("a.txt"))
+  asked = Approval.verdict(Approval.Rules(all: []), ctx, "apply_patch", add.call("a.txt"))
   _ = Path.remove(dir)
   Test.eq(asked, Tools.Verdict.Ask)
 end
@@ -230,7 +230,10 @@ end
 def test_writes_and_deletes_follow_their_own_rules() -> Result[Void]
   dir = try fresh()
   try File.write_text("#{dir}/a.txt", "one\n")
-  edits = try Approval.parse_rules(["edit_file(*)", "write_file(*)"], ["write_file(secret*)", "edit_file(frozen*)"])
+  edits = try Approval.parse_rules([
+    "allow edit_file(*)", "allow write_file(*)", "deny write_file(secret*)", "deny edit_file(frozen*)",
+  ])
+
   ctx = try plain(dir)
   patches = [
     "*** Add File: secret.txt\n+x",
@@ -245,7 +248,7 @@ def test_writes_and_deletes_follow_their_own_rules() -> Result[Void]
     Approval.verdict(edits, ctx, "apply_patch", input("*** Begin Patch\n#{p}\n*** End Patch"))
   }
 
-  patching = try Approval.parse_rules(["apply_patch(*.txt)"], [])
+  patching = try Approval.parse_rules(["allow apply_patch(*.txt)"])
   delete = input("*** Begin Patch\n*** Delete File: a.txt\n*** End Patch")
   removed = Approval.verdict(patching, ctx, "apply_patch", delete)
   _ = Path.remove(dir)

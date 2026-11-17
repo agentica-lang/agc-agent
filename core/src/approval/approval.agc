@@ -1,55 +1,72 @@
-## What the agent may do without asking. A rule is `tool(pattern)`, where `*` in the pattern matches any text.
+## What the agent may do without asking: OpenCode's rules (v1.19.5, MIT, see THIRD_PARTY_NOTICES). A rule is
+## `ACTION TOOL(PATTERN)`, the action `allow`, `ask` or `deny`; `TOOL` alone is `TOOL(*)`. The tool and the pattern are
+## globs: `*` matches any text (line ends too), `?` one character, and a pattern that ends in ` *` also matches without
+## it (`git *` matches `git`); `~` or `$HOME` at its start is the home folder. The last rule that matches wins; with
+## none, the tool's default (`Spec.Tool.asks`).
 ##
-## For `bash`, a rule matches the whole command text, best effort: `bash(rm *)` refuses `rm -rf x` and not
-## `ls && rm -rf x`. An allow rule matches only a plain command (`plain?`), so `git status*` does not allow
-## `git status; rm x`. A `*` after a word matches only the end or a space and more text, so `git status*` matches
-## `git status --short` and not `git statusx`; a `*` also matches line ends. The rules of `read_file`, `edit_file` and `write_file` apply to the file
-## tools only, not to what `bash` reads or writes. A rule is a convenience and not a sandbox: see the security model of
-## `Tools`.
+## A `bash` command is checked by its parts (`Shell`): each command of the line by its text, and each folder outside
+## the session folder that `cd`, `rm`, `cp` and the like name, as `external_directory(FOLDER/*)`. Any deny denies, else
+## any ask asks. A line that tree-sitter-bash cannot read or misreads asks, unless a deny rule matches it whole or one of
+## its commands. The rules of `read_file`, `edit_file` and `write_file` apply to the file tools only, not to what `bash`
+## reads or writes. A rule is a convenience and not a sandbox: see the security model of `Tools`.
 ##
-## A change to a path under `.git/` (`write_file`, `edit_file`, `apply_patch`) always asks, because `.git/config` and the hooks run
-## programs (`core.fsmonitor`, aliases) the next time git runs; the name is compared without case and trailing dots.
-## Only a deny rule can change that. `edit_file` reads the file, so a deny rule of `read_file` denies it too.
+## A change to a path under `.git/` (`write_file`, `edit_file`, `apply_patch`) always asks, because `.git/config` and the
+## hooks run programs (`core.fsmonitor`, aliases) the next time git runs; the name is compared without case and
+## trailing dots. Only a deny rule can change that. `edit_file` reads the file, so a deny rule of `read_file` denies it
+## too.
 
 import Regex from "std/regex"
+import Shell from "shell"
 import Patch from "../tools/patch"
 import Spec from "../tools/spec"
 import Tools from "../tools/tools"
 
+## OpenCode's defaults for reads, before the rules of the config: a `.env` file asks, `.env.example` does not.
+DEFAULTS = ["ask read_file(*.env)", "ask read_file(*.env.*)", "allow read_file(*.env.example)"]
+## The longest glob of a rule: a match costs up to the length of the pattern times that of the target.
+MAX_PATTERN = 256
+
 struct Rule
+  action: Spec.Verdict
   tool: String
   pattern: String
+  ## The pattern is the whole target as it is, not a glob: the exact command an "always" answer allows.
+  literal: Bool = false
 end
 
 struct Rules
-  allow: List[Rule]
-  deny: List[Rule]
+  all: List[Rule]
 end
 
 def parse_rule(text: String) -> Result[Rule]
-  open = text.index_of("(")
-  return error("rule is not tool(pattern): #{text}") if open.none? or not text.end_with?(")")
+  space = text.index_of(" ")
+  return error("rule is not \"ACTION TOOL(PATTERN)\": #{text}") if space.none?
+
+  action = try action_of(text.slice(0, space.unwrap!), text)
+  rest = text.slice(space.unwrap! + 1, text.length - space.unwrap! - 1).strip
+
+  open = rest.index_of("(")
+  tool = rest.slice(0, open.unwrap_or(rest.length))
+  return error("rule has no tool: #{text}") if tool == ""
+  return error("rule's tool has a space (write TOOL(PATTERN)): #{text}") if tool.include?(" ") or tool.include?("\t")
+  return ok(Rule(action: action, tool: tool, pattern: "*")) if open.none?
+  return error("rule is not \"ACTION TOOL(PATTERN)\": #{text}") if not rest.end_with?(")")
 
   start = open.unwrap!
-  tool = text.slice(0, start)
-  pattern = text.slice(start + 1, text.length - start - 2)
-  return error("rule has no tool or no pattern: #{text}") if tool == "" or pattern == ""
+  pattern = rest.slice(start + 1, rest.length - start - 2)
+  return error("rule has no pattern: #{text}") if pattern == ""
+  return error("rule's pattern is over #{MAX_PATTERN} characters: #{text}") if pattern.length > MAX_PATTERN
 
-  ok(Rule(tool: tool, pattern: pattern))
+  ok(Rule(action: action, tool: tool, pattern: expanded(pattern)))
 end
 
-def parse_rules(allow: List[String], deny: List[String]) -> Result[Rules]
-  allowed: List[Rule] = []
-  for text in allow
-    allowed = allowed.push(try parse_rule(text))
+def parse_rules(texts: List[String]) -> Result[Rules]
+  all: List[Rule] = []
+  for text in texts
+    all = all.push(try parse_rule(text))
   end
 
-  denied: List[Rule] = []
-  for text in deny
-    denied = denied.push(try parse_rule(text))
-  end
-
-  ok(Rules(allow: allowed, deny: denied))
+  ok(Rules(all: all))
 end
 
 ## Whether a call runs, waits for an answer or is refused. A call whose input or path is not valid is refused.
@@ -62,28 +79,42 @@ def verdict(rules: Rules, ctx: Spec.Context, name: String, input: JSON.Value) ->
   end
 end
 
-## A command made only of letters, digits, `_ . / : = , + @ % -`, spaces and tabs: nothing in it is special to bash
-## (no quote, `$`, backslash, `~`, `*`, `?`, `!`, `;`, `&`, `|`, `<`, `>`, backtick, line end or non-ASCII character),
-## so it runs as the words it shows.
-def plain?(command: String) -> Bool = Regex.match?(command, PLAIN)
+## The verdict of `tool` on `target`, a command for `bash` (in the session folder `root`); `asks` is whether the tool
+## asks when no rule matches.
+def decide(rules: Rules, root: String, tool: String, target: String, asks: Bool) -> Spec.Verdict
+  return decide_one(rules, tool, target, asks) if tool != "bash"
 
-## `asks` is whether the tool asks when no rule matches. A deny rule wins over an allow rule.
-def decide(rules: Rules, tool: String, target: String, asks: Bool) -> Spec.Verdict
-  hidden = tool == "edit_file" and read_denied?(rules, target)
-  denied = hidden or rules.deny.any? { |rule| matches?(rule, tool, target) }
-  allowable = tool != "bash" or plain?(target)
-  allowed = allowable and rules.allow.any? { |rule| matches?(rule, tool, target) }
-  if denied
-    Spec.Verdict.Deny
-  elsif protected?(tool, target)
-    Spec.Verdict.Ask
-  elsif allowed
-    Spec.Verdict.Allow
-  elsif asks
-    Spec.Verdict.Ask
-  else
-    Spec.Verdict.Allow
+  scan = Shell.scan(root, target)
+  verdicts = scan.asked.map { |r| decide_one(rules, r.tool, r.pattern, r.tool == "bash") }
+  return combined(verdicts) if scan.clear
+  return Spec.Verdict.Deny if verdicts.include?(Spec.Verdict.Deny)
+
+  case decide_one(rules, "bash", target, true)
+    Spec.Verdict.Deny -> Spec.Verdict.Deny
+    _ -> Spec.Verdict.Ask
   end
+end
+
+## The action of the last rule that matches.
+def evaluate(rules: Rules, tool: String, target: String) -> Optional[Spec.Verdict]
+  found: Optional[Spec.Verdict] = none
+  for rule in rules.all
+    matched = (rule.literal and target == rule.pattern) or (not rule.literal and match?(target, rule.pattern))
+    if match?(tool, rule.tool) and matched
+      found = some(rule.action)
+    end
+  end
+
+  found
+end
+
+## OpenCode's `Wildcard.match`: `*` any text, `?` one character, a trailing ` *` optional; `\\` counts as `/`.
+def match?(text: String, pattern: String) -> Bool
+  chars = text.replace("\\", "/").split("")
+  glob = pattern.replace("\\", "/")
+  return true if glob.end_with?(" *") and globbed?(chars, glob.slice(0, glob.length - 2).split(""))
+
+  globbed?(chars, glob.split(""))
 end
 
 ## A change under `.git/`, which always asks unless a deny rule refuses it. The target of `apply_patch` is its paths
@@ -94,38 +125,35 @@ def protected?(tool: String, target: String) -> Bool
   target.split(", ").any? { |path| path.split("/").any? { |name| Regex.match?(name.downcase, GIT) } }
 end
 
-## Whether a deny rule of `tool` matches `target`.
-def denied?(rules: Rules, tool: String, target: String) -> Bool
-  rules.deny.any? { |rule| matches?(rule, tool, target) }
+## Whether a rule of `read_file` denies the path (relative to the session folder): `glob` and `grep` skip it too.
+def read_denied?(rules: Rules, path: String) -> Bool = evaluate(rules, "read_file", path) == some(Spec.Verdict.Deny)
+
+def combined(verdicts: List[Spec.Verdict]) -> Spec.Verdict
+  return Spec.Verdict.Deny if verdicts.include?(Spec.Verdict.Deny)
+  return Spec.Verdict.Ask if verdicts.include?(Spec.Verdict.Ask)
+
+  Spec.Verdict.Allow
 end
 
-## Whether a deny rule of `read_file` covers the path (relative to the session folder): `glob` and `grep` skip it too.
-def read_denied?(rules: Rules, path: String) -> Bool = rules.deny.any? { |rule| matches?(rule, "read_file", path) }
-
-def wildcard?(pattern: String, text: String) -> Bool
-  parts = pattern.split("*")
-  return text == pattern if parts.size == 1
-
-  first = parts.first
-  last = parts.last
-  return false if text.length < first.length + last.length
-  return false if not text.start_with?(first) or not text.end_with?(last)
-
-  rest = text.slice(first.length, text.length - first.length - last.length)
-  for middle in parts.drop(1).take(parts.size - 2)
-    found = rest.index_of(middle)
-    return false if found.none?
-
-    rest = rest.slice(found.unwrap! + middle.length, rest.length - found.unwrap! - middle.length)
+## The verdict of one tool and target, without reading a `bash` command into its parts.
+def decide_one(rules: Rules, tool: String, target: String, asks: Bool) -> Spec.Verdict
+  found = evaluate(rules, tool, target)
+  hidden = tool == "edit_file" and read_denied?(rules, target)
+  if hidden or found == some(Spec.Verdict.Deny)
+    Spec.Verdict.Deny
+  elsif protected?(tool, target)
+    Spec.Verdict.Ask
+  elsif found.some?
+    found.unwrap!
+  elsif asks
+    Spec.Verdict.Ask
+  else
+    Spec.Verdict.Allow
   end
-
-  true
 end
 
 private
 
-WORD = /\A[A-Za-z0-9_]\z/
-PLAIN = /\A[A-Za-z0-9_.\/:=,+@%\- \t]*\z/
 GIT = /\A\.git\.*\z/
 WRITES = ["write_file", "edit_file", "apply_patch"]
 
@@ -141,22 +169,15 @@ def patch_verdict(rules: Rules, ctx: Spec.Context, input: JSON.Value) -> Spec.Ve
   end
 end
 
-def combined(verdicts: List[Spec.Verdict]) -> Spec.Verdict
-  return Spec.Verdict.Deny if verdicts.include?(Spec.Verdict.Deny)
-  return Spec.Verdict.Ask if verdicts.include?(Spec.Verdict.Ask)
-
-  Spec.Verdict.Allow
-end
-
 def tool_verdict(rules: Rules, ctx: Spec.Context, tool: Spec.Tool, input: JSON.Value) -> Spec.Verdict
   case tool.target(ctx, input)
-    ok(target) -> decide(rules, tool.name, target, tool.asks)
+    ok(target) -> decide(rules, ctx.root, tool.name, target, tool.asks)
     error(_) -> Spec.Verdict.Deny
   end
 end
 
 def path_verdict(rules: Rules, t: Patch.Touched) -> Spec.Verdict
-  decide = ->(tool: String) { decide(rules, tool, t.path, true) }
+  decide = ->(tool: String) { decide_one(rules, tool, t.path, true) }
   denied = ["edit_file", "write_file", Patch.NAME].any? { |tool| decide.call(tool) == Spec.Verdict.Deny }
   return Spec.Verdict.Deny if denied
 
@@ -171,31 +192,54 @@ def path_verdict(rules: Rules, t: Patch.Touched) -> Spec.Verdict
   Spec.Verdict.Ask
 end
 
-def matches?(rule: Rule, tool: String, target: String) -> Bool
-  return false if rule.tool != tool
+def expanded(pattern: String) -> String
+  home = System.env("HOME")
+  return pattern if not home.ok?
 
-  if tool == "bash"
-    command_matches?(rule.pattern, target)
-  else
-    wildcard?(rule.pattern, target)
+  for start in ["~", "$HOME"]
+    if pattern == start or pattern.start_with?("#{start}/")
+      return "#{home.unwrap!}#{pattern.slice(start.length, pattern.length - start.length)}"
+    end
+  end
+
+  pattern
+end
+
+def action_of(word: String, text: String) -> Result[Spec.Verdict]
+  case word
+    "allow" -> ok(Spec.Verdict.Allow)
+    "ask" -> ok(Spec.Verdict.Ask)
+    "deny" -> ok(Spec.Verdict.Deny)
+    _ -> error("rule's action is not allow, ask or deny: #{text}")
   end
 end
 
-def command_matches?(pattern: String, command: String) -> Bool
-  case Regex.compile("(?s)\\A#{command_regex(pattern.split(""), 0, "")}\\z")
-    ok(regex) -> Regex.match?(command, regex)
-    error(_) -> false
+# A glob match that goes back to the last `*` on a miss: linear for most patterns, never exponential.
+def globbed?(text: List[String], glob: List[String]) -> Bool
+  t = 0
+  g = 0
+  star = -1
+  mark = 0
+  while t < text.size
+    if g < glob.size and glob[g] == "*"
+      star = g
+      mark = t
+      g = g + 1
+    elsif g < glob.size and (glob[g] == "?" or glob[g] == text[t])
+      t = t + 1
+      g = g + 1
+    elsif star >= 0
+      g = star + 1
+      mark = mark + 1
+      t = mark
+    else
+      return false
+    end
   end
-end
 
-def command_regex(chars: List[String], at: Int, out: String) -> String
-  return out if at >= chars.size
-
-  if chars[at] != "*"
-    command_regex(chars, at + 1, "#{out}#{Regex.escape(chars[at])}")
-  elsif at > 0 and Regex.match?(chars[at - 1], WORD)
-    command_regex(chars, at + 1, "#{out}(?:\\s.*)?")
-  else
-    command_regex(chars, at + 1, "#{out}.*")
+  while g < glob.size and glob[g] == "*"
+    g = g + 1
   end
+
+  g == glob.size
 end

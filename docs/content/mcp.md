@@ -57,4 +57,4 @@ A tool of server `NAME` is `mcp__NAME__TOOL`. Finn connects to the servers in th
 
 A server whose tools cannot be listed is left out, and so is a tool whose name another server already has; the server log says so (`finn server logs`).
 
-MCP tools follow the approvals and the deny rules as the other tools do. With the approvals on, a call asks before it runs unless a rule allows it: `"allow": ["mcp__fs__read_file(*)"]`. The rule's pattern matches the call's JSON input. See [Approvals and security](security.md).
+MCP tools follow the approvals and the deny rules as the other tools do. With the approvals on, a call asks before it runs unless a rule allows it: `"permission": ["allow mcp__fs__read_file(*)"]`. The rule's pattern matches the call's JSON input. See [Approvals and security](security.md).
