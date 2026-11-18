@@ -1,7 +1,8 @@
 ## The commands of a bash line, read by tree-sitter-bash (vendored in native/, MIT): each with its text and its words
 ## as written. It reads only; what a command means is for the caller to decide.
 ##
-## The module is built by the first run on a machine with a C compiler. Without one, `parse` gives an error, and so
+## The module is built by the first run on a machine with a C compiler (a fetched package never builds it from source:
+## it uses the prebuilt library of its release). Without the module, `parse` gives an error, and so
 ## does a line over `MAX_LINE` bytes, one with over `MAX_PIPES` `|`, or one whose parse takes over `LIMIT_MS`.
 ##
 ## tree-sitter-bash 0.25.1 misreads some lines; `Parsed.unclear` is set for those known, and a caller should not
@@ -36,6 +37,10 @@ def parse(line: String) -> Result[Tree.Parsed]
   return error("the line is over #{MAX_LINE} bytes") if line.bytesize > MAX_LINE
   return error("the line has over #{MAX_PIPES} |") if line.split("|").length - 1 > MAX_PIPES
 
-  try Native.load("bash")
+  loaded = Native.load("bash")
+  if !loaded.ok?
+    return error("the native module of bash is not built (#{loaded.message}); in a clone, run `make install`")
+  end
+
   Tree.commands(line, LIMIT_MS)
 end
