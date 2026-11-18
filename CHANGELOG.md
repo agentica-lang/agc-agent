@@ -11,6 +11,10 @@
 - A new session uses the provider and model last picked (`/model`, `finn --provider` and `--model`, or a login), kept in `choice.json` of the state folder; the order is the request, `FINN_PROVIDER`/`FINN_API`/`FINN_BASE_URL` and `FINN_MODEL`, the last choice, then `local`; `finn -p` never changes it. A login with no choice yet makes its provider the choice, and a first-start session on `local` moves there too.
 - `finn login` prints one line after the screen closes: the provider, and `run finn to start` or `use finn --provider X, or /model, to use it`; Esc ends it with `finn: login cancelled` and status 0.
 
+### Changed
+
+- In `finn`, Enter on a row of the list under `/model `, `/resume `, `/tree ` or `/fork ` runs the command with that row (the first or the one you moved to) in one step, with no second picker; Tab still only completes.
+
 ### Fixed
 
 - A refusal or a connection failure of the `local` provider says `pick a provider with /model, or log in with /login` (and is a warning in `/logs`); a successful `finn login chatgpt` followed by `finn` no longer opens a session on `local` that fails with HTTP 401.

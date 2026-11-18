@@ -116,12 +116,13 @@ def mention_key?(app: State.Model, found: Input.Mention, event: TUI.Event) -> Bo
   end
 end
 
-## Enter on the list of a command's argument runs the command with the row moved to, so a pick there is the one that
-## counts and no picker opens after it. Untouched, the line is sent as typed: the command alone opens its picker.
+## Enter on a row of the list of `/model`, `/resume`, `/tree` or `/fork` runs the command with that row, the one
+## moved to or the first shown, so no picker opens after it. With no row (no match, or the list not read yet) the line
+## is sent as typed: the command alone opens its picker. Tab only completes.
 def runs_choice?(app: State.Model, found: Input.Mention, event: TUI.Event) -> Bool
   case event
     TUI.Event.Key(TUI.Key.Enter, mods) if not mods.alt and found.source == Input.Source.Arguments ->
-      moved_in?(app, found) and not mention_choices(app, found).empty?
+      Input.RUNNING_COMMANDS.include?(found.command) and not mention_choices(app, found).empty?
     _ -> false
   end
 end

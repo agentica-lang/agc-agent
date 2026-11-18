@@ -1527,10 +1527,10 @@ def test_finn_login_ends_with_a_line_for_the_console() -> Result[Void]
   Test.eq(["#{failed.code}", "#{failed.line}"], ["1", "none"])
 end
 
-# Enter on the untouched list of a command's argument sends the command alone: `/model`, `/resume`, `/tree` and `/fork`
-# open their one picker, `/thinking` says the level; nothing changes. The list starts on the session's model and level.
-# A row moved to in the list of one command no longer counts once the command changes.
-def test_enter_on_an_untouched_argument_list_runs_nothing() -> Result[Void]
+# Enter on the untouched list of `/model`, `/resume`, `/tree` and `/fork` runs the command with the first row shown (the
+# session's model for `/model`): one step, no picker. Tab only completes. `/thinking` still sends the line as typed, and
+# a row moved to in the list of one command does not count once the command changes.
+def test_enter_on_an_argument_list_runs_the_row() -> Result[Void]
   providers = Protocol.ProviderList(
     provider: "p",
     providers: [Protocol.ProviderInfo(name: "p", api: "chat", models: ["small", "large"])],
@@ -1538,21 +1538,25 @@ def test_enter_on_an_untouched_argument_list_runs_nothing() -> Result[Void]
 
   summary = Protocol.SessionSummary(id: "s9", cwd: "/w", model: "m", api: "chat", title: "fix the tests")
   tree = Protocol.SessionTree(nodes: [Protocol.TreeNode(id: 1, text: "hello", last: 2)])
-  changed: Channel[String] = Channel.new(8)
+  calls: Channel[String] = Channel.new(16)
   backend = Client.unreachable_backend().with(
     list_providers: -> { ok(providers) },
     list_sessions: -> { ok(Protocol.SessionList(sessions: [summary])) },
     tree: ->(_id: String) { ok(tree) },
-    update_session: ->(_id: String, _change: Protocol.UpdateSession) {
-      _ = changed.send("update", 0)
+    session: ->(id: String) {
+      _ = calls.send("session #{id}", 0)
+      error("no session here")
+    },
+    update_session: ->(_id: String, change: Protocol.UpdateSession) {
+      _ = calls.send("update #{change.model.unwrap_or("")}", 0)
       ok()
     },
-    branch: ->(_id: String, _entry: Int) {
-      _ = changed.send("branch", 0)
+    branch: ->(_id: String, entry: Int) {
+      _ = calls.send("branch #{entry}", 0)
       error("no branch here")
     },
-    fork: ->(_id: String, _entry: Optional[Int]) {
-      _ = changed.send("fork", 0)
+    fork: ->(_id: String, entry: Optional[Int]) {
+      _ = calls.send("fork #{entry.unwrap_or(0)}", 0)
       error("no fork here")
     },
   )
@@ -1566,11 +1570,9 @@ def test_enter_on_an_untouched_argument_list_runs_nothing() -> Result[Void]
       listed = App.update(listed, run(cmd)[0]).model
     end
 
-    if command == "/model" or command == "/thinking"
-      tabbed = App.update(listed, App.Msg.Key(TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))).model
-      kinds = kinds.push(tabbed.prompt)
-    end
-
+    tabbed = App.update(listed, App.Msg.Key(TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))).model
+    kinds = kinds.push(tabbed.prompt)
+    try Test.eq(calls.recv(0).ok?, false)
     sent = App.update(listed, enter())
     after = sent.model
     for cmd in sent.cmds
@@ -1579,7 +1581,15 @@ def test_enter_on_an_untouched_argument_list_runs_nothing() -> Result[Void]
       end
     end
 
-    kinds = kinds.push("#{command} #{after.picker.map { |p| p.kind.to_s }.unwrap_or("none")} #{after.id}")
+    ran: List[String] = []
+    while true
+      case calls.recv(0)
+        ok(call) -> ran = ran.push(call)
+        error(_) -> break
+      end
+    end
+
+    kinds = kinds.push("#{command} #{after.picker.map { |p| p.kind.to_s }.unwrap_or("none")} #{ran.join(",")}")
   end
 
   # A row moved to in the list of `/fork ` does not count for `/thinking ` typed after Backspace to `/`.
@@ -1604,17 +1614,19 @@ def test_enter_on_an_untouched_argument_list_runs_nothing() -> Result[Void]
   end
 
   kinds = kinds.push("#{edited.prompt} #{sent.model.effort.unwrap_or("none")}")
-  try Test.eq(changed.recv(0).ok?, false)
   Test.eq(
     kinds,
     [
       "/model p/large",
-      "/model Kind.Models s1",
-      "/resume Kind.Sessions s1",
-      "/tree Kind.Tree s1",
-      "/fork Kind.Fork s1",
+      "/model none update large,session s1",
+      "/resume s9",
+      "/resume none session s9",
+      "/tree 1",
+      "/tree none branch 1",
+      "/fork 1",
+      "/fork none fork 1",
       "/thinking high",
-      "/thinking none s1",
+      "/thinking none session s1",
       "/thinking  high",
     ],
   )
