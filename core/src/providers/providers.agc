@@ -50,8 +50,6 @@ struct Custom
   check_path: String = "/models"
   ## The model of a session that names none.
   model: String = ""
-  ## The prefixes of the models that take their thinking back as `reasoning_content` (see `LLM.openai_chat`).
-  reasoning_back: List[String] = []
   ## HTTP headers of every request; `${session}` in a value is the session's id.
   headers: Map[String, String] = {}
 end
@@ -76,14 +74,12 @@ def presets() -> List[Custom]
     ),
     Custom(name: "groq", base_url: "https://api.groq.com/openai/v1", key_env: "GROQ_API_KEY"),
     Custom(name: "deepseek", base_url: "https://api.deepseek.com/v1", key_env: "DEEPSEEK_API_KEY"),
-    # Its docs fetch the model list without a key, so a login may not tell a wrong key. Its session header serves the
-    # routing and the prompt cache.
+    # It refuses a call without `x-opencode-session`.
     Custom(
       name: "opencode-go",
       base_url: "https://opencode.ai/inference/go/v1",
       key_env: "OPENCODE_API_KEY",
       model: "deepseek-v4.1-flash",
-      reasoning_back: ["deepseek-"],
       headers: {"x-opencode-client": "finn", "x-opencode-session": "${session}"},
     ),
   ]
@@ -185,12 +181,7 @@ def custom_of(wire: CustomWire) -> Custom
   )
 
   for preset in (presets().select { |p| p.name == custom.name })
-    return custom.with(
-      check_path: preset.check_path,
-      model: preset.model,
-      reasoning_back: preset.reasoning_back,
-      headers: preset.headers,
-    )
+    return custom.with(check_path: preset.check_path, model: preset.model, headers: preset.headers)
   end
 
   custom
@@ -214,7 +205,7 @@ end
 
 def provider_of(custom: Custom, key: String, options: LLM.Options) -> Provider
   chat = ModelApi(
-    provider: LLM.openai_chat(custom.base_url, key, options, custom.reasoning_back),
+    provider: LLM.openai_chat(custom.base_url, key, options),
     model: custom.model,
     headers: custom.headers,
     local: false,

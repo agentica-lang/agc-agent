@@ -1,7 +1,7 @@
 # The `opencode-go` preset: its key comes from `OPENCODE_API_KEY` or a stored login (the variable wins), its default
 # model is `deepseek-v4.1-flash`, and a chat call goes to its URL with that key as a Bearer token and the model asked
-# for. A session on it names itself in the headers and gives each assistant message its thinking back. The fake answers
-# in place of the real URL; the preset's own base URL is checked as given.
+# for. A session on it names itself in the headers. The fake answers in place of the real URL; the preset's own base
+# URL is checked as given.
 
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
@@ -56,26 +56,31 @@ def test_a_chat_call_sends_the_key_and_the_model_to_the_preset_url() -> Result[V
   end
 end
 
-# The session id and the client go in the headers of each call, and a DeepSeek model gets the thinking of its earlier
-# rounds back (`reasoning_content`) on the next request of a tool round.
-def test_a_tool_round_on_the_preset_names_the_session_and_gives_the_thinking_back() -> Result[Void]
-  setup = H.Setup(replies: ["think_read.sse", "text.sse"], presets: ["opencode-go"], approvals: false)
+# The session id and the client go in the headers of each call of the preset, and of no other provider.
+def test_a_session_on_the_preset_names_itself_in_the_headers() -> Result[Void]
+  setup = H.Setup(replies: ["text.sse", "text.sse", "text.sse"], presets: ["opencode-go"], approvals: false)
   H.using(setup) do |h|
     id = try H.new_session_in(h, h.work, provider: some("opencode-go"))
     try Test.eq((try H.session(h, id)).model, MODEL)
-    _ = try H.send(h, id, "Read missing.txt.")
+    _ = try H.send(h, id, "Hello.")
+    _ = try H.idle(h, id)
+    _ = try H.send(h, id, "Again.")
     _ = try H.idle(h, id)
     first = try H.next_request(h)
     second = try H.next_request(h)
     try Test.eq([first.path, second.path], ["/opencode-go/chat/completions", "/opencode-go/chat/completions"])
     try Test.eq(HTTP.header_values(first.headers, "x-opencode-session"), [id])
+    try Test.eq(HTTP.header_values(second.headers, "x-opencode-session"), [id])
     try Test.eq(HTTP.header_values(second.headers, "x-opencode-client"), ["finn"])
     try Test.eq(HTTP.header_values(first.headers, "authorization"), ["Bearer sk-opencode-go"])
-    asked = try JSON.parse(second.body)
-    try Test.eq(JSON.get(asked, "model"), ok(JSON.from(MODEL)))
-    sent = try JSON.list(try JSON.get(asked, "messages"))
-    assistant = try sent.find { |m| JSON.string(JSON.get(m, "role").unwrap_or(JSON.from(""))) == ok("assistant") }
-    Test.eq(JSON.get(assistant, "reasoning_content"), ok(JSON.from("The user wants the file.")))
+    try Test.eq(JSON.get(try JSON.parse(second.body), "model"), ok(JSON.from(MODEL)))
+    other = try H.new_session(h)
+    _ = try H.send(h, other, "Hello.")
+    _ = try H.idle(h, other)
+    plain = try H.next_request(h)
+    named = ["x-opencode-session", "x-opencode-client"].map { |name| HTTP.header_values(plain.headers, name) }
+    try Test.eq(named, [[], []])
+    Test.eq(plain.path, "/v1/chat/completions")
   end
 end
 

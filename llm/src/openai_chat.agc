@@ -6,18 +6,12 @@ import Http from "http"
 import Wire from "openai_chat_wire"
 
 ## The provider for an API at `base_url` (such as `http://127.0.0.1:8080/v1`). An empty `api_key` sends no
-## `Authorization` header. A request for a model whose name starts with one of `reasoning_back` sends the thinking of
-## each assistant message back as `reasoning_content` (what DeepSeek's models ask for).
-def openai_chat(
-  base_url: String,
-  api_key: String = "",
-  options: Http.Options = Http.Options(),
-  reasoning_back: List[String] = [],
-) -> Api.Provider
+## `Authorization` header.
+def openai_chat(base_url: String, api_key: String = "", options: Http.Options = Http.Options()) -> Api.Provider
   wire = Http.Wire(
     path: "/chat/completions",
     headers: &Http.bearer,
-    body: ->(request) { Wire.request_body_with(request, reasoning_back.any? { |p| request.model.start_with?(p) }) },
+    body: &Wire.request_body,
     begin: &Wire.new_turn,
     take: &Wire.take,
     ended: &Wire.ended?,
