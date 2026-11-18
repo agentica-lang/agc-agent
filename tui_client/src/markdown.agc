@@ -34,6 +34,8 @@ end
 struct Marked
   spans: List[Span]
   join: Int = 0
+  ## The columns of indent a row of a list item starts with after the first: drawn, but not part of the text.
+  indent: Int = 0
 end
 
 ## The rows of `text` in `width` columns, each a list of spans.
@@ -123,11 +125,13 @@ def block(line: String, width: Int) -> List[Marked]
   body = wrapped(inline(rest, Look.Plain), width - Width.text(lead))
   indent = " " * Width.text(lead)
   first = Marked(spans: merged([Span(text: lead, look: Look.Plain)] + body[0].spans), join: body[0].join)
-  (
-    [first] +
-    body.drop(1)
-      .map { |row| Marked(spans: merged([Span(text: indent, look: Look.Plain)] + row.spans), join: row.join) }
-  )
+  width_of_lead = Width.text(lead)
+  later = body.drop(1)
+    .map do |row|
+      Marked(spans: merged([Span(text: indent, look: Look.Plain)] + row.spans), join: row.join, indent: width_of_lead)
+    end
+
+  [first] + later
 end
 
 # `# Title` to `###### Title`: the title.

@@ -249,7 +249,7 @@ def clicked(app: State.Model, x: Int, y: Int) -> State.Model = clicked_on(app, V
 
 # A button down on the transcript may start a drag, so it acts when it goes up; on anything else it acts at once.
 def pressed(app: State.Model, x: Int, y: Int) -> State.Model
-  frame = Views.framed(app)
+  frame = Views.located(app)
   case Screen.hit(frame, x, y)
     Screen.Hit.Entry(index) ->
       press = Select.Press(cell: Select.cell_at(frame.top, x, y), entry: index)
@@ -261,7 +261,7 @@ end
 # The button moves down: the cells from where it went down to this one are selected, the rows of the transcript that
 # are on the screen at most.
 def dragged(app: State.Model, x: Int, y: Int) -> State.Model
-  frame = Views.framed(app)
+  frame = Views.located(app)
   case app.pressed
     some(press) if not frame.transcript.empty? ->
       row = [[y, 0].max.unwrap!, frame.transcript.size - 1].min.unwrap!

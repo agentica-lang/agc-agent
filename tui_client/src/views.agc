@@ -20,7 +20,12 @@ def shown_name(shown: Bool) -> String
   "folded"
 end
 
-def framed(app: State.Model) -> Screen.Frame
+def framed(app: State.Model) -> Screen.Frame = laid_out(app, app.selection.some? or app.pressed.some?)
+
+## The same, with the rows counted from the first row of the transcript: what the mouse needs to place a cell.
+def located(app: State.Model) -> Screen.Frame = laid_out(app, true)
+
+def laid_out(app: State.Model, counted: Bool) -> Screen.Frame
   prompt = Prompt.view(app.prompt, State.cursor(app), app.width, app.height)
   for name in State.option_list(app.key_for)
     hidden = "key of #{name}: #{"•" * app.secret.length}"
@@ -49,6 +54,8 @@ def framed(app: State.Model) -> Screen.Frame
 
   shown = Transcript.tail(app.entries, app.width, State.folds(app), app.height + app.scroll)
   frame = Screen.frame(app.width, app.height, shown, app.scroll, parts)
+  return frame if not counted
+
   # The rows of the frame are counted from the first row of the transcript, not of what `shown` kept.
   top = frame.top + Transcript.size(app.entries, app.width, State.folds(app)) - shown.size
   frame.with(top: top, marks: Select.marks(app.selection, top, frame.transcript.size))

@@ -78,7 +78,7 @@ def text(selection: Selection, lines: List[Transcript.Line]) -> String
         to = pair[1].col + 1
       end
 
-      piece = columns(Markdown.plain(line.spans), from, to, code?(line))
+      piece = columns(Markdown.plain(line.spans), from, to, code?(line), line.indent)
       if row == pair[0].row
         out = [piece]
       elsif line.join == Markdown.JOIN_DIRECT
@@ -150,15 +150,15 @@ end
 # cell in them, a wide one also when only its other cell is. The end of a row that is taken to its end loses
 # its spaces,
 # but a line of code keeps them.
-def columns(text: String, from: Int, to: Int, code: Bool) -> String
-  start = [from, GUTTER].max.unwrap!
+def columns(text: String, from: Int, to: Int, code: Bool, indent: Int) -> String
+  start = [from, GUTTER + indent].max.unwrap!
   return "" if to <= start
 
   # A row taken whole, as the rows between the ends of a long selection are: no walk over its characters.
-  if from <= GUTTER and to >= FAR
-    return "" if text.length <= 1
+  if from <= GUTTER + indent and to >= FAR
+    return "" if text.length <= GUTTER + indent
 
-    whole = text.slice(1, text.length - 1)
+    whole = text.slice(GUTTER + indent, text.length - GUTTER - indent)
     return whole if code
 
     return trimmed_end(whole)

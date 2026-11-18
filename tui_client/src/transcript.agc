@@ -47,6 +47,8 @@ struct Line
   entry: Int = -1
   ## How the row goes on from the one before (`Markdown.JOIN_NEW`, `JOIN_SPACE` or `JOIN_DIRECT`).
   join: Int = 0
+  ## The columns of indent after the gutter that are not part of the text (a continued list item).
+  indent: Int = 0
 end
 
 ## A row of a wrapped text, and how it goes on from the one before.
@@ -330,7 +332,7 @@ def entry_lines(entry: Entry, width: Int, folds: Folds) -> List[Line]
 
     lead = Markdown.Span(text: INDENT, look: Markdown.Look.Plain)
     rows = Markdown.marked(entry.text, width - INDENT.length)
-    return rows.map { |row| Line(kind: entry.kind, spans: [lead] + row.spans, join: row.join) }
+    return rows.map { |row| Line(kind: entry.kind, spans: [lead] + row.spans, join: row.join, indent: row.indent) }
   end
 
   wrap_marked(entry.text, width - INDENT.length).map do |row|

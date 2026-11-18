@@ -43,7 +43,7 @@ struct Frame
   height: Int
   transcript: List[Transcript.Line]
   ## The number of the row at the top of `transcript`: in the lines given to `frame`, and counted from the first row of
-  ## the transcript once `Views.framed` has it.
+  ## the transcript once `Views.located` (or `framed`, with a selection) has it.
   top: Int
   ## The columns of each row of `transcript` that a selection covers (from, to), or an empty list.
   marks: List[List[Int]] = []

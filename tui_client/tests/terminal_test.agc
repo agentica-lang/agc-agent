@@ -823,3 +823,24 @@ def test_the_editor_ending_keeps_the_mouse_off_when_it_was_off() -> Result[Void]
   _ = Editor.closed(model, ok("text"))
   Test.error?(written.recv(0))
 end
+
+# The indent that a list item draws under its first row is not text: a long word cut over its rows copies without it.
+def test_a_list_item_copies_without_the_indent_of_its_continued_rows() -> Result[Void]
+  url = "https://very.example.com/a/long/path/x"
+  within(16, 14, &list_item, first: some(assistant_said("- see #{url} now")))
+end
+
+def assistant_said(text: String) -> Fn[App.Model, App.Model]
+  ->(model: App.Model) {
+    model.with(entries: Transcript.from_history([Protocol.Message(role: Protocol.Role.Assistant, text: text)]))
+  }
+end
+
+def list_item(rig: Rig) -> Result[Void]
+  start = try find(rig, "• see")
+  last = try find(rig, "now")
+  try press(rig, mouse(TUI.Mouse.Left, [start[1], start[0]]))
+  try press(rig, mouse(TUI.Mouse.Left, [last[1] + 5, last[0]], motion: true))
+  try press(rig, mouse(TUI.Mouse.Release, [last[1] + 5, last[0]]))
+  Test.eq(try rig.written.recv(2000), Terminal.osc52("• see https://very.example.com/a/long/path/x now"))
+end
