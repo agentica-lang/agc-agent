@@ -5,22 +5,23 @@ import State from "state"
 import Terminal from "terminal"
 import Transcript from "transcript"
 
+## The most the clipboard of a terminal is sent: terminals and multiplexers cut an OSC 52 sequence at about 100 KB of
+## base64.
+MAX_COPY_BYTES = 74_000
+
 ## Copies the selected text to the clipboard of the terminal and says how much. The note adds rows at the end of the
-## transcript, so the selection moves up by them and stays on the same text.
+## transcript, which the cells (counted from its first row) do not feel.
 def copied(app: State.Model) -> State.Model
   chosen = app.selection.unwrap!
-  first = Select.ends(chosen)[0]
-  lines = Transcript.tail(app.entries, app.width, State.folds(app), first.row + 1)
-  text = Select.text(chosen, lines)
+  text = Select.text(chosen, Transcript.lines(app.entries, app.width, State.folds(app)))
   return app if text == ""
 
+  if text.bytesize > MAX_COPY_BYTES
+    return State.noted(app, "selection too large to copy (#{text.bytesize} bytes, at most #{MAX_COPY_BYTES})")
+  end
+
   app.write.call(Terminal.osc52(text))
-  before = Transcript.lines(app.entries, app.width, State.folds(app)).size
-  noted = State.noted(app, "copied #{text.length} characters")
-  shift = Transcript.lines(noted.entries, app.width, State.folds(app)).size - before
-  noted.with(
-    selection: some(Select.Selection(anchor: lowered(chosen.anchor, shift), head: lowered(chosen.head, shift))),
-  )
+  State.noted(app, "copied #{text.length} characters")
 end
 
 ## Whether a click at `cell` is the second of a double click.
@@ -31,15 +32,19 @@ def double?(app: State.Model, cell: Select.Cell) -> Bool
   end
 end
 
-## The word at `cell` is selected and copied.
+## The word at `cell` is selected and copied. The first click of the pair folded a block (a thinking block or a tool
+## call): the second puts it back.
 def double(app: State.Model, cell: Select.Cell) -> State.Model
-  lines = Transcript.tail(app.entries, app.width, State.folds(app), cell.row + 1)
+  unfolded = app
+  for before in State.option_list(app.click)
+    if before.toggled >= 0
+      unfolded = app.with(entries: Transcript.toggle(app.entries, before.toggled, State.folds(app)))
+    end
+  end
+
+  lines = Transcript.lines(unfolded.entries, unfolded.width, State.folds(unfolded))
   case Select.word_at(lines, cell)
-    some(word) -> copied(app.with(selection: some(word), click: none))
-    none -> app.with(click: none)
+    some(word) -> copied(unfolded.with(selection: some(word), click: none))
+    none -> unfolded.with(click: none)
   end
 end
-
-private
-
-def lowered(cell: Select.Cell, rows: Int) -> Select.Cell = Select.Cell(row: cell.row + rows, col: cell.col)

@@ -144,7 +144,7 @@ The mouse answers the keys of a panel, opens a tool call or the thinking, and mo
 
 ## Copying text
 
-In `finn`, drag over the transcript to select text; letting go copies it to the clipboard of the terminal (OSC 52: it works in local terminals, over SSH, and in tmux with `set-clipboard on`) and a note says how many characters. The copy is the transcript's text, without the gutter and the breaks the screen made to fit its width. A double click selects a word, and Esc clears the selection. The selection follows the text when the transcript scrolls.
+In `finn`, drag over the transcript to select text; letting go copies it to the clipboard of the terminal (OSC 52: it works in local terminals, over SSH, and in tmux with `set-clipboard on`; GNU screen cuts long sequences and may keep nothing) and a note says how many characters. The copy is the transcript's text, without the gutter and the breaks the screen made to fit its width. A double click selects a word, and any key clears the selection. The selection follows the text when the transcript scrolls or grows. A selection over 74000 bytes is not copied (a note says so): terminals and multiplexers cut longer sequences.
 
 The terminal's own selection still works with Shift+drag (Option+drag in iTerm2), which does not reach `finn`. `/mouse` turns the mouse reporting of `finn` off, so the terminal selects with a plain drag (and a click no longer folds a tool call), and on again; `"mouse": false` in [the config file](config.md#the-users-config-file) starts `finn` with it off.
 

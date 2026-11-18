@@ -227,7 +227,8 @@ private
 
 def handled(app: State.Model, msg: State.Msg) -> State.Model
   case msg
-    State.Msg.Key(TUI.Event.Resize(width, height)) -> app.with(width: width, height: height)
+    State.Msg.Key(TUI.Event.Resize(width, height)) ->
+      app.with(width: width, height: height, selection: none, pressed: none, click: none)
     State.Msg.Key(event) -> Keys.on_key(app, event)
     State.Msg.Signal(signal) -> Session.signalled(app, signal)
     State.Msg.Edited(result) -> Editor.closed(app, result)

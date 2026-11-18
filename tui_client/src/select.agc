@@ -1,5 +1,5 @@
-## Selecting the text of the transcript with the mouse. A cell is a row counted from the last row of the transcript (0),
-## so a scroll, or a longer transcript, leaves the cells where they are, and a column. Pure.
+## Selecting the text of the transcript with the mouse. A cell is a row counted from the first row of the transcript (0),
+## so a scroll, or rows added at its end, leave the cells where they are, and a column. Pure.
 
 import Markdown from "markdown"
 import Transcript from "transcript"
@@ -23,10 +23,11 @@ struct Press
   entry: Int
 end
 
-## A click that ended where it started: where, and when.
+## A click that ended where it started: where, when, and the entry it folded or unfolded (-1 for none).
 struct Click
   cell: Cell
   at_ms: Int
+  toggled: Int = -1
 end
 
 struct Selection
@@ -34,39 +35,39 @@ struct Selection
   head: Cell
 end
 
-## The cell at column `x` of the row `y` of the screen, when `base` is the number of the row at its top.
-def cell_at(base: Int, x: Int, y: Int) -> Cell = Cell(row: base - y, col: x)
+## The cell at column `x` of the row `y` of the screen, when `top` is the number of the row at its top.
+def cell_at(top: Int, x: Int, y: Int) -> Cell = Cell(row: top + y, col: x)
 
 ## The two ends in reading order: the earlier one first.
 def ends(selection: Selection) -> List[Cell]
   a = selection.anchor
   b = selection.head
-  return [a, b] if a.row > b.row or (a.row == b.row and a.col <= b.col)
+  return [a, b] if a.row < b.row or (a.row == b.row and a.col <= b.col)
 
   [b, a]
 end
 
-## The columns from and to (past the last) that the selection covers in each of the `rows` rows of the screen, `base`
+## The columns from and to (past the last) that the selection covers in each of the `rows` rows of the screen, `top`
 ## being the number of the first; an empty list for a row it does not touch.
-def marks(selection: Optional[Selection], base: Int, rows: Int) -> List[List[Int]]
+def marks(selection: Optional[Selection], top: Int, rows: Int) -> List[List[Int]]
   case selection
     some(chosen) ->
       pair = ends(chosen)
-      (0...rows).to_a.map { |y| marked(pair[0], pair[1], base - y) }
+      (0...rows).to_a.map { |y| marked(pair[0], pair[1], top + y) }
     none -> []
   end
 end
 
-## The text a selection copies from `lines`, the last rows of the transcript (at least up to its first row): the text
-## of the rows without their gutter, with a row that was cut to fit the width joined to the one before.
+## The text a selection copies from `lines`, the rows of the transcript: the text of the rows without their gutter, with
+## a row that was cut to fit the width joined to the one before.
 def text(selection: Selection, lines: List[Transcript.Line]) -> String
   pair = ends(selection)
-  out = ""
-  row = pair[0].row
-  while row >= pair[1].row
-    at = lines.size - 1 - row
-    if at >= 0 and at < lines.size
-      line = lines[at]
+  out: List[String] = []
+  row = [pair[0].row, 0].max.unwrap!
+  last = [pair[1].row, lines.size - 1].min.unwrap!
+  while row <= last
+    if row >= 0 and row < lines.size
+      line = lines[row]
       from = 0
       to = FAR
       if row == pair[0].row
@@ -77,25 +78,27 @@ def text(selection: Selection, lines: List[Transcript.Line]) -> String
         to = pair[1].col + 1
       end
 
-      piece = columns(Markdown.plain(line.spans), from, to)
+      piece = columns(Markdown.plain(line.spans), from, to, code?(line))
       if row == pair[0].row
-        out = piece
-      elsif line.soft
-        out = joined(out, piece, line)
+        out = [piece]
+      elsif line.join == Markdown.JOIN_DIRECT
+        out = out.push(piece)
+      elsif line.join == Markdown.JOIN_SPACE
+        out = out.push(" #{trimmed_start(piece)}")
       else
-        out = "#{out}\n#{piece}"
+        out = out.push("\n#{piece}")
       end
     end
 
-    row = row - 1
+    row = row + 1
   end
 
-  out
+  out.join("")
 end
 
-## The word at `cell` in `lines` (the last rows of the transcript), as a selection; none on a space or past the row.
+## The word at `cell` in `lines` (the rows of the transcript), as a selection; none on a space or past the row.
 def word_at(lines: List[Transcript.Line], cell: Cell) -> Optional[Selection]
-  at = lines.size - 1 - cell.row
+  at = cell.row
   return none if at < 0 or at >= lines.size
 
   chars = Markdown.plain(lines[at].spans).split("")
@@ -128,7 +131,7 @@ end
 private
 
 def marked(first: Cell, last: Cell, row: Int) -> List[Int]
-  return [] if row > first.row or row < last.row
+  return [] if row < first.row or row > last.row
 
   from = 0
   to = FAR
@@ -143,25 +146,42 @@ def marked(first: Cell, last: Cell, row: Int) -> List[Int]
   [from, to]
 end
 
-# The part of a row between the columns `from` and `to` (past the last), without the gutter; the end of a row that is
-# taken to its end loses its spaces.
-def columns(text: String, from: Int, to: Int) -> String
+# The part of a row between the columns `from` and `to` (past the last), without the gutter: each character that has a
+# cell in them, a wide one also when only its other cell is. The end of a row that is taken to its end loses
+# its spaces,
+# but a line of code keeps them.
+def columns(text: String, from: Int, to: Int, code: Bool) -> String
   start = [from, GUTTER].max.unwrap!
   return "" if to <= start
 
-  parts = split_at(text, start, to)
-  return trimmed_end(parts[1]) if to == FAR
+  # A row taken whole, as the rows between the ends of a long selection are: no walk over its characters.
+  if from <= GUTTER and to >= FAR
+    return "" if text.length <= 1
 
-  parts[1]
+    whole = text.slice(1, text.length - 1)
+    return whole if code
+
+    return trimmed_end(whole)
+  end
+
+  out = ""
+  used = 0
+  for char in text.split("")
+    size = Width.char(char)
+    if used + size > start and used < to
+      out = "#{out}#{char}"
+    end
+
+    used = used + size
+  end
+
+  return trimmed_end(out) if to == FAR and not code
+
+  out
 end
 
-# A row cut to fit the width goes on the one before it: after a space, except a line of code, which keeps its spaces.
-def joined(before: String, piece: String, line: Transcript.Line) -> String
-  code = line.spans.any? { |span| span.look == Markdown.Look.Code }
-  return "#{before}#{piece}" if code
-
-  "#{before} #{trimmed_start(piece)}"
-end
+# Whether the row is a line of code.
+def code?(line: Transcript.Line) -> Bool = line.spans.any? { |span| span.look == Markdown.Look.Code }
 
 # The index of the character that covers the column, -1 past the end.
 def char_at(chars: List[String], col: Int) -> Int

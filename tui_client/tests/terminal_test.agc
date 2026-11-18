@@ -7,6 +7,9 @@ import Protocol from "pkg/protocol/protocol"
 import Yolo from "pkg/client/yolo"
 import TUI from "pkg/tui/tui"
 import App from "../src/app"
+import Editor from "../src/editor"
+import Select from "../src/select"
+import Selecting from "../src/selecting"
 import Terminal from "../src/terminal"
 import Transcript from "../src/transcript"
 import Approvals from "../src/approvals"
@@ -15,6 +18,8 @@ import Logins from "../src/logins"
 
 ## The base URL of `local` when nothing sets another.
 DEFAULT_URL = "http://127.0.0.1:8080/v1"
+ESC = String.from_code(27)
+BEL = String.from_code(7)
 TEXT = "alpha beta gamma delta epsilon zeta eta theta"
 SSE_HEADERS = [HTTP.Header(name: "Content-Type", value: "text/event-stream")]
 
@@ -696,3 +701,125 @@ def test_the_config_can_turn_the_mouse_off() -> Result[Void]
 end
 
 def configured(rig: Rig) -> Result[Void] = Test.eq(try rig.written.recv(2000), Terminal.mouse(false))
+
+# A word longer than the row is cut where it must: the copy joins its pieces with nothing, and the rows cut at a space
+# with one space. The sequence is the literal OSC 52 one, base64 of the UTF-8 bytes, wide characters whole.
+def test_a_copy_joins_a_long_word_whole_and_writes_the_literal_sequence() -> Result[Void]
+  url = "https://example.com/a/very/long/path/to/file.txt"
+  within(20, 14, &long_word, first: some(said("see #{url} ok")))
+end
+
+def long_word(rig: Rig) -> Result[Void]
+  start = try find(rig, "see")
+  last = try find(rig, "ok")
+  try press(rig, mouse(TUI.Mouse.Left, [start[1], start[0]]))
+  try press(rig, mouse(TUI.Mouse.Left, [last[1] + 5, last[0]], motion: true))
+  try press(rig, mouse(TUI.Mouse.Release, [last[1] + 5, last[0]]))
+  Test.eq(try rig.written.recv(2000), Terminal.osc52("see https://example.com/a/very/long/path/to/file.txt ok"))
+end
+
+def test_the_copy_is_the_literal_sequence_and_keeps_wide_characters() -> Result[Void]
+  within(40, 8, &wide, first: some(said("héllo 日本")))
+end
+
+def wide(rig: Rig) -> Result[Void]
+  start = try find(rig, "héllo")
+  try press(rig, mouse(TUI.Mouse.Left, [start[1], start[0]]))
+  try press(rig, mouse(TUI.Mouse.Left, [start[1] + 30, start[0]], motion: true))
+  try press(rig, mouse(TUI.Mouse.Release, [start[1] + 30, start[0]]))
+  try Test.eq(try rig.written.recv(2000), "#{ESC}]52;c;aMOpbGxvIOaXpeacrA==#{BEL}")
+  # A drag that ends on the left cell of a wide character takes it whole.
+  try press(rig, mouse(TUI.Mouse.Left, [start[1], start[0]]))
+  try press(rig, mouse(TUI.Mouse.Left, [start[1] + 6, start[0]], motion: true))
+  try press(rig, mouse(TUI.Mouse.Release, [start[1] + 6, start[0]]))
+  Test.eq(try rig.written.recv(2000), "#{ESC}]52;c;aMOpbGxvIOaXpQ==#{BEL}")
+end
+
+# Rows added under the transcript while the button is down do not move the selection off its text.
+def test_a_selection_stays_on_its_text_while_the_transcript_grows() -> Result[Void]
+  within(20, 30, &growing, first: some(said(TEXT)))
+end
+
+def growing(rig: Rig) -> Result[Void]
+  start = try find(rig, "alpha beta gamma")
+  try press(rig, mouse(TUI.Mouse.Left, [start[1], start[0]]))
+  for number in 1...4
+    started = Protocol.ToolStarted(call_id: "c#{number}", name: "bash", summary: "echo #{number}")
+    try rig.feed.send(Client.Item.Event(some(number), Protocol.Event.ToolStarted(started)), 1000)
+  end
+
+  try shows(rig, "echo 3")
+  last = try find(rig, "eta theta")
+  try press(rig, mouse(TUI.Mouse.Left, [last[1] + 8, last[0]], motion: true))
+  try press(rig, mouse(TUI.Mouse.Release, [last[1] + 8, last[0]]))
+  Test.eq(try rig.written.recv(2000), Terminal.osc52(TEXT))
+end
+
+# A resize drops the selection, and a key does too (the copy leaves it shown until then).
+def test_a_resize_or_a_key_clears_the_selection() -> Result[Void] = within(20, 12, &cleared, first: some(said(TEXT)))
+
+def cleared(rig: Rig) -> Result[Void]
+  start = try find(rig, "alpha beta gamma")
+  try press(rig, mouse(TUI.Mouse.Left, [start[1], start[0]]))
+  try press(rig, mouse(TUI.Mouse.Left, [start[1] + 5, start[0]], motion: true))
+  try press(rig, mouse(TUI.Mouse.Release, [start[1] + 5, start[0]]))
+  try rig.written.recv(2000)
+  try TUI.Testing.wait_for(rig.fake, ->(_rows: List[String]) { reversed_at?(rig.fake, start[1], start[0]) })
+  try press(rig, TUI.Event.Char("x", TUI.Mods()))
+  try TUI.Testing.wait_for(rig.fake, ->(_rows: List[String]) { not reversed_at?(rig.fake, start[1], start[0]) })
+  try press(rig, mouse(TUI.Mouse.Left, [start[1], start[0]]))
+  try press(rig, mouse(TUI.Mouse.Left, [start[1] + 5, start[0]], motion: true))
+  try TUI.Testing.wait_for(rig.fake, ->(_rows: List[String]) { reversed_at?(rig.fake, start[1], start[0]) })
+  try TUI.Testing.resize(rig.fake, 24, 12)
+  try TUI.Testing.wait_for(rig.fake, ->(_rows: List[String]) { not reversed_at?(rig.fake, start[1], start[0]) })
+  ok()
+end
+
+# A double click on a call's row selects its word but leaves the call as it was: the first click folded or unfolded it,
+# and the second puts it back.
+def test_a_double_click_on_a_tool_call_leaves_it_folded() -> Result[Void] = within(80, 24, &double_on_tool)
+
+def double_on_tool(rig: Rig) -> Result[Void]
+  started = Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "seq 10")
+  output = (1..10).to_a.map { |i| "line #{i}" }.join("\n")
+  finished = Protocol.ToolFinished(call_id: "c1", ok: true, summary: "exit 0", duration_ms: 5, output: some(output))
+  try rig.feed.send(Client.Item.Event(some(1), Protocol.Event.ToolStarted(started)), 1000)
+  try rig.feed.send(Client.Item.Event(some(2), Protocol.Event.ToolFinished(finished)), 1000)
+  try shows(rig, "6 more lines")
+  at = try find(rig, "seq 10")
+  for _ in 0...2
+    try press(rig, mouse(TUI.Mouse.Left, [at[1] + 1, at[0]]))
+    try press(rig, mouse(TUI.Mouse.Release, [at[1] + 1, at[0]]))
+  end
+
+  try Test.eq(try rig.written.recv(2000), Terminal.osc52("seq"))
+  rows = try shows(rig, "6 more lines")
+  Test.assert(not rows.any? { |row| row.include?("line 10") }, "the call stayed folded")
+end
+
+# A selection over the cap is not sent: terminals and multiplexers cut a longer sequence.
+def test_a_selection_too_large_to_copy_says_so() -> Result[Void]
+  written: Channel[String] = Channel.new(4)
+  text = (0...16000).to_a.map { |n| "word#{n}" }.join(" ")
+  model = App.seed(Client.unreachable_backend(), options(), Channel.new(1), 40, 12).with(
+    entries: Transcript.from_history([Protocol.Message(role: Protocol.Role.User, text: text)]),
+    write: ->(sent: String) { _ = written.send(sent, 0) },
+  )
+
+  everything = Select.Selection(anchor: Select.Cell(row: 0, col: 0), head: Select.Cell(row: 100_000, col: 0))
+  done = Selecting.copied(model.with(selection: some(everything)))
+  try Test.error?(written.recv(0))
+  Test.assert(done.entries.last.text.include?("selection too large to copy"), done.entries.last.text)
+end
+
+# The terminal library turns the mouse reporting on again when the editor ends: with `/mouse` off it is turned
+# off again.
+def test_the_editor_ending_keeps_the_mouse_off_when_it_was_off() -> Result[Void]
+  written: Channel[String] = Channel.new(4)
+  seeded = App.seed(Client.unreachable_backend(), options(), Channel.new(1), 40, 12)
+  model = seeded.with(write: ->(sent: String) { _ = written.send(sent, 0) })
+  _ = Editor.closed(model.with(mouse: false), ok("text"))
+  try Test.eq(written.recv(0), ok(Terminal.mouse(false)))
+  _ = Editor.closed(model, ok("text"))
+  Test.error?(written.recv(0))
+end

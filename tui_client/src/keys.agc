@@ -19,11 +19,21 @@ import Turn from "turn"
 import Commands from "commands"
 import Views from "views"
 
-def on_key(model: State.Model, event: TUI.Event) -> State.Model = Files.asked(keyed(aimed(model, event), event))
+def on_key(model: State.Model, event: TUI.Event) -> State.Model
+  Files.asked(keyed(aimed(unmarked(model, event), event), event))
+end
 
 private
 
 SCROLL_STEP = 3
+
+# A key (not the mouse) ends the selection, which the copy left shown: Esc then stops a turn at once.
+def unmarked(app: State.Model, event: TUI.Event) -> State.Model
+  case event
+    TUI.Event.Mouse(_, _, _, _) -> app
+    _ -> app.with(selection: none, pressed: none)
+  end
+end
 
 def keyed(app: State.Model, event: TUI.Event) -> State.Model
   for name in State.option_list(app.key_for)
@@ -102,7 +112,6 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     TUI.Event.Mouse(TUI.Mouse.Left, x, y, mods) if mods.motion -> dragged(app, x, y)
     TUI.Event.Mouse(TUI.Mouse.Left, x, y, _) -> pressed(app, x, y)
     TUI.Event.Mouse(TUI.Mouse.Release, _, _, _) -> released(app)
-    TUI.Event.Key(TUI.Key.Escape, _) if app.selection.some? -> app.with(selection: none, pressed: none)
     TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals, app.now))
     TUI.Event.Key(TUI.Key.BackTab, _) -> Level.leveled(app)
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
@@ -243,7 +252,7 @@ def pressed(app: State.Model, x: Int, y: Int) -> State.Model
   frame = Views.framed(app)
   case Screen.hit(frame, x, y)
     Screen.Hit.Entry(index) ->
-      press = Select.Press(cell: Select.cell_at(frame.base, x, y), entry: index)
+      press = Select.Press(cell: Select.cell_at(frame.top, x, y), entry: index)
       app.with(pressed: some(press), selection: none)
     _ -> clicked_on(app.with(selection: none, pressed: none), frame, x, y)
   end
@@ -256,7 +265,7 @@ def dragged(app: State.Model, x: Int, y: Int) -> State.Model
   case app.pressed
     some(press) if not frame.transcript.empty? ->
       row = [[y, 0].max.unwrap!, frame.transcript.size - 1].min.unwrap!
-      head = Select.cell_at(frame.base, x, row)
+      head = Select.cell_at(frame.top, x, row)
       return app if head == press.cell and app.selection.none?
 
       app.with(selection: some(Select.Selection(anchor: press.cell, head: head)))
@@ -273,7 +282,7 @@ def released(app: State.Model) -> State.Model
 
       return Selecting.double(done, press.cell) if Selecting.double?(done, press.cell)
 
-      toggled = done.with(click: some(Select.Click(cell: press.cell, at_ms: app.now)))
+      toggled = done.with(click: some(Select.Click(cell: press.cell, at_ms: app.now, toggled: press.entry)))
       return toggled if press.entry < 0
 
       toggled.with(entries: Transcript.toggle(app.entries, press.entry, State.folds(app)))

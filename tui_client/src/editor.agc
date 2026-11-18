@@ -5,6 +5,7 @@ import Client from "pkg/client/client"
 import TUI from "pkg/tui/tui"
 import Input from "input"
 import State from "state"
+import Terminal from "terminal"
 
 ## The folders of edits under the private state folder `state_dir`, each client's named by its pid. What a client that
 ## was killed left there goes once it is a day old (at `now_s`): a younger folder may be another client's edit.
@@ -40,6 +41,11 @@ end
 ## The text the editor saved becomes the prompt, without the line break editors add at its end; the pastes are in it.
 def closed(app: State.Model, result: Result[String]) -> State.Model
   done = app.with(editing: false)
+  # The terminal library turns the mouse reporting on again when the editor ends: `/mouse` off means it stays off.
+  if not app.mouse
+    app.write.call(Terminal.mouse(false))
+  end
+
   case result
     ok(text) ->
       prompt = text

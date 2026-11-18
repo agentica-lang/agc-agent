@@ -45,14 +45,14 @@ struct Line
   spans: List[Markdown.Span]
   ## The index of the entry it draws, -1 for the row between two entries.
   entry: Int = -1
-  ## The row goes on the one before it: the text was cut there to fit the width.
-  soft: Bool = false
+  ## How the row goes on from the one before (`Markdown.JOIN_NEW`, `JOIN_SPACE` or `JOIN_DIRECT`).
+  join: Int = 0
 end
 
-## A row of a wrapped text, and whether it goes on the one before.
+## A row of a wrapped text, and how it goes on from the one before.
 struct Cut
   text: String
-  soft: Bool
+  join: Int
 end
 
 struct Wrapped
@@ -185,6 +185,23 @@ def lines(entries: List[Entry], width: Int, folds: Folds) -> List[Line]
   rows
 end
 
+## How many rows `lines` has, without making them again when they are kept.
+def size(entries: List[Entry], width: Int, folds: Folds) -> Int
+  total = 0
+  for index in 0...entries.size
+    rows = entry_rows(entries[index], index, width, folds).size
+    next if rows == 0
+
+    if total > 0
+      total = total + 1
+    end
+
+    total = total + rows
+  end
+
+  total
+end
+
 ## The last `count` rows of `lines` (all of them when there are fewer), cutting only the entries they reach.
 def tail(entries: List[Entry], width: Int, folds: Folds, count: Int) -> List[Line]
   parts: List[List[Line]] = []
@@ -231,8 +248,7 @@ def wrap(text: String, width: Int) -> List[String] = wrap_marked(text, width).ma
 def wrap_marked(text: String, width: Int) -> List[Cut]
   rows: List[Cut] = []
   for paragraph in text.split("\n")
-    pieces = wrap_paragraph(paragraph, [width, 1].max.unwrap!)
-    rows = rows + (0...pieces.size).to_a.map { |at| Cut(text: pieces[at], soft: at > 0) }
+    rows = rows + wrap_paragraph(paragraph, [width, 1].max.unwrap!)
   end
 
   rows
@@ -314,11 +330,11 @@ def entry_lines(entry: Entry, width: Int, folds: Folds) -> List[Line]
 
     lead = Markdown.Span(text: INDENT, look: Markdown.Look.Plain)
     rows = Markdown.marked(entry.text, width - INDENT.length)
-    return rows.map { |row| Line(kind: entry.kind, spans: [lead] + row.spans, soft: row.soft) }
+    return rows.map { |row| Line(kind: entry.kind, spans: [lead] + row.spans, join: row.join) }
   end
 
   wrap_marked(entry.text, width - INDENT.length).map do |row|
-    Line(kind: entry.kind, spans: [Markdown.Span(text: INDENT + row.text, look: Markdown.Look.Plain)], soft: row.soft)
+    Line(kind: entry.kind, spans: [Markdown.Span(text: INDENT + row.text, look: Markdown.Look.Plain)], join: row.join)
   end
 end
 
@@ -329,9 +345,10 @@ def option_list[T](value: Optional[T]) -> List[T]
   end
 end
 
-def wrap_paragraph(paragraph: String, width: Int) -> List[String]
-  rows: List[String] = []
+def wrap_paragraph(paragraph: String, width: Int) -> List[Cut]
+  rows: List[Cut] = []
   row = ""
+  join = Markdown.JOIN_NEW
   for word in paragraph.split(" ")
     candidate = word
     if row != ""
@@ -342,7 +359,8 @@ def wrap_paragraph(paragraph: String, width: Int) -> List[String]
       row = candidate
     else
       if row != ""
-        rows = rows.push(row)
+        rows = rows.push(Cut(text: row, join: join))
+        join = Markdown.JOIN_SPACE
       end
 
       row = word
@@ -352,11 +370,12 @@ def wrap_paragraph(paragraph: String, width: Int) -> List[String]
           parts = [row.slice(0, 1), row.slice(1, row.length - 1)]
         end
 
-        rows = rows.push(parts[0])
+        rows = rows.push(Cut(text: parts[0], join: join))
+        join = Markdown.JOIN_DIRECT
         row = parts[1]
       end
     end
   end
 
-  rows.push(row)
+  rows.push(Cut(text: row, join: join))
 end

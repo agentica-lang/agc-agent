@@ -42,8 +42,9 @@ struct Frame
   width: Int
   height: Int
   transcript: List[Transcript.Line]
-  ## The number of the row at the top of `transcript`, counted from the last row of the transcript (0).
-  base: Int
+  ## The number of the row at the top of `transcript`: in the lines given to `frame`, and counted from the first row of
+  ## the transcript once `Views.framed` has it.
+  top: Int
   ## The columns of each row of `transcript` that a selection covers (from, to), or an empty list.
   marks: List[List[Int]] = []
   area: Int
@@ -95,7 +96,7 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
     width: width,
     height: height,
     transcript: lines.drop(top).take(area),
-    base: lines.size - 1 - top,
+    top: top,
     area: area,
     queued: queued.map { |text| Width.cut(" #{text}", width)[0] },
     label: parts.label,

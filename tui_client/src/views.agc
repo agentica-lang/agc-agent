@@ -47,15 +47,11 @@ def framed(app: State.Model) -> Screen.Frame
     queued: app.follow_ups.map { |text| "follow-up: #{Client.printable(text)}" },
   )
 
-  frame = Screen.frame(
-    app.width,
-    app.height,
-    Transcript.tail(app.entries, app.width, State.folds(app), app.height + app.scroll),
-    app.scroll,
-    parts,
-  )
-
-  frame.with(marks: Select.marks(app.selection, frame.base, frame.transcript.size))
+  shown = Transcript.tail(app.entries, app.width, State.folds(app), app.height + app.scroll)
+  frame = Screen.frame(app.width, app.height, shown, app.scroll, parts)
+  # The rows of the frame are counted from the first row of the transcript, not of what `shown` kept.
+  top = frame.top + Transcript.size(app.entries, app.width, State.folds(app)) - shown.size
+  frame.with(top: top, marks: Select.marks(app.selection, top, frame.transcript.size))
 end
 
 ## The rows of the approval panel, without the transcript: a key needs only these.
