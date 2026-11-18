@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- Every line of the server log starts with its UTC time and level (`2026-11-18T17:30:02.345Z WARNING ...`); `GET /v1/logs` gives its end and the warnings since the server started.
+- `finn` and `finn chat` show the last 3 warnings of the server as notes when a session starts, `/logs [N]` shows the end of the server log, and leaving prints the warnings and `finn server logs` after the screen closes.
+
+### Fixed
+
+- `finn login chatgpt` works again: OpenAI answers the device code with its `interval` as text, which the login did not read.
+- A `finn` that ends with an error prints why after the screen closes, also a failed `finn login`; it ended with code 1 and said nothing.
+- A session file with no `created_ms` in its header (one of an early version) is listed, as the oldest, with no warning at each start.
+
 ## [finn-20261118140503] - 2026-11-18
 
 ### Fixed

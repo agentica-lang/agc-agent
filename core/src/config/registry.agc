@@ -5,6 +5,7 @@
 import LLM from "pkg/llm/llm"
 import Sandbox from "../tools/sandbox"
 import Spec from "../tools/spec"
+import Logger from "std/logger"
 
 ## How long all the `Message` handlers, or all the `Fold` handlers, of one event may take together: well under the
 ## time a client waits for the session to answer.
@@ -280,7 +281,7 @@ def fold(registry: Registry, staying: List[LLM.Message]) -> String
     case bounded("a fold handler", deadline - Time.monotonic_ms(), -> { ok(handle.call(texts)) })
       ok(extra) if not extra.empty? -> out = "#{out}\n\n#{extra}"
       ok(_) -> nil
-      error(e) -> IO.warn(e.message)
+      error(e) -> Logger.warning(e.message)
     end
   end
 
@@ -406,11 +407,11 @@ def stop_services(services: List[Running]) -> Void
   for running in services.reverse
     _ = running.stopping.send(true, 0)
     case running.news.recv(running.ms)
-      ok(Note.Down(down)) if down.reason != TaskExit.Ok -> IO.warn("service #{running.name}: #{down.message}")
+      ok(Note.Down(down)) if down.reason != TaskExit.Ok -> Logger.warning("service #{running.name}: #{down.message}")
       ok(_) -> nil
       error(_) ->
         cancelled(running.task, running.news)
-        IO.warn("service #{running.name} took over #{running.ms} ms to stop")
+        Logger.warning("service #{running.name} took over #{running.ms} ms to stop")
     end
   end
 end
@@ -605,12 +606,12 @@ def observed(inbox: Channel[Seen], dropped: ATS[String, Int], handler: Fn[Seen, 
         lost = dropped.add(DROPPED, 0)
         if lost > 0
           _ = dropped.add(DROPPED, -lost)
-          IO.warn("an observer of extensions: #{lost} events dropped (behind)")
+          Logger.warning("an observer of extensions: #{lost} events dropped (behind)")
         end
 
         case bounded("an observer of #{seen.name}", ms, -> { handled(handler, seen) })
           ok(_) -> nil
-          error(e) -> IO.warn(e.message)
+          error(e) -> Logger.warning(e.message)
         end
 
       error(_) -> return if inbox.closed? and inbox.empty?

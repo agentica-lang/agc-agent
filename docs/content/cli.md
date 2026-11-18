@@ -79,6 +79,7 @@ Type them in either client:
 | `/compact` | fold the history into a summary now |
 | `/login [PROVIDER]` | set up a provider (`finn`) |
 | `/logout [PROVIDER]` | remove a stored key; alone, every one |
+| `/logs [N]` | the last N lines (default 50) of the server log, read through the server |
 | `/stop` | stop the running turn |
 | `/help` | the list |
 | `/quit` | leave; a session with something in it prints how to come back to it (`finn --session ID`, `finn chat --session ID`) |

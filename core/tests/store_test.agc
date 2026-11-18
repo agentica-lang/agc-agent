@@ -5,6 +5,7 @@ import Storage from "../src/session/storage"
 import Store from "../src/session/store"
 
 LINEAR = "tests/fixtures/sessions/linear.jsonl"
+NO_TIME = "tests/fixtures/sessions/no_time.jsonl"
 MEMORY = "/memory"
 CALLS = 2000
 BUILD_MS = 500
@@ -92,6 +93,12 @@ def test_a_session_file_of_the_linear_format_still_loads() -> Result[Void]
   ]
 
   Test.eq(tree.nodes, nodes)
+end
+
+# A session of an early version has no time in its header: it loads, as the oldest.
+def test_a_session_file_without_a_time_still_loads() -> Result[Void]
+  saved = try Store.load(Store.Ref(port: Store.disk(), path: NO_TIME))
+  Test.eq([saved.header.id, "#{saved.header.created_ms}"], ["s1-0123", "0"])
 end
 
 # A branch goes back before a message and the next records follow it; a branch to the end of a turn goes on from there.

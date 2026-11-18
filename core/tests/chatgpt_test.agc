@@ -339,3 +339,25 @@ def bearer(seen: Fake.Seen) -> String = header(seen, "authorization").replace("B
 def header(seen: Fake.Seen, name: String) -> String
   seen.headers.select { |x| x.name.downcase == name }.map { |x| x.value }.join(",")
 end
+
+# The interval of the device code is seconds, a number or text, kept from 1 to 60; a missing or unreadable one is 5.
+def test_the_interval_of_a_device_code_is_read_as_a_number_or_text_and_clamped() -> Result[Void]
+  head = "{\"device_auth_id\": \"d\", \"user_code\": \"U\""
+  rows = [
+    ["", "5"],
+    [", \"interval\": 7", "7"],
+    [", \"interval\": \"5\"", "5"],
+    [", \"interval\": \"abc\"", "5"],
+    [", \"interval\": -3", "1"],
+    [", \"interval\": \"0\"", "1"],
+    [", \"interval\": 99999999999", "60"],
+    [", \"interval\": 99999999999999999999", "5"],
+  ]
+
+  for row in rows
+    code = try Chatgpt.usercode("#{head}#{row[0]}}")
+    try Test.eq("#{code.interval}", row[1])
+  end
+
+  Test.error?(Chatgpt.usercode("{\"user_code\": \"U\"}"))
+end

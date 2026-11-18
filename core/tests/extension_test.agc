@@ -31,10 +31,14 @@ def served(fake: Fake.Fake, base: String) -> Result[Void]
 end
 
 def run(server: Process, base: String) -> Result[Void]
-  try Test.eq(try lines_until(server, "listening on"), ["greeter started", "Finn Agent core listening on"])
+  started = try lines_until(server, "listening on")
+  try Test.eq([started[0], "#{started.size}"], ["greeter started", "2"])
+  try Test.assert(started[1].end_with?(" INFO Finn Agent core listening on"), "#{started}")
   try turn(base)
   try Process.signal(server, System.Signal.Term)
-  Test.eq(try lines_until(server, "core stopped"), ["greeter stopped", "Finn Agent core stopped"])
+  stopped = try lines_until(server, "core stopped")
+  try Test.eq([stopped[0], "#{stopped.size}"], ["greeter stopped", "2"])
+  Test.assert(stopped[1].end_with?(" INFO Finn Agent core stopped"), "#{stopped}")
 end
 
 # The bytecode `make unit` compiled once (EXTENSION_BYTECODE), else the source.

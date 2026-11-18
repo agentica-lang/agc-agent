@@ -45,6 +45,14 @@ struct ServerStatus
   no_worker: Optional[Bool] = none
 end
 
+## `GET /v1/logs`: the last lines of the server log, the last of the warnings it logged since it started, and how many
+## there were in all.
+struct ServerLog
+  lines: List[String]
+  warnings: List[String]
+  warning_count: Int
+end
+
 ## The answer of `POST /v1/sessions`.
 struct SessionCreated
   id: String
@@ -320,6 +328,10 @@ def encode_server_status(reply: ServerStatus) -> String = JSON.encode(reply)
 
 def decode_server_status(text: String) -> Result[ServerStatus] = Wire.decode(text, ServerStatus.codec)
 
+def encode_server_log(reply: ServerLog) -> String = JSON.encode(reply)
+
+def decode_server_log(text: String) -> Result[ServerLog] = Wire.decode(text, ServerLog.codec)
+
 def encode_branched(reply: Branched) -> String = JSON.encode(reply)
 
 def decode_branched(text: String) -> Result[Branched] = Wire.decode(text, Branched.codec)
@@ -453,6 +465,7 @@ def shape() -> List[String]
     Wire.record("SessionExport", SessionExport.members),
     Wire.record("Branched", Branched.members),
     Wire.record("ServerStatus", ServerStatus.members),
+    Wire.record("ServerLog", ServerLog.members),
     Wire.record("ShellAccepted", ShellAccepted.members),
     Wire.record("Stopped", Stopped.members),
     Wire.record("FileList", FileList.members),
