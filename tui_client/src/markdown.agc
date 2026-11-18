@@ -25,22 +25,36 @@ struct Span
   look: Look
 end
 
+## A row of the text, and whether it goes on the row before: the text was cut there to fit the width.
+struct Marked
+  spans: List[Span]
+  soft: Bool
+end
+
 ## The rows of `text` in `width` columns, each a list of spans.
-def rows(text: String, width: Int) -> List[List[Span]]
+def rows(text: String, width: Int) -> List[List[Span]] = marked(text, width).map { |row| row.spans }
+
+## The same rows, each with whether it goes on the one before.
+def marked(text: String, width: Int) -> List[Marked]
   columns = [width, 1].max.unwrap!
-  out: List[List[Span]] = []
+  out: List[Marked] = []
   code = false
   for line in text.split("\n")
     if line.strip.start_with?(FENCE)
       code = not code
     elsif code
-      out = out + chunks(line, columns).map { |piece| [Span(text: piece, look: Look.Code)] }
+      out = out + continued(chunks(line, columns).map { |piece| [Span(text: piece, look: Look.Code)] })
     else
-      out = out + block(line, columns)
+      out = out + continued(block(line, columns))
     end
   end
 
   out
+end
+
+# The rows of one line of the text: each but the first goes on the one before.
+def continued(rows: List[List[Span]]) -> List[Marked]
+  (0...rows.size).to_a.map { |at| Marked(spans: rows[at], soft: at > 0) }
 end
 
 ## A code line in rows of `columns`, cut at any character so its spaces stay.

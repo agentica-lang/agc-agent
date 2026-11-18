@@ -45,6 +45,8 @@ struct Line
   spans: List[Markdown.Span]
   ## The index of the entry it draws, -1 for the row between two entries.
   entry: Int = -1
+  ## The row goes on the one before it: the text was cut there to fit the width.
+  soft: Bool = false
 end
 
 struct Wrapped
@@ -218,10 +220,19 @@ def wrapped(entries: List[Entry], width: Int, folds: Folds) -> List[Entry]
 end
 
 ## `text` cut into rows of at most `width` columns, at spaces when it can.
-def wrap(text: String, width: Int) -> List[String]
-  rows: List[String] = []
+def wrap(text: String, width: Int) -> List[String] = wrap_marked(text, width).map { |row| row.text }
+
+## A row of a wrapped text, and whether it goes on the one before.
+struct Cut
+  text: String
+  soft: Bool
+end
+
+def wrap_marked(text: String, width: Int) -> List[Cut]
+  rows: List[Cut] = []
   for paragraph in text.split("\n")
-    rows = rows + wrap_paragraph(paragraph, [width, 1].max.unwrap!)
+    pieces = wrap_paragraph(paragraph, [width, 1].max.unwrap!)
+    rows = rows + (0...pieces.size).to_a.map { |at| Cut(text: pieces[at], soft: at > 0) }
   end
 
   rows
@@ -302,12 +313,12 @@ def entry_lines(entry: Entry, width: Int, folds: Folds) -> List[Line]
     return [] if entry.text.strip == ""
 
     lead = Markdown.Span(text: INDENT, look: Markdown.Look.Plain)
-    rows = Markdown.rows(entry.text, width - INDENT.length)
-    return rows.map { |spans| Line(kind: entry.kind, spans: [lead] + spans) }
+    rows = Markdown.marked(entry.text, width - INDENT.length)
+    return rows.map { |row| Line(kind: entry.kind, spans: [lead] + row.spans, soft: row.soft) }
   end
 
-  wrap(entry.text, width - INDENT.length).map do |row|
-    Line(kind: entry.kind, spans: [Markdown.Span(text: INDENT + row, look: Markdown.Look.Plain)])
+  wrap_marked(entry.text, width - INDENT.length).map do |row|
+    Line(kind: entry.kind, spans: [Markdown.Span(text: INDENT + row.text, look: Markdown.Look.Plain)], soft: row.soft)
   end
 end
 
