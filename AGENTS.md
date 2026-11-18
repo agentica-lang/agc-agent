@@ -78,6 +78,15 @@ A package is added by the phase that needs it, never as an empty folder.
   key of the module). `install` fetches bond into `core/deps/` and
   agentica-tui into `tui_client/deps/` (gitignored); `check`, `smoke` and `pty`
   run it first.
+  `prebuilt-e2e` (`scripts/prebuilt_e2e.agc`, after `native-lib`, which builds
+  bash's library into `tmp/native-lib/`) fetches bash into a fresh project
+  from a git copy, with the library served on 127.0.0.1, `CC=false` and
+  `--native-prebuilt-only=bash`: a parse must work with no compiler, and no
+  fetched file may be over 1 MiB. The workflow `bash-native.yml` builds the
+  library per target on a pushed tag `bash-native-<key>` (the coordinator
+  pushes it; `<key>` is `agentica native source bash`) and attaches it, with
+  `SHA256SUMS`, to the release of the tag; its summary prints the rows for
+  `[native.bash.prebuilt]` of `bash/agentica.toml`.
 - `cli` tests run the client as a child process on pipes (the Makefile
   exports `AGENTICA` for it) against a fake protocol server in
   `cli/tests/support/`. The client finds the server in the state folder

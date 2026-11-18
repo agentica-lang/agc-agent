@@ -45,7 +45,7 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check native-source native-gen native-header native-check unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
+.PHONY: install check coupling fmt-check native-source native-gen native-header native-check native-lib prebuilt-e2e unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
 install: native-source
@@ -111,6 +111,22 @@ SHA256 = $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
 native-source:
 	@[ -f $(PARSER) ] || git submodule update --init $(TREE_SITTER_BASH)
 
+# The library of bash's native module for this system, built from source by agentica (the C compiler is CC) into
+# tmp/native-lib/, the file that [native.bash.prebuilt] names. NATIVE_CACHE is the package cache of the build; the
+# library is the path that agentica prints.
+NATIVE_CACHE ?= $(CURDIR)/tmp/native-cache
+native-lib: native-source
+	mkdir -p tmp/native-lib && rm -f tmp/native-lib/* && rm -r -f '$(NATIVE_CACHE)'
+	built=$$(cd bash && XDG_CACHE_HOME='$(NATIVE_CACHE)' LOCALAPPDATA='$(NATIVE_CACHE)' AGENTICA_NATIVE_BUILD=bash \
+	  $(AGENTICA) install 2>&1 | tr -d '\r' | sed -n 's/^built native bash: //p'); \
+	[ -n "$$built" ] || { echo 'native-lib: agentica built no library' >&2; exit 1; }; \
+	cp "$$built" tmp/native-lib/
+
+# A fresh project fetches bash from a copy of this repository and uses a library served on 127.0.0.1, with no
+# compiler, as one that reads [native.bash.prebuilt] does.
+prebuilt-e2e: native-lib
+	$(AGENTICA) scripts/prebuilt_e2e.agc '$(AGENTICA)' tmp/native-lib
+
 fmt-check:
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} sh -c 'cd {} && $(AGENTICA) fmt --check .'
 
@@ -167,7 +183,7 @@ pty: install
 peer: native-source
 	python3 -m unittest bash/tests/test_bash_peer.py -v
 
-test: check native-check unit smoke pty peer
+test: check native-check unit smoke pty peer prebuilt-e2e
 
 # The llm tests against a real llama-server with Qwen2.5-0.5B (fetched and checked by sha256 first), or the one at
 # LLAMA_URL. Local only, never in CI.
