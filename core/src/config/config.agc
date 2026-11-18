@@ -123,9 +123,12 @@ struct Options
   trusted: List[String] = []
   ## The program and arguments that list the files for `@`, from the user's config only; empty for the built-in walk.
   files_command: List[String] = []
-  ## `FINN_PROVIDER` and `FINN_MODEL` are set: they win over the provider and model last picked.
+  ## The provider is set (`FINN_PROVIDER`, `FINN_API` or `FINN_BASE_URL`) and `FINN_MODEL` is: they win over the provider and
+  ## model last picked.
   provider_pinned: Bool = false
   model_pinned: Bool = false
+  ## The model of `picked` is none the user named: the provider has no model of its own, so the first of its list.
+  model_unset: Bool = false
 end
 
 def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_with(read, &Offered.ant_token)
@@ -177,6 +180,16 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   choice = Logins.load_choice(choice_path)
   stale: List[String] = []
   for found in option_list(choice)
+    if providers.has_key?(found.provider) and not found.model.empty? and not providers[found.provider].models.empty?
+      if not providers[found.provider].models.include?(found.model)
+        stale = stale.push(
+          "the model of the last choice, #{found.model}, is not in the models of #{found.provider}: new sessions use its default",
+        )
+
+        choice = some(Logins.Choice(provider: found.provider))
+      end
+    end
+
     if not providers.has_key?(found.provider)
       stale = stale.push(
         "the provider of the last choice, #{found.provider}, is not offered (is its key set?): new sessions use the default",
@@ -252,7 +265,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       docs: docs_folder(read),
       trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
       files_command: try files_command(read),
-      provider_pinned: set(read, "FINN_PROVIDER").some?,
+      provider_pinned: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
       model_pinned: set(read, "FINN_MODEL").some?,
     ),
   )
@@ -306,11 +319,12 @@ def picked(options: Options, current: Logins.Current) -> Options
       end
     end
 
-    if model.empty?
+    unset = model.empty?
+    if unset
       model = DEFAULT_MODEL
     end
 
-    return options.with(provider: choice.provider, model: model)
+    return options.with(provider: choice.provider, model: model, model_unset: unset)
   end
 
   options

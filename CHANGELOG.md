@@ -7,7 +7,7 @@
 - Every line of the server log starts with its UTC time and level (`2026-11-18T17:30:02.345Z WARNING ...`); `GET /v1/logs` gives its end and the warnings since the server started.
 - `finn` and `finn chat` show the last 3 warnings of the server as notes when a session starts, `/logs [N]` shows the end of the server log, and leaving prints the warnings and `finn server logs` after the screen closes.
 
-- A new session uses the provider and model last picked (`/model`, `--provider` and `--model`, or a login), kept in `choice.json` of the state folder; the order is the request, `FINN_PROVIDER` and `FINN_MODEL`, the last choice, then `local`. A login with no choice yet makes its provider the choice, and a first-start session on `local` moves there too.
+- A new session uses the provider and model last picked (`/model`, `finn --provider` and `--model`, or a login), kept in `choice.json` of the state folder; the order is the request, `FINN_PROVIDER`/`FINN_API`/`FINN_BASE_URL` and `FINN_MODEL`, the last choice, then `local`; `finn -p` never changes it. A login with no choice yet makes its provider the choice, and a first-start session on `local` moves there too.
 - `finn login` prints one line after the screen closes: the provider, and `run finn to start` or `use finn --provider X, or /model, to use it`; Esc ends it with `finn: login cancelled` and status 0.
 
 ### Fixed

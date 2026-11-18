@@ -1488,7 +1488,7 @@ def test_a_login_that_made_the_default_moves_the_local_session() -> Result[Void]
     },
   )
 
-  local = model_of(100, 12).with(backend: backend, id: "s1", serving: "local/qwen")
+  local = model_of(100, 12).with(backend: backend, id: "s1", serving: "local/qwen", first_login: true)
   status = Protocol.LoginStatus(
     name: "box",
     label: "",
@@ -1501,7 +1501,9 @@ def test_a_login_that_made_the_default_moves_the_local_session() -> Result[Void]
   moved = App.update(local, App.Msg.LoggedIn("box", ok(status))).model
   try Test.eq(changes.recv(0), ok(Protocol.UpdateSession(provider: some("box"))))
   try Test.eq(moved.serving, "box/m1")
-  Test.assert(moved.entries.last.text.include?("the session is on box/m1"), moved.entries.last.text)
+  try Test.assert(moved.entries.last.text.include?("the session is on box/m1"), moved.entries.last.text)
+  later = App.update(local.with(first_login: false), App.Msg.LoggedIn("box", ok(status))).model
+  Test.eq([later.serving, changes.recv(0).ok?.to_s], ["local/qwen", "false"])
 end
 
 # `finn login` says what happened on the console once the screen is closed: the provider, whether `finn` uses it now
@@ -1514,6 +1516,9 @@ def test_finn_login_ends_with_a_line_for_the_console() -> Result[Void]
   try Test.eq(["#{first.code}", "#{first.line}"], ["0", "some(\"finn: logged in to groq; run `finn` to start\")"])
   kept = try App.outcome(App.update(only, App.Msg.LoggedIn("groq", ok(status))).model)
   try Test.eq(kept.line, some("finn: logged in to groq; use `finn --provider groq`, or /model, to use it"))
+  env = try App.outcome(App.update(only, App.Msg.LoggedIn("groq", ok(status.with(from: "env")))).model)
+  try Test.eq(env.line, some("finn: logged in to groq; GROQ_API_KEY is set in the environment and wins over it"))
+
   keyless = Protocol.LoginList(providers: [status], first: false)
   asking = App.update(only.with(picker: some(Picker.logins(keyless))), enter()).model
   cancelled = try App.outcome(App.update(asking, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model)

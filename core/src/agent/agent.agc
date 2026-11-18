@@ -377,13 +377,18 @@ end
 def failure_text(turn: Turn, e: Error) -> String
   return e.message if not turn.source.start_with?("local/")
 
+  # `FINN_BASE_URL` is an explicit choice of the user: the way out is its key, not another provider.
+  advice = "pick a provider with /model, or log in with /login"
+  case turn.ctx.env.call("FINN_BASE_URL")
+    ok(url) if not url.empty? -> advice = "check FINN_API_KEY, or pick a provider with /model"
+    _ -> nil
+  end
+
   said = e.message
   if e.kind == "llm.auth"
-    said = (
-      "the local provider refused the request (HTTP #{e.code.unwrap_or(0)}): pick a provider with /model, or log in with /login"
-    )
+    said = "the local provider refused the request (HTTP #{e.code.unwrap_or(0)}): #{advice}"
   elsif e.kind == "llm.network"
-    said = "the local provider did not answer (#{e.message}): pick a provider with /model, or log in with /login"
+    said = "the local provider did not answer (#{e.message.split("\n").select { |l| l != "" }.join("; ")}): #{advice}"
   end
 
   if said != e.message

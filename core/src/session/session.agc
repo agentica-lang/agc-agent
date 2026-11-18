@@ -683,6 +683,12 @@ end
 # A session on another provider or API than the server's takes that API's model, when it names one; else the server's
 # model on the server's provider, and `default` on another.
 def default_model(options: Config.Options, provider: String, api: String) -> String
+  if options.model_unset and provider == options.provider
+    # The provider of the last choice has no model of its own: the first model it lists, which the clients show too.
+    listed = provider_info(options, provider).models.select { |m| m != Config.DEFAULT_MODEL }
+    return listed[0] if not listed.empty?
+  end
+
   own = options.providers[options.provider]
   return options.model if provider == options.provider and api == own.api
 

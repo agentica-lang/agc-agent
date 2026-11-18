@@ -330,7 +330,7 @@ def create(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   id = try Sessions.create(sessions, request)
   profile = case Sessions.snapshot(sessions, id)
     ok(session) ->
-      if request.provider.some? or request.model.some?
+      if request.remember == some(true) and (request.provider.some? or request.model.some?)
         remember(sessions, session)
       end
 

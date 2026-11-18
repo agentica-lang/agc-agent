@@ -83,6 +83,8 @@ struct Setup
   ## Presets of the server (`Providers.presets`) at `/NAME` of the fake, each with a stored key `sk-NAME`.
   presets: List[String] = []
   provider: String = ""
+  ## `FINN_MODEL` is set: it wins over the model last picked.
+  model_pinned: Bool = false
   key_envs: Map[String, String] = {}
   ## Providers a login sets up, each at `/NAME` of the fake with the key variable `NAME_KEY` (`NAME=VAR` for another),
   ## and their keys in `config/finn/auth.json` of the test's folder.
@@ -317,6 +319,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     ),
     provider: server_provider(setup),
     provider_pinned: not setup.provider.empty?,
+    model_pinned: setup.model_pinned,
     login: login,
     key_envs: setup.key_envs,
     model: setup.model,
@@ -521,8 +524,17 @@ def new_session_in(
   provider: Optional[String] = none,
   profile: Optional[String] = none,
   model: Optional[String] = none,
+  remember: Bool = false,
 ) -> Result[String]
-  asked = Protocol.NewSession(cwd: cwd, model: model, api: api, provider: provider, profile: profile)
+  asked = Protocol.NewSession(
+    cwd: cwd,
+    model: model,
+    api: api,
+    provider: provider,
+    profile: profile,
+    remember: some(remember),
+  )
+
   answer = try post(h, Protocol.SESSIONS_PATH, Protocol.encode_new_session(asked))
 
   return error("POST /v1/sessions: #{answer.status} #{answer.text}") if answer.status != 201

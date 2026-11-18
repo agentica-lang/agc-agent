@@ -119,7 +119,11 @@ end
 def logged_in(app: State.Model, name: String, result: Result[Protocol.LoginStatus]) -> State.Model
   done = case result
     ok(status) if status.asks == Protocol.ASKS_URL and status.from == "env" ->
-      State.noted(app, "#{name}: the URL is stored, but #{status.key_env} is set and wins over it")
+      env_wins(
+        State.noted(app, "#{name}: the URL is stored, but #{status.key_env} is set and wins over it"),
+        name,
+        status,
+      )
     ok(status) if status.asks == Protocol.ASKS_URL ->
       lined(
         moved(app, name, "#{name} is set up at #{status.base_url}", status.made_default),
@@ -127,7 +131,11 @@ def logged_in(app: State.Model, name: String, result: Result[Protocol.LoginStatu
         status.made_default,
       )
     ok(status) if status.from == "env" ->
-      State.noted(app, "#{name}: the key is stored, but #{status.key_env} is set and wins over it")
+      env_wins(
+        State.noted(app, "#{name}: the key is stored, but #{status.key_env} is set and wins over it"),
+        name,
+        status,
+      )
     ok(status) ->
       said = "#{name} is set up (#{status.key_env} would also work)"
       lined(moved(app, name, said, status.made_default), name, status.made_default)
@@ -176,7 +184,7 @@ DEVICE_POLL_MS = 2000
 # stays where it is; `said` then tells how to pick a model.
 def moved(app: State.Model, name: String, said: String, made_default: Bool) -> State.Model
   return State.noted(app, "#{said}: /model lists its models") if app.login_only or app.id == ""
-  return switched(app, name, said) if made_default and name != LOCAL and provider_of(app) == LOCAL
+  return switched(app, name, said) if app.first_login and made_default and name != LOCAL and provider_of(app) == LOCAL
 
   case app.backend.list_providers.call()
     ok(list) ->
@@ -216,6 +224,13 @@ def switched(app: State.Model, name: String, said: String) -> State.Model
 
     error(e) -> State.noted(app, "#{said}: /model #{name}/NAME picks a model (error: #{e.message})")
   end
+end
+
+# `finn login` when the environment's key (or URL) wins over the stored one: it says so, not that the login is in use.
+def env_wins(app: State.Model, name: String, status: Protocol.LoginStatus) -> State.Model
+  return app if not app.login_only
+
+  app.with(line: some("finn: logged in to #{name}; #{status.key_env} is set in the environment and wins over it"))
 end
 
 # What `finn login` prints once the screen is closed.

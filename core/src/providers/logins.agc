@@ -506,7 +506,10 @@ def save_choice(path: String, choice: Choice) -> Result[Void]
   text = "#{JSON.encode(choice)}\n"
   return File.replace(path, text.bytes) if File.stat(path).ok?
 
-  File.open(path, "create_private") do |handle| File.write(handle, text) end
+  # Never a half written file where the next start reads: made aside, then moved.
+  temp = "#{path}.#{Random.int(0, 999999999)}.tmp"
+  try File.open(temp, "create_private") do |handle| File.write(handle, text) end
+  Path.rename(temp, path)
 end
 
 def done(changed: Result[State]) -> Result[Void]
