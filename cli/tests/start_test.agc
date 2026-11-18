@@ -8,6 +8,7 @@ import Fake from "support/fake_server"
 import Routes from "support/routes"
 
 SETTLE_MS = 1500
+CLIENT_VERSION = "20261118000000"
 
 def test_clients_that_start_together_start_one_server_that_outlives_them() -> Result[Void]
   Driver.within_dir(&started_together)
@@ -85,19 +86,37 @@ def hung(rig: Driver.Rig) -> Result[Void]
   Test.assert(not File.stat("#{rig.dir}/starts.log").ok?, "no server was started")
 end
 
-def test_a_server_of_another_version_is_reported_with_how_to_stop_it() -> Result[Void]
-  old = Fake.Reply(body: "{\"version\": \"0.0.1\"}")
-  Driver.within([Fake.Route(method: "GET", path: Protocol.HEALTH_PATH, replies: [old])], &other_version)
+# A server of another protocol is never used: the client says which side is older, and for an older server the restart
+# that replaces it, never a kill. A version from before the dated ones (0.0.1) is older.
+def test_a_server_of_another_protocol_says_which_side_is_older() -> Result[Void]
+  cases = [
+    ["20260101000000", "runs an older Finn (20260101000000) than this client (#{CLIENT_VERSION}) and cannot serve it"],
+    ["0.0.1", "runs an older Finn (0.0.1) than this client (#{CLIENT_VERSION})"],
+    ["20270101000000", "this client (#{CLIENT_VERSION}) is older than the server of"],
+  ]
+
+  for pair in cases
+    old = Fake.Reply(body: "{\"version\": \"#{pair[0]}\"}")
+    try Driver.within([Fake.Route(method: "GET", path: Protocol.HEALTH_PATH, replies: [old])]) do |rig|
+      other_version(rig, pair[1], pair[0] != "20270101000000")
+    end
+  end
+
+  ok()
 end
 
-def other_version(rig: Driver.Rig) -> Result[Void]
+def other_version(rig: Driver.Rig, reason: String, older: Bool) -> Result[Void]
   command = try Driver.fake_command()
-  cli = try Driver.start(rig.dir, ["--"] + command)
+  cli = try Driver.start(rig.dir, ["--"] + command, extra: {"FINN_VERSION": CLIENT_VERSION})
   done = try Driver.finish(cli)
-  info = try Protocol.decode_server_info(try File.read_text("#{rig.dir}/server.json"))
   try Test.eq(done.code, 1)
-  try Test.assert(done.errors.include?("runs another version"), "the version is the reason: #{done.errors}")
-  try Test.assert(done.errors.include?("`kill #{info.pid}`"), "it says how to stop it: #{done.errors}")
+  try Test.assert(done.errors.include?(reason), "the versions are the reason: #{done.errors}")
+  restart = (
+    "`finn server restart --state-dir #{rig.dir}` replaces it; it stops the running turns and keeps the sessions"
+  )
+
+  try Test.eq(done.errors.include?(restart), older)
+  try Test.assert(not done.errors.include?("kill"), "no kill: #{done.errors}")
   Test.assert(not File.stat("#{rig.dir}/starts.log").ok?, "no server was started")
 end
 

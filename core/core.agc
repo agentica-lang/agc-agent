@@ -14,15 +14,15 @@
 ## that message or adds nothing to that fold, and never stops a session or the server.
 
 import Catalog from "src/providers/catalog"
-import Cli from "src/config/cli"
 import Config from "src/config/config"
 import Extensions from "src/config/registry"
 import Server from "src/http/server"
 import Builtins from "src/session/builtins"
 import Tools from "src/tools/tools"
 
-## The version of the core: that of the package, which `/v1/health` and `--version` give.
-VERSION = Cli.VERSION
+## The version of the core package, as its tag (`core-0.0.1`). The version of Finn that a server runs is the time of its
+## commit (`/v1/health`).
+VERSION = "0.0.1"
 
 export Extensions.Registry
 export Extensions.Call

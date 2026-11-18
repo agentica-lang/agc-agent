@@ -6,10 +6,12 @@ import Render from "render"
 ## Connects to the server of the state folder (starting it when none runs) and runs one session. Gives the exit code.
 def run(options: Args.Options) -> Result[Int]
   launch = Args.launch(options)
-  server = try Client.connect(launch, try Client.state_dir(launch))
-  note = Client.code_mode_note(server, options.code_mode)
-  if not note.empty?
-    IO.warn(note)
+  dir = try Client.state_dir(launch)
+  server = try Client.connect(launch, dir)
+  for note in [Client.code_mode_note(server, options.code_mode), Client.version_note(server, dir)]
+    if not note.empty?
+      IO.warn(note)
+    end
   end
 
   Chat.run(server, options, Render.Style(thinking: options.thinking, color: not no_color?()))

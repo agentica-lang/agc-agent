@@ -2,8 +2,6 @@ import OP from "std/option_parser"
 import {Kind, Opt, Parsed} from "std/option_parser"
 import Client from "pkg/client/client"
 
-VERSION = "0.0.1"
-
 ## The options of a run; `none` takes the default, as in the line-mode client.
 struct Options
   state_dir: Optional[String]
@@ -19,8 +17,9 @@ struct Options
   yolo: Bool = false
   ## The code mode asked for: off with `--no-codemode`, else as `FINN_CODE_MODE` says; none when neither says.
   code_mode: Optional[Bool] = none
-  ## What the session says first about its server (`Client.code_mode_note`).
-  server_note: String = ""
+  ## What the session says first about its server: its code mode and its version (`Client.code_mode_note`,
+  ## `Client.version_note`).
+  server_notes: List[String] = []
 end
 
 enum Command

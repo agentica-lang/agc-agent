@@ -8,6 +8,7 @@
 
 import Protocol from "pkg/protocol/protocol"
 import Client from "http"
+import Version from "version"
 
 STATE_DIR_ENV = "FINN_STATE_DIR"
 SERVER_COMMAND_ENV = "FINN_SERVER_COMMAND"
@@ -15,6 +16,8 @@ CODE_MODE_ENV = "FINN_CODE_MODE"
 SERVER_FILE = "server.json"
 LOCK_FILE = "server.lock"
 LOG_FILE = "server.log"
+## The file the running core holds locked (core/src/http/server.agc).
+CORE_LOCK_FILE = "core.lock"
 KIND_STATE = "client.state"
 KIND_SERVER = "client.server"
 KIND_VERSION = "client.version"
@@ -28,6 +31,9 @@ POLL_MS = 100
 NOT_FOUND = 127
 GROUP_AND_OTHERS = 63
 LOG_KEEP_BYTES = 10_485_760
+## The clock ticks of /proc/PID/stat (USER_HZ, 100 on Linux).
+TICKS_PER_S = 100
+NUL = String.from_code(0)
 
 ## How a client finds or starts its server. `none` takes the default: the state folder of the environment, and the
 ## server command of `FINN_SERVER_COMMAND`, else `core/main.agc serve` of the repository the client runs from, which
@@ -40,10 +46,11 @@ struct Launch
   code_mode: Bool = true
 end
 
-## What runs in the folder: a server of this client's version, one of another version (its pid), or nothing (why).
+## What runs in the folder: a server of this client's protocol, one of another version (its pid and version), or nothing
+## (why).
 enum Found
   Running(Client.Server)
-  Other(Int)
+  Other(Int, String)
   Absent(String)
 end
 
@@ -70,8 +77,8 @@ def connect(options: Launch, dir: String) -> Result[Client.Server]
 
   case probe(dir)
     Probe.Alive(server) -> ok(server)
-    Probe.Unusable(reason) -> refused(dir, reason)
-    Probe.Other(pid) -> other_version(dir, pid)
+    Probe.Unusable(reason, kind) -> refused(dir, reason, kind)
+    Probe.Other(pid, version) -> other_version(dir, pid, version)
     Probe.Absent(reason) -> start(options, dir, reason)
   end
 end
@@ -117,9 +124,9 @@ def find(dir: String) -> Result[Found]
 
   case probe(dir)
     Probe.Alive(server) -> ok(Found.Running(server))
-    Probe.Other(pid) -> ok(Found.Other(pid))
+    Probe.Other(pid, version) -> ok(Found.Other(pid, version))
     Probe.Absent(reason) -> ok(Found.Absent(reason))
-    Probe.Unusable(reason) -> refused(dir, reason)
+    Probe.Unusable(reason, kind) -> refused(dir, reason, kind)
   end
 end
 
@@ -142,17 +149,59 @@ end
 ## The file the server writes its output to.
 def log_file(dir: String) -> String = file_in(dir, LOG_FILE)
 
-## Checks again that the server is of this client's version, as a client does before it reads the event stream again.
+## Checks again that the server speaks this client's protocol, as a client does before it reads the event stream again.
 ## A server that does not answer is left to the reconnect.
 def recheck(server: Client.Server) -> Result[Void]
   case Client.health(server)
     ok(health) if health.wire != some(Protocol.wire_digest()) ->
-      error(
-        "the server now runs another version of Finn Agent than this client: start the client again",
-        kind: KIND_VERSION,
-      )
+      error(Version.changed(Version.finn_version(), health.version, "finn server restart"), kind: KIND_VERSION)
     _ -> ok()
   end
+end
+
+## One line when the server of `dir`, which serves this client, is of another version: which is older and how to get
+## the new one; "" when it is the same, or one side does not say.
+def version_note(server: Client.Server, dir: String) -> String
+  case Client.health(server)
+    ok(health) -> Version.note(Version.finn_version(), health.version, server_command(dir, "restart"))
+    error(_) -> ""
+  end
+end
+
+## Why a client does not use the server of `dir` (pid `pid`, version `version`), which speaks another protocol: which
+## side is older, and how to get the new one.
+def other_version_text(dir: String, pid: Int, version: String) -> String
+  Version.refusal(Version.finn_version(), version, dir, pid, server_command(dir, "restart"))
+end
+
+## `finn server ACTION` for the server of `dir`, with `--state-dir` when it is not the folder a client finds by default.
+def server_command(dir: String, action: String) -> String
+  command = "finn server #{action}"
+  case state_dir(Launch(main: ""))
+    ok(default) if default == dir -> command
+    _ -> "#{command} --state-dir #{dir}"
+  end
+end
+
+## True when a server holds the lock of the folder, so one runs there, whether it answers or not.
+def held?(dir: String) -> Bool
+  path = file_in(dir, CORE_LOCK_FILE)
+  return false if not File.stat(path).ok?
+
+  # A lock taken here is released when the file is closed, at the end of the block.
+  taken = File.open(path, "append") do |lock| File.try_lock(lock, POLL_MS) end
+  taken == ok(false)
+end
+
+## True when `pid` is the server of `dir` by every proof there is, as a signal to it needs: a server holds the lock of
+## the folder; and where there is a /proc, the process is Agentica, started before `server.json` was written, and its
+## `FINN_STATE_DIR` is the folder (without one, the folder is the default one).
+def server_process?(dir: String, pid: Int) -> Bool
+  return false if not held?(dir)
+  return true if not File.stat("/proc/self").ok?
+  return false if File.read_text("/proc/#{pid}/comm").unwrap_or("").strip != "agentica"
+
+  started_before_file?(dir, pid) and serves_dir?(dir, pid)
 end
 
 private
@@ -161,10 +210,11 @@ enum Probe
   Alive(Client.Server)
   ## Nothing serves: start one.
   Absent(String)
-  ## Something is there that does not serve this client: start nothing.
-  Unusable(String)
-  ## A server of another version, with its pid.
-  Other(Int)
+  ## Something is there that does not serve this client: start nothing. The kind is `KIND_STATE` when the file is not
+  ## safe to read (its owner or mode), `KIND_SERVER` when the server answers badly.
+  Unusable(String, String)
+  ## A server of another protocol, with its pid and version.
+  Other(Int, String)
 end
 
 def environment_dir() -> Result[String]
@@ -198,22 +248,18 @@ end
 
 def file_in(dir: String, name: String) -> String = "#{dir}/#{name}"
 
-def refused[T](dir: String, reason: String) -> Result[T]
+def refused[T](dir: String, reason: String, kind: String) -> Result[T]
   error(
     "a server is registered in #{file_in(dir, SERVER_FILE)} but does not serve this client: #{reason}; " +
     "not starting another (remove the file if the server is gone)",
-    kind: KIND_SERVER,
+    kind: kind,
   )
 end
 
-# A server from other code may not read what this client sends, nor send what it reads: it is never used. Stopping it
-# ends the turn it runs; the sessions are on disk, so the next server reads them.
-def other_version[T](dir: String, pid: Int) -> Result[T]
-  error(
-    "the server of #{dir} (pid #{pid}) runs another version of Finn Agent than this client: " +
-    "once no turn runs there, stop it with `kill #{pid}` and start the client again (the sessions are kept)",
-    kind: KIND_VERSION,
-  )
+# A server from other code may not read what this client sends, nor send what it reads: it is never used. A restart
+# waits for the turns it runs; the sessions are on disk, so the next server reads them.
+def other_version[T](dir: String, pid: Int, version: String) -> Result[T]
+  error(other_version_text(dir, pid, version), kind: KIND_VERSION)
 end
 
 def probe(dir: String) -> Probe
@@ -223,7 +269,7 @@ def probe(dir: String) -> Probe
   checked = check_owned(path, "600")
   # A server that stops removes its file at any time: gone since the check is not unusable.
   return Probe.Absent("#{path} does not exist") if not checked.ok? and not File.stat(path).ok?
-  return Probe.Unusable(checked.message) if not checked.ok?
+  return Probe.Unusable(checked.message, KIND_STATE) if not checked.ok?
 
   case read_info(path)
     ok(info) -> reach(info)
@@ -238,10 +284,10 @@ def reach(info: Protocol.ServerInfo) -> Probe
 
   server = Client.Server(url: "http://127.0.0.1:#{info.port}", token: info.token)
   case Client.health(server)
-    ok(health) if health.wire != some(Protocol.wire_digest()) -> Probe.Other(info.pid)
+    ok(health) if health.wire != some(Protocol.wire_digest()) -> Probe.Other(info.pid, health.version)
     ok(_) -> Probe.Alive(server)
     error(e) if e.kind == Client.KIND_UNREACHABLE -> Probe.Absent(e.message)
-    error(e) -> Probe.Unusable(e.message)
+    error(e) -> Probe.Unusable(e.message, KIND_SERVER)
   end
 end
 
@@ -316,8 +362,8 @@ def start(options: Launch, dir: String, why_not: String) -> Result[Client.Server
     try take_lock(lock)
     case probe(dir)
       Probe.Alive(server) -> ok(server)
-      Probe.Unusable(reason) -> refused(dir, reason)
-      Probe.Other(pid) -> other_version(dir, pid)
+      Probe.Unusable(reason, kind) -> refused(dir, reason, kind)
+      Probe.Other(pid, version) -> other_version(dir, pid, version)
       Probe.Absent(_) -> explained(started(options, dir), why_not)
     end
   end
@@ -452,10 +498,16 @@ def spawn_server(options: Launch, dir: String) -> Result[Void]
   error("the server command could not be started (exit #{status}): #{command.join(" ")}", kind: KIND_SERVER)
 end
 
+# A server command that is not the core next to this client may be other code: it does not get this client's version.
 def server_env(options: Launch, dir: String) -> Map[String, String]
-  return {STATE_DIR_ENV: dir} if options.code_mode
+  env = {STATE_DIR_ENV: dir}
+  if options.server_command.some? or setting(SERVER_COMMAND_ENV) != ""
+    env = env.put(Version.VERSION_ENV, "")
+  end
 
-  {STATE_DIR_ENV: dir, CODE_MODE_ENV: "0"}
+  return env if options.code_mode
+
+  env.put(CODE_MODE_ENV, "0")
 end
 
 def wait_alive(dir: String) -> Result[Client.Server]
@@ -463,8 +515,8 @@ def wait_alive(dir: String) -> Result[Client.Server]
   while waited < START_WAIT_MS
     case probe(dir)
       Probe.Alive(server) -> return ok(server)
-      Probe.Unusable(reason) -> return refused(dir, reason)
-      Probe.Other(pid) -> return other_version(dir, pid)
+      Probe.Unusable(reason, kind) -> return refused(dir, reason, kind)
+      Probe.Other(pid, version) -> return other_version(dir, pid, version)
       Probe.Absent(_) -> Task.sleep(POLL_MS)
     end
 
@@ -481,5 +533,56 @@ def option_list[T](value: Optional[T]) -> List[T]
   case value
     some(v) -> [v]
     none -> []
+  end
+end
+
+# The start of the process (field 22 of /proc/PID/stat, in ticks of 1/100 s after the boot time of /proc/stat) is not
+# after the time `server.json` was written: a process that took the pid later is another.
+def started_before_file?(dir: String, pid: Int) -> Bool
+  info = File.stat(file_in(dir, SERVER_FILE))
+  start = process_start_s(pid)
+  return false if not info.ok? or start.none?
+
+  start.unwrap! <= info.unwrap!.modified_seconds + 1
+end
+
+def process_start_s(pid: Int) -> Optional[Int]
+  stat = File.read_text("/proc/#{pid}/stat").unwrap_or("")
+  parts = stat.split(") ")
+  fields = parts[parts.size - 1].split(" ")
+  return none if fields.size < 20
+
+  ticks = fields[19].to_i.unwrap_or(-1)
+  boot = boot_s()
+  return none if ticks < 0 or boot < 0
+
+  some(boot + ticks / TICKS_PER_S)
+end
+
+def boot_s() -> Int
+  for line in File.read_text("/proc/stat").unwrap_or("").split("\n")
+    return line.replace("btime ", "").strip.to_i.unwrap_or(-1) if line.start_with?("btime ")
+  end
+
+  -1
+end
+
+# Its `FINN_STATE_DIR` names the folder; without one, the folder is the default one. An environment that cannot be read
+# proves nothing, so the process is not proved to be the server.
+def serves_dir?(dir: String, pid: Int) -> Bool
+  read = File.read_text("/proc/#{pid}/environ")
+  return false if not read.ok?
+
+  environ = NUL + read.unwrap! + NUL
+  key = "#{NUL}#{STATE_DIR_ENV}="
+  case environ.index_of(key)
+    some(start) ->
+      rest = environ.slice(start + key.length, environ.length - start - key.length)
+      rest.slice(0, rest.index_of(NUL).unwrap_or(rest.length)) == dir
+    none ->
+      case state_dir(Launch(main: ""))
+        ok(default) -> default == dir
+        error(_) -> false
+      end
   end
 end
