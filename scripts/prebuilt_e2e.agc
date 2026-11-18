@@ -125,14 +125,15 @@ def copy_bash(repository: String, archive: String) -> Result[String]
   ok(repository)
 end
 
-# The manifest of the copy names the served library for every target, with the source key of the copy.
+# The manifest of the copy names the served library for every target, with the source key of the copy, in place of the
+# rows of the release (the table is the last of the manifest).
 def prebuilt(agentica: String, repository: String, port: Int, sha256: String) -> Result[Void]
   printed = try run(agentica, ["native", "source", "bash"], "#{repository}/bash", {})
   source = try field(printed, "source")
   api = try field(printed, "api")
   rows = TARGETS.map { |target| "#{target} = \"#{sha256}\"" }.join(", ")
   manifest = "#{repository}/bash/agentica.toml"
-  text = try File.read_text(manifest)
+  text = (try File.read_text(manifest)).split("\n[native.bash.prebuilt]")[0]
   table = <<~TOML
 
     [native.bash.prebuilt]
