@@ -25,6 +25,8 @@ MAX_WINDOW = 2_000_000
 ## The highest price taken, in USD per million tokens; a model with a price above it, below 0 or not finite has none.
 MAX_PRICE = 10_000.0
 OPENAI_COMPATIBLE = "@ai-sdk/openai-compatible"
+## Raise it when `Model` gains a field that a file of the older format cannot have.
+CACHE_VERSION = 1
 
 ## Prices in USD per million tokens.
 struct Prices
@@ -192,6 +194,8 @@ struct Cached
   url: String
   fetched_ms: Int
   models: List[Model]
+  ## The format of `models`: a file of an older one (0) is fetched again.
+  version: Int = 0
 end
 
 def handle(state: State, msg: Msg) -> Actor.Step[State]
@@ -261,7 +265,7 @@ end
 
 def loaded_models(options: Options) -> Result[List[Model]]
   cached = read_cache(options.cache)
-    .select { |c| c.url == options.url }
+    .select { |c| c.url == options.url and c.version == CACHE_VERSION }
     .map { |c| c.with(models: c.models.map(&bounded)) }
 
   fresh = cached.select { |c| c.fetched_ms <= Time.now_ms() and Time.now_ms() - c.fetched_ms < options.ttl_ms }
@@ -269,7 +273,11 @@ def loaded_models(options: Options) -> Result[List[Model]]
 
   case fetch(options)
     ok(models) ->
-      _ = write_cache(options.cache, Cached(url: options.url, fetched_ms: Time.now_ms(), models: models))
+      _ = write_cache(
+        options.cache,
+        Cached(url: options.url, fetched_ms: Time.now_ms(), models: models, version: CACHE_VERSION),
+      )
+
       ok(models)
     error(_) if not cached.empty? -> ok(cached[0].models)
     error(e) -> error(e)

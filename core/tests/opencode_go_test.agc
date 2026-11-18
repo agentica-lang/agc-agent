@@ -84,6 +84,39 @@ def test_a_session_on_the_preset_names_itself_in_the_headers() -> Result[Void]
   end
 end
 
+# The summary of a fold is a call of its own, and OpenCode refuses it without the session header too.
+def test_the_summary_call_of_a_fold_names_the_session_too() -> Result[Void]
+  replies = ["text.sse", "summary.sse", "text.sse"]
+  setup = H.Setup(replies: replies, presets: ["opencode-go"], approvals: false, context_window: 27)
+  H.using(setup) do |h|
+    id = try H.new_session_in(h, h.work, provider: some("opencode-go"))
+    _ = try H.send(h, id, "Hello.")
+    _ = try H.idle(h, id)
+    _ = try H.send(h, id, "Again.")
+    _ = try H.idle(h, id)
+    _ = try H.next_request(h)
+    summary = try H.next_request(h)
+    try Test.eq(JSON.get(try JSON.parse(summary.body), "tools").ok?, false)
+    try Test.eq(HTTP.header_values(summary.headers, "x-opencode-session"), [id])
+    Test.eq(HTTP.header_values(summary.headers, "x-opencode-client"), ["finn"])
+  end
+end
+
+# A `providers` entry named `opencode-go` with another URL replaces the preset and keeps its default model and headers.
+def test_a_config_entry_that_replaces_the_preset_keeps_its_model_and_headers() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-opencode-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  entry = "{\"name\": \"opencode-go\", \"base_url\": \"http://proxy/v1\", \"key_env\": \"OPENCODE_API_KEY\"}"
+  try File.write_text("#{dir}/config.json", "{\"providers\": [#{entry}]}")
+  env = {"OPENCODE_API_KEY": "sk-env", "FINN_CONFIG": "#{dir}/config.json", "FINN_PROVIDER": "opencode-go"}
+  config = Config.from_env(->(n) { located(env, n) })
+  _ = Path.remove(dir)
+  given = try config
+  api = given.providers["opencode-go"].apis["openai"]
+  try Test.eq(given.model, MODEL)
+  Test.eq(api.headers, (try opencode()).headers)
+end
+
 def opencode() -> Result[Providers.Custom]
   found = Providers.presets().select { |p| p.name == "opencode-go" }
   return error("no opencode-go preset") if found.empty?

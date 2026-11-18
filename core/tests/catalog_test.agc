@@ -170,6 +170,18 @@ def test_the_list_leaves_out_the_models_of_another_api() -> Result[Void]
   end
 end
 
+# A cache file of an older format (no `version`) is not read: the catalog is fetched again.
+def test_a_cache_of_an_older_format_is_fetched_again() -> Result[Void]
+  within_models do |served, dir|
+    cache = "#{dir}/models.json"
+    old = "{\"url\": \"#{served.url}\", \"fetched_ms\": #{Time.now_ms()}, \"models\": []}"
+    try File.write_text(cache, old)
+    listed = found(Catalog.Options(url: served.url, cache: cache), "openai", "gpt-5.1")
+    try Test.eq(listed.map { |m| m.id }, some("gpt-5.1"))
+    Test.eq(hits(dir), ["/api.json"])
+  end
+end
+
 # A fetch that hangs holds up no one: `find` answers at once, with nothing while the catalog loads.
 def test_a_slow_fetch_does_not_hold_up_find() -> Result[Void]
   within_models do |served, dir|
@@ -234,7 +246,7 @@ def test_a_cache_out_of_range_is_checked() -> Result[Void]
     cache = "#{dir}/models.json"
     now = Time.now_ms()
     bad = <<~JSON
-      {"url": "#{served.url}", "fetched_ms": #{now},
+      {"url": "#{served.url}", "fetched_ms": #{now}, "version": 1,
         "models": [{"provider": "openai", "id": "gpt-5.1", "prices": {"input": -5.0, "output": 1.0, "cache_read": 0.0, "cache_write": 0.0}, "tiers": [],
           "window": 99000000, "reasoning": false, "tools": false}]}
     JSON

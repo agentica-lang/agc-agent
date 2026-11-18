@@ -124,6 +124,8 @@ The `providers` list of your config file (`~/.config/finn/config.json`) adds an 
 - With `key_env`, the provider is offered only when that variable is set or a login stored its key. Without it, the provider needs no key.
 - `models` are the names a client offers in `/model`.
 
+An entry that replaces a preset keeps what the preset sets besides the URL, the key variable and the models: the default model and the headers of `opencode-go`, and where a login checks a key.
+
 The server warns when two providers take the same key variable: that key would go to both URLs.
 
 ## Costs
