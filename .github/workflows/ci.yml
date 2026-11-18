@@ -65,7 +65,7 @@ jobs:
           - name: core
             run: make fmt-check check unit PACKAGES=core
           - name: packages
-            run: make fmt-check check native-check prebuilt-e2e unit PACKAGES="sse llm mcp protocol monty bash client cli tui_client"
+            run: make fmt-check check native-check prebuilt-e2e check-library-test unit PACKAGES="sse llm mcp protocol monty bash client cli tui_client"
           - name: pty and smoke
             run: make pty smoke peer
     steps:

@@ -10,6 +10,8 @@ on:
   pull_request:
     paths:
       - 'bash/native/**'
+      - 'bash/src/**'
+      - 'bash/tests/**'
       - 'bash/agentica.toml'
       - 'vendor/tree-sitter-bash'
       - 'vendor/tree-sitter-bash/**'
@@ -147,7 +149,7 @@ jobs:
         name: Install the pinned zig
         run: |
           dir="$RUNNER_TEMP/zig"
-          curl -sSfL "https://ziglang.org/download/$ZIG_VERSION/zig-${{ matrix.zig_arch }}-linux-$ZIG_VERSION.tar.xz" -o zig.tar.xz
+          curl -sSfL --retry 5 --retry-delay 10 --retry-all-errors "https://ziglang.org/download/$ZIG_VERSION/zig-${{ matrix.zig_arch }}-linux-$ZIG_VERSION.tar.xz" -o zig.tar.xz
           echo "${{ matrix.zig_sha256 }}  zig.tar.xz" | sha256sum -c
           mkdir -p "$dir" && tar -xJf zig.tar.xz -C "$dir" --strip-components=1 && rm zig.tar.xz
           # zig's clang refuses the glibc version in the target when it is only asked --version or -dumpmachine, which
@@ -168,7 +170,9 @@ jobs:
           for file in tmp/native-lib/*; do cp "$file" "$ASSET.${file##*.}"; done
           ls -l libbash-*
       - name: Check what the library needs
-        run: scripts/check-library.sh libbash-*
+        run: |
+          make check-library-test
+          scripts/check-library.sh libbash-*
       # The same cache as the build: the library that the tests load is the one that is uploaded, so a run that has
       # to build again fails.
       - name: Test the module
@@ -210,13 +214,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cd dist
+          for target in linux-x86_64 linux-arm64 macos-x86_64 macos-arm64 windows-x86_64; do
+            test "$(ls libbash-$API-$target.* | wc -l)" -eq 1
+          done
+          test "$(ls libbash-* | wc -l)" -eq 5
           sha256sum libbash-* > SHA256SUMS
           cat SHA256SUMS
-          test "$(wc -l < SHA256SUMS)" -eq 5
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --title "$GITHUB_REF_NAME" \
-            --notes "The libraries of bash's native module for source key $SOURCE." \
-            libbash-* SHA256SUMS LICENSES.txt
-          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false
+          # A failure leaves no draft behind (a rerun is clean); a release that is published is never deleted.
+          if ! { gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --latest=false \
+              --title "$GITHUB_REF_NAME" --notes "The libraries of bash's native module for source key $SOURCE." \
+              libbash-* SHA256SUMS LICENSES.txt &&
+              gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false; }; then
+            if [ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)" = true ]; then
+              gh release delete "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --yes
+            fi
+            exit 1
+          fi
       - name: The rows of bash/agentica.toml
         run: |
           {

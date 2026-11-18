@@ -198,7 +198,7 @@ A package is added by the phase that needs it, never as an empty folder.
   `docs/content/` (`make docs` builds it). A page keeps one line per paragraph
   or list item, as the other sites of the docs theme do; a link to another
   page names its file (`[Tools](tools.md)`).
-- The repo is private. Do not create other repos.
+- The repo is public. Do not create other repos.
 - A line that is only `end` is followed by an empty line, except before
   another `end`, `else`, `elsif`, a closing `)` or `]`, or the end of the file
   (`[style] blank_line_after_end`).

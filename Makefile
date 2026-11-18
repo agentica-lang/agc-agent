@@ -45,7 +45,7 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check native-source native-gen native-header native-check native-lib prebuilt-e2e prebuilt-e2e-run unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
+.PHONY: install check coupling fmt-check native-source native-gen native-header native-check native-lib prebuilt-e2e prebuilt-e2e-run check-library-test unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
 install: native-source
@@ -122,6 +122,13 @@ native-lib: native-source
 	built=$$(tr -d '\r' < tmp/native-build.log | sed -n 's/^built native bash: //p'); \
 	[ -n "$$built" ] || { echo 'native-lib: agentica built no library' >&2; exit 1; }; \
 	cp "$$built" tmp/native-lib/
+
+# check-library.sh fails closed: with no tool on PATH it is exit 2, never a pass.
+check-library-test:
+	@for ext in so dylib dll; do \
+	  env PATH=/nonexistent /bin/sh scripts/check-library.sh x.$$ext >/dev/null 2>&1; \
+	  [ $$? -eq 2 ] || { echo "check-library-test: x.$$ext without its tool did not exit 2" >&2; exit 1; }; \
+	done
 
 # A fresh project fetches bash from a copy of this repository and uses the library of tmp/native-lib, served on
 # 127.0.0.1, with no compiler, as one that reads [native.bash.prebuilt] does. prebuilt-e2e builds the library first;
