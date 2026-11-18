@@ -40,7 +40,7 @@ def glob(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   base = try folder(ctx, args.path)
   walked = try walk(base, "", 0, started(ctx, base))
   found = readable(ctx, base, walked.files).select { |file| Regex.match?(file, matcher) }
-  lines = found.take(MAX_RESULTS).map { |file| Sandbox.relative(ctx.root, "#{base}/#{file}") }
+  lines = found.take(MAX_RESULTS).map { |file| Sandbox.relative(ctx.root, child(base, file)) }
   ok("#{listing(lines, found.size)}#{cut_note(walked.cut)}")
 end
 
@@ -55,7 +55,7 @@ def grep(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   for file in wanted
     break if hits.size > MAX_RESULTS
 
-    hits = hits + matches(pattern, "#{base}/#{file}", Sandbox.relative(ctx.root, "#{base}/#{file}"))
+    hits = hits + matches(pattern, child(base, file), Sandbox.relative(ctx.root, child(base, file)))
   end
 
   ok("#{listing(hits.take(MAX_RESULTS), hits.size)}#{cut_note(walked.cut)}")
@@ -69,6 +69,28 @@ end
 def grep_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, GrepArgs.codec)
   ok(Sandbox.relative(ctx.root, try Sandbox.reach(ctx.root, args.path.unwrap_or("."), ctx.confine)))
+end
+
+## `dir` and `name` as one path, with no doubled slash: a walk from `/` has `/proc`, not `//proc`.
+def child(dir: String, name: String) -> String
+  if dir == ""
+    name
+  elsif dir.end_with?("/")
+    "#{dir}#{name}"
+  else
+    "#{dir}/#{name}"
+  end
+end
+
+## Whether a walk does not go in `path`, an absolute path: a folder that is not files on a disk.
+def skipped?(path: String) -> Bool = SKIPPED.include?(path)
+
+## The files of the walk (relative to `base`) that the context does not hide.
+def readable(ctx: Spec.Context, base: String, files: List[String]) -> List[String]
+  case ctx.hidden
+    some(hidden) -> files.select { |file| not hidden.call(Sandbox.relative(ctx.root, child(base, file))) }
+    none -> files
+  end
 end
 
 ## The regex of a glob: `*` and `?` stay inside a folder name, `**` crosses folders.
@@ -125,14 +147,6 @@ def translate(chars: List[String], at: Int, out: String) -> String
   end
 end
 
-def child(dir: String, name: String) -> String
-  if dir == ""
-    name
-  else
-    "#{dir}/#{name}"
-  end
-end
-
 def started(ctx: Spec.Context, base: String) -> Walked
   return Walked(files: [], cut: false) if Sandbox.inside?(ctx.root, base)
 
@@ -142,7 +156,7 @@ end
 def walk(base: String, dir: String, depth: Int, found: Walked) -> Result[Walked]
   walked = found
   for name in try Dir.list(child(base, dir))
-    next if name == ".git" or SKIPPED.include?(child(base, child(dir, name)))
+    next if name == ".git" or skipped?(child(base, child(dir, name)))
     return ok(walked.with(cut: true)) if walked.files.size >= MAX_FILES
     return ok(walked.with(cut: true)) if walked.until_ms > 0 and Time.now_ms > walked.until_ms
 
@@ -156,14 +170,6 @@ def walk(base: String, dir: String, depth: Int, found: Walked) -> Result[Walked]
   end
 
   ok(walked)
-end
-
-## The files of the walk that the context does not hide.
-def readable(ctx: Spec.Context, base: String, files: List[String]) -> List[String]
-  case ctx.hidden
-    some(hidden) -> files.select { |file| not hidden.call(Sandbox.relative(ctx.root, child(base, file))) }
-    none -> files
-  end
 end
 
 def cut_note(cut: Bool) -> String

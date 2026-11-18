@@ -207,13 +207,32 @@ def test_the_confinement_of_the_file_tools_is_off_unless_asked() -> Result[Void]
   from_env = try Config.from_env(->(n) { located({"FINN_CONFINE_FILES": "1"}, n) })
   over = try Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/on.json", "FINN_CONFINE_FILES": "0"}, n) })
   odd = Config.from_env(->(n) { located({"FINN_CONFINE_FILES": "yes"}, n) })
+  # Each setting reads its own key: a bad `confine_files` is not read when the variable is set, and a bad `mouse` names
+  # itself and does not touch `files`.
+  try File.write_text("#{dir}/bad.json", "{\"confine_files\": \"x\", \"files\": {\"command\": [\"rg\"]}}")
+  try File.write_text("#{dir}/bad_mouse.json", "{\"mouse\": 3, \"files\": {\"command\": [\"rg\"]}}")
+  set_over_bad = try Config.from_env(
+    ->(n) { located({"FINN_CONFIG": "#{dir}/bad.json", "FINN_CONFINE_FILES": "1"}, n) },
+  )
+
+  bad_key = Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/bad.json"}, n) })
+  bad_mouse = Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/bad_mouse.json"}, n) })
   _ = Path.remove(dir)
   try Test.eq(
     [bare.confine_files, from_file.confine_files, from_env.confine_files, over.confine_files],
     [false, true, true, false],
   )
 
-  Test.eq(odd.ok?, false)
+  try Test.eq(set_over_bad.confine_files, true)
+  try Test.eq(set_over_bad.files_command, ["rg"])
+  try Test.eq([odd.ok?, bad_key.ok?, bad_mouse.ok?], [false, false, false])
+  said = ""
+  case bad_mouse
+    error(e) -> said = e.message
+    ok(_) -> nil
+  end
+
+  Test.assert(said.include?("mouse must be true or false"), "its own key is named: #{said}")
 end
 
 # `"mouse": false` in the user's config leaves the mouse to the terminal; no key or file leaves it on, and the status

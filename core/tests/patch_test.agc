@@ -151,21 +151,34 @@ def test_an_unconfined_patch_reaches_outside_asks_and_rolls_back_its_new_folders
     input("*** Begin Patch\n*** Add File: #{outside}/y.txt\n+x\n*** End Patch"),
   )
 
+  mixed = Approval.verdict(
+    rules,
+    ctx,
+    "apply_patch",
+    input("*** Begin Patch\n*** Add File: inside.txt\n+x\n*** Add File: #{outside}/y.txt\n+x\n*** End Patch"),
+  )
+
   made = run(ctx, patch)
   kept = File.read_text("#{outside}/new/deep/x.txt")
+  try Dir.mkdir("#{outside}/ro")
+  _ = try H.run("chmod", ["555", "#{outside}/ro"])
+  writable = File.write_text("#{outside}/ro/probe", "x").ok?
   failing = (
-    "*** Begin Patch\n*** Add File: #{outside}/other/z.txt\n+z\n*** Update File: missing.txt\n-a\n+b\n*** End Patch"
+    "*** Begin Patch\n*** Add File: #{outside}/other/deep/z.txt\n+z\n*** Add File: #{outside}/ro/w.txt\n+w\n*** End Patch"
   )
 
   failed = run(ctx, failing)
   left = Dir.list(outside)
+  _ = H.run("chmod", ["755", "#{outside}/ro"])
   _ = Path.remove(dir)
   _ = Path.remove(base)
-  try Test.eq([asked, folder_rule], [Tools.Verdict.Ask, Tools.Verdict.Allow])
+  return error("this test needs a user that a 555 folder stops, not root") if writable
+
+  try Test.eq([asked, folder_rule, mixed], [Tools.Verdict.Ask, Tools.Verdict.Allow, Tools.Verdict.Ask])
   try Test.eq(made.is_error, false)
   try Test.eq(kept, ok("x\n"))
   try Test.eq(failed.is_error, true)
-  Test.eq(left, ok(["new"]))
+  Test.eq(left, ok(["new", "ro"]))
 end
 
 # A write or a delete that fails midway puts back the files written before it, removes the files and folders it

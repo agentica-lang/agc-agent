@@ -8,13 +8,13 @@
 - In `finn`, a drag over the transcript selects text and letting go copies it (OSC 52) with a note; a double click selects a word and Esc clears the selection. `/mouse` turns the mouse reporting off and on, and `"mouse": false` in the config file starts with it off; Shift+drag (Option+drag in iTerm2) is the terminal's own selection.
 - Every line of the server log starts with its UTC time and level (`2026-11-18T17:30:02.345Z WARNING ...`); `GET /v1/logs` gives its end and the warnings since the server started.
 - `finn` and `finn chat` show the last 3 warnings of the server as notes when a session starts, `/logs [N]` shows the end of the server log, and leaving prints the warnings and `finn server logs` after the screen closes.
+- A new session uses the provider and model last picked (`/model`, `finn --provider` and `--model`, or a login), kept in `choice.json` of the state folder; the order is the request, `FINN_PROVIDER`/`FINN_API`/`FINN_BASE_URL` and `FINN_MODEL`, the last choice, then `local`; `finn -p` never changes it. A login with no choice yet makes its provider the choice, and a first-start session on `local` moves there too.
+- `finn login` prints one line after the screen closes: the provider, and `run finn to start` or `use finn --provider X, or /model, to use it`; Esc ends it with `finn: login cancelled` and status 0.
 
 ### Changed
 
-- With approvals on, a file tool that reaches outside the session folder asks like `bash` does (`external_directory(FOLDER/*)` rules cover it), the accept-edits mode runs only writes inside the folder, and Finn's own `auth.json`, `server.json`, `config.json` and `chatgpt.json` are denied by default.
+- With approvals on, a file tool that reaches outside the session folder asks like `bash` does, unlike before when it was refused: `external_directory(FOLDER/*)` rules now cover file tools too (an allow rule lets a folder run, a deny rule refuses it). The accept-edits mode runs only writes inside the folder. Finn's own `auth.json`, `server.json`, `config.json` and `chatgpt.json` (in the config, state and data folders, and the file of `FINN_CONFIG`) are denied to the file tools by default, whatever the session folder; an `allow read_file(...)` rule of your config lifts it.
 - **Breaking:** the file tools (`read_file`, `write_file`, `edit_file`, `apply_patch`, `glob`, `grep`) reach any path by default, not only the session folder, so the model can read `~/.bashrc` when asked; deny and ask rules still apply everywhere. Set `"confine_files": true` (config) or `FINN_CONFINE_FILES=1` to keep them in the folder.
-- A new session uses the provider and model last picked (`/model`, `finn --provider` and `--model`, or a login), kept in `choice.json` of the state folder; the order is the request, `FINN_PROVIDER`/`FINN_API`/`FINN_BASE_URL` and `FINN_MODEL`, the last choice, then `local`; `finn -p` never changes it. A login with no choice yet makes its provider the choice, and a first-start session on `local` moves there too.
-- `finn login` prints one line after the screen closes: the provider, and `run finn to start` or `use finn --provider X, or /model, to use it`; Esc ends it with `finn: login cancelled` and status 0.
 
 ### Fixed
 

@@ -249,7 +249,13 @@ def fork(sessions: Sessions, id: String, entry: Optional[Int]) -> Result[Protoco
   # The confinement of the file tools is a setting of the session that the file does not keep.
   confined = (try SessionActor.snapshot(address)).confine
   if confined != sessions.options.confine_files
-    try update(sessions, header.id, Protocol.UpdateSession(confine: some(confined)))
+    case update(sessions, header.id, Protocol.UpdateSession(confine: some(confined)))
+      ok(_) -> nil
+      error(e) ->
+        # A fork that is not as confined as its source must not stay.
+        _ = delete(sessions, header.id)
+        return error(e.message, kind: e.kind)
+    end
   end
 
   ok(Protocol.Branched(id: header.id, text: copied.text))

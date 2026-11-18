@@ -34,6 +34,7 @@ import Offered from "../providers/offered"
 import Permissions from "../approval/permissions"
 import Providers from "../providers/providers"
 import Extensions from "registry"
+import Sandbox from "../tools/sandbox"
 import Tools from "../tools/tools"
 
 export Providers.ModelApi
@@ -237,6 +238,10 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   end
 
   user = try Permissions.user_rules(read, try approvals_switch(read))
+  user_settings = try settings(read)
+  secret_folders = [states, try data_dir(read)] + auth_path.map { |path| [Sandbox.parent(path)] }.unwrap_or([])
+  secret_files = option_list(Permissions.config_path(read))
+  denies = try Approval.parse_rules(Approval.finn_denies(secret_folders, secret_files))
   ok(
     Options(
       state_dir: states,
@@ -254,7 +259,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       login: some(login),
       model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,
-      approvals: some(user.rules),
+      approvals: some(Approval.Rules(all: denies.all + user.rules.all)),
       asking: user.asking,
       context_window: try context_window(read),
       max_tokens: try tokens_of(read, "FINN_MAX_TOKENS"),
@@ -269,9 +274,9 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       home: set(read, "HOME").unwrap_or(""),
       docs: docs_folder(read),
       trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
-      files_command: try files_command(read),
-      confine_files: try confine_files(read),
-      mouse: try mouse_setting(read),
+      files_command: try files_command(user_settings),
+      confine_files: try confine_files(read, user_settings),
+      mouse: try mouse_setting(user_settings),
       provider_pinned: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
       model_pinned: set(read, "FINN_MODEL").some?,
     ),
@@ -345,36 +350,6 @@ def approvals_switch(read: Fn[String, Result[String]]) -> Result[Optional[Bool]]
     some(other) -> error("FINN_APPROVALS must be 0 or 1, not #{other.inspect}")
     none -> ok(none)
   end
-end
-
-## `files.command` of the user's config file: a program and its arguments, which the file must name with a program.
-def files_command(read: Fn[String, Result[String]]) -> Result[List[String]]
-  file = try user_file(read, "files")
-  command = file.files.map { |files| files.command }.unwrap_or([])
-  if file.files.some? and (command.empty? or command[0] == "")
-    return error("#{Permissions.config_path(read).unwrap_or("")}: files.command must name a program")
-  end
-
-  ok(command)
-end
-
-## `FINN_CONFINE_FILES` (0 or 1), else `confine_files` of the user's config file, else off.
-def confine_files(read: Fn[String, Result[String]]) -> Result[Bool]
-  case set(read, "FINN_CONFINE_FILES")
-    some("1") -> return ok(true)
-    some("0") -> return ok(false)
-    some(other) -> return error("FINN_CONFINE_FILES must be 0 or 1, not #{other.inspect}")
-    none -> nil
-  end
-
-  file = try user_file(read, "confine_files")
-  ok(file.confine_files.unwrap_or(false))
-end
-
-## `mouse` of the user's config file: `false` leaves the mouse to the terminal; anything else, or no file, is on.
-def mouse_setting(read: Fn[String, Result[String]]) -> Result[Bool]
-  file = try user_file(read, "mouse")
-  ok(file.mouse.unwrap_or(true))
 end
 
 ## Code mode unless `FINN_CODE_MODE` is `0`, when there is a worker for this machine: `FINN_MONTY`, or a pinned wheel
@@ -465,25 +440,80 @@ def data_dir(read: Fn[String, Result[String]]) -> Result[String] = folder(read, 
 
 private
 
-struct UserFile
-  files: Optional[FilesKey] = none
-  confine_files: Optional[Bool] = none
-  mouse: Optional[Bool] = none
+# The user's config file, read once: each setting takes its own key, so a bad value stops only its own setting.
+struct Settings
+  path: String
+  root: Optional[JSON.Value] = none
 end
 
-struct FilesKey
-  command: List[String]
-end
-
-def user_file(read: Fn[String, Result[String]], key: String) -> Result[UserFile]
+def settings(read: Fn[String, Result[String]]) -> Result[Settings]
   for path in option_list(Permissions.config_path(read))
-    case JSON.decode(try File.read_text(path), UserFile)
-      ok(file) -> return ok(file)
-      error(e) -> return error("#{path}: #{key}: #{e.message}")
+    case JSON.parse(try File.read_text(path))
+      ok(root) -> return ok(Settings(path: path, root: some(root)))
+      error(e) -> return error("#{path}: #{e.message}")
     end
   end
 
-  ok(UserFile())
+  ok(Settings(path: ""))
+end
+
+# The value of a key of the file, none when it is not there or is null.
+def setting(found: Settings, key: String) -> Optional[JSON.Value]
+  for root in option_list(found.root)
+    case JSON.get(root, key)
+      ok(value) if not JSON.null?(value) -> return some(value)
+      _ -> nil
+    end
+  end
+
+  none
+end
+
+# `files.command` of the user's config file: a program and its arguments, which the file must name with a program.
+def files_command(found: Settings) -> Result[List[String]]
+  for files in option_list(setting(found, "files"))
+    case program(files)
+      ok(command) -> return ok(command)
+      error(_) -> return error("#{found.path}: files.command must name a program")
+    end
+  end
+
+  ok([])
+end
+
+def program(files: JSON.Value) -> Result[List[String]]
+  command: List[String] = []
+  for item in try JSON.list(try JSON.get(files, "command"))
+    command = command.push(try JSON.string(item))
+  end
+
+  return error("no program") if command.empty? or command[0] == ""
+
+  ok(command)
+end
+
+# `FINN_CONFINE_FILES` (0 or 1), else `confine_files` of the user's config file, else off.
+def confine_files(read: Fn[String, Result[String]], found: Settings) -> Result[Bool]
+  case set(read, "FINN_CONFINE_FILES")
+    some("1") -> ok(true)
+    some("0") -> ok(false)
+    some(other) -> error("FINN_CONFINE_FILES must be 0 or 1, not #{other.inspect}")
+    none -> flag(found, "confine_files", false)
+  end
+end
+
+# `mouse` of the user's config file: `false` leaves the mouse to the terminal; no key, or no file, is on.
+def mouse_setting(found: Settings) -> Result[Bool] = flag(found, "mouse", true)
+
+def flag(found: Settings, key: String, fallback: Bool) -> Result[Bool]
+  for value in option_list(setting(found, key))
+    case JSON.bool(value)
+      ok(on) -> return ok(on)
+      error(_) -> return error("#{found.path}: #{key} must be true or false")
+    end
+  end
+
+  ok(fallback)
 end
 
 def local_url(fallback: String, env_url: Optional[String], urls: Map[String, String]) -> String

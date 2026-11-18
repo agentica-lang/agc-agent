@@ -24,22 +24,12 @@ import Patch from "../tools/patch"
 import Spec from "../tools/spec"
 import Tools from "../tools/tools"
 
-## OpenCode's defaults for reads, before the rules of the config: a `.env` file asks, `.env.example` does not; and no
-## tool reads or writes the files of Finn's own folders that hold keys, tokens and the server's address (an `allow` rule of
-## the config comes after and wins).
-DEFAULTS = [
-  "ask read_file(*.env)",
-  "ask read_file(*.env.*)",
-  "allow read_file(*.env.example)",
-  "deny read_file(/*/finn/auth.json)",
-  "deny read_file(/*/finn/server.json)",
-  "deny read_file(/*/finn/config.json)",
-  "deny read_file(/*/finn/chatgpt.json)",
-  "deny write_file(/*/finn/auth.json)",
-  "deny write_file(/*/finn/server.json)",
-  "deny write_file(/*/finn/config.json)",
-  "deny write_file(/*/finn/chatgpt.json)",
-]
+## OpenCode's defaults for reads, before the rules of the config: a `.env` file asks, `.env.example` does not. The files
+## of Finn's own folders that hold keys, tokens and the server's address are denied to every tool by `finn_denies`
+## (an `allow` rule of the config comes after and wins).
+DEFAULTS = ["ask read_file(*.env)", "ask read_file(*.env.*)", "allow read_file(*.env.example)"]
+## The files of Finn's own folders that no tool reads or writes by default, by their name in the folder.
+SECRET_FILES = ["auth.json", "server.json", "config.json", "chatgpt.json"]
 ## The longest glob of a rule: a match costs up to the length of the pattern times that of the target.
 MAX_PATTERN = 256
 
@@ -53,6 +43,9 @@ end
 
 struct Rules
   all: List[Rule]
+  ## The session folder: a path of a rule that starts with `/` also matches the files of the folder, which tools name
+  ## relative to it. Empty for rules not of a session.
+  root: String = ""
 end
 
 def parse_rule(text: String) -> Result[Rule]
@@ -75,6 +68,26 @@ def parse_rule(text: String) -> Result[Rule]
   return error("rule's pattern is over #{MAX_PATTERN} characters: #{text}") if pattern.length > MAX_PATTERN
 
   ok(Rule(action: action, tool: tool, pattern: expanded(pattern)))
+end
+
+## The deny rules for the files of `SECRET_FILES` in each of `folders` (the state folder, the folder of the config file
+## and of the stored keys), also by the real path of the folder, and for each of `files` as it is.
+def finn_denies(folders: List[String], files: List[String]) -> List[String]
+  paths = files
+  for folder in folders
+    for place in [folder, Path.real(folder).unwrap_or(folder)].uniq
+      paths = paths + SECRET_FILES.map { |name| "#{place}/#{name}" }
+    end
+  end
+
+  texts: List[String] = []
+  for path in paths.uniq
+    for tool in ["read_file", "write_file"]
+      texts = texts.push("deny #{tool}(#{path})")
+    end
+  end
+
+  texts
 end
 
 def parse_rules(texts: List[String]) -> Result[Rules]
@@ -121,12 +134,32 @@ end
 def evaluate(rules: Rules, tool: String, target: String) -> Optional[Spec.Verdict]
   found: Optional[Spec.Verdict] = none
   chars = target.replace("\\", "/").split("")
+  # A path in the session folder is named relative to it: a rule of an absolute path sees it in full.
+  full = chars
+  if not chars.empty? and chars[0] != "/"
+    full = []
+    if rules.root != ""
+      base = rules.root
+      if base.end_with?("/")
+        base = base.slice(0, base.length - 1)
+      end
+
+      full = "#{base}/#{target}".replace("\\", "/").split("")
+    end
+  end
+
   for rule in rules.all
-    # A pattern of an absolute path cannot match a path inside the session folder: no walk over it.
-    next if rule.pattern.start_with?("/") and not chars.empty? and chars[0] != "/"
+    absolute = rule.pattern.start_with?("/")
+    # With no full path, a pattern of an absolute path cannot match a relative one: no walk over it.
+    next if absolute and full.empty? and not chars.empty?
     next if rule.tool != tool and not match?(tool, rule.tool)
 
-    matched = (rule.literal and target == rule.pattern) or (not rule.literal and matches_chars?(chars, rule.pattern))
+    wanted = chars
+    if absolute
+      wanted = full
+    end
+
+    matched = (rule.literal and target == rule.pattern) or (not rule.literal and matches_chars?(wanted, rule.pattern))
     if matched
       found = some(rule.action)
     end
@@ -190,6 +223,7 @@ GIT = /\A\.git\.*\z/
 FINN = /\A\.finn\.*\z/
 WRITES = ["write_file", "edit_file", "apply_patch"]
 FILE_TOOLS = ["read_file", "write_file", "edit_file", "glob", "grep"]
+READS = ["read_file", "glob", "grep"]
 
 # Each path of `apply_patch` decides as the call that does the same would: an updated file as `edit_file`, an added
 # file or the target of a move as `write_file`, each also as `apply_patch`. A deny rule of `edit_file`, `write_file`
@@ -216,7 +250,7 @@ end
 def outside_verdict(rules: Rules, ctx: Spec.Context, tool: String, target: String) -> Spec.Verdict
   return Spec.Verdict.Allow if tool == "bash" or not FILE_TOOLS.include?(tool)
   # The folders of the skills the session can load are read as part of the session.
-  return Spec.Verdict.Allow if (ctx.read_roots.any? { |dir| Sandbox.inside?(dir, target) })
+  return Spec.Verdict.Allow if (READS.include?(tool) and ctx.read_roots.any? { |dir| Sandbox.inside?(dir, target) })
 
   case Shell.external(ctx.root, target)
     some(glob) -> decide_one(rules, Shell.EXTERNAL, glob, true)
