@@ -39,10 +39,8 @@ struct Control
   flags: ATS[String, Bool]
   drain_ms: Int
   state_dir: String = ""
-  approvals: Bool = false
   code_mode: Bool = false
   no_worker: Bool = false
-  mouse: Bool = true
 end
 
 struct Server
@@ -188,10 +186,8 @@ def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handl
   token = OpenSSL.Random.hex(32)
   control = new_control(options.drain_ms).with(
     state_dir: options.state_dir,
-    approvals: options.asking,
     code_mode: options.code_mode.some?,
     no_worker: options.no_worker,
-    mouse: options.mouse,
   )
 
   http = try Bond.start_with(
@@ -262,6 +258,7 @@ end
 
 def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
   activity = try Sessions.activity(sessions)
+  now = Config.applied(sessions.options)
   ok(
     Protocol.encode_server_status(
       Protocol.ServerStatus(
@@ -271,19 +268,19 @@ def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
         sessions: activity.sessions,
         running_turns: activity.running,
         stopping: flag?(control, "draining"),
-        approvals: some(control.approvals),
+        approvals: some(now.asking),
         code_mode: some(control.code_mode),
         no_worker: some(control.no_worker),
-        mouse: some(control.mouse),
+        mouse: some(now.mouse),
       ),
     ),
   )
 end
 
-# The answer goes out first: the task that owns the server stops it after, without cutting this request.
-# The server reads its config file, extensions, skills and project instructions again.
+# The server reads its config file, MCP servers, skills and project instructions again.
 def reload(sessions: Sessions.Sessions) -> Result[String] = ok(Protocol.encode_reloaded(try Sessions.reload(sessions)))
 
+# The answer goes out first: the task that owns the server stops it after, without cutting this request.
 def stop_route(control: Control, conn: Bond.Conn) -> Result[String]
   request = try Protocol.decode_stop_server(try String.from_bytes(conn.body))
   asked(control, request.now.unwrap_or(false))
@@ -557,6 +554,7 @@ def starts_work?(conn: Bond.Conn) -> Bool
 
   (
     conn.path == Protocol.SESSIONS_PATH or
+    conn.path == Protocol.RELOAD_PATH or
     ["/messages", "/shell", "/compact", "/branch", "/fork"].any? { |end_| conn.path.end_with?(end_) }
   )
 end

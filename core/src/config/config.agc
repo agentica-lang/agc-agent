@@ -149,6 +149,8 @@ end
 ## files, the mouse, and the providers it adds.
 struct Settings
   approvals: Approval.Rules
+  ## How many rules of the user's file and project defaults (the denies for Finn's own files are not counted).
+  rules: Int
   asking: Bool
   files_command: List[String]
   mouse: Bool
@@ -166,6 +168,9 @@ struct Reloaded
   ## `reloaded`, `unchanged`, or `kept` with the reason the file was not taken.
   config: String
   changed: Bool = false
+  ## What now applies: the rules of the user and whether calls that no rule allows ask.
+  rules: Int = 0
+  asking: Bool = false
 end
 
 def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_with(read, &Offered.ant_token)
@@ -355,10 +360,10 @@ end
 def reload(options: Options) -> Reloaded
   for live in option_list(options.live)
     case settings_of(options.env)
-      error(e) -> return Reloaded(config: "kept: #{e.message}")
+      error(e) -> return stated(live, Reloaded(config: "kept: #{e.message}"))
       ok(fresh) ->
         old = live.cell.get(LIVE_KEY)
-        return Reloaded(config: "unchanged") if old == ok(fresh)
+        return stated(live, Reloaded(config: "unchanged")) if old == ok(fresh)
 
         before = fresh.customs
         for kept in option_list(current(live))
@@ -370,17 +375,20 @@ def reload(options: Options) -> Reloaded
 
           case Logins.replace(holder, live.providers.call(fresh.customs))
             ok(_) -> nil
-            error(e) -> return Reloaded(config: "kept: #{e.message}")
+            error(e) -> return stated(live, Reloaded(config: "kept: #{e.message}"))
           end
         end
 
         live.cell.put(LIVE_KEY, fresh)
-        return Reloaded(config: "reloaded", changed: true)
+        return stated(live, Reloaded(config: "reloaded", changed: true))
     end
   end
 
   Reloaded(config: "unchanged")
 end
+
+## `options` with the settings the last reload took (the options of the start when there was none).
+def applied(options: Options) -> Options = lived(options)
 
 ## `now` without the last choice: the providers as they are listed, the server's own provider and model.
 def listed(options: Options) -> Options
@@ -615,6 +623,14 @@ def logged_in(options: Options) -> Options
   options
 end
 
+def stated(live: Live, done: Reloaded) -> Reloaded
+  for found in option_list(current(live))
+    return done.with(rules: found.rules, asking: found.asking)
+  end
+
+  done
+end
+
 def settings_of(read: Fn[String, Result[String]]) -> Result[Settings]
   user = try Permissions.user_rules(read, try approvals_switch(read))
   file = try settings(read)
@@ -632,6 +648,7 @@ def settings_of(read: Fn[String, Result[String]]) -> Result[Settings]
   ok(
     Settings(
       approvals: Approval.Rules(all: denies + user.rules.all),
+      rules: user.rules.all.size,
       asking: user.asking,
       files_command: try files_command(file),
       mouse: try mouse_setting(file),

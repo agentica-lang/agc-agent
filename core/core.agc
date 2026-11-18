@@ -82,7 +82,7 @@ def serve(registry: Extensions.Registry) -> Void
   case start(registry)
     ok(server) ->
       Logger.info("#{Log.STARTED} 127.0.0.1:#{server.port}")
-      if not server.control.approvals
+      if not Config.applied(server.sessions.options).asking
         Logger.info("approvals are off: tools run without asking (finn serve --approvals turns them on)")
       end
 

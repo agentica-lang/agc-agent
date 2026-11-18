@@ -104,6 +104,8 @@ struct Setup
   approvals_env: Optional[Fn[String, Result[String]]] = none
   ## The settings of the config file that `FINN_CONFIG` of `env` names are live: a reload reads them again.
   live: Bool = false
+  ## What else a reload does (the MCP servers of `Builtins.mcp`).
+  reloads: List[Fn[Result[String]]] = []
   ## The command that lists the files for `@` (`files.command` of the user's config).
   files_command: List[String] = []
   ## The file tools reach only the session folder.
@@ -342,6 +344,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     asking: user.asking,
     registry: some(served_of(setup, user, env_of(setup, base), live)),
     live: live,
+    reloads: setup.reloads,
     keep_events: setup.keep_events,
     approval_timeout_ms: setup.approval_timeout_ms,
     drain_ms: setup.drain_ms,

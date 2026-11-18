@@ -4,9 +4,9 @@ import Approval from "../src/approval/approval"
 import McpTools from "../src/ext/mcp"
 import Tools from "../src/tools/tools"
 import Fake from "support/fake_llm"
+import S from "support/mcp_fakes"
 import H from "support/harness"
 
-FAKES = ["../mcp/tests/support/fake_server.agc", "mcp/tests/support/fake_server.agc"]
 PEERS = ["../mcp/tests/fixtures/http_peer.py", "mcp/tests/fixtures/http_peer.py"]
 TOKEN = "peer-secret-token"
 
@@ -93,27 +93,27 @@ end
 
 # A server name or env name that could break out of its place is refused.
 def test_the_config_refuses_odd_names() -> Result[Void]
-  within_dir do |dir|
+  S.within_dir do |dir|
     for name in ["../x", "a__b"]
-      try write_config(dir, {name: JSON.object({"command": JSON.from("true")})})
-      try Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok? == false, "#{name} taken")
+      try S.write_config(dir, {name: JSON.object({"command": JSON.from("true")})})
+      try Test.assert(McpTools.servers(->(n) { S.config_env(dir, n) }, dir).ok? == false, "#{name} taken")
     end
 
     env = JSON.object({"A=B": JSON.from("x")})
-    try write_config(dir, {"ok": JSON.object({"command": JSON.from("true"), "env": env})})
-    try Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok? == false, "A=B taken")
-    try write_config(dir, {"ok": JSON.object({"command": JSON.from("X=1")})})
-    Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok? == false, "a command with = taken")
+    try S.write_config(dir, {"ok": JSON.object({"command": JSON.from("true"), "env": env})})
+    try Test.assert(McpTools.servers(->(n) { S.config_env(dir, n) }, dir).ok? == false, "A=B taken")
+    try S.write_config(dir, {"ok": JSON.object({"command": JSON.from("X=1")})})
+    Test.assert(McpTools.servers(->(n) { S.config_env(dir, n) }, dir).ok? == false, "a command with = taken")
   end
 end
 
 # The server gets the env of its config and none of the agent's keys; a tool listed twice or with a bad name is left
 # out with a warning.
 def test_a_server_gets_a_short_environment_and_unique_tools() -> Result[Void]
-  within_dir do |dir|
+  S.within_dir do |dir|
     env = JSON.object({"FAKE_MCP_GREETING": JSON.from("hi"), "FAKE_MCP_MODE": JSON.from("odd")})
-    try write_config(dir, {"odd": try fake_server(env)})
-    servers = (try McpTools.servers(->(n) { config_env(dir, n) }, dir)).map do |server|
+    try S.write_config(dir, {"odd": try S.fake_server(env)})
+    servers = (try McpTools.servers(->(n) { S.config_env(dir, n) }, dir)).map do |server|
       secret = {"SECRET_API_KEY": "leaked"}
       Mcp.Server(name: server.name, command: server.command, args: server.args, env: secret, log: server.log)
     end
@@ -134,11 +134,11 @@ end
 
 # Slow servers list their tools at the same time and after the start: their tools come as they are listed.
 def test_slow_servers_list_their_tools_in_the_background() -> Result[Void]
-  within_dir do |dir|
+  S.within_dir do |dir|
     slow = JSON.object({"FAKE_MCP_SLOW_MS": JSON.from("800")})
-    try write_config(dir, {"one": try fake_server(slow), "two": try fake_server(slow)})
+    try S.write_config(dir, {"one": try S.fake_server(slow), "two": try S.fake_server(slow)})
     began = Time.monotonic_ms()
-    board = McpTools.background(try McpTools.servers(->(n) { config_env(dir, n) }, dir), ->(_w: String) { nil })
+    board = McpTools.background(try McpTools.servers(->(n) { S.config_env(dir, n) }, dir), ->(_w: String) { nil })
     at_start = McpTools.tools(board)
     started = McpTools.wait(board)
     took = Time.monotonic_ms() - began
@@ -152,10 +152,10 @@ end
 # A server on streamable HTTP takes its token from the environment; its tools follow the rules as those on stdio, and
 # a server that refuses the token is left out with a warning that does not show it.
 def test_an_http_server_takes_its_token_from_the_environment() -> Result[Void]
-  within_dir do |dir|
+  S.within_dir do |dir|
     process = try Process.spawn(
       "python3",
-      [try Path.resolve(try existing(PEERS)), "#{dir}/requests.jsonl"],
+      [try Path.resolve(try S.existing(PEERS)), "#{dir}/requests.jsonl"],
       Process.Options(env: {"PEER_TOKEN": TOKEN}),
     )
 
@@ -168,7 +168,7 @@ end
 # A url that is not HTTP, a reserved header, a variable that is not set and a server with both a command and a url
 # are refused, and no error shows a header value.
 def test_the_config_refuses_odd_http_servers() -> Result[Void]
-  within_dir do |dir|
+  S.within_dir do |dir|
     url = JSON.from("http://127.0.0.1:1/mcp")
     odd = [
       JSON.object({"url": JSON.from("file:///etc/passwd")}),
@@ -187,8 +187,8 @@ def test_the_config_refuses_odd_http_servers() -> Result[Void]
     ]
 
     for entry in odd
-      try write_config(dir, {"web": entry})
-      listed = McpTools.servers(->(n) { config_env(dir, n) }, dir)
+      try S.write_config(dir, {"web": entry})
+      listed = McpTools.servers(->(n) { S.config_env(dir, n) }, dir)
       try Test.assert(not listed.ok?, "taken: #{JSON.encode(entry)}")
       try Test.assert(not listed.message.include?(TOKEN), "the error shows the value")
     end
@@ -198,12 +198,12 @@ def test_the_config_refuses_odd_http_servers() -> Result[Void]
     ]
 
     for each in allowed
-      try write_config(
+      try S.write_config(
         dir,
         {"web": JSON.object({"url": JSON.from(each), "headers": JSON.object({"X-Key": JSON.from("k")})})},
       )
 
-      try Test.assert(McpTools.servers(->(n) { config_env(dir, n) }, dir).ok?, "refused: #{each}")
+      try Test.assert(McpTools.servers(->(n) { S.config_env(dir, n) }, dir).ok?, "refused: #{each}")
     end
 
     ok()
@@ -216,7 +216,7 @@ def with_peer(dir: String, process: Process) -> Result[Void]
   url = "http://127.0.0.1:#{(try Process.read_line(process, 10_000)).strip}/mcp"
   bearer = JSON.object({"Authorization": JSON.from("Bearer ${PEER_TEST_TOKEN}")})
   wrong = JSON.object({"Authorization": JSON.from("Bearer ${WRONG_TEST_TOKEN}")})
-  try write_config(
+  try S.write_config(
     dir,
     {
       "web": JSON.object({"url": JSON.from(url), "headers": bearer}),
@@ -225,7 +225,7 @@ def with_peer(dir: String, process: Process) -> Result[Void]
   )
 
   vars = {"PEER_TEST_TOKEN": TOKEN, "WRONG_TEST_TOKEN": "not-#{TOKEN}"}
-  read = ->(name: String) { vars.get(name).map { |v| ok(v) }.unwrap_or(config_env(dir, name)) }
+  read = ->(name: String) { vars.get(name).map { |v| ok(v) }.unwrap_or(S.config_env(dir, name)) }
   started = McpTools.start(try McpTools.servers(read, dir))
   rules = try Approval.parse_rules(["allow mcp__web__echo(*)"])
   ctx = try Tools.context(".", &H.fake_env, true, started.tools)
@@ -253,56 +253,18 @@ def with_peer(dir: String, process: Process) -> Result[Void]
   Test.assert(not started.warnings[0].include?(TOKEN), "the warning shows the token")
 end
 
-def within_dir(body: Fn[String, Result[Void]]) -> Result[Void]
-  tmp = System.env("TMPDIR").unwrap_or("/tmp")
-  dir = "#{tmp}/core-mcp-#{Random.int(0, 999999999)}"
-  try Dir.mkdir_private(dir)
-  result = body.call(dir)
-  _ = Path.remove(dir)
-  result
-end
-
-def write_config(dir: String, servers: Map[String, JSON.Value]) -> Result[Void]
-  File.write_text("#{dir}/mcp.json", JSON.encode(JSON.object({"mcpServers": JSON.object(servers)})))
-end
-
-def fake_server(env: JSON.Value) -> Result[JSON.Value]
-  main = try Path.resolve(try existing(FAKES))
-  ok(JSON.object({"command": JSON.from(binary()), "args": JSON.from([main]), "env": env}))
-end
-
 def within_mcp(body: Fn[McpTools.Started, Result[Void]]) -> Result[Void]
-  within_dir do |dir| with_config(dir, body) end
+  S.within_dir do |dir| with_config(dir, body) end
 end
 
 def with_config(dir: String, body: Fn[McpTools.Started, Result[Void]]) -> Result[Void]
-  try write_config(dir, {"fake": try fake_server(JSON.object({}))})
-  read = ->(name) { config_env(dir, name) }
+  try S.write_config(dir, {"fake": try S.fake_server(JSON.object({}))})
+  read = ->(name) { S.config_env(dir, name) }
   started = McpTools.start(try McpTools.servers(read, dir))
   try Test.eq(started.warnings, [])
   result = body.call(started)
   McpTools.stop(started)
   result
-end
-
-def config_env(dir: String, name: String) -> Result[String]
-  return ok("#{dir}/mcp.json") if name == "FINN_MCP_CONFIG"
-
-  System.env(name)
-end
-
-def binary() -> String
-  case System.env("AGENTICA")
-    ok(path) if path != "" -> path
-    _ -> "agentica"
-  end
-end
-
-def existing(paths: List[String]) -> Result[String]
-  case (paths.find { |path| File.stat(path).ok? })
-    ok(path) -> ok(path)
-    error(_) -> error("none of #{paths.join(", ")} exists")
-  end
 end
 
 # The tools listed so far: one more on each call.

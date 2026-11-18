@@ -1155,14 +1155,15 @@ def docs_pages(dir: String) -> Result[Void]
   Test.assert(not help.lines.any? { |line| line.include?("state-dir") }, "#{help.lines}")
 end
 
-# `/reload` asks the server to read its config, skills and extensions again, and says in one line what changed, with
-# a line
-# for each warning.
+# `/reload` asks the server to read its config, skills and MCP servers again, and says in one line what changed, with a
+# line for each warning.
 def test_the_chat_reload_command_reports_what_the_server_read_again() -> Result[Void]
   done = Protocol.Reloaded(
     skills_added: ["lint"],
     config: "reloaded",
-    extensions: ["1 MCP server(s) started again"],
+    extensions: ["restarting 1 MCP server(s)"],
+    rules: 3,
+    approvals: true,
     sessions: 1,
     warnings: ["config: kept: bad file"],
   )
@@ -1178,7 +1179,7 @@ def test_the_chat_reload_command_reports_what_the_server_read_again() -> Result[
     try Driver.say(cli, "/reload")
     try Driver.read_until(
       cli,
-      "skills: 1 added (lint); config reloaded; 1 MCP server(s) started again; the next turn of 1 running session uses it",
+      "skills: 1 added (lint); config reloaded (3 rules, approvals on); restarting 1 MCP server(s); the next turn of 1 running session uses it",
     )
 
     try Driver.read_until(cli, "warning: config: kept: bad file")

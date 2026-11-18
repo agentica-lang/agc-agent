@@ -17,9 +17,12 @@ import Logger from "std/logger"
 ## The server with its MCP servers, and how to read them again.
 struct Mounted
   served: Extensions.Served
-  ## Reads the MCP servers of the config again: when they are not the ones that run, those are stopped and the new ones
-  ## start (a call that runs on a stopped server fails). What it did, for the report; empty when nothing changed.
+  ## Reads the MCP servers of the config again: when they are not the ones that run, all of them are stopped (a call
+  ## that runs on a stopped server fails) and the new list starts. What it did, for the report; empty when nothing
+  ## changed.
   reload: Fn[Result[String]]
+  ## Stops the servers and the actor that holds them, for the end of a test: a server stops with its process.
+  stop: Fn[Void]
 end
 
 ## The slash commands of the user's folder (from `read`) and of a trusted session folder: a message that starts with
@@ -53,7 +56,8 @@ def mcp(served: Extensions.Served, read: Fn[String, Result[String]], state_dir: 
 
   reload = -> { reloaded(address, read, state_dir) }
 
-  ok(Mounted(served: Extensions.add_late_tools(served, tools), reload: reload))
+  stop = -> { finished(holder, address) }
+  ok(Mounted(served: Extensions.add_late_tools(served, tools), reload: reload, stop: stop))
 end
 
 ## The approval of every session: the server's `rules` with those of the session folder's project file; `asking` makes
@@ -85,24 +89,36 @@ end
 private
 
 MCP_CALL_MS = 5000
-# A reload waits for the servers that still list their tools, then stops them.
-MCP_RELOAD_MS = 120_000
+MCP_FINISH_MS = 120_000
 
 # The MCP servers that run, in the actor that a reload changes.
 struct Running
   board: Optional[McpTools.Board]
   servers: List[Mcp.Server]
+  # The tasks that stop the servers of the boards a reload replaced, so the swap itself does not wait for them.
+  stopping: List[Task[Void]] = []
 end
 
 enum Held
   Tools(Channel[List[Spec.Tool]])
   Replace(List[Mcp.Server], Channel[Result[String]])
+  Finish(Channel[Bool])
+end
+
+def finished(holder: Actor.Ref[Running, Held], address: Address[Held]) -> Void
+  done: Result[Bool] = Actor.call(address, MCP_FINISH_MS) do |reply| Held.Finish(reply) end
+  _ = done
+  _ = Actor.stop(holder, MCP_CALL_MS)
 end
 
 def reloaded(address: Address[Held], read: Fn[String, Result[String]], state_dir: String) -> Result[String]
   fresh = try McpTools.servers(read, state_dir)
-  again: Result[Result[String]] = Actor.call(address, MCP_RELOAD_MS) do |reply| Held.Replace(fresh, reply) end
+  again: Result[Result[String]] = Actor.call(address, MCP_CALL_MS) do |reply| Held.Replace(fresh, reply) end
   ok(try try again)
+end
+
+def stopped(board: McpTools.Board) -> Void
+  McpTools.stop(McpTools.wait(board))
 end
 
 def started(servers: List[Mcp.Server]) -> McpTools.Board
@@ -115,16 +131,28 @@ def handled(state: Running, msg: Held) -> Actor.Step[Running]
       no_tools: List[Spec.Tool] = []
       Actor.reply(reply, state.board.map { |board| McpTools.tools(board) }.unwrap_or(no_tools))
       Actor.continue(state)
+    Held.Finish(reply) ->
+      for task in state.stopping
+        Task.await(task)
+      end
+
+      for board in option_list(state.board)
+        stopped(board)
+      end
+
+      Actor.reply(reply, true)
+      Actor.continue(state.with(board: none, stopping: []))
     Held.Replace(fresh, reply) if fresh == state.servers ->
       Actor.reply(reply, ok(""))
       Actor.continue(state)
     Held.Replace(fresh, reply) ->
+      stopping = state.stopping
       for board in option_list(state.board)
-        McpTools.stop(McpTools.wait(board))
+        stopping = stopping.push(Task.spawn(&stopped, board))
       end
 
-      Actor.reply(reply, ok("#{fresh.size} MCP server(s) started again"))
-      Actor.continue(Running(board: some(started(fresh)), servers: fresh))
+      Actor.reply(reply, ok("restarting #{fresh.size} MCP server(s)"))
+      Actor.continue(Running(board: some(started(fresh)), servers: fresh, stopping: stopping))
   end
 end
 

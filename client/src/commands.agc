@@ -194,8 +194,8 @@ def warning_banner(log: Protocol.ServerLog, mouse: Bool = true) -> List[String]
   [head] + log.warnings.map { |line| printable(line) }
 end
 
-## What a reload did, in one line, and a line for each warning: `skills: 2 added, 1 removed; config reloaded; 1 MCP
-## server started again; 3 sessions use it from their next turn`.
+## What a reload did, in one line, and a line for each warning: `skills: 2 added, 1 removed; config reloaded (3 rules,
+## approvals on); restarting 1 MCP server(s); the next turn of 3 running sessions uses it`.
 def reload_report(done: Protocol.Reloaded) -> List[String]
   skills = "skills: unchanged"
   if not done.skills_added.empty? or not done.skills_removed.empty?
@@ -213,7 +213,17 @@ def reload_report(done: Protocol.Reloaded) -> List[String]
     skills = "skills: #{parts.join(", ")}"
   end
 
-  config = "config #{done.config.split(":")[0]}"
+  rules = "#{done.rules} rules"
+  if done.rules == 1
+    rules = "1 rule"
+  end
+
+  approvals = "approvals off"
+  if done.approvals
+    approvals = "approvals on"
+  end
+
+  config = "config #{done.config.split(":")[0]} (#{rules}, #{approvals})"
   line = ([skills, config] + done.extensions.map { |text| printable(text) }).join("; ")
   if done.sessions > 0
     running = "#{done.sessions} running sessions"

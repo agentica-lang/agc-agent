@@ -57,7 +57,7 @@ struct ServerLog
 end
 
 ## `POST /v1/reload`: what the server read again. `config` is `reloaded`, `unchanged`, or `kept: WHY` when the file did not
-## read; `extensions` says what was started again; `sessions` is how many running sessions read their prompt, skills and
+## read; `extensions` says what was done to the MCP servers; `sessions` is how many running sessions read their prompt, skills and
 ## approval again for their next turn.
 struct Reloaded
   skills_added: List[String] = []
@@ -66,6 +66,9 @@ struct Reloaded
   extensions: List[String] = []
   sessions: Int = 0
   warnings: List[String] = []
+  ## The permission rules of the user that apply now, and whether a call that no rule allows asks.
+  rules: Int = 0
+  approvals: Bool = false
 end
 
 ## The answer of `POST /v1/sessions`.

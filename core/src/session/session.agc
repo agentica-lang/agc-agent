@@ -27,6 +27,8 @@ import Logger from "std/logger"
 
 SESSIONS_DIR = "sessions"
 CALL_MS = 5000
+# How long a reload waits for another one that runs.
+RELOAD_WAIT_MS = 150_000
 ## A request for a session that is not loaded yet waits for its load.
 LOAD_MS = 60_000
 ## A session whose file names a model API this server does not have; its 503 says so.
@@ -39,6 +41,8 @@ struct Sessions
   registry: Actor.Ref[Registry, Msg]
   options: Config.Options
   dir: String
+  ## One token: a reload holds it, so two reloads do not run at once.
+  reloading: Channel[Bool]
 end
 
 ## How many sessions the server has, how many of them work now (a turn or a shell command; only a loaded session can),
@@ -65,7 +69,9 @@ def start(given: Config.Options, store: Optional[Store.Port] = none) -> Sessions
   }
 
   registry = Actor.start(Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate)))
-  Sessions(registry: registry, options: options, dir: folder(options))
+  gate: Channel[Bool] = Channel.new(1)
+  _ = gate.send(true, 0)
+  Sessions(registry: registry, options: options, dir: folder(options), reloading: gate)
 end
 
 ## Stops the registry and the sessions it runs.
@@ -175,51 +181,16 @@ def cancel_turns(sessions: Sessions) -> Result[Int]
   ok(stopped)
 end
 
-## Reads the config file, the extensions, the skills and the project instructions again. The sessions that run read
+## Reads the config file, the MCP servers, the skills and the project instructions again. The sessions that run read
 ## their system prompt and approval again for their next turn (a turn that runs keeps what it started with), the others
-## when they load. A config file that does not read stays as it was, said in the answer.
+## when they load. A config file that does not read stays as it was, said in the answer. One reload runs at a time.
 def reload(sessions: Sessions) -> Result[Protocol.Reloaded]
-  config = Config.reload(sessions.options)
-  extensions: List[String] = []
-  warnings: List[String] = []
-  for step in sessions.options.reloads
-    case step.call()
-      ok(said) if said != "" -> extensions = extensions.push(said)
-      ok(_) -> nil
-      error(e) ->
-        warnings = warnings.push("extensions: #{e.message}")
-        Logger.warning("reload: #{e.message}")
-    end
-  end
+  token = sessions.reloading.recv(RELOAD_WAIT_MS)
+  return error("another reload is running") if not token.ok?
 
-  added: List[String] = []
-  removed: List[String] = []
-  running = loaded(try entries(sessions))
-  for address in running
-    case SessionActor.reload(address)
-      ok(found) ->
-        added = (added + found.added).uniq
-        removed = (removed + found.removed).uniq
-        warnings = (warnings + found.warnings).uniq
-      error(e) -> warnings = (warnings + ["session: #{e.message}"]).uniq
-    end
-  end
-
-  if config.config.start_with?("kept")
-    warnings = warnings.push("config: #{config.config}")
-    Logger.warning("reload: the config file was not taken, #{config.config}")
-  end
-
-  ok(
-    Protocol.Reloaded(
-      skills_added: added.sort,
-      skills_removed: removed.sort,
-      config: config.config,
-      extensions: extensions,
-      sessions: running.size,
-      warnings: warnings,
-    ),
-  )
+  done = reloaded(sessions)
+  _ = sessions.reloading.send(true, 0)
+  done
 end
 
 ## Deletes a session and its file, refused while a turn runs.
@@ -256,7 +227,8 @@ end
 ## The files of the session's folder that its rules do not hide, read in the caller's task.
 def files(sessions: Sessions, id: String) -> Result[Protocol.FileList]
   place = try SessionActor.place(try find(sessions, id))
-  ok(Folder.listed(place.root, place.hidden, sessions.options.files_command, sessions.options.env))
+  now = Config.applied(sessions.options)
+  ok(Folder.listed(place.root, place.hidden, now.files_command, now.env))
 end
 
 def answer(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
@@ -1024,9 +996,6 @@ def reopened(options: Config.Options, root: String) -> Result[SessionActor.Reope
   approver = try approver_of(now, root)
   builtins = builtins_of(now, root, system)
   warnings = builtins.flat_map { |b| b.warnings }
-  for warning in warnings
-    Logger.warning(warning)
-  end
 
   ok(
     SessionActor.Reopened(
@@ -1115,4 +1084,51 @@ def find(sessions: Sessions, id: String) -> Result[Address[SessionActor.Msg]]
         error(_) -> error("session #{id} is still loading", kind: Protocol.KIND_SESSION_UNAVAILABLE)
       end
   end
+end
+
+def reloaded(sessions: Sessions) -> Result[Protocol.Reloaded]
+  config = Config.reload(sessions.options)
+  extensions: List[String] = []
+  warnings: List[String] = []
+  for step in sessions.options.reloads
+    case step.call()
+      ok(said) if said != "" -> extensions = extensions.push(said)
+      ok(_) -> nil
+      error(e) -> warnings = warnings.push("extensions: #{e.message}")
+    end
+  end
+
+  added: List[String] = []
+  removed: List[String] = []
+  running = loaded(try entries(sessions))
+  for address in running
+    case SessionActor.reload(address)
+      ok(found) ->
+        added = (added + found.added).uniq
+        removed = (removed + found.removed).uniq
+        warnings = (warnings + found.warnings).uniq
+      error(e) -> warnings = (warnings + ["session: #{e.message}"]).uniq
+    end
+  end
+
+  if config.config.start_with?("kept")
+    warnings = warnings.push("config: #{config.config}")
+  end
+
+  for warning in warnings
+    Logger.warning("reload: #{warning}")
+  end
+
+  ok(
+    Protocol.Reloaded(
+      skills_added: added.sort,
+      skills_removed: removed.sort,
+      config: config.config,
+      extensions: extensions,
+      sessions: running.size,
+      warnings: warnings,
+      rules: config.rules,
+      approvals: config.asking,
+    ),
+  )
 end

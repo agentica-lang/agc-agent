@@ -81,12 +81,12 @@ A one-shot run (`finn -p`) never changes the choice, so a script does not reset 
 `/reload` (`POST /v1/reload`) makes the running server read these again, with no restart and without stopping a turn:
 
 - the user's config file: the permission rules and `approvals`, `files.command`, `mouse` and the providers it adds;
-- the MCP servers (`FINN_MCP_CONFIG`): when the list changed, the old ones stop and the new ones start (a call that runs on a stopped one fails);
+- the MCP servers (`FINN_MCP_CONFIG`): when the list changed, every server stops and the new list starts (a call that runs on a stopped one fails, and the new tools come as the servers list them); only MCP servers reload, not extensions registered in code;
 - the skills and the `AGENTS.md` of each running session, and its approval.
 
-A session that runs uses them from its next turn; a turn that runs keeps what it started with. The answers that a session gave with "always" are forgotten, the accept-edits mode stays. A new session, or one that loads later, reads everything fresh. The answer says what changed (`skills: 2 added, 1 removed; config reloaded; 1 MCP server(s) started again`), and the warnings of the load go to `/logs`.
+A session that runs uses them from its next turn; a turn that runs keeps what it started with. The answers that a session gave with "always" are forgotten, the accept-edits mode stays. A new session, or one that loads later, reads everything fresh. The answer says what changed (`skills: 2 added, 1 removed; config reloaded (3 rules, approvals on); restarting 1 MCP server(s)`), and the warnings of the load go to `/logs`. Two reloads never run at once, and a draining server refuses one.
 
-A config file that does not read stays as it was, with the reason as a warning: a reload never leaves the server without a config. Environment variables, the model catalog and `FINN_STATE_DIR` are not read again;
+A config file that does not read stays as it was, with the reason as a warning: a reload never leaves the server without a config. Environment variables, the model catalog and `FINN_STATE_DIR` are not read again, and `confine_files` stays per session (`/confine`).
 
 ## Environment variables
 
