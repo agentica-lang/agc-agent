@@ -11,6 +11,7 @@ import Protocol from "pkg/protocol/protocol"
 import Auth from "auth"
 import Chatgpt from "chatgpt"
 import Providers from "providers"
+import Logger from "std/logger"
 
 CALL_MS = 5000
 ## The check of a key at a login waits at most this long.
@@ -43,11 +44,23 @@ struct Setup
   chosen: Bool = false
   ## The ChatGPT login, whose tokens the rebuild reads from its own file; none offers no such login.
   chatgpt: Optional[Chatgpt.Login] = none
+  ## The provider and model last picked, which new sessions use when no flag or variable says: as the file of the state
+  ## folder held it at the start, and where it is written.
+  choice: Optional[Choice] = none
+  choice_file: Optional[String] = none
+end
+
+## The provider and model a user last picked (`/model`, `--provider` and `--model`, or a login); an empty model is the
+## provider's own default.
+struct Choice
+  provider: String
+  model: String = ""
 end
 
 struct DeviceState
   state: String
   message: String = ""
+  made_default: Bool = false
 end
 
 ## What a list of the logins shows of a provider. `from` is where its key comes from: `env`, `stored` or empty.
@@ -60,6 +73,8 @@ struct Status
   ## What a login gives: a key, or the base URL of a local server (`base_url` is the one it uses now).
   asks: String = Protocol.ASKS_KEY
   base_url: String = ""
+  ## The login that just ended made this provider the default of new sessions.
+  made_default: Bool = false
 end
 
 ## The logins, and `first`: no key file, no key of a provider in the environment and no provider chosen for the server,
@@ -77,12 +92,17 @@ end
 struct Current
   providers: Map[String, Providers.Provider]
   local_url: String = ""
+  ## The provider and model last picked.
+  choice: Optional[Choice] = none
 end
 
 ## Holds `providers`; without `setup` there is no login (`list` is empty).
 def start(providers: Map[String, Providers.Provider], setup: Optional[Setup]) -> Holder
   stored = setup.map { |s| s.stored }.unwrap_or(Auth.Stored())
-  init = -> { State(providers: providers, setup: setup, stored: stored) }
+  init = -> {
+    State(providers: providers, setup: setup, stored: stored, choice: setup.map { |s| s.choice }.unwrap_or(none))
+  }
+
   Holder(ref: Actor.start(Actor.Behaviour(init: init, handle: &handle)))
 end
 
@@ -94,7 +114,7 @@ end
 def current(holder: Holder) -> Result[Current]
   state = try now(holder)
   url = state.setup.map { |setup| local_status(setup, state.stored).map { |l| l.base_url }.join("") }
-  ok(Current(providers: state.providers, local_url: url.unwrap_or("")))
+  ok(Current(providers: state.providers, local_url: url.unwrap_or(""), choice: state.choice))
 end
 
 def list(holder: Holder) -> Result[Listing]
@@ -182,6 +202,11 @@ def logout(holder: Holder, name: Optional[String]) -> Result[Void]
   inner
 end
 
+## Keeps `provider` and `model` as the last choice, which new sessions use unless a flag or a variable says otherwise.
+def remember(holder: Holder, provider: String, model: String) -> Void
+  _ = Actor.cast(holder.ref.address, Msg.Remember(Choice(provider: provider, model: model)), CALL_MS)
+end
+
 ## Makes an empty key file when there is none, so the first start does not offer a login again; a file that is there
 ## stays as it is.
 def skip(holder: Holder) -> Result[Void]
@@ -220,7 +245,7 @@ def device_state(holder: Holder) -> Result[DeviceState]
   case state.device
     DeviceRun.Idle -> ok(DeviceState(state: Protocol.DEVICE_NONE))
     DeviceRun.Waiting(_) -> ok(DeviceState(state: Protocol.DEVICE_WAITING))
-    DeviceRun.Done -> ok(DeviceState(state: Protocol.DEVICE_DONE))
+    DeviceRun.Done -> ok(DeviceState(state: Protocol.DEVICE_DONE, made_default: state.made == Chatgpt.NAME))
     DeviceRun.Failed(why) -> ok(DeviceState(state: Protocol.DEVICE_FAILED, message: why))
   end
 end
@@ -243,6 +268,16 @@ def check_key(entry: Providers.Custom, key: String) -> Result[Void]
   end
 end
 
+## The choice in `path`; none when the file is not there or does not read.
+def load_choice(path: String) -> Optional[Choice]
+  return none if not File.stat(path).ok?
+
+  case JSON.decode(File.read_text(path).unwrap_or(""), Choice)
+    ok(choice) if choice.provider != "" -> some(choice)
+    _ -> none
+  end
+end
+
 private
 
 struct State
@@ -252,6 +287,10 @@ struct State
   device: DeviceRun = DeviceRun.Idle
   ## The number of the last device login started: the end of an older one is dropped.
   serial: Int = 0
+  ## The provider and model last picked.
+  choice: Optional[Choice] = none
+  ## The provider the last login made the default, "" when it made none.
+  made: String = ""
 end
 
 enum DeviceRun
@@ -267,6 +306,7 @@ enum Msg
   StoreUrl(String, String, Channel[Result[Status]])
   Remove(Optional[String], Channel[Result[Void]])
   Skip(Channel[Result[Void]])
+  Remember(Choice)
   DeviceStarted(Task[Void], Channel[Int])
   DeviceEnded(Int, Result[Chatgpt.Tokens])
 end
@@ -317,7 +357,7 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
       Actor.reply(reply, state)
       Actor.continue(state)
     Msg.Store(name, key, reply) ->
-      changed = saved(state, ->(now: Auth.Stored) { ok(now.with(keys: now.keys.put(name, key))) })
+      changed = claimed(saved(state, ->(now: Auth.Stored) { ok(now.with(keys: now.keys.put(name, key))) }), name)
       Actor.reply(reply, status_after(changed, name))
       Actor.continue(changed.unwrap_or(state))
     Msg.StoreUrl(name, url, reply) ->
@@ -336,6 +376,7 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
 
       Actor.reply(reply, done(changed))
       Actor.continue(changed.unwrap_or(state))
+    Msg.Remember(choice) -> Actor.continue(remembered(state, choice))
     Msg.Skip(reply) ->
       changed = skipped(state)
       Actor.reply(reply, done(changed))
@@ -378,7 +419,7 @@ def device_ended(state: State, result: Result[Chatgpt.Tokens]) -> State
   end
 
   case state.setup.unwrap!.rebuild.call(state.stored.keys, state.stored.urls)
-    ok(providers) -> state.with(providers: providers, device: DeviceRun.Done)
+    ok(providers) -> claimed(ok(state.with(providers: providers, device: DeviceRun.Done)), Chatgpt.NAME).unwrap!
     error(e) -> state.with(device: DeviceRun.Failed(e.message))
   end
 end
@@ -428,7 +469,44 @@ def status_after(changed: Result[State], name: String) -> Result[Status]
   setup = state.setup.unwrap!
   return ok(local_status(setup, state.stored)[0]) if name == Providers.LOCAL
 
-  ok(status_of(setup, state.stored, setup.entries.select { |e| e.name == name }[0]))
+  ok(
+    status_of(setup, state.stored, setup.entries.select { |e| e.name == name }[0]).with(
+      made_default: state.made == name,
+    ),
+  )
+end
+
+# A login makes its provider the remembered choice (with the provider's own model), unless the server's provider was
+# chosen by a variable or a choice of a provider still offered is kept.
+def claimed(changed: Result[State], name: String) -> Result[State]
+  state = (try changed).with(made: "")
+  setup = try usable(state)
+  return ok(state) if setup.chosen or name == Providers.LOCAL
+
+  for choice in option_list(state.choice)
+    return ok(state) if state.providers.has_key?(choice.provider)
+  end
+
+  ok(remembered(state, Choice(provider: name)).with(made: name))
+end
+
+# The choice kept, and written in its file when there is one.
+def remembered(state: State, choice: Choice) -> State
+  for path in option_list(state.setup.map { |s| s.choice_file }.unwrap_or(none))
+    case save_choice(path, choice)
+      ok(_) -> nil
+      error(e) -> Logger.warning("the last choice of provider was not stored in #{path}: #{e.message}")
+    end
+  end
+
+  state.with(choice: some(choice))
+end
+
+def save_choice(path: String, choice: Choice) -> Result[Void]
+  text = "#{JSON.encode(choice)}\n"
+  return File.replace(path, text.bytes) if File.stat(path).ok?
+
+  File.open(path, "create_private") do |handle| File.write(handle, text) end
 end
 
 def done(changed: Result[State]) -> Result[Void]

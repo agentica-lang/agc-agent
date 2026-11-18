@@ -181,7 +181,7 @@ def run(started: Turn) -> Outcome
     case called
       ok(_) -> nil
       error(e) ->
-        turn.link.emit.call(Protocol.Event.Error(Protocol.Failure(kind: e.kind, message: e.message)))
+        turn.link.emit.call(Protocol.Event.Error(Protocol.Failure(kind: e.kind, message: failure_text(turn, e))))
         return Outcome(history: messages, reason: Protocol.StopReason.Other("error"))
     end
 
@@ -370,6 +370,27 @@ def compacted(turn: Turn, context: Int, folded: Folded, marks: List[String]) -> 
   end
 
   folded
+end
+
+# What a failed call says. A refusal or a connection that failed on the `local` provider, which a session gets when no
+# provider was picked, says so and what to do, and is logged as a warning.
+def failure_text(turn: Turn, e: Error) -> String
+  return e.message if not turn.source.start_with?("local/")
+
+  said = e.message
+  if e.kind == "llm.auth"
+    said = (
+      "the local provider refused the request (HTTP #{e.code.unwrap_or(0)}): pick a provider with /model, or log in with /login"
+    )
+  elsif e.kind == "llm.network"
+    said = "the local provider did not answer (#{e.message}): pick a provider with /model, or log in with /login"
+  end
+
+  if said != e.message
+    Logger.warning("turn #{turn.id}: #{said}")
+  end
+
+  said
 end
 
 # Anthropic folds only between turns: a fold inside a tool round would change the history its thinking blocks are bound

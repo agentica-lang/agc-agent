@@ -27,7 +27,7 @@ finn login anthropic    # or name the provider
 
 Finn checks the key with one call to the provider, then stores it for the next starts. A key in the environment works too, and wins over a stored one: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `FIREWORKS_API_KEY`, `GROQ_API_KEY`, `DEEPSEEK_API_KEY` or `OPENCODE_API_KEY`. See [Providers](providers.md).
 
-On the first start, `finn` opens the login list itself when there is no key file, no key of a provider in the environment, and none of `FINN_BASE_URL`, `FINN_PROVIDER` and `FINN_API` is set. Close it with no key and it is not offered again: `/login` sets up a provider later. After a login, a session on `local` gets the models of the provider just set up in a list: Enter moves the session to the one picked, from the next turn, and Esc keeps it on `local`.
+On the first start, `finn` opens the login list itself when there is no key file, no key of a provider in the environment, and none of `FINN_BASE_URL`, `FINN_PROVIDER` and `FINN_API` is set. Close it with no key and it is not offered again: `/login` sets up a provider later. After a login that becomes the choice for new sessions, a session on `local` moves to that provider at once; after another login, it gets the models of the provider just set up in a list: Enter moves the session to the one picked, from the next turn, and Esc keeps it on `local`.
 
 ## The first session
 

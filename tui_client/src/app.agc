@@ -39,6 +39,8 @@ struct Ended
   code: Int
   hint: Optional[String] = none
   reason: Optional[String] = none
+  ## Printed on stdout before the hint.
+  line: Optional[String] = none
 end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it.
@@ -97,9 +99,9 @@ end
 ## that failed, say) or the signal that ended it: no end with an error is silent.
 def outcome(last: State.Model) -> Result[Ended]
   code = try ended(last)
-  return ok(Ended(code: code)) if code == 0
+  return ok(Ended(code: code, line: last.line)) if code == 0
 
-  ok(Ended(code: code, reason: some(why(last, code))))
+  ok(Ended(code: code, reason: some(why(last, code)), line: last.line))
 end
 
 # The model the app ends with.

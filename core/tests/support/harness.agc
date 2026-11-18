@@ -277,9 +277,13 @@ def login_setup(setup: Setup, fake: Fake.Fake, base: String) -> Optional[Logins.
       local_url: local_url_of(setup, fake),
       local_key: "test-key",
       chatgpt: chatgpt,
+      choice: Logins.load_choice(choice_file(base)),
+      choice_file: some(choice_file(base)),
     ),
   )
 end
+
+def choice_file(base: String) -> String = "#{base}/state/#{Config.CHOICE_FILE}"
 
 def placed(reply: Fake.Reply, base: String) -> Fake.Reply
   case String.from_bytes(reply.body)
@@ -312,6 +316,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
       login.map { |l| l.chatgpt }.unwrap_or(none),
     ),
     provider: server_provider(setup),
+    provider_pinned: not setup.provider.empty?,
     login: login,
     key_envs: setup.key_envs,
     model: setup.model,

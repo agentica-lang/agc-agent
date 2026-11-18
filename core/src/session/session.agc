@@ -80,10 +80,10 @@ end
 ## The providers a session may use, each with the models of the config file, then the server's model for its own
 ## provider, then those of the catalog that call tools.
 def providers(sessions: Sessions) -> Protocol.ProviderList
-  options = Config.now(sessions.options)
+  options = Config.listed(sessions.options)
   infos = options.providers.keys.sort.map do |name| provider_info(options, name) end
 
-  Protocol.ProviderList(provider: options.provider, providers: infos)
+  Protocol.ProviderList(provider: Config.now(sessions.options).provider, providers: infos)
 end
 
 ## A new session: its id.

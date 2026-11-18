@@ -70,8 +70,8 @@ The server makes the state and data folders with mode 0700, and refuses one that
 | `FINN_API` | the API of `local`: `openai` (chat completions, the default) or `openai_responses`; `anthropic` makes Anthropic the server's provider |
 | `FINN_BASE_URL` | where `local` is: `http://127.0.0.1:8080/v1` by default |
 | `FINN_API_KEY` | the key of `local` |
-| `FINN_PROVIDER` | the provider of a session that names none |
-| `FINN_MODEL` | the model of a session that names none |
+| `FINN_PROVIDER` | the provider of a session that names none (wins over the last choice) |
+| `FINN_MODEL` | the model of a session that names none (wins over the last choice) |
 | `FINN_APPROVALS` | `1` turns the approvals on; `0` keeps them off over the config file |
 | `FINN_CONFIG` | the user's config file |
 | `FINN_TRUSTED_DIRS` | the [trusted folders](#trusted-folders) |

@@ -12,7 +12,7 @@ import Session from "session"
 def on_picker_key(app: State.Model, picker: Picker.Picker, event: TUI.Event) -> State.Model
   case Picker.key(picker, event)
     Picker.Step.Stay(next_picker) -> app.with(picker: some(next_picker))
-    Picker.Step.Close if picker.kind == Picker.Kind.Logins -> Logins.login_closed(app.with(picker: none))
+    Picker.Step.Close if picker.kind == Picker.Kind.Logins -> Logins.login_cancelled(app.with(picker: none))
     Picker.Step.Close -> app.with(picker: none)
     Picker.Step.Pick(key) if picker.kind == Picker.Kind.Logins ->
       Logins.login_picked(app.with(picker: none), picker, key)
