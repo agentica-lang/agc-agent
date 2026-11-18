@@ -32,6 +32,11 @@ struct PanelColors
   added: TUI.Style
 end
 
+## The banner of warnings at the top of the screen.
+struct BannerColors
+  text: TUI.Style
+end
+
 struct FooterColors
   status: TUI.Style
 end
@@ -54,6 +59,7 @@ end
 struct Theme
   transcript: TranscriptColors
   panel: PanelColors
+  banner: BannerColors
   footer: FooterColors
   editor: EditorColors
   rules: RuleColors
@@ -85,6 +91,7 @@ def default() -> Theme
       removed: TUI.Style(fg: TUI.Color.Index(203)),
       added: TUI.Style(fg: TUI.Color.Index(114)),
     ),
+    banner: BannerColors(text: TUI.Style(fg: TUI.Color.Index(16), bg: TUI.Color.Index(221))),
     footer: FooterColors(status: TUI.Style(fg: TUI.Color.Index(245))),
     editor: EditorColors(text: TUI.Style(), cursor: TUI.Style(reverse: true)),
     rules: RuleColors(
@@ -122,6 +129,7 @@ def basic() -> Theme
       removed: TUI.Style(fg: TUI.Color.Red),
       added: TUI.Style(fg: TUI.Color.Green),
     ),
+    banner: BannerColors(text: TUI.Style(fg: TUI.Color.Black, bg: TUI.Color.Yellow)),
     footer: FooterColors(status: TUI.Style(dim: true)),
     editor: EditorColors(text: TUI.Style(), cursor: TUI.Style(reverse: true)),
     rules: RuleColors(

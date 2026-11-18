@@ -13,6 +13,7 @@
 
 ### Changed
 
+- In `finn`, the warnings of the server show in a yellow banner at the top of the screen when it opens (a click or Esc with an empty prompt closes it), not as notes in the transcript. The server counts a warning with the same text once and shows it with `(×N)`, so a skill that is shadowed in three sessions is one warning.
 - In `finn`, Enter on a row of the list under `/model `, `/resume `, `/tree ` or `/fork ` runs the command with that row (the first or the one you moved to) in one step, with no second picker; Tab still only completes.
 
 ### Fixed

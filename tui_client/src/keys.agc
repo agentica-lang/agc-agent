@@ -116,6 +116,7 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     TUI.Event.Key(TUI.Key.BackTab, _) -> Level.leveled(app)
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
       app.with(approvals: Approvals.toggled(app.approvals, app.now))
+    TUI.Event.Key(TUI.Key.Escape, _) if closes_banner?(app) -> app.with(banner: [])
     TUI.Event.Key(TUI.Key.Escape, _) if not app.follow_ups.empty? -> Turn.stop(Turn.put_back(app))
     TUI.Event.Key(TUI.Key.Escape, _) -> Turn.stop(app)
     TUI.Event.Key(TUI.Key.PageUp, _) -> State.scrolled(app, State.page(app))
@@ -127,6 +128,9 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     _ -> app
   end
 end
+
+# Esc closes the banner of warnings when it has nothing else to do: an empty prompt and nothing running.
+def closes_banner?(app: State.Model) -> Bool = not app.banner.empty? and app.prompt == "" and not State.busy?(app)
 
 def typed(app: State.Model, piece: String) -> State.Model
   at = State.cursor(app)
@@ -252,7 +256,7 @@ def pressed(app: State.Model, x: Int, y: Int) -> State.Model
   frame = Views.located(app)
   case Screen.hit(frame, x, y)
     Screen.Hit.Entry(index) ->
-      press = Select.Press(cell: Select.cell_at(frame.top, x, y), entry: index)
+      press = Select.Press(cell: Select.cell_at(frame.top, x, Screen.below_banner(frame, y)), entry: index)
       app.with(pressed: some(press), selection: none)
     _ -> clicked_on(app.with(selection: none, pressed: none), frame, x, y)
   end
@@ -264,7 +268,7 @@ def dragged(app: State.Model, x: Int, y: Int) -> State.Model
   frame = Views.located(app)
   case app.pressed
     some(press) if not frame.transcript.empty? ->
-      row = [[y, 0].max.unwrap!, frame.transcript.size - 1].min.unwrap!
+      row = [[Screen.below_banner(frame, y), 0].max.unwrap!, frame.transcript.size - 1].min.unwrap!
       head = Select.cell_at(frame.top, x, row)
       return app if head == press.cell and app.selection.none?
 
@@ -294,6 +298,7 @@ def clicked_on(app: State.Model, frame: Screen.Frame, x: Int, y: Int) -> State.M
   case Screen.hit(frame, x, y)
     Screen.Hit.Entry(index) -> app.with(entries: Transcript.toggle(app.entries, index, State.folds(app)))
     Screen.Hit.Key(event) -> on_key(app, event)
+    Screen.Hit.Banner -> app.with(banner: [])
     Screen.Hit.Prompt(column, row) ->
       app.with(cursor: Prompt.index_at(app.prompt, State.cursor(app), frame.width, frame.height, column, row))
     Screen.Hit.Nothing -> app

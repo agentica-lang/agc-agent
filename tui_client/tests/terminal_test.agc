@@ -559,27 +559,83 @@ def test_a_login_the_server_refuses_ends_with_a_reason() -> Result[Void]
   Test.eq(["#{signalled.code}", signalled.reason.unwrap_or("").include?("signal").to_s], ["143", "true"])
 end
 
-# The warnings of the server are the last notes of a started app, and `/logs N` shows the end of the log.
-def test_the_warnings_of_the_server_are_notes_and_logs_shows_the_log() -> Result[Void]
-  log = Protocol.ServerLog(
-    lines: ["2026-11-18T10:00:00.000Z INFO older", "2026-11-18T10:00:01.000Z WARNING bad skill"],
-    warnings: ["2026-11-18T10:00:01.000Z WARNING bad skill"],
-    warning_count: 4,
+# The warnings of the server are a yellow banner at the top of a started app, not notes of the transcript: the last of
+# them, each text once with its times, and the count. A click on it, or Esc with an empty prompt, closes it; a
+# server with
+# no warnings has none. `/logs N` shows the end of the log.
+def test_the_warnings_of_the_server_are_a_banner_that_a_click_or_esc_closes() -> Result[Void]
+  replies = {"GET /v1/logs": Protocol.encode_server_log(warned_log(4))}
+  try within(100, 24, &banner_closed_by_a_click, replies: replies, first: some(&App.server_notes))
+  try within(100, 24, &banner_closed_by_esc, replies: replies, first: some(&App.server_notes))
+  within(
+    100,
+    24,
+    &no_banner,
+    replies: {"GET /v1/logs": Protocol.encode_server_log(warned_log(0))},
+    first: some(&App.server_notes),
   )
-
-  replies = {"GET /v1/logs": Protocol.encode_server_log(log)}
-  within(100, 24, &logs_shown, replies: replies, first: some(&App.server_notes))
 end
 
-def logs_shown(rig: Rig) -> Result[Void]
-  try shows(rig, "WARNING bad skill")
-  try shows(rig, "4 warnings when the server started: /logs shows them")
+def warned_log(count: Int) -> Protocol.ServerLog
+  warnings = ["2026-11-18T10:00:01.000Z WARNING pr-reviewer is shadowed (×3)"]
+  if count == 0
+    warnings = []
+  end
+
+  Protocol.ServerLog(
+    lines: ["2026-11-18T10:00:00.000Z INFO older", "2026-11-18T10:00:01.000Z WARNING bad skill"],
+    warnings: warnings,
+    warning_count: count,
+  )
+end
+
+def banner_closed_by_a_click(rig: Rig) -> Result[Void]
+  rows = try shows(rig, "pr-reviewer is shadowed (×3)")
+  try Test.eq(rows.filter { |row| row.include?("pr-reviewer is shadowed") }.size, 1)
+  try Test.assert(
+    rows[0].include?("4 warnings when the server started (/logs shows all)"),
+    "the head is first: #{rows[0]}",
+  )
+
+  try Test.assert(rows[0].strip.end_with?("x"), "the first row ends with the x: #{rows[0]}")
+  try click(rig, [1, 5])
+  gone(rig)
+end
+
+def banner_closed_by_esc(rig: Rig) -> Result[Void]
+  try shows(rig, "pr-reviewer is shadowed (×3)")
+  try press(rig, TUI.Event.Char("a", TUI.Mods()))
+  try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
+  rows = try shows(rig, "pr-reviewer is shadowed (×3)")
+  try Test.assert(rows.any? { |row| row.include?("a") }, "Esc with text in the prompt keeps the banner")
+  try press(rig, TUI.Event.Key(TUI.Key.Backspace, TUI.Mods()))
+  try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
+  try gone(rig)
   for char in "/logs 2".split("")
     try press(rig, TUI.Event.Char(char, TUI.Mods()))
   end
 
   try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
   try shows(rig, "INFO older")
+  ok()
+end
+
+def no_banner(rig: Rig) -> Result[Void]
+  try press(rig, TUI.Event.Char("a", TUI.Mods()))
+  rows = try shows(rig, "a")
+  Test.assert(
+    not rows.any? { |row| row.include?("warnings when the server started") or row.include?("warning when") },
+    "no banner",
+  )
+end
+
+# Waits until the banner is not on the screen.
+def gone(rig: Rig) -> Result[Void]
+  _ = try TUI.Testing.wait_for(
+    rig.fake,
+    ->(rows: List[String]) { not rows.any? { |row| row.include?("when the server started") } },
+  )
+
   ok()
 end
 

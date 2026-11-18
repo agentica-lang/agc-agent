@@ -73,3 +73,21 @@ def test_a_cut_tail_drops_the_first_line_only_when_the_cut_fell_inside_it() -> R
     ok()
   end
 end
+
+# A warning with a text already kept counts once and shows once, with its times after it: three sessions that open on
+# the same shadowed skill give one warning, `(×3)`.
+def test_a_repeated_warning_is_counted_once_with_its_times() -> Result[Void]
+  Log.install()
+  before = Log.warnings().count
+  same = "shadowed #{Random.int(0, 999999999)}"
+  for _ in 1..3
+    Logger.warning(same)
+  end
+
+  Logger.warning("another #{same}")
+  shown = Log.warnings()
+  try Test.eq(shown.count - before, 2)
+  try Test.eq(shown.lines.select { |line| line.include?(same) and not line.include?("another") }.size, 1)
+  try Test.assert(shown.lines.any? { |line| line.end_with?(" WARNING #{same} (×3)") }, "#{shown.lines}")
+  Test.assert(shown.lines.any? { |line| line.end_with?(" WARNING another #{same}") }, "#{shown.lines}")
+end

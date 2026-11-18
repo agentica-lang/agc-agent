@@ -163,19 +163,12 @@ def configured(app: State.Model) -> State.Model
   Commands.turn_mouse(app, false)
 end
 
-## The last warnings of the server as notes, with where the rest is.
+## The last warnings of the server as the banner at the top of the screen, with where the rest is.
 def server_notes(app: State.Model) -> State.Model
-  shown = app
   case app.backend.server_log.call(0)
-    ok(log) ->
-      for line in Client.warning_notes(log)
-        shown = State.noted(shown, line)
-      end
-
-    error(_) -> nil
+    ok(log) -> app.with(banner: Client.warning_banner(log))
+    error(_) -> app
   end
-
-  shown
 end
 
 ## The session of the options opened, with the signals listened to; at the first start, the login picker.

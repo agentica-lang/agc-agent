@@ -1,4 +1,4 @@
-## What the screen shows, top to bottom, each region apart: the transcript, the follow-ups waiting, the prompt between
+## What the screen shows, top to bottom, each region apart: the banner of warnings, the transcript, the follow-ups waiting, the prompt between
 ## two rules (or the session picker in its place), the panel under it (an approval), the place row (folder, branch,
 ## session) and the status line. `frame` places them on a screen of a size, `view` draws a
 ## frame as a view tree, and `hit` tells what a click at a cell of the same frame is on, so a click meets what was
@@ -34,6 +34,8 @@ struct Parts
   queued: List[String] = []
   ## The row above the status: where the session is.
   place: String = ""
+  ## The banner at the top of the screen, one row each; none shows no banner.
+  banner: List[String] = []
 end
 
 ## Where each region is: `area` transcript rows (the `transcript` lines shown, from the top), the top rule, the
@@ -57,6 +59,8 @@ struct Frame
   ## The place row, none on a screen too short for it.
   place: List[String]
   status: String
+  ## The banner rows above the transcript, as many as the screen has room for.
+  banner: List[String] = []
 end
 
 ## What a click is on.
@@ -65,6 +69,8 @@ enum Hit
   Entry(Int)
   ## A button of the panel, as the key it stands for.
   Key(TUI.Event)
+  ## A row of the banner.
+  Banner
   ## Column x of row y of the prompt view.
   Prompt(Int, Int)
   Nothing
@@ -89,7 +95,9 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
   end
 
   queued = parts.queued.take([height - editor - asked.size - place.size - CHROME, 0].max.unwrap!)
-  area = [height - editor - asked.size - place.size - queued.size - CHROME, 0].max.unwrap!
+  room = [height - editor - asked.size - place.size - queued.size - CHROME, 0].max.unwrap!
+  banner = parts.banner.take(room)
+  area = room - banner.size
   hidden = [lines.size - area, 0].max.unwrap!
   top = [hidden - [scroll, hidden].min.unwrap!, 0].max.unwrap!
   Frame(
@@ -106,6 +114,7 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
     panel: asked,
     place: place,
     status: parts.status,
+    banner: (0...banner.size).to_a.map { |i| banner_text(banner[i], width, i == 0) },
   )
 end
 
@@ -114,6 +123,7 @@ def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
     chosen_row(frame.transcript[y], theme.transcript, mark_of(frame, y))
   }
 
+  shown = frame.banner.map { |text| TUI.line([TUI.span(text, theme.banner.text)]) }
   blank = (rows.size...frame.area).to_a.map { |_| TUI.line([]) }
   rule = rule_style(frame.level, theme.rules)
   editor = frame.picker.map { |row| panel_row(row, theme.panel) }
@@ -126,10 +136,16 @@ def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
   panel = frame.panel.map { |row| panel_row(row, theme.panel) }
   footer = (frame.place + [frame.status]).map { |text| TUI.line([TUI.span(text, theme.footer.status)]) }
   queued = frame.queued.map { |text| TUI.line([TUI.span(text, theme.transcript.notice)]) }
-  TUI.col(rows + blank + queued + [top] + editor + [bottom] + panel + footer)
+  TUI.col(shown + rows + blank + queued + [top] + editor + [bottom] + panel + footer)
 end
 
-def hit(frame: Frame, x: Int, y: Int) -> Hit
+## The row of the transcript area that screen row `y` is: the banner above it is taken off.
+def below_banner(frame: Frame, y: Int) -> Int = y - frame.banner.size
+
+def hit(frame: Frame, x: Int, screen_y: Int) -> Hit
+  return Hit.Banner if screen_y >= 0 and screen_y < frame.banner.size
+
+  y = below_banner(frame, screen_y)
   return Hit.Entry(frame.transcript[y].entry) if y >= 0 and y < frame.transcript.size
 
   editor_top = frame.area + frame.queued.size + 1
@@ -170,6 +186,19 @@ def button(row: Layout.Row, x: Int) -> Hit
     some(event) -> Hit.Key(event)
     none -> Hit.Nothing
   end
+end
+
+# A banner row cut to the screen and padded to its width; the first one ends with the `x` that closes it (a click
+# anywhere on the banner does).
+def banner_text(text: String, width: Int, first: Bool) -> String
+  cut = Width.cut(" #{text}", [width - 3, 0].max.unwrap!)[0]
+  pad = [width - 3 - Width.text(cut), 0].max.unwrap!
+  tail = "   "
+  if first
+    tail = " x "
+  end
+
+  "#{cut}#{" " * pad}#{tail}"
 end
 
 # A full-width rule, with `label` after its lead when there is one.

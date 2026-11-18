@@ -1527,8 +1527,10 @@ def test_finn_login_ends_with_a_line_for_the_console() -> Result[Void]
   Test.eq(["#{failed.code}", "#{failed.line}"], ["1", "none"])
 end
 
-# Enter on the untouched list of `/model`, `/resume`, `/tree` and `/fork` runs the command with the first row shown (the
-# session's model for `/model`): one step, no picker. Tab only completes. `/thinking` still sends the line as typed, and
+# Enter on the untouched list of `/model`, `/resume`, `/tree` and `/fork` runs the command with the first row
+# shown (the
+# session's model for `/model`): one step, no picker. Tab only completes. `/thinking` still sends the line as
+# typed, and
 # a row moved to in the list of one command does not count once the command changes.
 def test_enter_on_an_argument_list_runs_the_row() -> Result[Void]
   providers = Protocol.ProviderList(
