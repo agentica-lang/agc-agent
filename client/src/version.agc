@@ -6,7 +6,12 @@ VERSION_ENV = "FINN_VERSION"
 UNKNOWN = "unknown"
 DATED_LENGTH = 14
 DIGITS = "0123456789"
+## A restart of a server of this protocol asks it to stop, and it waits for its turns.
 KEEPS = "it waits for the running turns and keeps the sessions"
+## A server of another protocol may not know the request: a restart ends it with a signal, which stops its turns.
+STOPS = "it stops the running turns and keeps the sessions"
+## How a version that is none of these shows: a server is not trusted to print anything.
+ANOTHER = "another version"
 
 ## How the server's version stands to the client's.
 enum Age
@@ -64,7 +69,7 @@ def refusal(client: String, server: String, dir: String, pid: Int, restart: Stri
     Age.Older ->
       (
         "the server of #{dir} (pid #{pid}) runs an older Finn (#{server}) than this client (#{client}) and cannot " +
-        "serve it: `#{restart}` replaces it; #{KEEPS}"
+        "serve it: `#{restart}` replaces it; #{STOPS}"
       )
     Age.Newer ->
       (
@@ -74,7 +79,7 @@ def refusal(client: String, server: String, dir: String, pid: Int, restart: Stri
     Age.Same, Age.Unknown ->
       (
         "the server of #{dir} (pid #{pid}) runs another version of Finn than this client: `#{restart}` replaces it; " +
-        KEEPS
+        STOPS
       )
   end
 end
@@ -84,8 +89,8 @@ def changed(client: String, server: String, restart: String) -> String
   case age(client, server)
     Age.Older ->
       (
-        "the server now runs an older Finn (#{server}) than this client (#{client}): `#{restart}` replaces it, then " +
-        "start the client again"
+        "the server now runs an older Finn (#{server}) than this client (#{client}): `#{restart}` replaces it " +
+        "(#{STOPS}), then start the client again"
       )
     Age.Newer -> "the server now runs a newer Finn (#{server}) than this client (#{client}): start the client again"
     Age.Same, Age.Unknown -> "the server now runs another version of Finn than this client: start the client again"
@@ -99,6 +104,13 @@ def version_suffix(client: String, server: String, restart: String) -> String
     Age.Newer -> " (newer than this client, #{client})"
     Age.Same, Age.Unknown -> ""
   end
+end
+
+## A version as a client shows it: a dated or dotted one, or `unknown`; anything else is `another version`.
+def shown_version(version: String) -> String
+  return version if dated?(version) or dotted?(version) or version == UNKNOWN
+
+  ANOTHER
 end
 
 private

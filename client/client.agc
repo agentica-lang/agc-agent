@@ -74,6 +74,7 @@ export Discovery.other_version_text
 export Discovery.server_command
 export Version.finn_version
 export Version.version_suffix
+export Version.shown_version
 
 export Control.stop_and_wait
 export Control.restart

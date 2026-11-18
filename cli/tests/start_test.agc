@@ -111,7 +111,10 @@ def other_version(rig: Driver.Rig, reason: String, older: Bool) -> Result[Void]
   done = try Driver.finish(cli)
   try Test.eq(done.code, 1)
   try Test.assert(done.errors.include?(reason), "the versions are the reason: #{done.errors}")
-  restart = "`finn server restart --state-dir #{rig.dir}` replaces it"
+  restart = (
+    "`finn server restart --state-dir #{rig.dir}` replaces it; it stops the running turns and keeps the sessions"
+  )
+
   try Test.eq(done.errors.include?(restart), older)
   try Test.assert(not done.errors.include?("kill"), "no kill: #{done.errors}")
   Test.assert(not File.stat("#{rig.dir}/starts.log").ok?, "no server was started")

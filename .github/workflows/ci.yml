@@ -140,11 +140,13 @@ jobs:
           echo "$RUNNER_TEMP/dart-sass" >> "$GITHUB_PATH"
       - run: make docs
 
-  # Each merge to main gets the tag of its version, finn-YYYYMMDDhhmmss: the UTC time of the commit, which bin/finn
-  # reports as the version. Only on a push to main, never on a pull request; a tag that exists is left as it is. The one
-  # job that may write to the repository.
+  # Each merge to main whose checks passed gets the tag of its version, finn-YYYYMMDDhhmmss: the UTC time of the commit,
+  # which bin/finn reports as the version. Only on a push to main, never on a pull request. A tag that exists on this
+  # commit is left as it is; one on another commit (two merges in the same second) fails the job. The one job that may
+  # write to the repository.
   tag-version:
     name: tag the version
+    needs: result
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -155,9 +157,13 @@ jobs:
       - name: Tag the commit with its version
         run: |
           tag="finn-$(TZ=UTC0 git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S "$GITHUB_SHA")"
-          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
-            echo "$tag exists already"
-            exit 0
+          if existing=$(git ls-remote --exit-code --tags origin "refs/tags/$tag"); then
+            if [ "$(echo "$existing" | cut -f1)" = "$GITHUB_SHA" ]; then
+              echo "$tag exists already on $GITHUB_SHA"
+              exit 0
+            fi
+            echo "$tag exists on another commit: $existing" >&2
+            exit 1
           fi
           git tag "$tag" "$GITHUB_SHA"
           git push origin "refs/tags/$tag"

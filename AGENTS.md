@@ -48,7 +48,8 @@ scripts/             fetch the pinned llama.cpp release and model into .tools/ (
 Makefile             check, fmt-check, unit, smoke, test over every package; smoke-llama, live-fireworks,
                      smoke-anthropic, live-anthropic-core
 .github/workflows/   ci.yml, on GitHub-hosted ubuntu-24.04: the pinned Agentica release, the cached packages and compile
-                     caches (`_build/`), then fmt-check and test (no real-model job)
+                     caches (`_build/`), then fmt-check and test (no real-model job); `tag-version` tags each
+                     merge to main that passed as `finn-<ts>` (the one job with `contents: write`)
 ```
 
 A package is added by the phase that needs it, never as an empty folder.
@@ -135,6 +136,10 @@ A package is added by the phase that needs it, never as an empty folder.
     tag (`llm-0.0.1` is `VERSION = "0.0.1"`). A release goes in this order: tag
     the dependency (`llm-X`), then a PR that bumps the dependent's entry and
     `agentica.lock`, then tag the dependent (`core-Y`).
+  - The version of Finn itself is the UTC time of the commit
+    (`YYYYMMDDhhmmss`): `bin/finn` exports it as `FINN_VERSION` (from git, or
+    from `bin/commit-time` in an archive), and the core and the clients report
+    it (`unknown` without it). CI tags it `finn-<ts>`; nobody bumps it by hand.
 - Tests are hermetic: localhost, port 0, no network, no keys. LLM APIs are
   faked by a local server that streams recorded fixtures. A real API call costs
   money: only through a `live` target, never in CI, and only with the owner's

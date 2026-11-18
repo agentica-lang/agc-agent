@@ -27,6 +27,7 @@ SETTINGS = [
 
 OTHER_SETTINGS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
 FAKE_MAINS = ["tests/support/fake_main.agc", "cli/tests/support/fake_main.agc"]
+SLEEPERS = ["tests/support/sleeper.agc", "cli/tests/support/sleeper.agc"]
 
 ## A fake server and the state folder that points at it.
 struct Rig
@@ -152,6 +153,9 @@ def core_command() -> Result[List[String]]
   words = try program_words(CORES, "CORE_BYTECODE", true)
   ok(words + ["serve"])
 end
+
+## The words that start a program that serves nothing (`sleeper.agc`), run from its source.
+def sleeper_command() -> Result[List[String]] = ok([binary(), try Path.resolve(try existing(SLEEPERS))])
 
 ## The words that start the fake server program.
 def fake_command() -> Result[List[String]] = program_words(FAKE_MAINS, "FAKE_BYTECODE", true)

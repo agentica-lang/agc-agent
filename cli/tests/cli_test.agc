@@ -636,6 +636,50 @@ def test_a_server_of_another_version_serves_the_client_with_a_note() -> Result[V
   ok()
 end
 
+# `finn server status` shows how the server's version stands to the client's, and a version that is neither dated nor
+# dotted as `another version`.
+def test_the_status_compares_the_versions() -> Result[Void]
+  client = "20261118000000"
+  cases = [
+    [
+      "20260101000000",
+      "  version 20260101000000 (older than this client, #{client}: `finn server restart --state-dir ",
+    ],
+    ["20270101000000", "  version 20270101000000 (newer than this client, #{client})"],
+    ["#{String.from_code(27)}[2Jx", "  version another version"],
+  ]
+
+  for pair in cases
+    health = Protocol.encode_health(Protocol.Health(version: pair[0], wire: some(Protocol.wire_digest())))
+    status = Protocol.ServerStatus(
+      pid: 1,
+      version: pair[0],
+      started_s: 0,
+      sessions: 0,
+      running_turns: 0,
+      stopping: false,
+    )
+
+    routes = [
+      Fake.Route(method: "GET", path: Protocol.HEALTH_PATH, replies: [Fake.Reply(body: health)]),
+      Fake.Route(
+        method: "GET",
+        path: Protocol.SERVER_PATH,
+        replies: [Fake.Reply(body: Protocol.encode_server_status(status))],
+      ),
+    ]
+
+    try Driver.within(routes) do |rig|
+      done = try Driver.finish(try Driver.start_server(rig.dir, ["status"], [], {"FINN_VERSION": client}))
+      try Test.eq(done.code, 0)
+      shown = done.lines.find { |line| line.start_with?("  version ") }.unwrap_or("")
+      Test.assert(shown.start_with?(pair[1]), "the version line: #{done.lines}")
+    end
+  end
+
+  ok()
+end
+
 def test_one_shot_denies_approvals_and_yolo_allows_them() -> Result[Void]
   for yolo in [false, true]
     end_pushes = ["denied_end.sse"]

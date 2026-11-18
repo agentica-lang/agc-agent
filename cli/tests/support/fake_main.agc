@@ -2,7 +2,8 @@
 ## holds `core.lock` of the state folder as the core does, writes `server.json` there, notes each start in `starts.log`,
 ## prints `ready`, and exits when `server.json` is removed (or after a minute, if a test died). `FAKE_HEALTH_VERSION`
 ## makes its health check say that version and no wire digest (a server of another protocol); `FAKE_HEALTH_STATUS`
-## makes it fail with that status.
+## makes it fail with that status. With `FAKE_IGNORE_TERM` it drops SIGTERM, as a server that does not stop on it.
+## It writes the `FINN_VERSION` it got (`unset` without one) in `version.log`.
 
 import Protocol from "pkg/protocol/protocol"
 import Fake from "fake_server"
@@ -22,14 +23,27 @@ private
 def serve(dir: String) -> Result[Void]
   idle = Fake.Reply(session: "session_idle.json")
   stream = Fake.Reply(hold: true)
+  running = Protocol.ServerStatus(
+    pid: System.pid(),
+    version: "0.0.1",
+    started_s: 0,
+    sessions: 0,
+    running_turns: 0,
+    stopping: false,
+  )
+
+  status = Fake.Reply(body: Protocol.encode_server_status(running))
   fake = try Fake.start(
     [
       Fake.Route(method: "GET", path: Protocol.session_path("s1"), replies: [idle, idle]),
       Fake.Route(method: "GET", path: Protocol.events_path("s1"), replies: [stream, stream]),
+      Fake.Route(method: "GET", path: Protocol.SERVER_PATH, replies: [status, status, status, status]),
     ] +
     health_routes(),
   )
 
+  ignoring = try ignore_term()
+  try File.write_text(try Path.join([dir, "version.log"]), System.env("FINN_VERSION").unwrap_or("unset"))
   # Held until the program ends; a second fake in the folder goes on without it.
   lock = try File.open(try Path.join([dir, "core.lock"]), "append")
   _ = File.try_lock(lock, POLL_MS)
@@ -45,8 +59,18 @@ def serve(dir: String) -> Result[Void]
     waited = waited + POLL_MS
   end
 
+  for signals in ignoring
+    signals.close
+  end
+
   _ = File.close(lock)
   Fake.stop(fake)
+end
+
+def ignore_term() -> Result[List[Channel[System.Signal]]]
+  return ok([]) if System.env("FAKE_IGNORE_TERM").unwrap_or("") == ""
+
+  ok([try System.subscribe([System.Signal.Term])])
 end
 
 def health_routes() -> List[Fake.Route]
