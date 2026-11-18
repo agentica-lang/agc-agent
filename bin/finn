@@ -15,6 +15,22 @@ done
 root=$(cd -P "$(dirname "$self")/.." && pwd)
 agentica=${AGENTICA:-agentica}
 
+# The version of Finn that the server and the clients report: the UTC time of the commit this checkout runs,
+# YYYYMMDDhhmmss. Without a .git (an archive of a tag), bin/commit-time holds that time in Unix seconds, which
+# `git archive` writes there (export-subst). Empty when neither says: the programs then report "unknown".
+commit_version() {
+  if [ -e "$root/.git" ]; then
+    TZ=UTC0 git -C "$root" log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S 2>/dev/null && return
+  fi
+  seconds=$(head -n 1 "$root/bin/commit-time" 2>/dev/null) || return 0
+  case $seconds in
+    ''|*[!0-9]*) return 0 ;;
+  esac
+  date -u -d "@$seconds" +%Y%m%d%H%M%S 2>/dev/null || date -u -r "$seconds" +%Y%m%d%H%M%S 2>/dev/null || true
+}
+FINN_VERSION=$(commit_version || true)
+export FINN_VERSION
+
 usage() {
   cat <<'TEXT'
 usage: finn [tui] [options]       talk to the agent in this folder on the full screen (starts the server when none

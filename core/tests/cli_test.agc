@@ -5,7 +5,7 @@ import Offered from "../src/providers/offered"
 
 def test_version_names_core_and_llm() -> Result[Void]
   try Test.eq(Cli.parse(["--version"]), ok(Cli.Command.Version))
-  Test.eq(Cli.output(Cli.Command.Version), "Finn Agent core #{Cli.VERSION} (llm #{LLM.VERSION})")
+  Test.eq(Cli.output(Cli.Command.Version), "Finn Agent core #{Cli.version()} (llm #{LLM.VERSION})")
 end
 
 def test_no_arguments_shows_help() -> Result[Void]

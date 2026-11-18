@@ -2,7 +2,6 @@ import OP from "std/option_parser"
 import Client from "pkg/client/client"
 import {Kind, Opt, Parsed} from "std/option_parser"
 
-VERSION = "0.0.1"
 # The options of a client that take the next word.
 VALUE_OPTIONS = [
   "--state-dir", "--server-command", "--session", "--cwd", "--model", "--api", "--provider", "--profile", "--prompt",

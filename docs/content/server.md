@@ -28,7 +28,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 
 | Method and path | What it does |
 |---|---|
-| `GET /v1/health` | the server answers, with its version |
+| `GET /v1/health` | the server answers, with its version (the UTC time of its commit, `YYYYMMDDhhmmss`, or `unknown`) and the digest of its protocol (`wire`) |
 | `GET /v1/server` | the server's status: its pid, version and start time, how many sessions it has and how many turns run, whether it is stopping, and whether the approvals are on |
 | `POST /v1/server/stop` | stop the server, as `finn server stop` does |
 | `GET /v1/providers` | the providers and their models |

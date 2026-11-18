@@ -18,6 +18,13 @@ NOT_FOR_CLIENTS = core|llm|mcp|monty|cli|tui_client|web_client
 # A fake key in the environment of every recipe: the bash test of core checks that the tool does not pass it on.
 export AGC_TEST_SECRET = sk-test-secret-must-not-reach-bash
 
+# The id of this test run, in the environment of every program the tests start (and the servers those start), so
+# `leftovers` finds a server that a test left running. The make that `unit` starts per package inherits it.
+ifndef FINN_TEST_RUN
+FINN_TEST_RUN := $(shell od -An -N8 -tx8 /dev/urandom | tr -d ' \n')
+endif
+export FINN_TEST_RUN
+
 # $(call none,DESCRIPTION,RG ARGS): fails when rg finds a match or cannot search (rg: 0 found, 1 none, 2 error).
 none = rg -n $(2); case $$? in 1) ;; 0) echo "coupling: $(1)" >&2; exit 1 ;; *) exit 2 ;; esac
 
@@ -38,7 +45,7 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check native-gen native-header native-check unit unit-package smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
+.PHONY: install check coupling fmt-check native-gen native-header native-check unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
 install:
@@ -95,8 +102,14 @@ fmt-check:
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} sh -c 'cd {} && $(AGENTICA) fmt --check .'
 
 # The packages run at once, and the files of each (`agentica test --jobs`).
+# After them, whether they passed or not, `leftovers` fails the run when one left a server running.
 unit:
-	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} $(MAKE) --no-print-directory unit-package PACKAGE={}
+	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} $(MAKE) --no-print-directory unit-package PACKAGE={}; \
+	  status=$$?; $(MAKE) --no-print-directory leftovers || exit 1; exit $$status
+
+# Fails when a server that this test run started (FINN_TEST_RUN) still runs, and ends it (Linux: it reads /proc).
+leftovers:
+	$(AGENTICA) scripts/leftovers.agc
 
 # The packages without tests of their own: core's tests run the example extension.
 NO_TESTS = examples/extension
@@ -117,22 +130,25 @@ unit-package:
 	$(call tests,$(PACKAGE),tests)
 
 # The entry points run, with their packages read from the workspace; bin/finn also from another folder, through a
-# relative symlink to the bin folder and one to the script (in .tools/, gitignored).
+# relative symlink to the bin folder and one to the script (in .tools/, gitignored). Run directly, a program has no
+# version; bin/finn gives it the time of the commit.
 smoke: install
-	out=$$($(AGENTICA) core/main.agc --version) && echo "$$out" | grep -qx 'Finn Agent core [0-9.]* (llm [0-9.]*)'
-	out=$$($(AGENTICA) cli/main.agc --version) && echo "$$out" | grep -qx 'Finn Agent cli [0-9.]*'
+	out=$$(FINN_VERSION= $(AGENTICA) core/main.agc --version) && echo "$$out" | grep -qx 'Finn Agent core unknown (llm [0-9.]*)'
+	out=$$(FINN_VERSION= $(AGENTICA) cli/main.agc --version) && echo "$$out" | grep -qx 'Finn Agent cli unknown'
 	mkdir -p .tools/smoke && ln -sfn ../../bin .tools/smoke/bin && ln -sf '$(CURDIR)/bin/finn' .tools/smoke/finn
 	cd / && finn='$(CURDIR)/.tools/smoke/bin/finn' && out=$$("$$finn" --version) && \
-	  echo "$$out" | grep -qx 'Finn Agent core [0-9.]* (llm [0-9.]*)' && echo "$$out" | grep -qx 'Finn Agent cli [0-9.]*' && \
+	  echo "$$out" | grep -Eqx 'Finn Agent core [0-9]{14} \(llm [0-9.]*\)' && \
+	  echo "$$out" | grep -Eqx 'Finn Agent cli [0-9]{14}' && \
 	  "$$finn" --help | grep -q '^usage: finn' && "$$finn" serve --help | grep -q '^usage: finn serve' && \
 	  "$$finn" chat --help | grep -q '^Usage: finn' && ! "$$finn" serve --bogus 2>/dev/null && \
-	  '$(CURDIR)/.tools/smoke/finn' --version | grep -qx 'Finn Agent cli [0-9.]*'
-	out=$$('$(CURDIR)/bin/finn' tui --version) && echo "$$out" | grep -qx 'Finn Agent tui [0-9.]*'
+	  '$(CURDIR)/.tools/smoke/finn' --version | grep -Eqx 'Finn Agent cli [0-9]{14}'
+	out=$$('$(CURDIR)/bin/finn' tui --version) && echo "$$out" | grep -Eqx 'Finn Agent tui [0-9]{14}'
 
 # The TUI client under a pseudo-terminal, against the server against a fake model (Python, standard library only). The
 # client and the core are compiled once, and the tests run JOBS at a time, one process each.
 pty: install
-	JOBS=$(JOBS) python3 tui_client/tests/run_pty.py
+	JOBS=$(JOBS) python3 tui_client/tests/run_pty.py; status=$$?; $(MAKE) --no-print-directory leftovers || exit 1; \
+	  exit $$status
 
 # The commands bash's parser finds against those real bash runs (Python standard library only).
 peer:

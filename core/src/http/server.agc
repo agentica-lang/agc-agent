@@ -61,7 +61,9 @@ def start(options: Config.Options) -> Result[Server]
   locked = File.try_lock(lock, 1000)
   if locked != ok(true)
     _ = File.close(lock)
-    return error("a server already runs for #{options.state_dir}")
+    return error(
+      "a server already runs for #{options.state_dir}: `finn server stop` stops it, `finn server restart` replaces it",
+    )
   end
 
   registry = options.registry.map { |served| served.registry }.unwrap_or(Extensions.Registry())
@@ -223,7 +225,7 @@ def health(conn: Bond.Conn) -> Result[Bond.Conn]
   reply(
     conn,
     200,
-    ok(Protocol.encode_health(Protocol.Health(version: Cli.VERSION, wire: some(Protocol.wire_digest())))),
+    ok(Protocol.encode_health(Protocol.Health(version: Cli.version(), wire: some(Protocol.wire_digest())))),
   )
 end
 
@@ -233,7 +235,7 @@ def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
     Protocol.encode_server_status(
       Protocol.ServerStatus(
         pid: System.pid,
-        version: Cli.VERSION,
+        version: Cli.version(),
         started_s: control.started_s,
         sessions: activity.sessions,
         running_turns: activity.running,

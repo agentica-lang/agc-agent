@@ -227,7 +227,8 @@ def test_a_server_of_another_version_found_on_a_reconnect_ends_the_client() -> R
 
   old = Fake.Reply(body: "{\"version\": \"0.0.1\"}")
   routes = [
-    Fake.Route(method: "GET", path: Protocol.HEALTH_PATH, replies: [current, old]),
+    # The start finds the server, then reads its version for the note; the reconnect finds the other one.
+    Fake.Route(method: "GET", path: Protocol.HEALTH_PATH, replies: [current, current, old]),
     Routes.session([Fake.Reply(session: "session_idle.json")]),
     Routes.events([Fake.Reply(fixture: "working.sse"), Fake.Reply(hold: true)]),
   ]

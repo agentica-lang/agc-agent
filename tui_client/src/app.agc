@@ -110,8 +110,8 @@ def opened(model: State.Model) -> Result[State.Model]
     app = State.noted(app, app.backend.yolo_warning.call())
   end
 
-  if not model.options.server_note.empty?
-    app = State.noted(app, model.options.server_note)
+  for note in model.options.server_notes
+    app = State.noted(app, note)
   end
 
   ok(State.effect(Logins.welcomed(app), State.listen(app.signals)))

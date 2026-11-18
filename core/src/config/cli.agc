@@ -1,6 +1,9 @@
 import LLM from "pkg/llm/llm"
 
-VERSION = "0.0.1"
+## The variable that holds the version of Finn: the UTC time of the commit it runs, `YYYYMMDDhhmmss`, which `bin/finn`
+## sets.
+VERSION_ENV = "FINN_VERSION"
+UNKNOWN_VERSION = "unknown"
 
 USAGE = <<~TEXT
   usage: finn serve [--api NAME] [--model NAME] [--base-url URL] [--approvals]
@@ -62,6 +65,15 @@ enum Command
   Help
 end
 
+## The version of Finn this server runs, which `/v1/health`, `/v1/server` and `--version` give: `FINN_VERSION`, else
+## `unknown`.
+def version() -> String
+  case System.env(VERSION_ENV)
+    ok(text) if text != "" -> text
+    _ -> UNKNOWN_VERSION
+  end
+end
+
 def parse(args: List[String]) -> Result[Command]
   text = args.join(" ")
   case text
@@ -74,7 +86,7 @@ end
 
 def output(command: Command) -> String
   case command
-    Command.Version -> "Finn Agent core #{VERSION} (llm #{LLM.VERSION})"
+    Command.Version -> "Finn Agent core #{version()} (llm #{LLM.VERSION})"
     Command.Help, Command.Serve -> USAGE.strip
   end
 end

@@ -14,35 +14,14 @@ struct Model
   gate: Channel[Bool]
 end
 
-def test_the_server_is_started_asked_restarted_and_stopped() -> Result[Void] = Driver.within_dir(&lifecycle)
+# Every test that starts a server runs in `Driver.within_dir`, which stops the servers of its folder whatever happens.
+# Each starts at most two, so it stays well under the 30 s that a test has.
+def test_the_server_is_started_asked_and_stopped() -> Result[Void] = Driver.within_dir(&lifecycle)
+
+def test_a_restart_starts_another_server() -> Result[Void] = Driver.within_dir(&restart)
 
 def lifecycle(dir: String) -> Result[Void]
   command = try Driver.core_command()
-  result = steps(dir, command)
-  stop_leftover(dir)
-  result
-end
-
-def cleaned(dir: String, steps: Fn[String, Result[Void]]) -> Result[Void]
-  result = steps.call(dir)
-  stop_leftover(dir)
-  result
-end
-
-# A server that is left after a failed step goes with the test.
-def stop_leftover(dir: String) -> Void
-  case File.read_text("#{dir}/server.json")
-    ok(text) ->
-      case Protocol.decode_server_info(text)
-        ok(info) -> _ = System.signal(info.pid, System.Signal.Term, "agentica")
-        error(_) -> nil
-      end
-
-    error(_) -> nil
-  end
-end
-
-def steps(dir: String, command: List[String]) -> Result[Void]
   none_yet = try run(dir, ["status"])
   try Test.eq(none_yet.code, 1)
   try Test.assert(none_yet.lines[0].start_with?("no server runs"), "status says none: #{none_yet.lines}")
@@ -50,20 +29,14 @@ def steps(dir: String, command: List[String]) -> Result[Void]
   started = try run(dir, ["start"], command)
   try Test.assert(started.code == 0, "start: #{started.errors}")
   try Test.assert(started.lines[0].start_with?("server running at http://127.0.0.1:"), "start: #{started.lines}")
-  first = try pid_of(try run(dir, ["status"]))
-
-  logs = try run(dir, ["logs"])
-  try Test.assert(logs.lines.any? { |line| line.include?("listening on 127.0.0.1") }, "the log: #{logs.lines}")
-  try Test.assert(logs.lines.any? { |line| line.start_with?("approvals are off") }, "the log: #{logs.lines}")
-
-  restarted = try run(dir, ["restart"], command)
-  try Test.assert(restarted.code == 0, "restart: #{restarted.errors}")
-  try Test.assert(restarted.lines[0].start_with?("server restarted at"), "restart: #{restarted.lines}")
   status = try run(dir, ["status"])
   try Test.assert(status.lines.include?("  sessions 0"), "status: #{status.lines}")
   try Test.assert(status.lines.include?("  running turns 0"), "status: #{status.lines}")
   try Test.assert(status.lines.include?("  approvals off (tools run without asking)"), "status: #{status.lines}")
-  try Test.assert(try pid_of(status) != first, "restart started another process")
+
+  logs = try run(dir, ["logs"])
+  try Test.assert(logs.lines.any? { |line| line.include?("listening on 127.0.0.1") }, "the log: #{logs.lines}")
+  try Test.assert(logs.lines.any? { |line| line.start_with?("approvals are off") }, "the log: #{logs.lines}")
 
   stopped = try run(dir, ["stop"])
   try Test.assert(stopped.code == 0, "stop: #{stopped.errors}")
@@ -76,17 +49,23 @@ def steps(dir: String, command: List[String]) -> Result[Void]
   Test.eq(gone.code, 1)
 end
 
+def restart(dir: String) -> Result[Void]
+  command = try Driver.core_command()
+  started = try run(dir, ["start"], command)
+  try Test.assert(started.code == 0, "start: #{started.errors}")
+  first = try Client.server_pid(dir)
+  restarted = try run(dir, ["restart"], command)
+  try Test.assert(restarted.code == 0, "restart: #{restarted.errors}")
+  try Test.assert(restarted.lines[0].start_with?("server restarted at"), "restart: #{restarted.lines}")
+  try Test.assert(try pid_of(try run(dir, ["status"])) != first, "restart started another process")
+  Test.assert(Client.exited?(dir, first), "the old server is gone")
+end
+
 # A server started with --no-codemode has no code mode: the status, which `GET /v1/server` gives, says so.
 def test_a_server_started_without_code_mode_says_so() -> Result[Void] = Driver.within_dir(&without_code_mode)
 
 def without_code_mode(dir: String) -> Result[Void]
   command = try Driver.core_command()
-  result = started_without_code_mode(dir, command)
-  stop_leftover(dir)
-  result
-end
-
-def started_without_code_mode(dir: String, command: List[String]) -> Result[Void]
   started = try run(dir, ["start", "--no-codemode"], command)
   try Test.assert(started.code == 0, "start: #{started.errors}")
   status = try run(dir, ["status"])
@@ -101,9 +80,7 @@ def started_without_code_mode(dir: String, command: List[String]) -> Result[Void
 end
 
 # A signal that ends a container stops the server cleanly: its file goes and its log says it stopped.
-def test_a_term_signal_stops_the_server_cleanly() -> Result[Void]
-  Driver.within_dir(->(dir) { cleaned(dir, &signalled) })
-end
+def test_a_term_signal_stops_the_server_cleanly() -> Result[Void] = Driver.within_dir(&signalled)
 
 def signalled(dir: String) -> Result[Void]
   command = try Driver.core_command()
@@ -162,7 +139,6 @@ def restarted_in_a_turn(dir: String) -> Result[Void]
   model = try model_that_waits()
   result = restart_steps(dir, model)
   free(model)
-  stop_leftover(dir)
   result
 end
 
@@ -189,7 +165,6 @@ def escalated(dir: String) -> Result[Void]
   model = try model_that_waits()
   result = escalation_steps(dir, model)
   free(model)
-  stop_leftover(dir)
   result
 end
 
@@ -213,15 +188,14 @@ def escalation_steps(dir: String, model: Model) -> Result[Void]
   Test.eq(cancelled.code, 130)
 end
 
-# `status` shows the stop that waits: its line says so once the stop request arrived.
+# `status` shows the stop that waits: its line says so once the stop request arrived. Each try runs a client, so the
+# limit is a time, not a count.
 def stopping_shown(dir: String) -> Result[Void]
-  waited = 0
-  while waited < 10_000
+  deadline = Time.now_ms + 10_000
+  while Time.now_ms < deadline
     status = try run(dir, ["status"])
     shown = status.lines.any? { |line| line.strip.start_with?("stopping yes") }
     return ok() if shown
-
-    waited = waited + 300
   end
 
   error("status never showed the stop")
@@ -229,7 +203,7 @@ end
 
 # The tail of a log over 1 MiB, a log that is gone, and a log that is rotated when a server starts.
 def test_the_logs_of_a_big_file_show_its_tail_and_a_start_rotates_a_log_over_10_mib() -> Result[Void]
-  Driver.within_dir(->(dir) { cleaned(dir, &big_log) })
+  Driver.within_dir(&big_log)
 end
 
 # A log of `head`, `count` lines of 100 bytes, and `tail`, which is over 1 MiB (the limit of `File.read_text`).
@@ -268,9 +242,7 @@ def big_log(dir: String) -> Result[Void]
 end
 
 # `logs -f` ends by itself when the server goes away.
-def test_following_the_logs_ends_when_the_server_stops() -> Result[Void]
-  Driver.within_dir(->(dir) { cleaned(dir, &followed) })
-end
+def test_following_the_logs_ends_when_the_server_stops() -> Result[Void] = Driver.within_dir(&followed)
 
 def followed(dir: String) -> Result[Void]
   command = try Driver.core_command()
@@ -292,6 +264,180 @@ def shows(cli: Process, word: String) -> Result[Void]
   end
 
   ok()
+end
+
+# A test that fails after its server started leaves nothing behind: `Driver.within_dir` stops the server, which runs
+# in a session of its own and outlives the client, and removes the folder.
+def test_a_failed_test_leaves_no_server_and_no_folder() -> Result[Void]
+  out: Channel[List[String]] = Channel.new(1)
+  failed = Driver.within_dir(->(dir) { started_then_failed(dir, out) })
+  try Test.eq(failed.message, "failed on purpose")
+  seen = try out.recv(0)
+  pid = try seen[1].to_i
+  ended = case File.read_text("/proc/#{pid}/stat")
+    ok(stat) -> stat.include?(") Z ")
+    error(_) -> true
+  end
+
+  try Test.assert(ended, "the server #{pid} is gone")
+  Test.assert(not File.stat(seen[0]).ok?, "the folder is removed")
+end
+
+def started_then_failed(dir: String, out: Channel[List[String]]) -> Result[Void]
+  started = try run(dir, ["start"], try Driver.core_command())
+  try Test.assert(started.code == 0, "start: #{started.errors}")
+  try out.send([dir, (try Client.server_pid(dir)).to_s], 0)
+  error("failed on purpose")
+end
+
+# A sweep stops only the processes whose environment names the folder: an Agentica program that a stale `server.json`
+# names, but that serves no folder of the tests, goes on running, and the folder goes.
+def test_a_sweep_never_stops_a_program_that_a_stale_server_json_names() -> Result[Void]
+  words = try Driver.sleeper_command()
+  sleeper = try Process.spawn_captured(words[0], words.drop(1), Process.Options(env: {"FINN_STATE_DIR": ""}))
+  result = swept_around(sleeper)
+  Process.close(sleeper)
+  result
+end
+
+def swept_around(sleeper: Process) -> Result[Void]
+  ready = try Process.read_line(sleeper, 15_000)
+  try Test.assert(ready.start_with?("ready "), "the sleeper: #{ready}")
+  pid = try ready.replace("ready ", "").to_i
+  # No process has a pid this high (over pid_max), so the folder's test run is gone.
+  stale = try Path.join([System.env("TMPDIR").unwrap_or("/tmp"), "agc-cli-999999999-#{Random.int(0, 999_999)}"])
+  try Dir.mkdir_private(stale)
+  info = Protocol.ServerInfo(port: 9, token: "t", pid: pid)
+  try File.write_text("#{stale}/server.json", Protocol.encode_server_info(info))
+  try Driver.within_dir(->(_dir) { ok() })
+  try Test.assert(not File.stat(stale).ok?, "the stale folder is removed")
+  Test.assert(not Process.wait(sleeper, 10).ok?, "the program it names still runs")
+end
+
+# A server that does not take the stop request is stopped by the pid of its `server.json`: one of another protocol, and
+# one that holds the lock of its folder but answers badly.
+def test_a_server_that_does_not_take_the_stop_request_is_stopped_by_its_pid() -> Result[Void]
+  for health in [{"FAKE_HEALTH_VERSION": "20260101000000"}, {"FAKE_HEALTH_STATUS": "500"}]
+    try Driver.within_dir(->(dir) { stopped_by_pid(dir, health) })
+  end
+
+  ok()
+end
+
+def stopped_by_pid(dir: String, health: Map[String, String]) -> Result[Void]
+  words = try Driver.fake_command()
+  server = try Process.spawn_captured(words[0], words.drop(1), Process.Options(env: health.put("FINN_STATE_DIR", dir)))
+  result = stop_steps(dir, server)
+  Process.close(server)
+  result
+end
+
+def stop_steps(dir: String, server: Process) -> Result[Void]
+  try Test.eq(try Process.read_line(server, 15_000), "ready")
+  stopped = try run(dir, ["stop"])
+  try Test.assert(stopped.code == 0, "stop: #{stopped.errors}")
+  try Test.eq(stopped.lines, ["server stopped"])
+  Test.eq(try Process.wait(server, 5000), 143)
+end
+
+# `finn server stop` signals only a process that proves to be the folder's server. A `server.json` that names an
+# Agentica program while no server holds the folder's lock, an Agentica program of another folder, a program that is
+# not Agentica, or the folder's own program when it started after `server.json` was written gets nothing: the stop says
+# no server runs, and the program goes on. The folder's own program, with the lock held, is stopped.
+def test_a_stop_signals_only_a_process_that_proves_to_be_the_folders_server() -> Result[Void]
+  Driver.within_dir(&only_the_server)
+end
+
+def only_the_server(dir: String) -> Result[Void]
+  words = try Driver.sleeper_command()
+  mine = try Process.spawn_captured(words[0], words.drop(1), Process.Options(env: {"FINN_STATE_DIR": dir}))
+  other = try Process.spawn_captured(words[0], words.drop(1), Process.Options(env: {"FINN_STATE_DIR": "#{dir}/home"}))
+  script = "echo \"ready $$\"; exec sleep 60"
+  sleep = try Process.spawn_captured("sh", ["-c", script], Process.Options(env: {"FINN_STATE_DIR": dir}))
+  result = signalled_once(dir, mine, other, sleep)
+  for program in [mine, other, sleep]
+    Process.close(program)
+  end
+
+  result
+end
+
+def signalled_once(dir: String, mine: Process, other: Process, sleep: Process) -> Result[Void]
+  pids = [try ready_pid(mine), try ready_pid(other), try ready_pid(sleep)]
+  try name_in_server_json(dir, pids[0])
+  try untouched(dir, mine, "no server holds the lock")
+  File.open("#{dir}/core.lock", "append") do |lock|
+    try Test.eq(File.try_lock(lock, 1000), ok(true))
+    try name_in_server_json(dir, pids[1])
+    try untouched(dir, other, "another folder's program")
+    try name_in_server_json(dir, pids[2])
+    try untouched(dir, sleep, "a program that is not Agentica")
+    try name_in_server_json(dir, pids[0])
+    # A minute before: the program started during this test, which has 30 s.
+    try written_at(dir, Time.now_ms / 1000 - 60)
+    try untouched(dir, mine, "a program that started after server.json was written")
+    try name_in_server_json(dir, pids[0])
+    stopped = try run(dir, ["stop"])
+    try Test.eq(stopped.lines, ["server stopped"])
+    Test.eq(try Process.wait(mine, 5000), 143)
+  end
+end
+
+def untouched(dir: String, program: Process, what: String) -> Result[Void]
+  stopped = try run(dir, ["stop"])
+  try Test.eq(stopped.lines, ["no server runs"])
+  Test.assert(not Process.wait(program, 10).ok?, "#{what} goes on")
+end
+
+def ready_pid(program: Process) -> Result[Int]
+  line = try Process.read_line(program, 15_000)
+  line.replace("ready ", "").strip.to_i
+end
+
+# Sets the time `server.json` was written, to before the program it names started.
+def written_at(dir: String, seconds: Int) -> Result[Void]
+  touch = try Process.spawn("touch", ["-d", "@#{seconds}", "#{dir}/server.json"])
+  code = Process.wait(touch, 5000)
+  Process.close(touch)
+  Test.eq(try code, 0)
+end
+
+# After the program it names started, as a server writes it.
+def name_in_server_json(dir: String, pid: Int) -> Result[Void]
+  path = "#{dir}/server.json"
+  try Path.remove(path)
+  text = Protocol.encode_server_info(Protocol.ServerInfo(port: 9, token: "t", pid: pid))
+  File.open(path, "create_private") do |file| File.write(file, text) end
+end
+
+# A server that drops SIGTERM: a stop that waits names `stop --now` (here after 1 s, not 30), and `--now` forces it.
+def test_a_server_that_does_not_stop_is_named_for_stop_now_which_forces_it() -> Result[Void]
+  Driver.within_dir(&forced)
+end
+
+def forced(dir: String) -> Result[Void]
+  command = try Driver.fake_command()
+  started = try Driver.finish(try Driver.start_server(dir, ["start"], command, {"FAKE_IGNORE_TERM": "1"}))
+  try Test.assert(started.code == 0, "start: #{started.errors}")
+  pid = try Client.server_pid(dir)
+  late = Client.stop_and_wait(dir, false, 1000)
+  try Test.assert(not late.ok?, "it did not stop")
+  want = "(pid #{pid}) did not stop in 1 s: `finn server stop --now --state-dir #{dir}` ends it at once"
+  try Test.assert(late.message.include?(want), late.message)
+  try Test.eq(Client.stop_and_wait(dir, true, 1000), ok(true))
+  Test.assert(Client.exited?(dir, pid), "it is gone")
+end
+
+# A server started with a server command of its own may be other code: it does not get the client's version.
+def test_a_server_command_of_its_own_gets_no_version() -> Result[Void] = Driver.within_dir(&no_version)
+
+def no_version(dir: String) -> Result[Void]
+  command = try Driver.fake_command()
+  started = try Driver.finish(try Driver.start_server(dir, ["start"], command, {"FINN_VERSION": "20261118000000"}))
+  try Test.assert(started.code == 0, "start: #{started.errors}")
+  try Test.eq(File.read_text("#{dir}/version.log"), ok(""))
+  stopped = try run(dir, ["stop"])
+  Test.eq(stopped.lines, ["server stopped"])
 end
 
 # A restart that cannot start a server says whether an old one was stopped.

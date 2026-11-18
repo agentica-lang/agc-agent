@@ -1,3 +1,4 @@
+import Client from "pkg/client/client"
 import App from "src/app"
 import Args from "src/args"
 import ServerCmd from "src/server_cmd"
@@ -15,7 +16,7 @@ private
 
 def dispatch(command: Args.Command) -> Void
   case command
-    Args.Command.Version -> puts("Finn Agent cli #{Args.VERSION}")
+    Args.Command.Version -> puts("Finn Agent cli #{Client.finn_version()}")
     Args.Command.Help(text) -> puts(text)
     Args.Command.Run(options) -> finish(App.run(options))
     Args.Command.Server(options) -> finish(ServerCmd.run(options))

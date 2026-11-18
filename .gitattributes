@@ -14,3 +14,5 @@ CHANGELOG.md merge=union
 bash/native/runtime/** linguist-vendored
 bash/native/grammar/** linguist-vendored -diff
 bash/native/bash_native.h linguist-generated
+# The commit time of an archive of the repository, for the version that bin/finn reports without a .git.
+bin/commit-time export-subst

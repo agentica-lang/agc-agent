@@ -14,7 +14,7 @@ Finn runs on [Agentica](https://github.com/agentica-lang/agentica) 0.34.0 or lat
 2. In the clone, run `make install`. It fetches the packages that the server and the TUI depend on.
 3. Use `bin/finn` from any folder, or link it into your `PATH`: `ln -s "$PWD/bin/finn" ~/.local/bin/finn`.
 
-`finn --version` prints the versions of the server and the client.
+`finn --version` prints the versions of the server and the client: the UTC time of the commit, as `20261118123456` ([Versions](cli.md#versions)).
 
 ## Set up a provider
 
