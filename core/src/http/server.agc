@@ -16,11 +16,14 @@ import Providers from "../providers/providers"
 import Extensions from "../config/registry"
 import Folders from "../config/folders"
 import Sessions from "../session/session"
+import Log from "../log"
 
 SERVER_JSON = "server.json"
 LOCK_FILE = "core.lock"
 MAX_BODY_BYTES = 1_048_576
 DRAIN_POLL_MS = 100
+DEFAULT_LOG_LINES = 50
+MAX_LOG_LINES = 1000
 ## A cancelled turn ends in this time at most before the sessions stop.
 CANCEL_MS = 3000
 ## Then the connections that are still open are closed.
@@ -35,6 +38,7 @@ struct Control
   started_s: Int
   flags: ATS[String, Bool]
   drain_ms: Int
+  state_dir: String = ""
   approvals: Bool = false
   code_mode: Bool = false
   no_worker: Bool = false
@@ -144,6 +148,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.before(->(conn) { ok(guard(token, control, conn)) })
     |> Bond.get(Protocol.HEALTH_PATH, &health)
     |> Bond.get(Protocol.SERVER_PATH, ->(conn) { reply(conn, 200, status(sessions, control)) })
+    |> Bond.get(Protocol.LOGS_PATH, ->(conn) { reply(conn, 200, logs(control, conn)) })
     |> Bond.post(Protocol.SERVER_STOP_PATH, ->(conn) { reply(conn, 200, stop_route(control, conn)) })
     |> Bond.post(all, ->(conn) { reply(conn, 201, create(sessions, conn)) })
     |> Bond.get(all, ->(conn) { reply(conn, 200, list(sessions)) })
@@ -180,6 +185,7 @@ private
 def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handle) -> Result[Server]
   token = OpenSSL.Random.hex(32)
   control = new_control(options.drain_ms).with(
+    state_dir: options.state_dir,
     approvals: options.asking,
     code_mode: options.code_mode.some?,
     no_worker: options.no_worker,
@@ -226,6 +232,23 @@ def health(conn: Bond.Conn) -> Result[Bond.Conn]
     conn,
     200,
     ok(Protocol.encode_health(Protocol.Health(version: Cli.version(), wire: some(Protocol.wire_digest())))),
+  )
+end
+
+# The lines of the log are read through the server: the client may be on the other side of a tunnel.
+def logs(control: Control, conn: Bond.Conn) -> Result[String]
+  asked = try Bond.query_all(conn, "lines")
+  count = DEFAULT_LOG_LINES
+  if not asked.empty?
+    count = try Bond.query_int(conn, "lines")
+  end
+
+  count = [[count, 0].max.unwrap!, MAX_LOG_LINES].min.unwrap!
+  tail = try Log.tail(control.state_dir, count)
+  ok(
+    Protocol.encode_server_log(
+      Protocol.ServerLog(lines: tail.lines, warnings: tail.warnings, warning_count: tail.warning_count),
+    ),
   )
 end
 

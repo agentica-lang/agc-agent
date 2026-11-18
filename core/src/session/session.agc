@@ -23,6 +23,7 @@ import SessionActor from "actor"
 import Folder from "folder"
 import Prompt from "prompt"
 import Store from "store"
+import Log from "../log"
 
 SESSIONS_DIR = "sessions"
 CALL_MS = 5000
@@ -555,7 +556,7 @@ def read(options: Config.Options, listed: Entry) -> Result[Loaded]
 
   saved = try Store.load(listed.file)
   if saved.skipped > 0
-    IO.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
+    Log.warn("session #{saved.header.id}: #{saved.skipped} records skipped")
   end
 
   context = try Tools.context(
@@ -585,7 +586,7 @@ def registered(registry: Registry, id: String, read: Result[Loaded]) -> Registry
 
       registry.with(sessions: registry.sessions.map { |e| replaced(e, entry) })
     error(e) ->
-      IO.warn("session #{id} cannot be loaded now: #{e.message}")
+      Log.warn("session #{id} cannot be loaded now: #{e.message}")
       message = "session #{id} cannot be loaded now"
       if e.kind == KIND_UNKNOWN_API
         message = "#{message}: #{e.message}"
@@ -630,7 +631,7 @@ def entry(
   system = header.system.unwrap_or(system_of(options, context.root))
   builtins = builtins_of(options, context.root, system)
   for warning in (builtins.flat_map { |b| b.warnings })
-    IO.warn(warning)
+    Log.warn(warning)
   end
 
   base = SessionActor.Setup(
@@ -859,14 +860,14 @@ def load_sessions(options: Config.Options, store: Store.Port) -> List[Entry]
   files: List[Store.Ref] = []
   case Store.all(store, folder(options))
     ok(found) -> files = found
-    error(e) -> IO.warn("sessions not listed: #{e.message}")
+    error(e) -> Log.warn("sessions not listed: #{e.message}")
   end
 
   listed: List[Listed] = []
   for file in files
     case Store.header(file)
       ok(header) -> listed = listed.push(Listed(file: file, header: header))
-      error(e) -> IO.warn("session #{file.path.split("/").last} not listed: #{e.message}")
+      error(e) -> Log.warn("session #{file.path.split("/").last} not listed: #{e.message}")
     end
   end
 
@@ -907,11 +908,11 @@ end
 def warn_profiles(options: Config.Options) -> Void
   loaded = Profiles.load(Profiles.user_folder(options.env), "", false)
   for warning in loaded.warnings
-    IO.warn(warning.text)
+    Log.warn(warning.text)
   end
 
   for name in loaded.broken.keys.sort
-    IO.warn(loaded.broken[name])
+    Log.warn(loaded.broken[name])
   end
 end
 

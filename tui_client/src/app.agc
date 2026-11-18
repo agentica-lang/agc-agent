@@ -33,10 +33,12 @@ export State.seed
 export Logins.welcomed
 export Session.read_feed
 
-## How the app ended: its exit code, and what to print once the screen is closed (how to come back to the session).
+## How the app ended: its exit code, why it is not 0 (printed on stderr once the screen is closed: what the screen showed
+## is wiped with it), and what to print once the screen is closed (how to come back to the session).
 struct Ended
   code: Int
   hint: Optional[String] = none
+  reason: Optional[String] = none
 end
 
 ## Runs the session of `options` on `screen` until the user leaves or a signal ends it.
@@ -71,13 +73,33 @@ def started(
   end
 
   last = try driven(TUI.Raw.backend(screen), start, output)
-  ok(Ended(code: try ended(last), hint: Client.resume_hint("finn", last.id, not Session.content?(last))))
+  outcome = try outcome(last)
+  hint = Client.resume_hint("finn", last.id, not Session.content?(last))
+  ok(outcome.with(hint: joined(server_report(backend), hint)))
 end
 
 ## Runs the app from the model `start` and its effects on `backend` until it ends: the exit code. The tests give it a
 ## fake terminal.
 def drive(backend: TUI.Backend, start: State.Model, output: TUI.OutputMode = TUI.OutputMode.Colors256) -> Result[Int]
   ended(try driven(backend, start, output))
+end
+
+## The same, with the reason of a code that is not 0.
+def drive_outcome(
+  backend: TUI.Backend,
+  start: State.Model,
+  output: TUI.OutputMode = TUI.OutputMode.Colors256,
+) -> Result[Ended]
+  outcome(try driven(backend, start, output))
+end
+
+## The end of the app `last`: its code, and for a code that is not 0 the last note of the screen (the answer of a login
+## that failed, say) or the signal that ended it: no end with an error is silent.
+def outcome(last: State.Model) -> Result[Ended]
+  code = try ended(last)
+  return ok(Ended(code: code)) if code == 0
+
+  ok(Ended(code: code, reason: some(why(last, code))))
 end
 
 # The model the app ends with.
@@ -96,11 +118,55 @@ def driven(backend: TUI.Backend, start: State.Model, output: TUI.OutputMode) -> 
   TUI.Raw.program(backend, app)
 end
 
+def why(last: State.Model, code: Int) -> String
+  return "stopped by a signal (#{code - 128})" if code > 128
+
+  case State.last_notice(last)
+    some(text) -> text
+    none -> "ended with code #{code}"
+  end
+end
+
 def ended(last: State.Model) -> Result[Int]
   case last.failure
     some(reason) -> error(reason, kind: "tui.session")
     none -> ok(last.exit.unwrap_or(0))
   end
+end
+
+# What the console gets after the screen closes about the warnings of the server, and then the hint to come back.
+def joined(report: Optional[String], hint: Optional[String]) -> Optional[String]
+  case report
+    some(text) ->
+      case hint
+        some(more) -> some("#{text}\n#{more}")
+        none -> some(text)
+      end
+
+    none -> hint
+  end
+end
+
+def server_report(backend: Client.Backend) -> Optional[String]
+  case backend.server_log.call(0)
+    ok(log) -> Client.warning_report(log)
+    error(_) -> none
+  end
+end
+
+## The last warnings of the server as notes, with where the rest is.
+def server_notes(app: State.Model) -> State.Model
+  shown = app
+  case app.backend.server_log.call(0)
+    ok(log) ->
+      for line in Client.warning_notes(log)
+        shown = State.noted(shown, line)
+      end
+
+    error(_) -> nil
+  end
+
+  shown
 end
 
 ## The session of the options opened, with the signals listened to; at the first start, the login picker.
@@ -114,7 +180,7 @@ def opened(model: State.Model) -> Result[State.Model]
     app = State.noted(app, note)
   end
 
-  ok(State.effect(Logins.welcomed(app), State.listen(app.signals)))
+  ok(State.effect(Logins.welcomed(server_notes(app)), State.listen(app.signals)))
 end
 
 def update(model: State.Model, msg: State.Msg) -> TUI.Step[State.Model, State.Msg]

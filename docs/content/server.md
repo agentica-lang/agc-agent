@@ -31,6 +31,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `GET /v1/health` | the server answers, with its version (the UTC time of its commit, `YYYYMMDDhhmmss`, or `unknown`) and the digest of its protocol (`wire`) |
 | `GET /v1/server` | the server's status: its pid, version and start time, how many sessions it has and how many turns run, whether it is stopping, and whether the approvals are on |
 | `POST /v1/server/stop` | stop the server, as `finn server stop` does |
+| `GET /v1/logs?lines=N` | the last N lines of the server log (default 50), the last 3 warnings it logged since it started, and their count |
 | `GET /v1/providers` | the providers and their models |
 | `GET /v1/auth` | the logins: each provider, where its key comes from, and what a login asks for (`asks`: `key`, or `url` with the `base_url` of `local`) |
 | `PUT /v1/auth` | make an empty key file when there is none, so the first-start login is not offered again |

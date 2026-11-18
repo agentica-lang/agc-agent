@@ -9,6 +9,7 @@ import Extensions from "../config/registry"
 import McpTools from "../ext/mcp"
 import Skills from "../ext/skills"
 import Spec from "../tools/spec"
+import Log from "../log"
 
 ## The slash commands of the user's folder (from `read`) and of a trusted session folder: a message that starts with
 ## `/NAME` becomes the command's prompt, read again at each such message. Before the skills, so a command wins over a
@@ -29,7 +30,7 @@ end
 ## Starts the MCP servers of the config in the background (the end of the process stops them); their tools come as
 ## they list them.
 def mcp(served: Extensions.Served, read: Fn[String, Result[String]], state_dir: String) -> Result[Extensions.Served]
-  board = McpTools.background(try McpTools.servers(read, state_dir), ->(warning: String) { IO.warn(warning) })
+  board = McpTools.background(try McpTools.servers(read, state_dir), ->(warning: String) { Log.warn(warning) })
   ok(Extensions.add_late_tools(served, -> { McpTools.tools(board) }))
 end
 

@@ -8,6 +8,7 @@ import URI from "std/uri"
 import LLM from "pkg/llm/llm"
 import Auth from "auth"
 import Providers from "providers"
+import Log from "../log"
 
 NAME = "chatgpt"
 LABEL = "ChatGPT Plus or Pro (Codex)"
@@ -20,6 +21,8 @@ BASE_URL = "https://chatgpt.com/backend-api/codex"
 ISSUER_ENV = "FINN_CHATGPT_AUTH_URL"
 BASE_URL_ENV = "FINN_CHATGPT_URL"
 CALL_MS = 15_000
+## How often a device login polls when the login does not say, in seconds.
+DEFAULT_INTERVAL_S = 5
 ## A device login waits this long for the user at most.
 DEVICE_MS = 900_000
 ## The key of the lock in `Login.lock`.
@@ -141,8 +144,8 @@ def start(endpoints: Endpoints) -> Result[Device]
   answer = try post(endpoints, "/api/accounts/deviceauth/usercode", body, JSON_TYPE)
   return error("the ChatGPT login did not start (HTTP #{answer.status})") if answer.status != 200
 
-  code = try answered(JSON.decode(try text_of(answer), UserCode))
-  interval = [code.interval.unwrap_or(5) * 1000, endpoints.min_poll_ms].max.unwrap!
+  code = try usercode(try text_of(answer))
+  interval = [code.interval * 1000, endpoints.min_poll_ms].max.unwrap!
   ok(
     Device(
       user_code: code.user_code,
@@ -269,7 +272,8 @@ end
 struct UserCode
   device_auth_id: String
   user_code: String
-  interval: Optional[Int]
+  ## Seconds.
+  interval: Int
 end
 
 struct Grant
@@ -344,7 +348,7 @@ def renewed_locked(login: Login, used: String) -> Result[Tokens]
   fresh = try refreshed(login.endpoints, now)
   case save(login, fresh)
     ok(_) -> nil
-    error(e) -> IO.warn("the refreshed ChatGPT login was not saved: #{e.message}")
+    error(e) -> Log.warn("the refreshed ChatGPT login was not saved: #{e.message}")
   end
 
   ok(fresh)
@@ -452,6 +456,28 @@ def post(endpoints: Endpoints, path: String, body: String, kind: String) -> Resu
   case answer
     ok(response) -> ok(response)
     error(_) -> error("#{endpoints.issuer} cannot be reached")
+  end
+end
+
+# The `interval` is a number or the text of one (the login answers `"5"`), and may be left out.
+def usercode(text: String) -> Result[UserCode]
+  json = try answered(JSON.parse(text))
+  id = try answered(JSON.string(try answered(JSON.get(json, "device_auth_id"))))
+  code = try answered(JSON.string(try answered(JSON.get(json, "user_code"))))
+  interval = DEFAULT_INTERVAL_S
+  case JSON.get(json, "interval")
+    ok(value) -> interval = seconds_of(JSON.node(value))
+    error(_) -> nil
+  end
+
+  ok(UserCode(device_auth_id: id, user_code: code, interval: interval))
+end
+
+def seconds_of(node: JSON.Node) -> Int
+  case node
+    JSON.Node.Int(n) -> n
+    JSON.Node.String(text) -> text.strip.to_i.unwrap_or(DEFAULT_INTERVAL_S)
+    _ -> DEFAULT_INTERVAL_S
   end
 end
 

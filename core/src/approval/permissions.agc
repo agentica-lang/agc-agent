@@ -16,6 +16,7 @@
 import Approval from "approval"
 import Shell from "shell"
 import Spec from "../tools/spec"
+import Log from "../log"
 
 CONFIG_ENV = "FINN_CONFIG"
 PROJECT_FILE = ".finn/config.json"
@@ -67,7 +68,7 @@ def with_project(rules: Approval.Rules, root: String, trusted: Bool) -> Result[A
   read = rules_of(path)
   case read
     error(e) if not trusted ->
-      IO.warn("#{e.message}; its rules are ignored")
+      Log.warn("#{e.message}; its rules are ignored")
       return ok(rules)
     _ -> nil
   end

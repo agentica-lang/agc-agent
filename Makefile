@@ -29,9 +29,10 @@ export FINN_TEST_RUN
 none = rg -n $(2); case $$? in 1) ;; 0) echo "coupling: $(1)" >&2; exit 1 ;; *) exit 2 ;; esac
 
 # $(call core_imports,FOLDER,ALLOWED): the rg arguments that find an import of core/src/FOLDER from another core folder
-# than those of ALLOWED (a|b), or with a `..` after its first folder. Needs rg with PCRE2; without it rg fails, and so
+# than those of ALLOWED (a|b), or with a `..` after its first folder; `core/src/log.agc`, the server log, is allowed
+# everywhere. Needs rg with PCRE2; without it rg fails, and so
 # does the rule.
-core_imports = -P -g 'core/src/$(1)/**' '^import \w+ from "\.\./((?!($(2))/)|[^"]*/\.\.(/|"))' .
+core_imports = -P -g 'core/src/$(1)/**' '^import \w+ from "\.\./((?!($(2))/|log")|[^"]*/\.\.(/|"))' .
 
 # The llama-server of `smoke-llama`, fetched by scripts/ into .tools/ (gitignored). LLAMA_URL uses a running one.
 LLAMA_SERVER ?= $(CURDIR)/.tools/llama.cpp/llama-server

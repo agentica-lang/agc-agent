@@ -43,9 +43,14 @@ end
 def finish(result: Result[App.Ended]) -> Void
   case result
     ok(ended) ->
+      # Written once the screen is closed (what it showed is wiped with it), as an error below.
+      for reason in option_list(ended.reason)
+        Task.sleep(RESTORE_MS)
+        IO.warn("finn: #{reason}")
+      end
+
       case ended.hint
         some(hint) ->
-          # Written once the screen is closed, as an error below.
           Task.sleep(RESTORE_MS)
           puts(hint)
         none -> nil
@@ -58,5 +63,12 @@ def finish(result: Result[App.Ended]) -> Void
       Task.sleep(RESTORE_MS)
       IO.warn("finn: #{e.message}")
       System.exit(1)
+  end
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
   end
 end

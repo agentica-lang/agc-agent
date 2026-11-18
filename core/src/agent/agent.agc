@@ -10,6 +10,7 @@ import Compaction from "compaction"
 import Spec from "../tools/spec"
 import Todos from "../tools/todos"
 import Tools from "../tools/tools"
+import Log from "../log"
 
 MAX_ROUNDS = 50
 ## The provider whose models are offered `apply_patch`, as a custom tool.
@@ -245,7 +246,7 @@ def with_token[T](
   for fetch in option_list(refresh)
     case fetch.call()
       ok(fresh) -> return Renewal(result: call.call(fresh), fresh: some(fresh))
-      error(e) -> IO.warn("the token was not fetched again: #{e.message}")
+      error(e) -> Log.warn("the token was not fetched again: #{e.message}")
     end
   end
 
@@ -376,7 +377,7 @@ end
 def past_limit(turn: Turn, context: Int) -> Bool
   return false if not Compaction.due?(turn.compaction, context)
 
-  IO.warn(
+  Log.warn(
     "turn #{turn.id}: the context is past the limit inside a tool round; the turn goes on without thinking blocks",
   )
 

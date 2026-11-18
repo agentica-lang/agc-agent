@@ -36,7 +36,7 @@ def lifecycle(dir: String) -> Result[Void]
 
   logs = try run(dir, ["logs"])
   try Test.assert(logs.lines.any? { |line| line.include?("listening on 127.0.0.1") }, "the log: #{logs.lines}")
-  try Test.assert(logs.lines.any? { |line| line.start_with?("approvals are off") }, "the log: #{logs.lines}")
+  try Test.assert(logs.lines.any? { |line| line.include?(" INFO approvals are off") }, "the log: #{logs.lines}")
 
   stopped = try run(dir, ["stop"])
   try Test.assert(stopped.code == 0, "stop: #{stopped.errors}")

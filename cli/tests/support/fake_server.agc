@@ -9,6 +9,7 @@ import Fixtures from "fixtures"
 TOKEN = "test-token"
 VERSION = "0.0.1"
 HEALTH = "GET /v1/health"
+LOGS = "GET #{Protocol.LOGS_PATH}"
 WAIT_MS = 5000
 POLL_MS = 100
 PIECE_BYTES = 13
@@ -53,10 +54,11 @@ struct Fake
   bus: Channel[Bytes]
 end
 
-## Starts a fake with `routes`; `GET /v1/health` is always there, and a route of it replaces the answer.
+## Starts a fake with `routes`; `GET /v1/health` and `GET /v1/logs` (an empty log) are always there, and a route of one
+## replaces the answer.
 def start(routes: List[Route]) -> Result[Fake]
   queues: Map[String, Channel[Reply]] = {}
-  seen: Map[String, Channel[Seen]] = {HEALTH: Channel.new(16)}
+  seen: Map[String, Channel[Seen]] = {HEALTH: Channel.new(16), LOGS: Channel.new(16)}
   for route in routes
     key = key_of(route.method, route.path)
     replies: Channel[Reply] = Channel.new(route.replies.size + 1)
@@ -169,6 +171,10 @@ def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Res
   return refuse(401, Protocol.KIND_UNAUTHORIZED, "the token is missing or wrong") if not authorized?(request)
   if key == HEALTH and not script.queues.has_key?(key)
     return json(200, Protocol.encode_health(Protocol.Health(version: VERSION, wire: some(Protocol.wire_digest()))))
+  end
+
+  if key == LOGS and not script.queues.has_key?(key)
+    return json(200, Protocol.encode_server_log(Protocol.ServerLog(lines: [], warnings: [], warning_count: 0)))
   end
 
   case script.queues.get(key)

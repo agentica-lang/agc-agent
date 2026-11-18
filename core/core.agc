@@ -19,6 +19,7 @@ import Extensions from "src/config/registry"
 import Server from "src/http/server"
 import Builtins from "src/session/builtins"
 import Tools from "src/tools/tools"
+import Log from "src/log"
 
 ## The version of the core package, informational (no tag follows it). A server runs the version of Finn, the time of
 ## its commit (`/v1/health`).
@@ -78,18 +79,18 @@ def call(root: String, input: JSON.Value) -> Extensions.Call = Extensions.call(r
 def serve(registry: Extensions.Registry) -> Void
   case start(registry)
     ok(server) ->
-      puts("Finn Agent core listening on 127.0.0.1:#{server.port}")
+      Log.info("#{Log.STARTED} 127.0.0.1:#{server.port}")
       if not server.control.approvals
-        puts("approvals are off: tools run without asking (finn serve --approvals turns them on)")
+        Log.info("approvals are off: tools run without asking (finn serve --approvals turns them on)")
       end
 
       IO.flush()
       stop_on_signals(server)
       Server.shutdown(server, Server.stop_requested(server))
-      puts("Finn Agent core stopped")
+      Log.info("Finn Agent core stopped")
       IO.flush()
     error(e) ->
-      IO.warn(e.message)
+      Log.warn(e.message)
       System.exit(2)
   end
 end
@@ -114,7 +115,7 @@ def stop_on_signals(server: Server.Server) -> Void
           end
         },
       )
-    error(e) -> IO.warn("no signal handling: #{e.message}")
+    error(e) -> Log.warn("no signal handling: #{e.message}")
   end
 end
 
@@ -125,7 +126,7 @@ def start(registry: Extensions.Registry) -> Result[Server.Server]
   read = ->(name) { System.env(name) }
   options = try Config.from_env(read)
   for warning in options.warnings
-    IO.warn(warning)
+    Log.warn(warning)
   end
 
   # The core's own extensions: the skills, and the MCP servers, which start now.

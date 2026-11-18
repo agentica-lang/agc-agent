@@ -4,6 +4,8 @@ import Protocol from "pkg/protocol/protocol"
 
 KIND_COMMAND = "client.command"
 DEFAULT_PROFILE = "build"
+## The lines `/logs` shows without a number.
+DEFAULT_LOG_LINES = 50
 BUILT_IN = "built-in"
 ## The commands of both clients, in the order `/help` lists them: the one table that the parser, the help and the
 ## suggestions of the full screen read.
@@ -42,6 +44,7 @@ COMMANDS = [
     about: "set up a provider with its key, or local with its base URL (the full screen); alone: pick one",
   ),
   Usage(name: "/logout", args: "[PROVIDER]", about: "remove a stored key or base URL; alone: every one"),
+  Usage(name: "/logs", args: "[N]", about: "the last N lines (default 50) of the server log, which has its warnings"),
   Usage(name: "/stop", about: "stop the running turn"),
   Usage(name: "/cost", about: "what the session cost", listed: false),
   Usage(name: "/help", about: "this list"),
@@ -78,6 +81,8 @@ enum Command
   ## Lists the profiles without an argument.
   Profile(Optional[String])
   Compact
+  ## The last lines of the server log.
+  Logs(Int)
   Stop
   ## The cost of the session, once the model catalog gives prices (#88).
   Cost
@@ -147,6 +152,29 @@ def custom(list: Protocol.CommandList) -> List[Usage]
 
     Usage(name: "/#{printable(c.name)}", args: "[TEXT]", about: about)
   end
+end
+
+## The note lines of a client that starts on a server that has load warnings (the last of them, and where the rest is);
+## none when it has none.
+def warning_notes(log: Protocol.ServerLog) -> List[String]
+  return [] if log.warning_count == 0
+
+  log.warnings + ["#{counted(log.warning_count)} when the server started: /logs shows them"]
+end
+
+## What a client prints on the console after its screen is closed, when the server has warnings: the last of them, the
+## count and the command for all.
+def warning_report(log: Protocol.ServerLog) -> Optional[String]
+  return none if log.warning_count == 0
+
+  head = "#{counted(log.warning_count)} in the server log, the last #{log.warnings.size}:"
+  some(([head] + log.warnings.map { |line| "  #{line}" } + ["finn server logs shows all of them"]).join("\n"))
+end
+
+def counted(count: Int) -> String
+  return "1 warning" if count == 1
+
+  "#{count} warnings"
 end
 
 ## The commands the help and the suggestions show.
@@ -342,6 +370,7 @@ def command(name: String, argument: String) -> Result[Command]
     "/thinking" -> thinking(argument)
     "/profile" -> ok(Command.Profile(given(argument)))
     "/compact" -> bare(Command.Compact, name, argument)
+    "/logs" -> logs(argument)
     "/stop" -> bare(Command.Stop, name, argument)
     "/cost" -> bare(Command.Cost, name, argument)
     "/login" -> ok(Command.Login(try provider(argument)))
@@ -349,6 +378,15 @@ def command(name: String, argument: String) -> Result[Command]
     "/help" -> bare(Command.Help, name, argument)
     # Only `/quit` is left of COMMANDS.
     _ -> bare(Command.Quit, name, argument)
+  end
+end
+
+def logs(argument: String) -> Result[Command]
+  return ok(Command.Logs(DEFAULT_LOG_LINES)) if argument == ""
+
+  case argument.to_i
+    ok(count) if count > 0 -> ok(Command.Logs(count))
+    _ -> error("/logs takes a number of lines, as in /logs 20", kind: KIND_COMMAND)
   end
 end
 

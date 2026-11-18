@@ -37,6 +37,7 @@ def on_command(app: State.Model, command: Client.Command) -> State.Model
     Client.Command.Thinking(level) -> thinking_command(app, level)
     Client.Command.Profile(name) -> State.tried(app, profile_command(app, name))
     Client.Command.Compact -> compact_command(app)
+    Client.Command.Logs(count) -> State.tried(app, logs_command(app, count))
     Client.Command.Login(name) -> Logins.login_command(app, name)
     Client.Command.Logout(name) -> State.tried(app, Logins.logout_command(app, name))
   end
@@ -238,6 +239,16 @@ def changed(app: State.Model, change: Protocol.UpdateSession, done: String) -> R
 end
 
 # The summary takes as long as a turn: a command asks for it and gives the outcome as a note.
+## The last lines of the server log, as notes.
+def logs_command(app: State.Model, count: Int) -> Result[State.Model]
+  shown = app
+  for line in (try app.backend.server_log.call(count)).lines
+    shown = State.noted(shown, line)
+  end
+
+  ok(shown)
+end
+
 def compact_command(app: State.Model) -> State.Model
   backend = app.backend
   id = app.id
