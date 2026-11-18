@@ -32,13 +32,13 @@ end
 
 ## Run it
 
-The program depends on the `core` package of the agc-agent repository by its tag (`core-0.0.1`), as `examples/extension/agentica.toml` does. To start one outside the repository:
+The example is a member of the repository's workspace (`examples/extension/agentica.toml`), so it runs from a clone, where `core` is read in place. `core` cannot be fetched from outside the repository yet: that needs bash's parser as a prebuilt library (agc-agent#290) and workspace dependencies in Agentica (agentica#1850). The planned form is one dependency on the repository, by the tag of a Finn version:
 
-1. Copy `examples/extension` to a folder of your own.
-2. Remove its `agentica.lock`: it lists `core` as a member of the repository's workspace, so `agentica install` refuses it there.
-3. Run `agentica update` in the folder. It fetches `core` and the packages it depends on, by their tags, and writes a new lock.
+```toml
+finn = { git = "https://github.com/agentica-lang/agc-agent", tag = "finn-<ts>", workspace = true }
+```
 
-Then start the program in place of the server:
+From a clone, start the program in place of the server:
 
 ```sh
 agentica my_finn/main.agc        # the server, in the foreground

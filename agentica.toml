@@ -1,5 +1,6 @@
 # A workspace: each member is a package with its own agentica.toml. A member that depends on another names this
 # repository with the member's subdir; inside the repository it is read in place, never fetched.
+# Its tag (a finn-<ts> tag, the only tags there are) only matters outside the repository.
 [workspace]
 repository = "https://github.com/agentica-lang/agc-agent"
 members = ["sse", "llm", "mcp", "protocol", "monty", "bash", "client", "core", "cli", "tui_client", "examples/extension"]
