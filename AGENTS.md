@@ -137,10 +137,11 @@ A package is added by the phase that needs it, never as an empty folder.
     `session`, only the actor's files (`actor`, `turn`, `stream`, `branch`,
     `state`) import `turn`, `stream`, `branch` and `state`. An import never
     has a `..` after its first folder.
-  - Each package has one `VERSION` constant in its public module, equal to its
-    tag (`llm-0.0.1` is `VERSION = "0.0.1"`). A release goes in this order: tag
-    the dependency (`llm-X`), then a PR that bumps the dependent's entry and
-    `agentica.lock`, then tag the dependent (`core-Y`).
+  - There are no member tags, only `finn-<ts>` (below). A member's pin of a
+    sibling names a `finn-<ts>` tag; inside the workspace it is read in place,
+    so the pin only matters outside the repository. The `VERSION` constant of
+    a package is informational (`finn --version` shows llm's, `mcp` sends its
+    own to MCP servers), and no tag follows it.
   - The version of Finn itself is the UTC time of the commit
     (`YYYYMMDDhhmmss`): `bin/finn` exports it as `FINN_VERSION` (from git, or
     from `bin/commit-time` in an archive), and the core and the clients report

@@ -4,5 +4,5 @@ version = 1
 name = "sse"
 git = "https://github.com/agentica-lang/agc-agent"
 subdir = "sse"
-tag = "sse-0.0.1"
+tag = "finn-20261118093950"
 workspace = true
