@@ -568,10 +568,10 @@ def boot_s() -> Int
 end
 
 # Its `FINN_STATE_DIR` names the folder; without one, the folder is the default one. An environment that cannot be read
-# proves nothing against it.
+# proves nothing, so the process is not proved to be the server.
 def serves_dir?(dir: String, pid: Int) -> Bool
   read = File.read_text("/proc/#{pid}/environ")
-  return true if not read.ok?
+  return false if not read.ok?
 
   environ = NUL + read.unwrap! + NUL
   key = "#{NUL}#{STATE_DIR_ENV}="

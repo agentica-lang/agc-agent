@@ -115,6 +115,7 @@ def gone(dir: String, pid: Int, now: Bool, wait_ms: Int) -> Result[Void]
   return ok() if stopped_in_time(dir, pid, wait_ms)
 
   if now
+    try proven(dir, pid, "it did not stop in time")
     try signal(pid, true)
     return ok() if exited_within(dir, pid, KILL_WAIT_MS)
 

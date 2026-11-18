@@ -321,9 +321,9 @@ def stop_steps(dir: String, server: Process) -> Result[Void]
 end
 
 # `finn server stop` signals only a process that proves to be the folder's server. A `server.json` that names an
-# Agentica program while no server holds the folder's lock, an Agentica program of another folder, or a program that is
-# not Agentica gets nothing: the stop says no server runs, and the program goes on. The folder's own program, with the
-# lock held, is stopped.
+# Agentica program while no server holds the folder's lock, an Agentica program of another folder, a program that is
+# not Agentica, or the folder's own program when it started after `server.json` was written gets nothing: the stop says
+# no server runs, and the program goes on. The folder's own program, with the lock held, is stopped.
 def test_a_stop_signals_only_a_process_that_proves_to_be_the_folders_server() -> Result[Void]
   Driver.within_dir(&only_the_server)
 end
@@ -353,6 +353,10 @@ def signalled_once(dir: String, mine: Process, other: Process, sleep: Process) -
     try name_in_server_json(dir, pids[2])
     try untouched(dir, sleep, "a program that is not Agentica")
     try name_in_server_json(dir, pids[0])
+    # A minute before: the program started during this test, which has 30 s.
+    try written_at(dir, Time.now_ms / 1000 - 60)
+    try untouched(dir, mine, "a program that started after server.json was written")
+    try name_in_server_json(dir, pids[0])
     stopped = try run(dir, ["stop"])
     try Test.eq(stopped.lines, ["server stopped"])
     Test.eq(try Process.wait(mine, 5000), 143)
@@ -368,6 +372,14 @@ end
 def ready_pid(program: Process) -> Result[Int]
   line = try Process.read_line(program, 15_000)
   line.replace("ready ", "").strip.to_i
+end
+
+# Sets the time `server.json` was written, to before the program it names started.
+def written_at(dir: String, seconds: Int) -> Result[Void]
+  touch = try Process.spawn("touch", ["-d", "@#{seconds}", "#{dir}/server.json"])
+  code = Process.wait(touch, 5000)
+  Process.close(touch)
+  Test.eq(try code, 0)
 end
 
 # After the program it names started, as a server writes it.

@@ -340,6 +340,7 @@ def test_a_code_mode_not_the_servers_is_noted() -> Result[Void]
   server = Http.Server(url: "http://127.0.0.1:#{HTTP.local_port(listening)}", token: "t")
   notes = [some(true), some(false), none].map { |wanted| Client.code_mode_note(server, wanted) }
   HTTP.close_server(listening)
+  _ = HTTP.wait(listening)
   try Test.eq(notes, ["the running server has code mode off; `finn server restart` applies it", "", ""])
   bare = Protocol.encode_server_status(status.with(no_worker: some(true)))
   app = HTTP.app(->(_request) { ok(HTTP.Response(status: 200, headers: [], body: bare.bytes)) })
@@ -347,6 +348,7 @@ def test_a_code_mode_not_the_servers_is_noted() -> Result[Void]
   server = Http.Server(url: "http://127.0.0.1:#{HTTP.local_port(listening)}", token: "t")
   note = Client.code_mode_note(server, some(true))
   HTTP.close_server(listening)
+  _ = HTTP.wait(listening)
   Test.eq(note, "code mode isn't available on this system: there is no Monty worker for it")
 end
 
