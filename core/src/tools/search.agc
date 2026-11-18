@@ -11,9 +11,16 @@ MAX_RESULTS = 500
 MAX_FILE_BYTES = 1048576
 MAX_LINE_CHARS = 300
 
+## A walk that starts outside the session folder (it may be the whole disk) stops after this long, with a note.
+OUTSIDE_MS = 5000
+## Folders that are not files on a disk: a walk from `/` does not go in.
+SKIPPED = ["/proc", "/sys", "/dev"]
+
 struct Walked
   files: List[String]
   cut: Bool
+  ## The time (ms) a walk stops at; 0 for no limit.
+  until_ms: Int = 0
 end
 
 struct GlobArgs
@@ -31,7 +38,7 @@ def glob(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, GlobArgs.codec)
   matcher = try glob_regex(args.pattern)
   base = try folder(ctx, args.path)
-  walked = try walk(base, "", 0, Walked(files: [], cut: false))
+  walked = try walk(base, "", 0, started(ctx, base))
   found = readable(ctx, base, walked.files).select { |file| Regex.match?(file, matcher) }
   lines = found.take(MAX_RESULTS).map { |file| Sandbox.relative(ctx.root, "#{base}/#{file}") }
   ok("#{listing(lines, found.size)}#{cut_note(walked.cut)}")
@@ -42,7 +49,7 @@ def grep(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   pattern = try Regex.compile(args.pattern)
   filter = try glob_regex(args.glob.unwrap_or("**"))
   base = try folder(ctx, args.path)
-  walked = try walk(base, "", 0, Walked(files: [], cut: false))
+  walked = try walk(base, "", 0, started(ctx, base))
   wanted = readable(ctx, base, walked.files).select { |name| Regex.match?(name, filter) }
   hits: List[String] = []
   for file in wanted
@@ -126,11 +133,18 @@ def child(dir: String, name: String) -> String
   end
 end
 
+def started(ctx: Spec.Context, base: String) -> Walked
+  return Walked(files: [], cut: false) if Sandbox.inside?(ctx.root, base)
+
+  Walked(files: [], cut: false, until_ms: Time.now_ms + OUTSIDE_MS)
+end
+
 def walk(base: String, dir: String, depth: Int, found: Walked) -> Result[Walked]
   walked = found
   for name in try Dir.list(child(base, dir))
-    next if name == ".git"
+    next if name == ".git" or SKIPPED.include?(child(base, child(dir, name)))
     return ok(walked.with(cut: true)) if walked.files.size >= MAX_FILES
+    return ok(walked.with(cut: true)) if walked.until_ms > 0 and Time.now_ms > walked.until_ms
 
     entry = child(dir, name)
     case File.lstat(child(base, entry))
@@ -154,7 +168,7 @@ end
 
 def cut_note(cut: Bool) -> String
   if cut
-    "\n[the walk stopped at #{MAX_FILES} files or depth #{MAX_DEPTH}: the list may be incomplete]"
+    "\n[the walk stopped at #{MAX_FILES} files, depth #{MAX_DEPTH} or the time limit: the list may be incomplete]"
   else
     ""
   end

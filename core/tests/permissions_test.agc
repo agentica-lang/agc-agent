@@ -155,7 +155,7 @@ def test_a_deny_rule_after_an_allow_rule_wins_for_bash() -> Result[Void]
   allowed = try Approval.parse_rules(["allow bash(*)"] + deny)
   bare = try Approval.parse_rules(deny)
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
-  ctx = try Tools.context(root, ->(_name: String) { error("unset") })
+  ctx = try Tools.context(root, ->(_name: String) { error("unset") }, true)
   commands = ["rm -rf x", "ls && rm x", "cat .env", "git status"]
   shown = [allowed, bare].flat_map do |rules|
     [false, true].map do |asking|

@@ -74,10 +74,7 @@ end
 ## The path of each call, relative to the session folder, for the approval rules and the preview.
 def read_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, ReadFileArgs.codec)
-  path = try readable(ctx, args.path)
-  return ok(path) if not Sandbox.inside?(ctx.root, path)
-
-  ok(Sandbox.relative(ctx.root, path))
+  ok(Sandbox.relative(ctx.root, try readable(ctx, args.path)))
 end
 
 ## The path `read_file` reads: in the session folder, or in a folder of `read_roots` when it is absolute.

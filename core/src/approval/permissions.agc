@@ -20,7 +20,7 @@ import Logger from "std/logger"
 
 CONFIG_ENV = "FINN_CONFIG"
 PROJECT_FILE = ".finn/config.json"
-## The tools whose calls the accept-edits mode runs.
+## The tools whose calls the accept-edits mode runs, for paths in the session folder (a path outside it shows absolute).
 EDITS = ["write_file", "edit_file", "apply_patch"]
 
 struct Allows
@@ -95,7 +95,7 @@ def allows?(allows: Allows, rules: Approval.Rules, root: String, tool: String, t
   return false if Approval.decide(rules, root, tool, target, false) == Spec.Verdict.Deny
   return true if allows.exact.include?(key(tool, target))
   return true if allows.tools.include?(tool)
-  return true if allows.accept_edits and EDITS.include?(tool)
+  return true if allows.accept_edits and EDITS.include?(tool) and in_folder?(target)
   return false if tool != "bash"
 
   scan = Shell.scan(root, target)
@@ -107,6 +107,9 @@ def allows?(allows: Allows, rules: Approval.Rules, root: String, tool: String, t
 
   scan.clear and scan.asked.all? { |r| allowed.call(r) }
 end
+
+# Every path of the target of a write is in the session folder (a path outside it shows absolute).
+def in_folder?(target: String) -> Bool = not target.split(", ").any? { |path| path.start_with?("/") }
 
 ## What an answer adds; `allow_prefix` without a prefix allows the same call.
 def answered(allows: Allows, decision: String, root: String, tool: String, target: String) -> Allows

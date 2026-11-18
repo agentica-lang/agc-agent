@@ -36,16 +36,16 @@ BASH = "bash"
 ## The longest a `bash` call may run.
 MAX_BASH_TIMEOUT_MS = Shell.MAX_TIMEOUT_MS
 
-## The context of a session in `cwd`: the real path of the folder, where bash reads its few environment variables, and
-## the tools `more` after the base ones.
+## The context of a session in `cwd`: the real path of the folder, where bash reads its few environment variables, whether
+## the file tools stay in it (`confine`: no default, so a caller says it), and the tools `more` after the base ones.
 def context(
   cwd: String,
   env: Fn[String, Result[String]],
+  confine: Bool,
   more: List[Spec.Tool] = [],
   late: Optional[Fn[List[Spec.Tool]]] = none,
   diff: Optional[Fn[String, JSON.Value, String]] = none,
   wrap: Optional[Fn[String, Spec.Run, Spec.Run]] = none,
-  confine: Bool = false,
 ) -> Result[Spec.Context]
   root = try Sandbox.open(cwd)
   ok(Spec.Context(root: root, env: env, tools: more, late: late, diff: diff, wrap: wrap, confine: confine))

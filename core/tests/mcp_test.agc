@@ -76,7 +76,7 @@ end
 def test_mcp_tools_follow_the_rules_and_survive_a_crash() -> Result[Void]
   within_mcp do |started|
     rules = try Approval.parse_rules(["allow mcp__fake__echo(*)"])
-    ctx = try Tools.context(".", &H.fake_env, started.tools)
+    ctx = try Tools.context(".", &H.fake_env, true, started.tools)
     input = JSON.object({"text": JSON.from("hi")})
     try Test.eq(Approval.verdict(rules, ctx, "mcp__fake__echo", input), Tools.Verdict.Allow)
     try Test.eq(Approval.verdict(rules, ctx, "mcp__fake__fail", input), Tools.Verdict.Ask)
@@ -119,7 +119,7 @@ def test_a_server_gets_a_short_environment_and_unique_tools() -> Result[Void]
     end
 
     started = McpTools.start(servers)
-    ctx = try Tools.context(".", &H.fake_env, started.tools)
+    ctx = try Tools.context(".", &H.fake_env, true, started.tools)
     probe = ->(name: String) { Tools.run(ctx, "mcp__odd__probe", JSON.object({"text": JSON.from(name)})).text }
     key = probe.call("SECRET_API_KEY")
     greeting = probe.call("FAKE_MCP_GREETING")
@@ -228,7 +228,7 @@ def with_peer(dir: String, process: Process) -> Result[Void]
   read = ->(name: String) { vars.get(name).map { |v| ok(v) }.unwrap_or(config_env(dir, name)) }
   started = McpTools.start(try McpTools.servers(read, dir))
   rules = try Approval.parse_rules(["allow mcp__web__echo(*)"])
-  ctx = try Tools.context(".", &H.fake_env, started.tools)
+  ctx = try Tools.context(".", &H.fake_env, true, started.tools)
   input = JSON.object({"text": JSON.from("hi")})
   verdicts = [
     Approval.verdict(rules, ctx, "mcp__web__echo", input),

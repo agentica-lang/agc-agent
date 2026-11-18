@@ -1,4 +1,5 @@
 import Approval from "../src/approval/approval"
+import Permissions from "../src/approval/permissions"
 import Diff from "../src/tools/diff"
 import Tools from "../src/tools/tools"
 
@@ -51,9 +52,8 @@ def setup_with(allow: List[String], deny: List[String], confine: Bool = true) ->
   try link("#{outside}/new.txt", "#{root}/dangling")
   try link("#{root}/a.txt", "#{root}/inside_link")
   rules = try Approval.parse_rules(allow.map { |r| "allow #{r}" } + deny.map { |r| "deny #{r}" })
-  ctx = (try Tools.context(root, &fake_env)).with(
+  ctx = (try Tools.context(root, &fake_env, confine)).with(
     hidden: some(->(path: String) { Approval.read_denied?(rules, path) }),
-    confine: confine,
   )
 
   ok(Setup(base: base, root: root, outside: outside, ctx: ctx, rules: rules))
@@ -114,6 +114,62 @@ def test_the_file_tools_reach_any_path_when_the_confinement_is_off() -> Result[V
   denied = Approval.verdict(s.rules, s.ctx, "write_file", JSON.from({"path": "../outside/denied.txt", "content": ""}))
   try Test.eq(denied, Tools.Verdict.Deny)
   try refused(call(s, "read_file", {"path": "../outside/missing.txt"}))
+  done(s)
+end
+
+# With the confinement off, a file tool that reaches outside the session folder is an `external_directory(FOLDER/*)`
+# too: with no rule it asks (a read as well), an allow rule of the folder lets it run, a deny rule refuses, and the
+# accept-edits mode runs only the writes inside the folder.
+def test_a_file_tool_outside_the_folder_asks_like_bash_does() -> Result[Void]
+  s = try setup_with([], [], false)
+  rules = Approval.Rules(all: [])
+  outside = "#{s.outside}/secret.txt"
+  verdict = ->(tool: String, fields: Map[String, String]) { Approval.verdict(rules, s.ctx, tool, JSON.from(fields)) }
+  try Test.eq(verdict.call("read_file", {"path": outside}), Tools.Verdict.Ask)
+  try Test.eq(verdict.call("grep", {"pattern": "x", "path": s.outside}), Tools.Verdict.Ask)
+  try Test.eq(verdict.call("glob", {"pattern": "*", "path": s.outside}), Tools.Verdict.Ask)
+  try Test.eq(verdict.call("write_file", {"path": "../outside/n.txt", "content": ""}), Tools.Verdict.Ask)
+  try Test.eq(verdict.call("read_file", {"path": "a.txt"}), Tools.Verdict.Allow)
+  allowed = try Approval.parse_rules(["allow external_directory(#{s.outside}/*)"])
+  denied = try Approval.parse_rules([
+    "allow external_directory(#{s.outside}/*)",
+    "deny external_directory(#{s.outside}/*)",
+  ])
+
+  try Test.eq(Approval.verdict(allowed, s.ctx, "read_file", JSON.from({"path": outside})), Tools.Verdict.Allow)
+  try Test.eq(Approval.verdict(denied, s.ctx, "read_file", JSON.from({"path": outside})), Tools.Verdict.Deny)
+  edits = Permissions.Allows(accept_edits: true)
+  try Test.eq(Permissions.allows?(edits, rules, s.root, "write_file", "sub/b.txt"), true)
+  try Test.eq(Permissions.allows?(edits, rules, s.root, "write_file", "#{s.outside}/n.txt"), false)
+  try Test.eq(Permissions.allows?(edits, rules, s.root, "apply_patch", "sub/b.txt, #{s.outside}/n.txt"), false)
+  done(s)
+end
+
+# A deny rule beats an outside path, also one written with `~`; Finn's own key and token files are denied unless a rule
+# of the config comes after and allows them.
+def test_deny_rules_and_the_defaults_cover_paths_outside_the_folder() -> Result[Void]
+  s = try setup_with([], ["read_file(~/.ssh/*)"], false)
+  home = System.env("HOME").unwrap_or("/root")
+  try Test.eq(
+    Approval.verdict(s.rules, s.ctx, "read_file", JSON.from({"path": "#{home}/.ssh/id_rsa"})),
+    Tools.Verdict.Deny,
+  )
+
+  defaults = try Approval.parse_rules(Approval.DEFAULTS)
+  later = try Approval.parse_rules(Approval.DEFAULTS + ["allow read_file(*/finn/auth.json)"])
+  mine = JSON.from({"path": "#{s.base}/config/finn/auth.json"})
+  try Test.eq(Approval.verdict(defaults, s.ctx, "read_file", mine), Tools.Verdict.Deny)
+  try Test.eq(
+    Approval.verdict(
+      defaults,
+      s.ctx,
+      "write_file",
+      JSON.from({"path": "#{s.base}/state/finn/server.json", "content": ""}),
+    ),
+    Tools.Verdict.Deny,
+  )
+
+  try Test.eq(Approval.verdict(later, s.ctx, "read_file", mine) == Tools.Verdict.Deny, false)
   done(s)
 end
 
@@ -533,7 +589,7 @@ end
 # (spaces, NBSP, a zero-width space, an ideographic space, a soft hyphen, a Hangul filler, a blank braille cell, VS16,
 # a tag character) or has a control character, an unknown status, two in progress. A line end or a tab is a space.
 def test_todo_write_refuses_a_bad_list() -> Result[Void]
-  ctx = try Tools.context(System.env("TMPDIR").unwrap_or("/tmp"), &fake_env)
+  ctx = try Tools.context(System.env("TMPDIR").unwrap_or("/tmp"), &fake_env, true)
   item = ->(content: String, status: String) {
     JSON.object({"content": JSON.from(content), "status": JSON.from(status)})
   }

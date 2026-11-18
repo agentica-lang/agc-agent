@@ -231,7 +231,7 @@ def branch(sessions: Sessions, id: String, entry: Int) -> Result[Protocol.Branch
 end
 
 ## A new session with the history of session `id` up to `entry` of its tree, all of it when none. It keeps the
-## session's folder, system prompt, model API, model and thinking level.
+## session's folder, system prompt, model API, model, thinking level and confinement of the file tools.
 def fork(sessions: Sessions, id: String, entry: Optional[Int]) -> Result[Protocol.Branched]
   address = try find(sessions, id)
   registry = sessions.registry.address
@@ -246,6 +246,12 @@ def fork(sessions: Sessions, id: String, entry: Optional[Int]) -> Result[Protoco
   end
 
   _ = try adopted
+  # The confinement of the file tools is a setting of the session that the file does not keep.
+  confined = (try SessionActor.snapshot(address)).confine
+  if confined != sessions.options.confine_files
+    try update(sessions, header.id, Protocol.UpdateSession(confine: some(confined)))
+  end
+
   ok(Protocol.Branched(id: header.id, text: copied.text))
 end
 
@@ -478,11 +484,11 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
   ctx = case Tools.context(
     request.cwd,
     options.env,
+    options.confine_files,
     options.tools,
     late_of(options),
     options.diff,
     wrap_of(options),
-    options.confine_files,
   )
     ok(ctx) -> ok(ctx)
     error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
@@ -570,11 +576,11 @@ def read(options: Config.Options, listed: Entry) -> Result[Loaded]
   context = try Tools.context(
     saved.header.cwd,
     options.env,
+    options.confine_files,
     options.tools,
     late_of(options),
     options.diff,
     wrap_of(options),
-    options.confine_files,
   )
 
   ok(Loaded(saved: saved, opened: opened(context, try approver_of(options, context.root))))

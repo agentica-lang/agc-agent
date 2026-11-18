@@ -183,3 +183,23 @@ def test_a_session_switches_the_confinement_of_its_file_tools() -> Result[Void]
     Test.eq((try H.session(h, id)).confine, false)
   end
 end
+
+# A read outside the session folder runs by default and is refused after `PATCH` with `confine`, in the same session.
+def test_a_read_outside_the_folder_is_refused_once_the_session_confines_its_file_tools() -> Result[Void]
+  replies = ["read_outside.sse", "text.sse", "read_outside.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, approvals: false)) do |h|
+    try File.write_text("#{h.base}/outside.txt", "text of outside")
+    id = try H.new_session(h)
+    _ = try H.send(h, id, "Read it.")
+    _ = try H.idle(h, id)
+    _ = try H.next_request(h)
+    open = (try H.next_request(h)).body
+    try Test.assert(open.include?("text of outside"), "the read did not run: #{open}")
+    try Test.eq((try patch(h, id, "{\"confine\": true}")).status, 200)
+    _ = try H.send(h, id, "Read it again.")
+    _ = try H.idle(h, id)
+    _ = try H.next_request(h)
+    shut = (try H.next_request(h)).body
+    Test.assert(shut.include?("outside the session folder"), "the read was not refused: #{shut}")
+  end
+end

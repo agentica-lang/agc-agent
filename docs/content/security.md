@@ -31,7 +31,7 @@ Any of these:
 
 With the approvals on, a call of these tools waits for your answer unless a rule or an earlier answer allows it: `write_file`, `edit_file`, `apply_patch`, `bash`, the MCP tools, and the tools of an [extension](extensions.md) that has `asks: true`.
 
-`read_file`, `glob`, `grep`, `todo_write`, `activate_skill` and `run_script` never ask. The calls that a `run_script` script makes are checked one by one, as direct calls.
+`read_file`, `glob`, `grep`, `todo_write`, `activate_skill` and `run_script` never ask, except for a path outside the session folder: a file tool that reaches there asks like `bash` does, unless an allow rule of `external_directory(FOLDER/*)` covers the folder (a deny rule refuses it). The calls that a `run_script` script makes are checked one by one, as direct calls.
 
 Every `bash` call asks unless an allow rule or an earlier answer allows each of its commands, even one that only reads. A read of a `.env` or `.env.*` file asks too, but `.env.example`, with the `read_file` tool or, best effort, with `cat .env` and the like; an `allow read_file(*)` rule turns that off.
 
@@ -49,13 +49,15 @@ The [HTTP API](server.md#routes) takes two more answers:
 - `allow_prefix` ("always") allows, for each command of the line, its name and ` *` (`ls *`) when the program is one of `echo`, `ls`, `pwd`, `sleep`, `which` and `df`. The request shows them. Any other program, a command with an assignment before its name (`FOO=1 rm x`), or a word with `$` or a substitution (`ls $(pwd)`), gets the same command only, and a later command of that kind is not allowed by a name and ` *`. A line with a `>` or `<` anywhere (`echo hi > f`, `{ echo hi; } > f`) is always asked exactly: each of its commands gets the same command only. For a line that tree-sitter-bash cannot read clearly, it allows the same call only.
 - `allow_tool` allows every call of the tool.
 
-The accept-edits mode (`PATCH /v1/sessions/ID` with `{"accept_edits": true}`) runs the calls of `write_file`, `edit_file` and `apply_patch` without asking.
+The accept-edits mode (`PATCH /v1/sessions/ID` with `{"accept_edits": true}`) runs the calls of `write_file`, `edit_file` and `apply_patch` without asking, for paths in the session folder; a path outside it still asks.
 
 Answers and the accept-edits mode last until the server restarts. With the approvals on, a change under `.git/` or `.finn/` always asks, even when an allow rule, an answer or accept-edits covers it, since git's config and hooks run programs and `.finn/` holds the project's rules, skills, profiles and slash commands; only a deny rule refuses it instead. With the approvals off it runs.
 
 ## Rules
 
 Finn's rules are [OpenCode's](https://opencode.ai/docs/permissions/), with Finn's tool names. A rule is `ACTION TOOL(PATTERN)`: the action `allow`, `ask` or `deny`, and `TOOL` alone means `TOOL(*)`. In the pattern and the tool, `*` matches any text and `?` one character; a pattern that ends in ` *` also matches without it, so `git *` matches `git`. `~` or `$HOME` at the start of a pattern is your home folder. For the file tools the pattern matches the path, for `bash` each command, and for an MCP tool its JSON input.
+
+A rule matches the real path of a file, links followed: `~` or `$HOME` at the start of a pattern is the home folder (and its real path when that is a link). By default no tool reads or writes `auth.json`, `server.json`, `config.json` and `chatgpt.json` of a `finn` folder (the key and token files, the server's address and its token); an `allow` rule in your config file, which comes after, lets one through.
 
 An [extension](extensions.md#prompts-and-events) that changes a call (`Core.Event.ToolBefore`) does so before the rules check it: the rules and the approval see the input that will run, and the call's result in the session file starts with the input that ran.
 

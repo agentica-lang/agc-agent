@@ -19,12 +19,27 @@
 
 import Regex from "std/regex"
 import Shell from "shell"
+import Sandbox from "../tools/sandbox"
 import Patch from "../tools/patch"
 import Spec from "../tools/spec"
 import Tools from "../tools/tools"
 
-## OpenCode's defaults for reads, before the rules of the config: a `.env` file asks, `.env.example` does not.
-DEFAULTS = ["ask read_file(*.env)", "ask read_file(*.env.*)", "allow read_file(*.env.example)"]
+## OpenCode's defaults for reads, before the rules of the config: a `.env` file asks, `.env.example` does not; and no
+## tool reads or writes the files of Finn's own folders that hold keys, tokens and the server's address (an `allow` rule of
+## the config comes after and wins).
+DEFAULTS = [
+  "ask read_file(*.env)",
+  "ask read_file(*.env.*)",
+  "allow read_file(*.env.example)",
+  "deny read_file(/*/finn/auth.json)",
+  "deny read_file(/*/finn/server.json)",
+  "deny read_file(/*/finn/config.json)",
+  "deny read_file(/*/finn/chatgpt.json)",
+  "deny write_file(/*/finn/auth.json)",
+  "deny write_file(/*/finn/server.json)",
+  "deny write_file(/*/finn/config.json)",
+  "deny write_file(/*/finn/chatgpt.json)",
+]
 ## The longest glob of a rule: a match costs up to the length of the pattern times that of the target.
 MAX_PATTERN = 256
 
@@ -65,7 +80,12 @@ end
 def parse_rules(texts: List[String]) -> Result[Rules]
   all: List[Rule] = []
   for text in texts
-    all = all.push(try parse_rule(text))
+    rule = try parse_rule(text)
+    all = all.push(rule)
+    # The tools check real paths: a rule of `~/x` also matches where a link in the home folder leads.
+    for real in real_home(rule)
+      all = all.push(real)
+    end
   end
 
   ok(Rules(all: all))
@@ -100,9 +120,14 @@ end
 ## The action of the last rule that matches.
 def evaluate(rules: Rules, tool: String, target: String) -> Optional[Spec.Verdict]
   found: Optional[Spec.Verdict] = none
+  chars = target.replace("\\", "/").split("")
   for rule in rules.all
-    matched = (rule.literal and target == rule.pattern) or (not rule.literal and match?(target, rule.pattern))
-    if match?(tool, rule.tool) and matched
+    # A pattern of an absolute path cannot match a path inside the session folder: no walk over it.
+    next if rule.pattern.start_with?("/") and not chars.empty? and chars[0] != "/"
+    next if rule.tool != tool and not match?(tool, rule.tool)
+
+    matched = (rule.literal and target == rule.pattern) or (not rule.literal and matches_chars?(chars, rule.pattern))
+    if matched
       found = some(rule.action)
     end
   end
@@ -111,8 +136,10 @@ def evaluate(rules: Rules, tool: String, target: String) -> Optional[Spec.Verdic
 end
 
 ## OpenCode's `Wildcard.match`: `*` any text, `?` one character, a trailing ` *` optional; `\\` counts as `/`.
-def match?(text: String, pattern: String) -> Bool
-  chars = text.replace("\\", "/").split("")
+def match?(text: String, pattern: String) -> Bool = matches_chars?(text.replace("\\", "/").split(""), pattern)
+
+## `match?` of a text already split into its characters (with `\\` as `/`), for many patterns.
+def matches_chars?(chars: List[String], pattern: String) -> Bool
   glob = pattern.replace("\\", "/")
   return true if glob.end_with?(" *") and globbed?(chars, glob.slice(0, glob.length - 2).split(""))
 
@@ -162,6 +189,7 @@ private
 GIT = /\A\.git\.*\z/
 FINN = /\A\.finn\.*\z/
 WRITES = ["write_file", "edit_file", "apply_patch"]
+FILE_TOOLS = ["read_file", "write_file", "edit_file", "glob", "grep"]
 
 # Each path of `apply_patch` decides as the call that does the same would: an updated file as `edit_file`, an added
 # file or the target of a move as `write_file`, each also as `apply_patch`. A deny rule of `edit_file`, `write_file`
@@ -170,19 +198,34 @@ WRITES = ["write_file", "edit_file", "apply_patch"]
 # allowed.
 def patch_verdict(rules: Rules, ctx: Spec.Context, input: JSON.Value) -> Spec.Verdict
   case Patch.touched(ctx, input)
-    ok(found) -> combined(found.map { |t| path_verdict(rules, t) })
+    ok(found) -> combined(found.map { |t| path_verdict(rules, ctx, t) })
     error(_) -> Spec.Verdict.Deny
   end
 end
 
 def tool_verdict(rules: Rules, ctx: Spec.Context, tool: Spec.Tool, input: JSON.Value) -> Spec.Verdict
   case tool.target(ctx, input)
-    ok(target) -> decide(rules, ctx.root, tool.name, target, tool.asks)
+    ok(target) ->
+      combined([decide(rules, ctx.root, tool.name, target, tool.asks), outside_verdict(rules, ctx, tool.name, target)])
     error(_) -> Spec.Verdict.Deny
   end
 end
 
-def path_verdict(rules: Rules, t: Patch.Touched) -> Spec.Verdict
+# A file tool that reaches outside the session folder is also an `external_directory(FOLDER/*)`, as it is for `bash`:
+# with no rule it asks, whatever the tool does by default, so a read of `~/.ssh/id_rsa` is not silent.
+def outside_verdict(rules: Rules, ctx: Spec.Context, tool: String, target: String) -> Spec.Verdict
+  return Spec.Verdict.Allow if tool == "bash" or not FILE_TOOLS.include?(tool)
+  # The folders of the skills the session can load are read as part of the session.
+  return Spec.Verdict.Allow if (ctx.read_roots.any? { |dir| Sandbox.inside?(dir, target) })
+
+  case Shell.external(ctx.root, target)
+    some(glob) -> decide_one(rules, Shell.EXTERNAL, glob, true)
+    none -> Spec.Verdict.Allow
+  end
+end
+
+def path_verdict(rules: Rules, ctx: Spec.Context, t: Patch.Touched) -> Spec.Verdict
+  outside = outside_verdict(rules, ctx, "write_file", t.path)
   decide = ->(tool: String) { decide_one(rules, tool, t.path, true) }
   denied = ["edit_file", "write_file", Patch.NAME].any? { |tool| decide.call(tool) == Spec.Verdict.Deny }
   return Spec.Verdict.Deny if denied
@@ -193,9 +236,25 @@ def path_verdict(rules: Rules, t: Patch.Touched) -> Spec.Verdict
     Patch.Touch.Remove -> [Patch.NAME]
   end
 
+  return Spec.Verdict.Deny if outside == Spec.Verdict.Deny
+  return Spec.Verdict.Ask if outside == Spec.Verdict.Ask
   return Spec.Verdict.Allow if (allowing.any? { |tool| decide.call(tool) == Spec.Verdict.Allow })
 
   Spec.Verdict.Ask
+end
+
+# The rule with the home folder of the rule (from `~` or `$HOME`) as its real path, when that is not the same text.
+def real_home(rule: Rule) -> List[Rule]
+  home = System.env("HOME")
+  return [] if not home.ok? or home.unwrap! == "" or not rule.pattern.start_with?(home.unwrap!)
+
+  real = Path.real(home.unwrap!).unwrap_or(home.unwrap!)
+  return [] if real == home.unwrap!
+
+  rest = rule.pattern.slice(home.unwrap!.length, rule.pattern.length - home.unwrap!.length)
+  return [] if rest != "" and not rest.start_with?("/")
+
+  [rule.with(pattern: "#{real}#{rest}")]
 end
 
 def expanded(pattern: String) -> String

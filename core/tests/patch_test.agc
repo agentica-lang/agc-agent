@@ -37,7 +37,7 @@ def test_a_patch_applies_whole_or_not_at_all() -> Result[Void]
   dir = try fresh()
   try File.write_text("#{dir}/a.py", "def f():\n    x = 1\n    return x\n\ndef g():\n    x = 1\n    return x\n")
   try File.write_text("#{dir}/old.txt", "bye\n")
-  ctx = try Tools.context(dir, ->(_n: String) { error("unset") })
+  ctx = try Tools.context(dir, ->(_n: String) { error("unset") }, true)
   bad = run(ctx, "*** Begin Patch\n*** Delete File: old.txt\n*** Update File: a.py\n-missing\n*** End Patch")
   try Test.eq(bad.is_error, true)
   try Test.eq(File.read_text("#{dir}/old.txt"), ok("bye\n"))
@@ -130,6 +130,42 @@ def test_bad_patches_are_refused() -> Result[Void]
   _ = Path.remove(dir)
   try Test.eq(outputs.select { |o| not o.is_error }.map { |o| o.text }, [])
   Test.eq([files, [ok(new.to_s)]], [[ok("one\n"), ok("two\n")], [ok("false")]])
+end
+
+# Without the confinement a patch reaches outside the folder: it asks (there is no rule for that folder), the files are
+# made with their folders, and a failed step removes the folders it made there too.
+def test_an_unconfined_patch_reaches_outside_asks_and_rolls_back_its_new_folders() -> Result[Void]
+  dir = try fresh()
+  base = try fresh()
+  outside = "#{base}/outside"
+  try Dir.mkdir(outside)
+  ctx = try Tools.context(dir, ->(_n: String) { error("unset") }, false)
+  patch = "*** Begin Patch\n*** Add File: #{outside}/new/deep/x.txt\n+x\n*** End Patch"
+  rules = try Approval.parse_rules(["allow apply_patch(*)"])
+  asked = Approval.verdict(rules, ctx, "apply_patch", input(patch))
+  allowed = try Approval.parse_rules(["allow apply_patch(*)", "allow external_directory(#{outside}/*)"])
+  folder_rule = Approval.verdict(
+    allowed,
+    ctx,
+    "apply_patch",
+    input("*** Begin Patch\n*** Add File: #{outside}/y.txt\n+x\n*** End Patch"),
+  )
+
+  made = run(ctx, patch)
+  kept = File.read_text("#{outside}/new/deep/x.txt")
+  failing = (
+    "*** Begin Patch\n*** Add File: #{outside}/other/z.txt\n+z\n*** Update File: missing.txt\n-a\n+b\n*** End Patch"
+  )
+
+  failed = run(ctx, failing)
+  left = Dir.list(outside)
+  _ = Path.remove(dir)
+  _ = Path.remove(base)
+  try Test.eq([asked, folder_rule], [Tools.Verdict.Ask, Tools.Verdict.Allow])
+  try Test.eq(made.is_error, false)
+  try Test.eq(kept, ok("x\n"))
+  try Test.eq(failed.is_error, true)
+  Test.eq(left, ok(["new"]))
 end
 
 # A write or a delete that fails midway puts back the files written before it, removes the files and folders it
@@ -263,7 +299,7 @@ end
 
 def update(path: String, body: String) -> String = "*** Begin Patch\n*** Update File: #{path}\n#{body}\n*** End Patch"
 
-def plain(dir: String) -> Result[Tools.Context] = Tools.context(dir, ->(_n: String) { error("unset") }, confine: true)
+def plain(dir: String) -> Result[Tools.Context] = Tools.context(dir, ->(_n: String) { error("unset") }, true)
 
 def run(ctx: Tools.Context, patch: String) -> Tools.Output = Tools.run(ctx, "apply_patch", input(patch))
 
