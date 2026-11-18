@@ -1,11 +1,17 @@
 ## Runs the client as a child process on pipes, against a fake server, and reads what it prints.
 
 import HTTP from "std/http"
+import Protocol from "pkg/protocol/protocol"
 import Fake from "fake_server"
 
 READ_MS = 10_000
 EXIT_MS = 15_000
 COMPILE_MS = 120_000
+## How long a server of a test folder has for SIGTERM before its process group gets SIGKILL.
+STOP_MS = 5000
+POLL_MS = 50
+FOLDER_PREFIX = "agc-cli-"
+NUL = String.from_code(0)
 ENTRIES = ["main.agc", "cli/main.agc"]
 CORES = ["../core/main.agc", "core/main.agc"]
 SETTINGS = [
@@ -26,6 +32,12 @@ SETTINGS = [
 
 OTHER_SETTINGS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
 FAKE_MAINS = ["tests/support/fake_main.agc", "cli/tests/support/fake_main.agc"]
+
+## A process with `FINN_STATE_DIR` in its environment: a server, and the folder it serves.
+struct Served
+  pid: Int
+  dir: String
+end
 
 ## A fake server and the state folder that points at it.
 struct Rig
@@ -58,7 +70,8 @@ def publish(rig: Rig) -> Result[Void]
   Fake.write_private("#{rig.dir}/server.json", Fake.server_file(rig.fake, rig.token))
 end
 
-## Runs `body` on a rig, and stops the fake and removes the state folder after it, whether it passed or not.
+## Runs `body` on a rig, and stops the fake, every server of the state folder and the folder itself after it, whether it
+## passed or not.
 def within(
   routes: List[Fake.Route],
   body: Fn[Rig, Result[Void]],
@@ -72,13 +85,21 @@ def within(
   cleaned
 end
 
-## Runs `body` on an empty state folder, which is removed after it, whether it passed or not.
+## Runs `body` on an empty state folder. Whether it passed or not, every server of the folder is stopped
+## (`stop_servers`) and the folder is removed.
 def within_dir(body: Fn[String, Result[Void]]) -> Result[Void]
   dir = try make_dir()
   result = body.call(dir)
-  cleaned = Path.remove(dir)
+  cleaned = removed(dir)
   try result
   cleaned
+end
+
+## Stops every server of a state folder: the processes of this user whose environment names the folder
+## (`FINN_STATE_DIR`, which a client gives the server it starts) and the one of its `server.json`. Each gets SIGTERM, and
+## its process group SIGKILL when it is still there after `STOP_MS`. Linux: it reads /proc; elsewhere only `server.json`.
+def stop_servers(dir: String) -> Void
+  stop_listed(dir, served())
 end
 
 ## The client on `dir`, with `NO_COLOR` set to `no_color` ("" turns the colors on), run from the folder `chdir`. It runs
@@ -175,19 +196,12 @@ def finish(cli: Process) -> Result[Done]
   exited(cli)
 end
 
-## Waits for the client to end by itself, with its input open.
+## Waits for the client to end by itself, with its input open. The client is closed on every path, so one that did not
+## end in time does not start a server after the test.
 def exited(cli: Process) -> Result[Done]
-  lines: List[String] = []
-  while true
-    case Process.read_line(cli, EXIT_MS)
-      ok(line) -> lines = lines.push(line)
-      error(_) -> break
-    end
-  end
-
-  code = try Process.wait(cli, EXIT_MS)
-  output = try Process.output(cli, EXIT_MS)
-  ok(Done(lines: lines, code: code, errors: output.stderr))
+  done = read_done(cli)
+  Process.close(cli)
+  done
 end
 
 ## True when the request carried the token of the fake.
@@ -201,8 +215,24 @@ private
 
 # The stop of a rig comes last, so what a test read from the fake is read before it goes.
 def clean_up(rig: Rig) -> Result[Void]
-  try Fake.stop(rig.fake)
-  Path.remove(rig.dir)
+  stopped = Fake.stop(rig.fake)
+  cleaned = removed(rig.dir)
+  try stopped
+  cleaned
+end
+
+def read_done(cli: Process) -> Result[Done]
+  lines: List[String] = []
+  while true
+    case Process.read_line(cli, EXIT_MS)
+      ok(line) -> lines = lines.push(line)
+      error(_) -> break
+    end
+  end
+
+  code = try Process.wait(cli, EXIT_MS)
+  output = try Process.output(cli, EXIT_MS)
+  ok(Done(lines: lines, code: code, errors: output.stderr))
 end
 
 # The source of the first of `paths` that exists, or the bytecode named by the environment variable `bytecode_env`.
@@ -266,10 +296,153 @@ def existing(paths: List[String]) -> Result[String]
   end
 end
 
+# The folders of the tests are removed only once no server writes there any more.
+def removed(dir: String) -> Result[Void] = removed_from(dir, served())
+
+def removed_from(dir: String, servers: List[Served]) -> Result[Void]
+  stop_listed(dir, servers)
+  Path.remove(dir)
+end
+
+# A folder `agc-cli-PID-N` whose test process PID is gone was left by a run that was stopped (a test that timed out
+# ends its file's run with no cleanup): its servers are stopped and it is removed, before a new folder is made.
 def make_dir() -> Result[String]
   base = System.env("TMPDIR").unwrap_or("/tmp")
-  dir = try Path.join([base, "agc-cli-#{System.pid()}-#{Random.int(0, 999_999_999)}"])
+  sweep(base)
+  dir = try Path.join([base, "#{FOLDER_PREFIX}#{System.pid()}-#{Random.int(0, 999_999_999)}"])
   try Dir.mkdir_private(dir)
   try Dir.mkdir("#{dir}/home")
   ok(dir)
+end
+
+def sweep(base: String) -> Void
+  names: List[String] = []
+  stale = Dir.list(base).unwrap_or(names).select { |name| stale?(name) }
+  return if stale.empty?
+
+  servers = served()
+  for name in stale
+    _ = removed_from("#{base}/#{name}", servers)
+  end
+end
+
+def stale?(name: String) -> Bool
+  return false if not name.start_with?(FOLDER_PREFIX)
+
+  owner = name.slice(FOLDER_PREFIX.length, name.length - FOLDER_PREFIX.length).split("-")[0].to_i.unwrap_or(0)
+  owner > 0 and not alive?(owner)
+end
+
+def stop_listed(dir: String, servers: List[Served]) -> Void
+  pids = servers.select { |server| server.dir == dir }.map { |server| server.pid }
+  for pid in pids + recorded(dir, pids)
+    stop_process(pid)
+  end
+end
+
+# The processes of this user with a `FINN_STATE_DIR`, read once from /proc (none where there is no /proc).
+def served() -> List[Served]
+  found: List[Served] = []
+  names: List[String] = []
+  for name in Dir.list("/proc").unwrap_or(names)
+    pid = name.to_i.unwrap_or(0)
+    next if pid <= 0 or pid == System.pid()
+
+    for dir in option_list(state_dir_of(pid))
+      found = found.push(Served(pid: pid, dir: dir))
+    end
+  end
+
+  found
+end
+
+def state_dir_of(pid: Int) -> Optional[String]
+  environ = NUL + File.read_text("/proc/#{pid}/environ").unwrap_or("") + NUL
+  key = "#{NUL}FINN_STATE_DIR="
+  case environ.index_of(key)
+    some(start) ->
+      rest = environ.slice(start + key.length, environ.length - start - key.length)
+      some(rest.slice(0, rest.index_of(NUL).unwrap_or(rest.length)))
+    none -> none
+  end
+end
+
+# The server of `server.json` when no process names the folder: an Agentica one only, since its pid may be gone and
+# taken by another program.
+def recorded(dir: String, known: List[Int]) -> List[Int]
+  case File.read_text("#{dir}/server.json")
+    ok(text) ->
+      case Protocol.decode_server_info(text)
+        ok(info) if info.pid != System.pid() and not known.include?(info.pid) and agentica?(info.pid) -> [info.pid]
+        _ -> []
+      end
+
+    error(_) -> []
+  end
+end
+
+def agentica?(pid: Int) -> Bool = File.read_text("/proc/#{pid}/comm").unwrap_or("").strip == "agentica"
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
+end
+
+# SIGTERM to the exact process, checked by its name; then SIGKILL to its process group (the server leads none, but runs
+# in the one of the shell that started it, with what it started), unless that group is this test's own.
+def stop_process(pid: Int) -> Void
+  comm = File.read_text("/proc/#{pid}/comm").unwrap_or("agentica").strip
+  _ = System.signal(pid, System.Signal.Term, comm)
+  return if gone_within(pid, STOP_MS)
+
+  group = process_group(pid)
+  if group > 0 and group != process_group(System.pid())
+    _ = run_kill(["-KILL", "--", "-#{group}"])
+  else
+    _ = System.signal(pid, System.Signal.Kill, comm)
+  end
+
+  _ = gone_within(pid, STOP_MS)
+end
+
+def gone_within(pid: Int, limit_ms: Int) -> Bool
+  waited = 0
+  while waited < limit_ms
+    return true if not alive?(pid)
+
+    Task.sleep(POLL_MS)
+    waited = waited + POLL_MS
+  end
+
+  not alive?(pid)
+end
+
+# A zombie has ended: only its parent's wait is left.
+def alive?(pid: Int) -> Bool
+  case File.read_text("/proc/#{pid}/stat")
+    ok(stat) -> stat_fields(stat)[0] != "Z"
+    error(_) -> false
+  end
+end
+
+def process_group(pid: Int) -> Int
+  case File.read_text("/proc/#{pid}/stat")
+    ok(stat) -> stat_fields(stat)[2].to_i.unwrap_or(0)
+    error(_) -> 0
+  end
+end
+
+# The fields of /proc/PID/stat after the name, which may hold spaces and parentheses: state, ppid, pgrp, ...
+def stat_fields(stat: String) -> List[String]
+  parts = stat.split(") ")
+  parts[parts.size - 1].split(" ")
+end
+
+def run_kill(args: List[String]) -> Result[Int]
+  process = try Process.spawn("kill", args)
+  code = Process.wait(process, STOP_MS)
+  Process.close(process)
+  code
 end

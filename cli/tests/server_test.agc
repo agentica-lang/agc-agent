@@ -2,7 +2,6 @@
 
 import HTTP from "std/http"
 import Client from "pkg/client/client"
-import Protocol from "pkg/protocol/protocol"
 import Args from "../src/args"
 import Driver from "support/driver"
 
@@ -14,35 +13,14 @@ struct Model
   gate: Channel[Bool]
 end
 
-def test_the_server_is_started_asked_restarted_and_stopped() -> Result[Void] = Driver.within_dir(&lifecycle)
+# Every test that starts a server runs in `Driver.within_dir`, which stops the servers of its folder whatever happens.
+# Each starts at most two, so it stays well under the 30 s that a test has.
+def test_the_server_is_started_asked_and_stopped() -> Result[Void] = Driver.within_dir(&lifecycle)
+
+def test_a_restart_starts_another_server() -> Result[Void] = Driver.within_dir(&restart)
 
 def lifecycle(dir: String) -> Result[Void]
   command = try Driver.core_command()
-  result = steps(dir, command)
-  stop_leftover(dir)
-  result
-end
-
-def cleaned(dir: String, steps: Fn[String, Result[Void]]) -> Result[Void]
-  result = steps.call(dir)
-  stop_leftover(dir)
-  result
-end
-
-# A server that is left after a failed step goes with the test.
-def stop_leftover(dir: String) -> Void
-  case File.read_text("#{dir}/server.json")
-    ok(text) ->
-      case Protocol.decode_server_info(text)
-        ok(info) -> _ = System.signal(info.pid, System.Signal.Term, "agentica")
-        error(_) -> nil
-      end
-
-    error(_) -> nil
-  end
-end
-
-def steps(dir: String, command: List[String]) -> Result[Void]
   none_yet = try run(dir, ["status"])
   try Test.eq(none_yet.code, 1)
   try Test.assert(none_yet.lines[0].start_with?("no server runs"), "status says none: #{none_yet.lines}")
@@ -50,20 +28,14 @@ def steps(dir: String, command: List[String]) -> Result[Void]
   started = try run(dir, ["start"], command)
   try Test.assert(started.code == 0, "start: #{started.errors}")
   try Test.assert(started.lines[0].start_with?("server running at http://127.0.0.1:"), "start: #{started.lines}")
-  first = try pid_of(try run(dir, ["status"]))
-
-  logs = try run(dir, ["logs"])
-  try Test.assert(logs.lines.any? { |line| line.include?("listening on 127.0.0.1") }, "the log: #{logs.lines}")
-  try Test.assert(logs.lines.any? { |line| line.start_with?("approvals are off") }, "the log: #{logs.lines}")
-
-  restarted = try run(dir, ["restart"], command)
-  try Test.assert(restarted.code == 0, "restart: #{restarted.errors}")
-  try Test.assert(restarted.lines[0].start_with?("server restarted at"), "restart: #{restarted.lines}")
   status = try run(dir, ["status"])
   try Test.assert(status.lines.include?("  sessions 0"), "status: #{status.lines}")
   try Test.assert(status.lines.include?("  running turns 0"), "status: #{status.lines}")
   try Test.assert(status.lines.include?("  approvals off (tools run without asking)"), "status: #{status.lines}")
-  try Test.assert(try pid_of(status) != first, "restart started another process")
+
+  logs = try run(dir, ["logs"])
+  try Test.assert(logs.lines.any? { |line| line.include?("listening on 127.0.0.1") }, "the log: #{logs.lines}")
+  try Test.assert(logs.lines.any? { |line| line.start_with?("approvals are off") }, "the log: #{logs.lines}")
 
   stopped = try run(dir, ["stop"])
   try Test.assert(stopped.code == 0, "stop: #{stopped.errors}")
@@ -76,17 +48,23 @@ def steps(dir: String, command: List[String]) -> Result[Void]
   Test.eq(gone.code, 1)
 end
 
+def restart(dir: String) -> Result[Void]
+  command = try Driver.core_command()
+  started = try run(dir, ["start"], command)
+  try Test.assert(started.code == 0, "start: #{started.errors}")
+  first = try Client.server_pid(dir)
+  restarted = try run(dir, ["restart"], command)
+  try Test.assert(restarted.code == 0, "restart: #{restarted.errors}")
+  try Test.assert(restarted.lines[0].start_with?("server restarted at"), "restart: #{restarted.lines}")
+  try Test.assert(try pid_of(try run(dir, ["status"])) != first, "restart started another process")
+  Test.assert(Client.exited?(dir, first), "the old server is gone")
+end
+
 # A server started with --no-codemode has no code mode: the status, which `GET /v1/server` gives, says so.
 def test_a_server_started_without_code_mode_says_so() -> Result[Void] = Driver.within_dir(&without_code_mode)
 
 def without_code_mode(dir: String) -> Result[Void]
   command = try Driver.core_command()
-  result = started_without_code_mode(dir, command)
-  stop_leftover(dir)
-  result
-end
-
-def started_without_code_mode(dir: String, command: List[String]) -> Result[Void]
   started = try run(dir, ["start", "--no-codemode"], command)
   try Test.assert(started.code == 0, "start: #{started.errors}")
   status = try run(dir, ["status"])
@@ -101,9 +79,7 @@ def started_without_code_mode(dir: String, command: List[String]) -> Result[Void
 end
 
 # A signal that ends a container stops the server cleanly: its file goes and its log says it stopped.
-def test_a_term_signal_stops_the_server_cleanly() -> Result[Void]
-  Driver.within_dir(->(dir) { cleaned(dir, &signalled) })
-end
+def test_a_term_signal_stops_the_server_cleanly() -> Result[Void] = Driver.within_dir(&signalled)
 
 def signalled(dir: String) -> Result[Void]
   command = try Driver.core_command()
@@ -162,7 +138,6 @@ def restarted_in_a_turn(dir: String) -> Result[Void]
   model = try model_that_waits()
   result = restart_steps(dir, model)
   free(model)
-  stop_leftover(dir)
   result
 end
 
@@ -189,7 +164,6 @@ def escalated(dir: String) -> Result[Void]
   model = try model_that_waits()
   result = escalation_steps(dir, model)
   free(model)
-  stop_leftover(dir)
   result
 end
 
@@ -213,15 +187,14 @@ def escalation_steps(dir: String, model: Model) -> Result[Void]
   Test.eq(cancelled.code, 130)
 end
 
-# `status` shows the stop that waits: its line says so once the stop request arrived.
+# `status` shows the stop that waits: its line says so once the stop request arrived. Each try runs a client, so the
+# limit is a time, not a count.
 def stopping_shown(dir: String) -> Result[Void]
-  waited = 0
-  while waited < 10_000
+  deadline = Time.now_ms + 10_000
+  while Time.now_ms < deadline
     status = try run(dir, ["status"])
     shown = status.lines.any? { |line| line.strip.start_with?("stopping yes") }
     return ok() if shown
-
-    waited = waited + 300
   end
 
   error("status never showed the stop")
@@ -229,7 +202,7 @@ end
 
 # The tail of a log over 1 MiB, a log that is gone, and a log that is rotated when a server starts.
 def test_the_logs_of_a_big_file_show_its_tail_and_a_start_rotates_a_log_over_10_mib() -> Result[Void]
-  Driver.within_dir(->(dir) { cleaned(dir, &big_log) })
+  Driver.within_dir(&big_log)
 end
 
 # A log of `head`, `count` lines of 100 bytes, and `tail`, which is over 1 MiB (the limit of `File.read_text`).
@@ -268,9 +241,7 @@ def big_log(dir: String) -> Result[Void]
 end
 
 # `logs -f` ends by itself when the server goes away.
-def test_following_the_logs_ends_when_the_server_stops() -> Result[Void]
-  Driver.within_dir(->(dir) { cleaned(dir, &followed) })
-end
+def test_following_the_logs_ends_when_the_server_stops() -> Result[Void] = Driver.within_dir(&followed)
 
 def followed(dir: String) -> Result[Void]
   command = try Driver.core_command()
@@ -292,6 +263,31 @@ def shows(cli: Process, word: String) -> Result[Void]
   end
 
   ok()
+end
+
+# A test that fails after its server started leaves nothing behind: `Driver.within_dir` stops the server, which runs
+# in a
+# session of its own and outlives the client, and removes the folder.
+def test_a_failed_test_leaves_no_server_and_no_folder() -> Result[Void]
+  out: Channel[List[String]] = Channel.new(1)
+  failed = Driver.within_dir(->(dir) { started_then_failed(dir, out) })
+  try Test.eq(failed.message, "failed on purpose")
+  seen = try out.recv(0)
+  pid = try seen[1].to_i
+  ended = case File.read_text("/proc/#{pid}/stat")
+    ok(stat) -> stat.include?(") Z ")
+    error(_) -> true
+  end
+
+  try Test.assert(ended, "the server #{pid} is gone")
+  Test.assert(not File.stat(seen[0]).ok?, "the folder is removed")
+end
+
+def started_then_failed(dir: String, out: Channel[List[String]]) -> Result[Void]
+  started = try run(dir, ["start"], try Driver.core_command())
+  try Test.assert(started.code == 0, "start: #{started.errors}")
+  try out.send([dir, (try Client.server_pid(dir)).to_s], 0)
+  error("failed on purpose")
 end
 
 # A restart that cannot start a server says whether an old one was stopped.
