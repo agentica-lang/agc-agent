@@ -162,6 +162,8 @@ struct Place
   root: String
   home: String
   trusted: Bool
+  ## The folder of Finn's own documentation pages (the built-in skill `finn`); empty for none.
+  docs: String = ""
 end
 
 ## One of the core's own extensions, which needs more than the public API: `system` adds to the system prompt of a new

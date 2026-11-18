@@ -14,6 +14,9 @@ done
 # -P: the real folder, also when the bin folder itself is a symlink.
 root=$(cd -P "$(dirname "$self")/.." && pwd)
 agentica=${AGENTICA:-agentica}
+# The install: the server reads its docs/content pages from here (the built-in skill finn), and finn docs prints them.
+FINN_HOME=$root
+export FINN_HOME
 
 # The version of Finn that the server and the clients report: the UTC time of the commit this checkout runs,
 # YYYYMMDDhhmmss. Without a .git (an archive of a tag), bin/commit-time holds that time in Unix seconds, which
@@ -45,6 +48,7 @@ usage: finn [tui] [options]       talk to the agent in this folder on the full s
                                   (stop waits for the running turns, --now cancels them; finn server --help)
        finn export SESSION [PATH] the branch a session is on as a Markdown file (0600; default SESSION.md here;
                                   --force replaces a file; finn export --help)
+       finn docs [PAGE]           the pages of Finn's own documentation, or one of them as Markdown
        finn --version | --help
 
 options of finn and finn chat: --provider NAME, --api NAME, --model NAME, --profile NAME (of a new session),
@@ -102,7 +106,7 @@ case ${1:-} in
   serve) shift; serve "$@" ;;
   chat) shift; exec "$agentica" "$root/cli/main.agc" "$@" ;;
   tui) shift; exec "$agentica" "$root/tui_client/main.agc" "$@" ;;
-  export) exec "$agentica" "$root/cli/main.agc" "$@" ;;
+  export|docs) exec "$agentica" "$root/cli/main.agc" "$@" ;;
   login|logout)
     # A key is never an argument: it is asked for, hidden.
     [ $# -le 2 ] || { echo "finn $1: give the provider alone; the key is asked for next" >&2; exit 2; }

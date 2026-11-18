@@ -120,6 +120,8 @@ struct Setup
   ## the test's folder itself when none) are trusted.
   skills: Bool = false
   trust: Optional[List[String]] = none
+  ## Finn's own documentation pages are the folder `docs` of the test's folder (the built-in skill `finn`).
+  docs: Bool = false
   ## The user's config folder is `config/finn` of the test's folder (`XDG_CONFIG_HOME`), with its profiles and commands.
   profiles: Bool = false
 end
@@ -333,6 +335,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     take_ms: setup.take_ms,
     catalog_wait_ms: setup.catalog_wait_ms,
     home: skills_home(setup, base),
+    docs: docs_folder(setup, base),
     trusted: skills_trusted(setup, base),
     files_command: setup.files_command,
   )
@@ -429,6 +432,12 @@ def skills_home(setup: Setup, base: String) -> String
   return "" if not setup.skills
 
   "#{base}/home"
+end
+
+def docs_folder(setup: Setup, base: String) -> String
+  return "" if not setup.docs
+
+  "#{base}/docs"
 end
 
 def skills_trusted(setup: Setup, base: String) -> List[String]

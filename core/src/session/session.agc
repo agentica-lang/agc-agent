@@ -109,7 +109,7 @@ end
 def commands(sessions: Sessions, id: String) -> Result[Protocol.CommandList]
   place = place_of(sessions.options, (try snapshot(sessions, id)).cwd)
   loaded = Commands.load(Commands.user_folder(sessions.options.env), place.root, place.trusted)
-  skills = Skills.discover(place.root, place.home, place.trusted).skills.map { |s| s.name }
+  skills = Skills.discover(place.root, place.home, place.trusted, place.docs).skills.map { |s| s.name }
   notes = loaded.warnings + Commands.clashes(loaded, skills)
   listed = loaded.commands.map do |c|
     warnings = notes.select { |n| n.name == c.name }.map { |n| n.text }
@@ -934,7 +934,7 @@ def late_of(options: Config.Options) -> Optional[Fn[List[Tools.Tool]]]
 end
 
 def place_of(options: Config.Options, root: String) -> Extensions.Place
-  Extensions.Place(root: root, home: options.home, trusted: trusted?(options, root))
+  Extensions.Place(root: root, home: options.home, trusted: trusted?(options, root), docs: options.docs)
 end
 
 # A session folder under a folder of `FINN_TRUSTED_DIRS`, whose own skills and all of whose rules count (elsewhere

@@ -69,6 +69,7 @@ coupling:
 	  '^[^#\n]*\{(?=[^}]*agentica-lang/agc-agent")(?=[^}]*\bsubdir\b)(?![^}]*\btag *= *"finn-[0-9]+")[^}]*\}' .)
 	@pins=$$(rg -o --no-filename -g '**/agentica.toml' 'tag *= *"finn-[0-9]+"' . | sort -u | wc -l); \
 	  [ "$$pins" -le 1 ] || { echo "coupling: the packages pin $$pins different finn tags (one tag for all)" >&2; exit 1; }
+	@$(call none,a page of docs/content has no description (the skill finn and finn docs list it),--files-without-match -g '*.md' '^description: ' docs/content)
 	@$(call none,a package imports another package's src/ (use its public module),-g '*.agc' 'pkg/[a-z0-9_-]+/src/' .)
 	@$(call none,core/src/tools imports another core folder,$(call core_imports,tools,tools))
 	@$(call none,core/src/approval imports a core folder but tools,$(call core_imports,approval,tools))

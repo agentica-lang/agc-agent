@@ -18,6 +18,12 @@ In these folders, of your home folder and of the session folder:
 
 The skills of the session folder count only when it is under a [trusted folder](config.md#trusted-folders). A project skill hides a home skill of the same name. Finn uses 100 skills at most.
 
+## The finn skill
+
+Finn has one skill of its own, `finn`, for tasks about Finn itself: extending it, its config, skills, MCP servers, providers, sessions, the server and the command line. It is in every session's list, with the lowest precedence: a skill of yours with the name `finn` hides it. Its resources are the pages of this documentation, the Markdown files of `docs/content` in the install, read in place and never copied, so they are the pages of the version that runs. When the model loads it, it gets one line for each page and reads the one that fits the task with `read_file`. You can read the same pages with `finn docs [PAGE]`.
+
+The skill exists when the server runs from `bin/finn`, which sets `FINN_HOME` to the install. A server started by hand (`agentica core/main.agc serve`) has it when you set `FINN_HOME` to the folder that holds `docs/`.
+
 ## Write one
 
 ```text

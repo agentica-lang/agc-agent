@@ -2,7 +2,8 @@
 ## of the session folder (only when it is trusted) and of the home folder. The system prompt lists each skill's name and
 ## description; the model loads one with `activate_skill`, the user with `/name` in a message. A loaded skill is its
 ## body in a `<skill_content>` block. The session keeps the names of the skills it loaded (its marks), so a skill loads
-## once, and a compaction that folds one puts its content after the summary.
+## once, and a compaction that folds one puts its content after the summary. The skill `finn` is built in, with the
+## lowest precedence: its resources are the pages of Finn's own documentation, read in place (`docs`, never copied).
 
 import LLM from "pkg/llm/llm"
 import Regex from "std/regex"
@@ -18,6 +19,11 @@ MAX_SKILL_BYTES = 1_048_576
 MAX_NAME = 64
 MAX_DESCRIPTION = 1024
 MAX_SKILLS = 100
+BUNDLED = "finn"
+BUNDLED_DESCRIPTION = (
+  "Finn's own documentation: extensions and tools, skills, MCP servers, providers, config, sessions, the server and " +
+  "the command line. Use when the task is to extend, configure or explain Finn itself."
+)
 OPEN = "<skill_content name=\""
 CLOSE = "</skill_content>"
 NAME = /\A[a-z0-9-]+\z/
@@ -26,7 +32,7 @@ CATALOG_NAME = /<name>([a-z0-9-]+)<\/name>/
 struct Skill
   name: String
   description: String
-  ## The real path of its SKILL.md.
+  ## The real path of its SKILL.md; empty for the built-in skill, whose body is made from its folder.
   location: String
   ## Its real path.
   dir: String
@@ -51,10 +57,11 @@ struct Expanded
   names: List[String]
 end
 
-## The skills of the session folder `root` (when `trusted`) and of `home` (none when empty), sorted by name, at most
-## `MAX_SKILLS`. A project skill shadows a user skill of the same name; in one scope the first root wins. A skills root
-## may be a link, which is resolved once; a link inside it is not followed.
-def discover(root: String, home: String, trusted: Bool) -> Found
+## The skills of the session folder `root` (when `trusted`) and of `home` (none when empty), then the built-in `finn`
+## when `docs` is the folder of Finn's pages, sorted by name, at most `MAX_SKILLS`. A project skill shadows a user
+## skill of the same name, and either the built-in one; in one scope the first root wins. A skills root may be a link,
+## which is resolved once; a link inside it is not followed.
+def discover(root: String, home: String, trusted: Bool, docs: String = "") -> Found
   found = Found(skills: [], warnings: [])
   if trusted
     found = scope(found, root)
@@ -63,6 +70,8 @@ def discover(root: String, home: String, trusted: Bool) -> Found
   if home != ""
     found = scope(found, home)
   end
+
+  found = bundled(found, docs)
 
   sorted = found.skills.sort_by { |skill| skill.name }
   return found.with(skills: sorted) if sorted.size <= MAX_SKILLS
@@ -378,9 +387,47 @@ def read_skill(found: Found, dir: String) -> Found
   end
 end
 
+def bundled(found: Found, docs: String) -> Found
+  return found if (docs == "" or found.skills.any? { |skill| skill.name == BUNDLED })
+
+  real = Path.real(docs)
+  return found if not real.ok? or not directory?(real.unwrap!)
+
+  dir = real.unwrap!
+  skill = Skill(name: BUNDLED, description: BUNDLED_DESCRIPTION, location: "", dir: dir, for_model: true)
+  found.with(skills: found.skills.push(skill))
+end
+
+# The body of the built-in skill: one line a page, from the descriptions in the pages' frontmatter.
+def bundled_body(dir: String) -> String
+  pages = names_in(dir).select { |name| name.end_with?(".md") and not name.start_with?("_") }
+  lines = pages.map { |name| "- #{name}: #{page_description(dir, name)}" }
+  (
+    "Finn's documentation is the Markdown pages of the folder below, of the version that runs. Pick the page that " +
+    "fits the task, read it with read_file (the skill directory and the page name make the path), and follow its " +
+    "links: they name pages of the same folder.\n\n#{lines.join("\n")}"
+  )
+end
+
+def page_description(dir: String, name: String) -> String
+  text = read("#{dir}/#{name}")
+  return "" if not text.ok?
+
+  case parse(text.unwrap!)
+    ok(front) -> front.fields.get("description").unwrap_or("").strip
+    error(_) -> ""
+  end
+end
+
 def content(skill: Skill) -> Result[String]
-  front = try parse(try read(skill.location))
-  resources = files(skill.dir, "", 0, [])
+  body = bundled_body(skill.dir)
+  resources: List[String] = []
+  if skill.location != ""
+    front = try parse(try read(skill.location))
+    body = front.body
+    resources = files(skill.dir, "", 0, [])
+  end
+
   listed = ""
   if not resources.empty?
     shown = resources.take(MAX_RESOURCES).map { |path| "  <file>#{path}</file>" }.join("\n")
@@ -392,7 +439,7 @@ def content(skill: Skill) -> Result[String]
   end
 
   ok(
-    "#{OPEN}#{skill.name}\">\n#{front.body}\n\nSkill directory: #{skill.dir}\n" +
+    "#{OPEN}#{skill.name}\">\n#{body}\n\nSkill directory: #{skill.dir}\n" +
     "Relative paths in this skill are relative to the skill directory.#{listed}\n#{CLOSE}",
   )
 end

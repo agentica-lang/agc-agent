@@ -75,6 +75,7 @@ The server makes the state and data folders with mode 0700, and refuses one that
 | `FINN_APPROVALS` | `1` turns the approvals on; `0` keeps them off over the config file |
 | `FINN_CONFIG` | the user's config file |
 | `FINN_TRUSTED_DIRS` | the [trusted folders](#trusted-folders) |
+| `FINN_HOME` | the install, the folder with `docs/`: `bin/finn` sets it, for the [skill `finn`](skills.md#the-finn-skill) and `finn docs` |
 | `FINN_MCP_CONFIG` | the JSON file of MCP servers ([MCP](mcp.md)) |
 | `FINN_CODE_MODE` | `0` turns off code mode, the `run_script` tool, as `--no-codemode` does; on by default ([Tools](tools.md#code-mode)) |
 | `FINN_MONTY` | a Monty 1.6.0 binary you trust, for code mode |

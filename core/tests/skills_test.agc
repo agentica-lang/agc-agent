@@ -13,6 +13,12 @@ LINT_HOME = "---\nname: lint\ndescription: The user's <lint> & more.\n---\nUser 
 LINT_PROJECT = "---\nname: lint\ndescription: The project's lint.\n---\nProject lint.\n"
 HEADING = "\n\nThe skills loaded in this session:\n\n"
 DEPLOY = "---\nname: deploy\ndescription: Deploy it.\ndisable-model-invocation: true\n---\nDeploy steps.\n"
+EXTENSIONS_PAGE = (
+  "---\ntitle: Extensions\ndescription: Extend Finn with a program of your own.\n---\n\n# Extensions\n\n" +
+  "Serve the core with your tools.\n"
+)
+TOOLS_PAGE = "---\ntitle: Tools\ndescription: What the model can call.\n---\n\n# Tools\n"
+OWN_FINN = "---\nname: finn\ndescription: My own notes on Finn.\n---\nMine.\n"
 
 # A skill loads once a session, by the model or by the user, and stays loaded after a restart; the model cannot load
 # a skill that only the user loads.
@@ -59,6 +65,51 @@ def test_the_model_and_the_user_load_skills_once() -> Result[Void]
       Test.eq((try H.session(r, id)).history.map { |m| m.text }.select { |t| t.include?("deploy") }.size, 2)
     end
   end
+end
+
+# Finn's own pages are the resources of the built-in skill `finn`: a task about extending Finn makes the model load
+# it and read the page, in place; its index has a line a page, without the home page.
+def test_the_model_reads_the_docs_of_finn_through_the_built_in_skill() -> Result[Void]
+  replies = ["activate_finn.sse", "read_docs_page.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, docs: true)) do |h|
+    docs = "#{h.base}/docs"
+    try write("#{docs}/extensions.md", EXTENSIONS_PAGE)
+    try write("#{docs}/tools.md", TOOLS_PAGE)
+    try write("#{docs}/_index.md", "---\ntitle: Finn\ndescription: The home page.\n---\n")
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write an extension that adds a tool.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    first = try JSON.parse((try H.next_request(h)).body)
+    system = try JSON.string(try JSON.get(try JSON.at(try JSON.get(first, "messages"), 0), "content"))
+    try Test.assert(system.include?("<name>finn</name>"), system)
+    try Test.eq(enum_of(first), ok(["finn"]))
+    loaded = try last_content(h)
+    try Test.assert(loaded.start_with?("<skill_content name=\"finn\">\n"), loaded)
+    try Test.assert(
+      loaded.include?(
+        "- extensions.md: Extend Finn with a program of your own.\n- tools.md: What the model can call.",
+      ),
+      loaded,
+    )
+
+    try Test.assert(not loaded.include?("_index"), loaded)
+    try Test.assert(loaded.include?("Skill directory: #{docs}"), loaded)
+    Test.eq(last_content(h), ok(EXTENSIONS_PAGE))
+  end
+end
+
+# A skill of the user or the project named `finn` hides the built-in one; without a folder of pages there is none.
+def test_a_skill_of_the_same_name_hides_the_built_in_one() -> Result[Void]
+  base = try fresh()
+  try write("#{base}/docs/extensions.md", EXTENSIONS_PAGE)
+  try write("#{base}/home/.agents/skills/finn/SKILL.md", OWN_FINN)
+  mine = Skills.discover("#{base}/work", "#{base}/home", false, "#{base}/docs").skills
+  try Test.eq(mine.map { |skill| skill.description }, ["My own notes on Finn."])
+  built_in = Skills.discover("#{base}/work", "#{base}/nohome", false, "#{base}/docs").skills
+  try Test.eq(built_in.map { |skill| skill.name }, ["finn"])
+  Test.eq(Skills.discover("#{base}/work", "#{base}/nohome", false, "#{base}/nodocs").skills.size, 0)
 end
 
 # A `Message` handler of an extension gets the message after the skills it names are expanded.

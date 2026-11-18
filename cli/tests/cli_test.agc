@@ -1094,3 +1094,41 @@ def idle(id: String, history: List[Protocol.Message]) -> Protocol.Session
     history: history,
   )
 end
+
+# `finn docs` lists the pages of the install (its `docs/content`, `FINN_HOME`), prints one without its front
+# matter, and
+# lists them when the name is not one; it needs no server.
+def test_docs_lists_and_prints_the_pages_of_the_install() -> Result[Void] = Driver.within_dir(&docs_pages)
+
+def docs_pages(dir: String) -> Result[Void]
+  pages = "#{dir}/install/docs/content"
+  try Dir.mkdir("#{dir}/install")
+  try Dir.mkdir("#{dir}/install/docs")
+  try Dir.mkdir(pages)
+  try File.write_text(
+    "#{pages}/extensions.md",
+    "---\ntitle: Extensions\ndescription: Extend Finn.\n---\n\n# Extensions\n\nText.\n",
+  )
+
+  try File.write_text("#{pages}/tools.md", "---\ntitle: Tools\ndescription: What the model calls.\n---\n\n# Tools\n")
+  try File.write_text("#{pages}/_index.md", "---\ntitle: Finn\ndescription: Home.\n---\n")
+  env = {"FINN_HOME": "#{dir}/install"}
+  listed = try Driver.exited(try Driver.start(dir, ["docs"], extra: env))
+  try Test.eq(
+    [listed.lines, [listed.code.to_s]],
+    [["extensions.md  Extend Finn.", "tools.md       What the model calls."], ["0"]],
+  )
+
+  page = try Driver.exited(try Driver.start(dir, ["docs", "extensions"], extra: env))
+  try Test.eq([page.lines, [page.code.to_s]], [["# Extensions", "", "Text."], ["0"]])
+  unknown = try Driver.exited(try Driver.start(dir, ["docs", "nope"], extra: env))
+  try Test.eq(
+    [unknown.code.to_s, unknown.errors.include?("no page nope").to_s, unknown.errors.include?("tools.md").to_s],
+    ["1", "true", "true"],
+  )
+
+  traversal = try Driver.exited(try Driver.start(dir, ["docs", "../install/docs/content/tools"], extra: env))
+  try Test.eq(traversal.code, 1)
+  lost = try Driver.exited(try Driver.start(dir, ["docs"], extra: {"FINN_HOME": ""}))
+  Test.eq([lost.code.to_s, lost.errors.include?("FINN_HOME").to_s], ["1", "true"])
+end

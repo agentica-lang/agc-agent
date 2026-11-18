@@ -59,6 +59,8 @@ enum Command
   Export(Options, String, Optional[String], Bool)
   ## Removes the stored key of that provider, or every one when none, on the server of the options.
   Logout(Options, Optional[String])
+  ## Prints a page of Finn's own documentation, or lists them when none.
+  Docs(Optional[String])
   Version
   Help(String)
 end
@@ -69,6 +71,9 @@ def parse(args: List[String]) -> Result[Command]
 
   at = word_at(args, "export")
   return parse_export(args.take(at) + args.drop(at + 1)) if at >= 0
+
+  at = word_at(args, "docs")
+  return parse_docs(args.take(at) + args.drop(at + 1)) if at >= 0
 
   parser = OP.new(
     "finn chat",
@@ -169,6 +174,26 @@ def parse_export(args: List[String]) -> Result[Command]
 
   case OP.parse(parser, args)
     ok(parsed) -> export_of(parsed)
+    error(e) if OP.help?(e.message) -> ok(Command.Help(OP.usage(parser)))
+    error(e) -> error(OP.message(e.message), kind: "cli.usage")
+  end
+end
+
+## `finn docs [PAGE]`: a page of the documentation of this install, or the list of pages.
+def parse_docs(args: List[String]) -> Result[Command]
+  parser = OP.new(
+    "finn docs",
+    "finn docs lists the pages of Finn's own documentation, in the version that runs; finn docs PAGE prints one as " +
+    "Markdown, without its front matter (a link in it names a page of the same folder).",
+    [],
+    [Opt(name: "state-dir", help: "not used: the pages are files of the install")],
+    "PAGE",
+  )
+
+  case OP.parse(parser, args)
+    ok(parsed) if OP.rest(parsed).size > 1 -> error("give one page, or none for the list", kind: "cli.usage")
+    ok(parsed) if OP.rest(parsed).empty? -> ok(Command.Docs(none))
+    ok(parsed) -> ok(Command.Docs(some(OP.rest(parsed)[0])))
     error(e) if OP.help?(e.message) -> ok(Command.Help(OP.usage(parser)))
     error(e) -> error(OP.message(e.message), kind: "cli.usage")
   end
