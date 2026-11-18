@@ -1,7 +1,8 @@
 ## The server log: `std/logger` writes it, each line as `TIME LEVEL MESSAGE key=value` with the UTC time
 ## (`2026-11-18T17:30:02.345Z INFO ...`), to stdout (info) and stderr (warning, error), which `finn` sends to
 ## `server.log` of the state folder. `install` makes the handler that does it and also keeps the last warnings of the
-## process in memory, since the first of them come before the server listens; `tail` reads the end of the file.
+## process in memory, since the first of them come before the server listens, a warning with a text already kept
+## counted once, with its times as `(×N)`; `tail` reads the end of the file.
 
 import Logger from "std/logger"
 
@@ -10,17 +11,26 @@ FILE = "server.log"
 STARTED = "Finn Agent core listening on"
 ## The warnings that `warnings` gives, the last ones.
 SHOWN = 3
+## The distinct warnings kept to count the ones that come again.
+KEPT = 64
 ## The end of the file that `tail` reads: a longer file is read through, and only this much of it is kept.
 TAIL_BYTES = 262_144
 READ_BYTES = 65_536
 NEWLINE = 10
 
-# The last warnings by their number modulo `SHOWN`, and how many there were.
-RECENT: ATS[Int, String] = ATS.new()
+# The distinct warnings by their number modulo `KEPT`, how many there were, and how many times each text came.
+RECENT: ATS[Int, Kept] = ATS.new()
 COUNTS: ATS[String, Int] = ATS.new()
+TIMES: ATS[String, Int] = ATS.new()
 WARNINGS = "warnings"
 
-## The warnings (and errors) the process logged: the last `SHOWN`, oldest first, and how many in all.
+# A warning as its first time, level and plain message, with the message that counts it.
+struct Kept
+  message: String
+  line: String
+end
+
+## The warnings (and errors) the process logged: the last `SHOWN` distinct ones, oldest first, and how many distinct.
 struct Warnings
   lines: List[String]
   count: Int
@@ -38,13 +48,16 @@ def install() -> Void
   _ = Logger.attach("server", Logger.Level.Info, &record)
 end
 
-## The warnings the process has logged since `install`.
+## The warnings the process has logged since `install`: each text once, with `(×N)` after it when it came N times.
 def warnings() -> Warnings
   count = COUNTS.get(WARNINGS).unwrap_or(0)
   first = [count - SHOWN + 1, 1].max.unwrap!
   lines: List[String] = []
   for number in first...(count + 1)
-    lines = lines.push(RECENT.get(number % SHOWN).unwrap_or(""))
+    case RECENT.get(number % KEPT)
+      ok(kept) -> lines = lines.push(counted(kept, TIMES.get(kept.message).unwrap_or(1)))
+      error(_) -> nil
+    end
   end
 
   Warnings(lines: lines, count: count)
@@ -90,10 +103,28 @@ def record(event: Logger.Event) -> Void
   end
 end
 
-# The warning is kept as its time, level and plain message: the log line quotes a message with a quote or an `=`. The
-# slot of the number is written right after the count moves, so a read between the two may see the line it replaces.
+# The warning is kept as its time, level and plain message: the log line quotes a message with a quote or an `=`. A
+# text that is kept already only counts. The slot of the number is written right after the count moves, so a read
+# between the two may see the line it replaces.
 def warned(event: Logger.Event, level: String, line: String) -> Void
   IO.warn(line)
-  number = COUNTS.add(WARNINGS, 1)
-  RECENT.put(number % SHOWN, "#{Logger.time_text(event.time_ms)} #{level} #{event.message}")
+  if TIMES.add(event.message, 1) == 1
+    number = COUNTS.add(WARNINGS, 1)
+    slot = number % KEPT
+    case RECENT.get(slot)
+      ok(old) -> TIMES.delete(old.message)
+      error(_) -> nil
+    end
+
+    RECENT.put(
+      slot,
+      Kept(message: event.message, line: "#{Logger.time_text(event.time_ms)} #{level} #{event.message}"),
+    )
+  end
+end
+
+def counted(kept: Kept, times: Int) -> String
+  return kept.line if times <= 1
+
+  "#{kept.line} (×#{times})"
 end

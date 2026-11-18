@@ -89,6 +89,7 @@ export Commands.Command
 export Commands.help
 export Commands.custom
 export Commands.warning_notes
+export Commands.warning_banner
 export Commands.warning_report
 export Commands.DEFAULT_LOG_LINES
 export Commands.profile_lines

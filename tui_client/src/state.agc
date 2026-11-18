@@ -39,6 +39,9 @@ struct Model
   ## Rows above the bottom of the transcript, 0 to follow its end.
   scroll: Int = 0
   turn: Bool = false
+  ## The rows of the yellow banner at the top of the screen (the server's warnings when the client opened), until a
+  ## click or Esc closes it.
+  banner: List[String] = []
   ## A `!` command of the session runs.
   shell: Bool = false
   stopping: Bool = false

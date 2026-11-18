@@ -559,27 +559,75 @@ def test_a_login_the_server_refuses_ends_with_a_reason() -> Result[Void]
   Test.eq(["#{signalled.code}", signalled.reason.unwrap_or("").include?("signal").to_s], ["143", "true"])
 end
 
-# The warnings of the server are the last notes of a started app, and `/logs N` shows the end of the log.
-def test_the_warnings_of_the_server_are_notes_and_logs_shows_the_log() -> Result[Void]
-  log = Protocol.ServerLog(
-    lines: ["2026-11-18T10:00:00.000Z INFO older", "2026-11-18T10:00:01.000Z WARNING bad skill"],
-    warnings: ["2026-11-18T10:00:01.000Z WARNING bad skill"],
-    warning_count: 4,
-  )
-
-  replies = {"GET /v1/logs": Protocol.encode_server_log(log)}
-  within(100, 24, &logs_shown, replies: replies, first: some(&App.server_notes))
+# The warnings of the server are a yellow banner at the top of a started app, not notes of the transcript: the last of
+# them, each text once with its times, and the count. A click on it, or Esc with an empty prompt, closes it, and a
+# click below it still reaches the transcript.
+def test_the_warnings_of_the_server_are_a_banner_that_a_click_or_esc_closes() -> Result[Void]
+  replies = {"GET /v1/logs": Protocol.encode_server_log(warned_log(4))}
+  try within(100, 16, &banner_closed_by_a_click, replies: replies, first: some(&App.server_notes))
+  within(100, 16, &banner_closed_by_esc, replies: replies, first: some(&App.server_notes))
 end
 
-def logs_shown(rig: Rig) -> Result[Void]
-  try shows(rig, "WARNING bad skill")
-  try shows(rig, "4 warnings when the server started: /logs shows them")
+def warned_log(count: Int) -> Protocol.ServerLog
+  warnings = ["2026-11-18T10:00:01.000Z WARNING pr-reviewer is shadowed (×3)"]
+  if count == 0
+    warnings = []
+  end
+
+  Protocol.ServerLog(
+    lines: ["2026-11-18T10:00:00.000Z INFO older", "2026-11-18T10:00:01.000Z WARNING bad skill"],
+    warnings: warnings,
+    warning_count: count,
+  )
+end
+
+def banner_closed_by_a_click(rig: Rig) -> Result[Void]
+  rows = try shows(rig, "pr-reviewer is shadowed (×3)")
+  try Test.eq(rows.filter { |row| row.include?("pr-reviewer is shadowed") }.size, 1)
+  try Test.assert(
+    rows[0].include?("4 warnings when the server started (/logs shows all)"),
+    "the head is first: #{rows[0]}",
+  )
+
+  try Test.assert(rows[0].strip.end_with?("x"), "the first row ends with the x: #{rows[0]}")
+  started = Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "seq 10")
+  output = (1..10).to_a.map { |i| "line #{i}" }.join("\n")
+  finished = Protocol.ToolFinished(call_id: "c1", ok: true, summary: "exit 0", duration_ms: 5, output: some(output))
+  try rig.feed.send(Client.Item.Event(some(1), Protocol.Event.ToolStarted(started)), 1000)
+  try rig.feed.send(Client.Item.Event(some(2), Protocol.Event.ToolFinished(finished)), 1000)
+  try shows(rig, "6 more lines")
+  try click(rig, try find(rig, "$ seq 10"))
+  rows = try shows(rig, "line 10")
+  try Test.assert(rows[0].include?("when the server started"), "a click below the banner leaves it: #{rows[0]}")
+  try click(rig, [1, 5])
+  gone(rig)
+end
+
+def banner_closed_by_esc(rig: Rig) -> Result[Void]
+  try shows(rig, "pr-reviewer is shadowed (×3)")
+  try press(rig, TUI.Event.Char("a", TUI.Mods()))
+  try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
+  rows = try shows(rig, "pr-reviewer is shadowed (×3)")
+  try Test.assert(rows[0].include?("when the server started"), "Esc with text in the prompt keeps the banner")
+  try press(rig, TUI.Event.Key(TUI.Key.Backspace, TUI.Mods()))
+  try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
+  try gone(rig)
   for char in "/logs 2".split("")
     try press(rig, TUI.Event.Char(char, TUI.Mods()))
   end
 
   try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
   try shows(rig, "INFO older")
+  ok()
+end
+
+# Waits until the banner is not on the screen.
+def gone(rig: Rig) -> Result[Void]
+  _ = try TUI.Testing.wait_for(
+    rig.fake,
+    ->(rows: List[String]) { not rows.any? { |row| row.include?("when the server started") } },
+  )
+
   ok()
 end
 
@@ -800,7 +848,8 @@ end
 # A selection over the cap is not sent: terminals and multiplexers cut a longer sequence.
 def test_a_selection_too_large_to_copy_says_so() -> Result[Void]
   written: Channel[String] = Channel.new(4)
-  text = (0...16000).to_a.map { |n| "word#{n}" }.join(" ")
+  word = (0...39).to_a.map { |_| "é" }.join("")
+  text = (0...1000).to_a.map { |_| word }.join(" ")
   model = App.seed(Client.unreachable_backend(), options(), Channel.new(1), 40, 12).with(
     entries: Transcript.from_history([Protocol.Message(role: Protocol.Role.User, text: text)]),
     write: ->(sent: String) { _ = written.send(sent, 0) },

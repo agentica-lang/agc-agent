@@ -177,6 +177,20 @@ def warning_notes(log: Protocol.ServerLog) -> List[String]
   log.warnings + ["#{counted(log.warning_count)} when the server started: /logs shows them"]
 end
 
+## The rows of the banner of a client that starts on a server that has load warnings: a head that says how many and
+## how to see them and close the banner (a click only with the mouse on), then the last of them; none when it has none.
+def warning_banner(log: Protocol.ServerLog, mouse: Bool = true) -> List[String]
+  return [] if log.warning_count == 0
+
+  closes = "Esc closes this"
+  if mouse
+    closes = "click here or Esc closes this"
+  end
+
+  head = "#{counted(log.warning_count)} when the server started (/logs shows all): #{closes}"
+  [head] + log.warnings.map { |line| printable(line) }
+end
+
 ## What a client prints on the console after its screen is closed, when the server has warnings: the last of them, the
 ## count and the command for all.
 def warning_report(log: Protocol.ServerLog) -> Optional[String]

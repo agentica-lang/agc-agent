@@ -118,6 +118,8 @@ struct Setup
   fresh_token: String = ""
   ## How long a turn waits for its queued messages.
   take_ms: Int = 5000
+  ## Variables of the server's environment, over the fake one.
+  env: Map[String, String] = {}
   ## How long a turn waits for a catalog that still loads.
   catalog_wait_ms: Int = 1500
   ## Skills: the home folder is `home` under the test's folder, and the folders of `trust` (under the test's folder;
@@ -429,11 +431,13 @@ def served_of(setup: Setup, user: Permissions.User, env: Fn[String, Result[Strin
 end
 
 def env_of(setup: Setup, base: String) -> Fn[String, Result[String]]
-  return &fake_env if not setup.profiles
+  return &fake_env if not setup.profiles and setup.env.empty?
 
   ->(name: String) {
+    return ok(setup.env[name]) if setup.env.has_key?(name)
+
     case name
-      "XDG_CONFIG_HOME" -> ok("#{base}/config")
+      "XDG_CONFIG_HOME" if setup.profiles -> ok("#{base}/config")
       _ -> fake_env(name)
     end
   }

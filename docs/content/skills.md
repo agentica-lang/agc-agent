@@ -47,7 +47,7 @@ Read CHANGELOG.md, take the section of the version, and fill template.md...
 - `name` is the folder's name when left out: `a-z`, `0-9` and `-`, at most 64 characters.
 - `disable-model-invocation: true` keeps the skill from the model: only you load it.
 
-A skill that has a problem is skipped. The server's log (`finn server logs`, or `/logs` in `finn` and `finn chat`) says why, and has the warnings. A session shows the last 3 warnings of the server as notes when it starts, and leaving prints them once more.
+A skill that has a problem is skipped. The server's log (`finn server logs`, or `/logs` in `finn` and `finn chat`) says why, and has the warnings. `finn` shows the last 3 warnings of the server in a yellow banner at the top of the screen when it opens (a click on it, or Esc with an empty prompt, closes it), and `finn chat` as notes; leaving prints them once more. A warning with the same text as an earlier one is counted once and shown with its times, `(×3)`.
 
 ## Load one
 

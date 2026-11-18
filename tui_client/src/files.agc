@@ -116,21 +116,36 @@ def mention_key?(app: State.Model, found: Input.Mention, event: TUI.Event) -> Bo
   end
 end
 
-## Enter on the list of a command's argument runs the command with the row moved to, so a pick there is the one that
-## counts and no picker opens after it. Untouched, the line is sent as typed: the command alone opens its picker.
+## Enter on a row of the list of `/model`, `/resume`, `/tree` or `/fork` runs the command with that row, the one
+## moved to or the first shown, so no picker opens after it; on the list of another command, with the row moved to.
+## With no row (no match, or the list not read yet), or an argument typed whole that nothing was moved from, the line
+## is sent as typed: the command alone opens its picker. Tab only completes.
 def runs_choice?(app: State.Model, found: Input.Mention, event: TUI.Event) -> Bool
   case event
     TUI.Event.Key(TUI.Key.Enter, mods) if not mods.alt and found.source == Input.Source.Arguments ->
-      moved_in?(app, found) and not mention_choices(app, found).empty?
+      choices = mention_choices(app, found)
+      return false if choices.empty? or app.prompt.include?("\n")
+      return true if moved_in?(app, found)
+
+      Input.RUNNING_COMMANDS.include?(found.command) and not typed_whole?(found, choices)
     _ -> false
   end
 end
 
-## The selected row of the list: the one moved to; before a move, the session's model or thinking level when the list
-## of `/model` or `/thinking` has it, else the first.
+## Whether the argument typed is one of the choices, letter for letter: a model id keeps its case.
+def typed_whole?(found: Input.Mention, choices: List[Input.Choice]) -> Bool
+  found.query != "" and choices.any? { |c| c.value == found.query }
+end
+
+## The selected row of the list: the one moved to; before a move, the one that is the argument typed, else the
+## session's model or thinking level when the list of `/model` or `/thinking` has it, else the first.
 def selected_row(app: State.Model, found: Input.Mention, choices: List[Input.Choice]) -> Int
   moved = [[app.mention_selected, choices.size - 1].min.unwrap!, 0].max.unwrap!
   return moved if moved_in?(app, found) or found.source != Input.Source.Arguments
+
+  for at in 0...choices.size
+    return at if found.query != "" and choices[at].value.downcase == found.query.downcase
+  end
 
   current = case found.command
     "/model" -> Client.printable(app.serving)
@@ -175,6 +190,9 @@ def on_mention_key(app: State.Model, found: Input.Mention, event: TUI.Event) -> 
       )
   end
 end
+
+## The list starts again at its first row: the row moved to does not stay once the query changes.
+def fresh_list(app: State.Model) -> State.Model = app.with(mention_selected: 0, mention_top: 0, mention_moved: none)
 
 private
 
@@ -248,8 +266,6 @@ def completes?(app: State.Model, found: Input.Mention) -> Bool
   word = "/#{found.query}"
   not mention_choices(app, found).any? { |choice| choice.value.strip == word }
 end
-
-def fresh_list(app: State.Model) -> State.Model = app.with(mention_selected: 0, mention_top: 0, mention_moved: none)
 
 # The rows under the editor that the list may take.
 def list_room(app: State.Model) -> Int

@@ -13,6 +13,8 @@ PASTE_CHARS = 1000
 MAX_MATCHES = 8
 ## The commands whose argument the list completes.
 ARGUMENT_COMMANDS = ["/model", "/resume", "/tree", "/fork", "/thinking", "/profile"]
+## The commands that Enter runs with the row of their list.
+RUNNING_COMMANDS = ["/model", "/resume", "/tree", "/fork"]
 
 ## What a list under the editor completes.
 enum Source
@@ -118,10 +120,14 @@ def argument_word(text: String, cursor: Int) -> Optional[Mention]
   some(Mention(start: name.length + 1, query: argument, source: Source.Arguments, command: name))
 end
 
-## The choices that start with `query`, or whose row holds it, in any case.
+## The choices that start with `query`, or whose row holds it, in any case: the one that is `query`, then those that
+## start with it, then the others.
 def argument_matches(choices: List[Choice], query: String) -> List[Choice]
   wanted = query.downcase
-  choices.select { |c| c.value.downcase.start_with?(wanted) or c.label.downcase.include?(wanted) }
+  exact = choices.select { |c| c.value.downcase == wanted }
+  prefixed = choices.select { |c| c.value.downcase != wanted and c.value.downcase.start_with?(wanted) }
+  held = choices.select { |c| not c.value.downcase.start_with?(wanted) and c.label.downcase.include?(wanted) }
+  exact + prefixed + held
 end
 
 ## The commands whose name starts with `/query`, each with its arguments and what it does, in a column. A command

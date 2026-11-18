@@ -13,11 +13,14 @@
 
 ### Changed
 
+- In `finn`, the warnings of the server show in a yellow banner at the top of the screen when it opens (a click or Esc with an empty prompt closes it), not as notes in the transcript. The server counts a warning with the same text once and shows it with `(×N)`, so a skill that is shadowed in three sessions is one warning.
+- In `finn`, Enter on a row of the list under `/model `, `/resume `, `/tree ` or `/fork ` runs the command with that row (the first or the one you moved to) in one step, with no second picker; Tab still only completes.
 - With approvals on, a file tool that reaches outside the session folder asks like `bash` does, unlike before when it was refused: `external_directory(FOLDER/*)` rules now cover file tools too (an allow rule lets a folder run, a deny rule refuses it). The accept-edits mode runs only writes inside the folder. Finn's own `auth.json`, `server.json`, `config.json` and `chatgpt.json` (in the config, state and data folders, and the file of `FINN_CONFIG`) are denied to the file tools by default, whatever the session folder; an `allow read_file(...)` rule of your config lifts it.
 - **Breaking:** the file tools (`read_file`, `write_file`, `edit_file`, `apply_patch`, `glob`, `grep`) reach any path by default, not only the session folder, so the model can read `~/.bashrc` when asked; deny and ask rules still apply everywhere. Set `"confine_files": true` (config) or `FINN_CONFINE_FILES=1` to keep them in the folder.
 
 ### Fixed
 
+- A new session on a provider with no model of its own waits for the model catalog (up to 1.5 s) before taking the first model it lists, instead of starting on `default`; a model you picked that is not in the provider's `models` list is kept, with a warning.
 - A refusal or a connection failure of the `local` provider says `pick a provider with /model, or log in with /login` (and is a warning in `/logs`); a successful `finn login chatgpt` followed by `finn` no longer opens a session on `local` that fails with HTTP 401.
 - `finn login chatgpt` works again: OpenAI answers the device code with its `interval` as text, which the login did not read.
 - A `finn` that ends with an error prints why after the screen closes, also a failed `finn login`; it ended with code 1 and said nothing.
