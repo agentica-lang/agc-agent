@@ -120,7 +120,8 @@ A package is added by the phase that needs it, never as an empty folder.
     root `[workspace]` `members` and in `PACKAGES` of the `Makefile`.
   - Names are Ruby style: short, lowercase, `snake_case`.
   - A package depends on another with a normal entry: `git` is this repo,
-    `subdir` the folder, `tag` `NAME-VERSION`. The workspace reads it in place.
+    `subdir` the folder, `tag` the current `finn-<ts>` tag (there are no member
+    tags; `make coupling` checks it). The workspace reads it in place.
   - Keep them loosely coupled, so one can move to its own repo: `llm`, `mcp`,
     `sse` and `protocol` never depend on `core` or a client, and a package imports
     another only through its public module (`pkg/llm/llm`), never its `src/`.
