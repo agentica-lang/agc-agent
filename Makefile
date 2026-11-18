@@ -99,24 +99,15 @@ native-header: native-gen
 	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h
 native-check: native-gen native-source
 	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h --check
-	@for f in scanner.c tree_sitter/alloc.h tree_sitter/array.h tree_sitter/parser.h; do \
-	  cmp -s $(TREE_SITTER_BASH)/src/$$f bash/native/grammar/$$f || \
-	  { echo "native-check: bash/native/grammar/$$f is not the one of $(TREE_SITTER_BASH)" >&2; exit 1; }; \
-	done
+	@diff -r -x LICENSE -x parser.c -x grammar.json -x node-types.json bash/native/grammar $(TREE_SITTER_BASH)/src || \
+	  { echo 'native-check: bash/native/grammar is not src/ of $(TREE_SITTER_BASH) (but its LICENSE and the stub parser.c)' >&2; exit 1; }
 
 # tree-sitter-bash's parser (9.5 MB), which bash/native/grammar/parser.c includes, is in the submodule
-# TREE_SITTER_BASH, outside bash/: a fetched package holds no file over 1 MiB. native-source makes sure that the
-# submodule holds the parser that the stub names by its sha256 (the line is part of the source key of the module, and a
-# build of another parser would stay in the native cache under that key). It fetches the submodule when it is missing
-# or at another commit, and fails when the parser is still not that one, or when this is not a git clone.
+# TREE_SITTER_BASH, outside bash/: a fetched package holds no file over 1 MiB. native-source (scripts/native-source.sh)
+# makes sure that the submodule holds the parser that the stub names by its sha256, and fails outside a git clone.
 TREE_SITTER_BASH = vendor/tree-sitter-bash
-PARSER = $(TREE_SITTER_BASH)/src/parser.c
-SHA256 = $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
-parser_ok = [ -f $(PARSER) ] && grep -qx "// sha256 $$($(SHA256) $(PARSER) | cut -d ' ' -f 1)" bash/native/grammar/parser.c
 native-source:
-	@[ -e .git ] || { echo 'native-source: bash needs the tree-sitter-bash submodule: use a git clone and "make install"' >&2; exit 1; }
-	@$(parser_ok) || git submodule update --init $(TREE_SITTER_BASH)
-	@$(parser_ok) || { echo 'native-source: $(PARSER) is not the parser that bash/native/grammar/parser.c names (sha256)' >&2; exit 1; }
+	@sh scripts/native-source.sh
 
 fmt-check:
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} sh -c 'cd {} && $(AGENTICA) fmt --check .'
