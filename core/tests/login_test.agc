@@ -59,6 +59,150 @@ def test_a_login_checks_the_key_stores_it_privately_and_offers_the_provider() ->
   end
 end
 
+# New sessions start on the provider and model last picked: a login makes its provider the choice (with the provider's
+# own model), `/model` (an update) replaces it, `FINN_PROVIDER` wins over it, and it stays after a restart; a
+# choice that
+# is not offered any more is skipped with a note.
+def test_a_new_session_uses_the_provider_logged_in_and_the_last_model_picked() -> Result[Void]
+  setup = H.Setup(replies: ["models_small.json"], logins: ["paid"], providers: ["other"])
+  H.using(setup) do |h|
+    before = try H.new_session(h)
+    try Test.eq((try H.session(h, before)).provider, "local")
+    try Test.eq((try login(h, "paid", "sk-right")).status, 200)
+    first = try H.new_session(h)
+    try Test.eq((try H.session(h, first)).provider, "paid")
+    try Test.eq(File.stat(H.choice_file(h.base)).ok?, true)
+    update = Protocol.encode_update_session(Protocol.UpdateSession(provider: some("other"), model: some("m1")))
+    try Test.eq((try H.call(h, "PATCH", Protocol.session_path(first), update, H.auth(h))).status, 200)
+    picked = try H.session(h, try H.new_session(h))
+    try Test.eq([picked.provider, picked.model], ["other", "m1"])
+    H.restarted(h, setup, "") do |r|
+      again = try H.session(r, try H.new_session(r))
+      Test.eq([again.provider, again.model], ["other", "m1"])
+    end
+  end
+end
+
+def test_a_provider_set_by_the_environment_wins_over_the_last_choice() -> Result[Void]
+  setup = H.Setup(replies: ["models_small.json"], logins: ["paid"], providers: ["other"])
+  H.using(setup) do |h|
+    try Test.eq((try login(h, "paid", "sk-right")).status, 200)
+    try Test.eq((try H.session(h, try H.new_session(h))).provider, "paid")
+    pinned = setup.with(provider: "other")
+    H.restarted(h, pinned, "") do |r| Test.eq((try H.session(r, try H.new_session(r))).provider, "other") end
+  end
+end
+
+# A login of a provider that is not the server's default says so, and a login of the first one made it the default.
+def test_a_login_says_whether_it_made_the_provider_the_default() -> Result[Void]
+  setup = H.Setup(replies: ["models_small.json", "models_small.json"], logins: ["paid", "second"])
+  H.using(setup) do |h|
+    one = try Protocol.decode_login_status((try login(h, "paid", "sk-1")).text)
+    two = try Protocol.decode_login_status((try login(h, "second", "sk-2")).text)
+    try Test.eq([one.made_default, two.made_default], [true, false])
+    Test.eq((try H.session(h, try H.new_session(h))).provider, "paid")
+  end
+end
+
+# The choice file is read at the start; a choice whose provider is not offered any more, or whose model is not in the
+# provider's list, is dropped with one note.
+def test_a_last_choice_of_a_provider_that_is_not_offered_is_dropped_with_a_note() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-choice-#{Random.int(0, 999999999)}"
+  try Dir.mkdir(dir)
+  never = -> { ok("tok") }
+  ghost = try Config.from_env_with(->(n) { choice_env(dir, "ghost", "m", n) }, never)
+  gone = try Config.from_env_with(->(n) { choice_env(dir, "box", "gone", n) }, never)
+  kept = try Config.from_env_with(->(n) { choice_env(dir, "box", "m1", n) }, never)
+  pinned = try Config.from_env_with(->(n) { choice_env(dir, "box", "m1", n, {"FINN_API": "openai"}) }, never)
+  based = try Config.from_env_with(
+    ->(n) { choice_env(dir, "box", "m1", n, {"FINN_BASE_URL": "http://127.0.0.1:9/v1"}) },
+    never,
+  )
+
+  _ = Path.remove(dir)
+  try Test.eq(ghost.login.map { |l| l.choice.none? }, some(true))
+  try Test.eq(ghost.warnings.select { |w| w.include?("ghost") }.size, 1)
+  try Test.eq(gone.login.map { |l| l.choice.map { |c| c.model } }, some(some("")))
+  try Test.eq(gone.warnings.select { |w| w.include?("gone") }.size, 1)
+  try Test.eq(kept.login.map { |l| l.choice.map { |c| c.model } }, some(some("m1")))
+  Test.eq([kept.provider_pinned, pinned.provider_pinned, based.provider_pinned], [false, true, true])
+end
+
+def choice_env(
+  dir: String,
+  provider: String,
+  model: String,
+  name: String,
+  more: Map[String, String] = {},
+) -> Result[String]
+  box = "{\"name\": \"box\", \"base_url\": \"http://127.0.0.1:9/v1\", \"key_env\": \"BOX_KEY\", \"models\": [\"m1\"]}"
+  try File.write_text("#{dir}/config.json", "{\"providers\": [#{box}]}")
+  try File.write_text("#{dir}/#{Config.CHOICE_FILE}", "{\"provider\":\"#{provider}\",\"model\":\"#{model}\"}")
+  base = {
+    "FINN_STATE_DIR": dir,
+    "FINN_DATA_DIR": dir,
+    "HOME": dir,
+    "FINN_CONFIG": "#{dir}/config.json",
+    "BOX_KEY": "k",
+  }
+
+  for key in more.keys
+    base = base.put(key, more[key])
+  end
+
+  base.get(name).to_result("not set")
+end
+
+# A refusal on `local`, which a session gets when no provider was picked, says what to do; another provider's does not.
+def test_a_refusal_of_the_local_provider_says_to_pick_a_provider() -> Result[Void]
+  setup = H.Setup(replies: ["401:bad_request.json", "401:bad_request.json"], providers: ["other"])
+  H.using(setup) do |h|
+    texts: List[String] = []
+    providers: List[Optional[String]] = [none, some("other")]
+    for provider in providers
+      id = try H.new_session_in(h, h.work, none, provider)
+      a = try H.subscribe(h, id)
+      _ = try H.send(h, id, "Hi.")
+      a = try H.until(a, Protocol.EventKind.Error)
+      H.close(a)
+      texts = texts.push("#{a.seen.map { |s| s.event }}")
+    end
+
+    try Test.eq(
+      texts[0].include?("the local provider refused the request (HTTP 401): pick a provider with /model"),
+      true,
+    )
+
+    Test.eq(texts[1].include?("the local provider"), false)
+  end
+end
+
+# What counts as picked: a session an interactive client opened with a provider and model (`remember`) sets the choice,
+# a one-shot run does not; a request names its own provider over the choice; `FINN_MODEL` alone keeps the choice's
+# provider with its model.
+def test_a_create_is_remembered_only_when_asked_and_the_request_beats_the_choice() -> Result[Void]
+  setup = H.Setup(replies: [], providers: ["other", "third"])
+  H.using(setup) do |h|
+    _ = try H.new_session_in(h, h.work, none, some("other"), model: some("m1"))
+    try Test.eq((try H.session(h, try H.new_session(h))).provider, "local")
+    _ = try H.new_session_in(h, h.work, none, some("other"), model: some("m1"), remember: true)
+    kept = try H.session(h, try H.new_session(h))
+    try Test.eq([kept.provider, kept.model], ["other", "m1"])
+    named = try H.new_session_in(h, h.work, none, some("third"))
+    try Test.eq((try H.session(h, named)).provider, "third")
+    Test.eq((try H.session(h, try H.new_session(h))).provider, "other")
+  end
+end
+
+def test_finn_model_alone_keeps_the_provider_of_the_choice() -> Result[Void]
+  setup = H.Setup(replies: ["models_small.json"], logins: ["paid"], model_pinned: true, model: "from-env")
+  H.using(setup) do |h|
+    try Test.eq((try login(h, "paid", "sk-1")).status, 200)
+    made = try H.session(h, try H.new_session(h))
+    Test.eq([made.provider, made.model], ["paid", "from-env"])
+  end
+end
+
 # A local server's login gives its base URL, no key: a URL with a user, a query, a fragment, a space or no host is
 # refused and never said back; the URL is checked with `GET /models` there (with `FINN_API_KEY`), stored next to the
 # keys, and `local` (its turns and its `/props`) goes there from then on, also after a restart; a logout takes it back.

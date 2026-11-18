@@ -74,7 +74,7 @@ def test_a_session_on_the_preset_names_itself_in_the_headers() -> Result[Void]
     try Test.eq(HTTP.header_values(second.headers, "x-opencode-client"), ["finn"])
     try Test.eq(HTTP.header_values(first.headers, "authorization"), ["Bearer sk-opencode-go"])
     try Test.eq(JSON.get(try JSON.parse(second.body), "model"), ok(JSON.from(MODEL)))
-    other = try H.new_session(h)
+    other = try H.new_session_in(h, h.work, provider: some("local"))
     _ = try H.send(h, other, "Hello.")
     _ = try H.idle(h, other)
     plain = try H.next_request(h)

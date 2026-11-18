@@ -59,7 +59,7 @@ end
 
 def create(app: State.Model) -> Result[State.Model]
   options = app.options
-  request = try Client.new_session(options.cwd, options.model, options.api, options.provider, options.profile)
+  request = try Client.new_session(options.cwd, options.model, options.api, options.provider, options.profile, true)
   cwd = request.cwd
   id = try app.backend.create_session.call(request)
   session = try app.backend.session.call(id)

@@ -163,7 +163,16 @@ def logs_command(chat: Chat, count: Int) -> Result[Step]
 end
 
 def create(chat: Chat, options: Args.Options) -> Result[Chat]
-  request = try Client.new_session(options.cwd, options.model, options.api, options.provider, options.profile)
+  # A one-shot run (`-p`) in a script does not change the choice of the next sessions.
+  request = try Client.new_session(
+    options.cwd,
+    options.model,
+    options.api,
+    options.provider,
+    options.profile,
+    options.prompt.none?,
+  )
+
   created = try Client.create_session(chat.server, request)
   id = created.id
   ok(subscribe(profile_notes(note(chat, "[session #{id}]"), created.profile).with(id: id), 0))

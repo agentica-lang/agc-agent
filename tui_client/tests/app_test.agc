@@ -1465,6 +1465,68 @@ def test_a_login_offers_a_local_session_the_new_provider() -> Result[Void]
   Test.eq(changes.recv(0).ok?, false)
 end
 
+# A login that made its provider the default moves the session of the first start, which is on `local`, there too.
+def test_a_login_that_made_the_default_moves_the_local_session() -> Result[Void]
+  session = Protocol.Session(
+    id: "s1",
+    cwd: ".",
+    model: "m1",
+    last_event_id: 0,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+    provider: "box",
+  )
+
+  changes: Channel[Protocol.UpdateSession] = Channel.new(4)
+  backend = Client.unreachable_backend().with(
+    session: ->(_id: String) { ok(session) },
+    update_session: ->(_id: String, change: Protocol.UpdateSession) {
+      _ = changes.send(change, 0)
+      ok()
+    },
+  )
+
+  local = model_of(100, 12).with(backend: backend, id: "s1", serving: "local/qwen", first_login: true)
+  status = Protocol.LoginStatus(
+    name: "box",
+    label: "",
+    key_env: "KEY",
+    from: "stored",
+    coming: false,
+    made_default: true,
+  )
+
+  moved = App.update(local, App.Msg.LoggedIn("box", ok(status))).model
+  try Test.eq(changes.recv(0), ok(Protocol.UpdateSession(provider: some("box"))))
+  try Test.eq(moved.serving, "box/m1")
+  try Test.assert(moved.entries.last.text.include?("the session is on box/m1"), moved.entries.last.text)
+  later = App.update(local.with(first_login: false), App.Msg.LoggedIn("box", ok(status))).model
+  Test.eq([later.serving, changes.recv(0).ok?.to_s], ["local/qwen", "false"])
+end
+
+# `finn login` says what happened on the console once the screen is closed: the provider, whether `finn` uses it now
+# or needs `--provider`, and a cancel by Esc is a status 0 with its own line.
+def test_finn_login_ends_with_a_line_for_the_console() -> Result[Void]
+  status = Protocol.LoginStatus(name: "groq", label: "", key_env: "GROQ_API_KEY", from: "stored", coming: false)
+  only = model_of(60, 12).with(login_only: true)
+  made = App.update(only, App.Msg.LoggedIn("groq", ok(status.with(made_default: true)))).model
+  first = try App.outcome(made)
+  try Test.eq(["#{first.code}", "#{first.line}"], ["0", "some(\"finn: logged in to groq; run `finn` to start\")"])
+  kept = try App.outcome(App.update(only, App.Msg.LoggedIn("groq", ok(status))).model)
+  try Test.eq(kept.line, some("finn: logged in to groq; use `finn --provider groq`, or /model, to use it"))
+  env = try App.outcome(App.update(only, App.Msg.LoggedIn("groq", ok(status.with(from: "env")))).model)
+  try Test.eq(env.line, some("finn: logged in to groq; GROQ_API_KEY is set in the environment and wins over it"))
+
+  keyless = Protocol.LoginList(providers: [status], first: false)
+  asking = App.update(only.with(picker: some(Picker.logins(keyless))), enter()).model
+  cancelled = try App.outcome(App.update(asking, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model)
+  try Test.eq(["#{cancelled.code}", "#{cancelled.line}"], ["0", "some(\"finn: login cancelled\")"])
+  failed = try App.outcome(App.update(only, App.Msg.LoggedIn("groq", error("refused"))).model)
+  Test.eq(["#{failed.code}", "#{failed.line}"], ["1", "none"])
+end
+
 # Enter on the untouched list of a command's argument sends the command alone: `/model`, `/resume`, `/tree` and `/fork`
 # open their one picker, `/thinking` says the level; nothing changes. The list starts on the session's model and level.
 # A row moved to in the list of one command no longer counts once the command changes.

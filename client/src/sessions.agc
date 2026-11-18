@@ -11,13 +11,23 @@ def new_session(
   api: Optional[String],
   provider: Optional[String],
   profile: Optional[String] = none,
+  remember: Bool = false,
 ) -> Result[Protocol.NewSession]
   folder = case cwd
     some(dir) -> dir
     none -> try Path.cwd()
   end
 
-  ok(Protocol.NewSession(cwd: folder, model: model, api: api, provider: provider, profile: profile))
+  ok(
+    Protocol.NewSession(
+      cwd: folder,
+      model: model,
+      api: api,
+      provider: provider,
+      profile: profile,
+      remember: some(remember),
+    ),
+  )
 end
 
 ## The event id to read the stream of `session` after: while a turn runs, the start of the turn, so the client gets

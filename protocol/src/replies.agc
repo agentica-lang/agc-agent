@@ -143,6 +143,8 @@ struct LoginStatus
   coming: Bool
   asks: String = ASKS_KEY
   base_url: String = ""
+  ## This login made the provider the default of new sessions (it was the first, and none was set).
+  made_default: Bool = false
 end
 
 ## The answer of `POST /v1/auth/chatgpt`: a device login started. The user opens `url` and types `user_code`; the
@@ -158,6 +160,8 @@ end
 struct DeviceState
   state: String
   message: String
+  ## The login that is done made the provider the default of new sessions.
+  made_default: Bool = false
 end
 
 ## The answer of `GET /v1/auth`. `first`: no key file and no key in the environment, so a client offers a login.

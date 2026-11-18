@@ -25,7 +25,7 @@ def test_a_session_changes_its_model_and_thinking_level() -> Result[Void]
     other = try H.new_session(h)
     listed = try Protocol.decode_session_list((try H.get(h, Protocol.SESSIONS_PATH)).text)
     shown = listed.sessions.map { |l| "#{l.id} #{l.model} #{l.title}" }
-    try Test.eq(shown.sort, ["#{id} other-model Hi. There", "#{other} qwen2.5-0.5b-instruct "].sort)
+    try Test.eq(shown.sort, ["#{id} other-model Hi. There", "#{other} other-model "].sort)
     try Test.assert(listed.sessions.all? { |l| l.updated_s > 0 }, "no time of change: #{listed}")
     _ = try H.send(h, id, "Again.")
     _ = try H.idle(h, id)

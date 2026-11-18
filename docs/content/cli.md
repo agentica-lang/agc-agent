@@ -16,7 +16,7 @@ Finn has two clients for a session: `finn`, a full-screen one, and `finn chat`, 
 | `finn chat` | chat in this folder, line by line |
 | `finn -p TASK` | run one task and exit; `-p -` reads it from stdin |
 | `finn serve` | run the server in the foreground |
-| `finn login [PROVIDER]` | set up a provider with its key ([Providers](providers.md)) |
+| `finn login [PROVIDER]` | set up a provider with its key ([Providers](providers.md)); prints the result on the console when it ends, and Esc cancels with status 0 |
 | `finn logout [PROVIDER]` | remove a stored key, or all of them |
 | `finn server ACTION` | `status`, `start`, `stop`, `restart` or `logs` of the server |
 | `finn export SESSION [PATH]` | write a session to a Markdown file ([Sessions](sessions.md#export)) |
