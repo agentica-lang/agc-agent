@@ -1,6 +1,7 @@
 #!/bin/sh
 # Fails when a prebuilt library of bash's native module needs more than it may: it is loaded on machines that have no
 # compiler and nothing of ours beside it. Usage: check-library.sh FILE (.so, .dylib or .dll).
+# (macOS: the second line of otool -L is the library's own id.)
 # Linux: no GLIBC symbol newer than the 2.28 of the build, and only the libraries of glibc itself. macOS: only
 # libSystem. Windows: only the system's DLLs, never libwinpthread (the loader does not find it beside the file).
 set -eu
@@ -31,7 +32,7 @@ case $file in
     fi
     ;;
   *.dylib)
-    needed=$(otool -L "$file" | tail -n +2 | awk '{ print $1 }')
+    needed=$(otool -L "$file" | tail -n +3 | awk '{ print $1 }')
     echo "$needed"
     echo "$needed" | allow '^(/usr/lib/libSystem\.B\.dylib|$)'
     ;;
