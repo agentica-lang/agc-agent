@@ -58,7 +58,10 @@ def keyed(app: State.Model, event: TUI.Event) -> State.Model
     return Files.on_mention_key(app, found, event) if Files.mention_key?(app, found, event)
   end
 
-  on_prompt_key(unselected(app, event), event)
+  edited = on_prompt_key(unselected(app, event), event)
+  return Files.fresh_list(edited) if edited.prompt != app.prompt
+
+  edited
 end
 
 # A typed character, a paste or Backspace replaces a selected prompt; any other key keeps it as text. An Alt key

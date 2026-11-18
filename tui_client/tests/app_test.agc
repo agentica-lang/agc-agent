@@ -1633,7 +1633,8 @@ def test_enter_on_an_argument_list_runs_the_row() -> Result[Void]
 end
 
 # An argument typed whole is run as typed on Enter, though a row before it also matches (`/model p/gpt-5` with a
-# `gpt-5-mini` above it, `/tree 2` with a node whose text holds a 2); a prompt of more than one line is sent as typed.
+# `gpt-5-mini` above it, in any case, also after a move to a row and typing again; `/tree 2` with a node whose text
+# holds a 2); a prompt of more than one line is sent as typed.
 def test_enter_runs_an_argument_typed_whole_and_not_a_longer_row() -> Result[Void]
   providers = Protocol.ProviderList(
     provider: "p",
@@ -1662,9 +1663,18 @@ def test_enter_runs_an_argument_typed_whole_and_not_a_longer_row() -> Result[Voi
     },
   )
 
-  base = model_of(80, 20).with(backend: backend, id: "s1")
+  base = model_of(80, 20).with(backend: backend, id: "s1", serving: "p/gpt-5-mini")
   ran: List[String] = []
-  for line in ["/model p/gpt-5", "/tree 2", "/model gpt\nmore"]
+  cases = [
+    ["/model p/gpt-5", ""],
+    ["/model P/GPT-5", ""],
+    ["/model p/gpt-5", "down"],
+    ["/tree 2", ""],
+    ["/model gpt\nmore", ""],
+  ]
+
+  for each in cases
+    line = each[0]
     name = line.split(" ")[0]
     asking = App.update(base.with(prompt: name, cursor: name.length), key_char(" "))
     listed = asking.model
@@ -1674,6 +1684,10 @@ def test_enter_runs_an_argument_typed_whole_and_not_a_longer_row() -> Result[Voi
 
     first = line.split("\n")[0]
     typed = listed
+    if each[1] == "down"
+      typed = App.update(typed, down()).model
+    end
+
     for c in first.slice(name.length + 1, first.length - name.length - 1).split("")
       typed = App.update(typed, key_char(c)).model
     end
@@ -1695,10 +1709,31 @@ def test_enter_runs_an_argument_typed_whole_and_not_a_longer_row() -> Result[Voi
       end
     end
 
-    ran = ran.push("#{first}: #{got.join(",")}")
+    ran = ran.push("#{first} #{each[1]}: #{got.join(",")}")
   end
 
-  Test.eq(ran, ["/model p/gpt-5: update gpt-5", "/tree 2: branch 2", "/model gpt: update gpt\nmore"])
+  asking = App.update(base.with(prompt: "/model", cursor: 6), key_char(" "))
+  tabbing = asking.model
+  for cmd in asking.cmds
+    tabbing = App.update(tabbing, run(cmd)[0]).model
+  end
+
+  for c in "P/GPT-5".split("")
+    tabbing = App.update(tabbing, key_char(c)).model
+  end
+
+  tabbed = App.update(tabbing, App.Msg.Key(TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))).model
+  try Test.eq(tabbed.prompt, "/model p/gpt-5")
+  Test.eq(
+    ran,
+    [
+      "/model p/gpt-5 : update gpt-5",
+      "/model P/GPT-5 : update P/GPT-5",
+      "/model p/gpt-5 down: update gpt-5",
+      "/tree 2 : branch 2",
+      "/model gpt : update gpt\nmore",
+    ],
+  )
 end
 
 # The banner of the warnings of the server: none for a log without them, and the head says what closes it (a click only

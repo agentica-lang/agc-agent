@@ -130,7 +130,8 @@ def test_a_last_choice_of_a_provider_that_is_not_offered_is_dropped_and_an_unlis
   Test.eq([kept.provider_pinned, pinned.provider_pinned, based.provider_pinned], [false, true, true])
 end
 
-# A choice that cannot be stored does not stop the session, and leaves no temporary file next to it.
+# A choice that cannot be stored (its file is a folder) does not stop the session, and no temporary file is left next
+# to it. This does not reach the cleanup of a temporary file that was made: the write there needs a failing disk.
 def test_a_choice_that_cannot_be_stored_leaves_no_temp_file() -> Result[Void]
   setup = H.Setup(replies: [], providers: ["other"])
   H.using(setup) do |h|
