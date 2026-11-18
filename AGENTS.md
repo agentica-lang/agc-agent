@@ -53,6 +53,8 @@ Makefile             check, fmt-check, unit, smoke, test over every package; smo
 .github/workflows/   ci.yml, on GitHub-hosted ubuntu-24.04: the pinned Agentica release, the cached packages and compile
                      caches (`_build/`), then fmt-check and test (no real-model job); `tag-version` tags each
                      merge to main that passed as `finn-<ts>` (the one job with `contents: write`)
+                     CI runs on Linux; `bash-native.yml` runs all five targets only when the native module, its
+                     submodule or its build changes (never add macOS or Windows runners to `ci.yml`)
 ```
 
 A package is added by the phase that needs it, never as an empty folder.

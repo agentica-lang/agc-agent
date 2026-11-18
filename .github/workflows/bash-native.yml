@@ -11,7 +11,12 @@ on:
     paths:
       - 'bash/native/**'
       - 'bash/agentica.toml'
+      - 'vendor/tree-sitter-bash'
       - 'vendor/tree-sitter-bash/**'
+      - '.gitmodules'
+      - 'Makefile'
+      - 'scripts/prebuilt_e2e.agc'
+      - 'scripts/check-library.sh'
       - '.github/workflows/bash-native.yml'
 
 permissions:
