@@ -156,6 +156,20 @@ def test_the_catalog_is_kept_and_read_offline() -> Result[Void]
   end
 end
 
+# A model that an OpenAI-compatible provider gives its own SDK (Anthropic, Responses, Google) is not listed: the
+# provider's chat completions may not serve it. One of that provider's own SDK, or with none, is.
+def test_the_list_leaves_out_the_models_of_another_api() -> Result[Void]
+  within_models do |served, dir|
+    catalog = Catalog.start(Catalog.Options(url: served.url, cache: "#{dir}/models.json"))
+    try Test.assert(Catalog.wait(catalog, 10_000), "the catalog did not load")
+    listed = Catalog.models(catalog, "opencode-go")
+    openai = Catalog.models(catalog, "openai")
+    Catalog.stop(catalog)
+    try Test.eq(listed, ["deepseek-v4.1-flash", "kimi-k3"])
+    Test.eq(openai.include?("gpt-5.1"), true)
+  end
+end
+
 # A fetch that hangs holds up no one: `find` answers at once, with nothing while the catalog loads.
 def test_a_slow_fetch_does_not_hold_up_find() -> Result[Void]
   within_models do |served, dir|

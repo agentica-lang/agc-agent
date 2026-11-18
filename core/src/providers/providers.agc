@@ -19,6 +19,8 @@ struct ModelApi
   model: String = ""
   ## Ask for the prompt cache (Anthropic).
   cache: Bool = false
+  ## HTTP headers of every request; `${session}` in a value is the session's id.
+  headers: Map[String, String] = {}
   ## A local server whose `/props` may give the window (llama-server), and which may get `FINN_API_KEY` there.
   local: Bool = true
   ## A provider with a fresh token, after a 401 (the token of `ant`).
@@ -46,6 +48,12 @@ struct Custom
   models: List[String] = []
   ## Where a login checks a key, under `base_url`: a path that answers 401 to a wrong key.
   check_path: String = "/models"
+  ## The model of a session that names none.
+  model: String = ""
+  ## The prefixes of the models that take their thinking back as `reasoning_content` (see `LLM.openai_chat`).
+  reasoning_back: List[String] = []
+  ## HTTP headers of every request; `${session}` in a value is the session's id.
+  headers: Map[String, String] = {}
 end
 
 ## A provider a login will offer, with no flow yet (a subscription): its name and what it is.
@@ -68,7 +76,16 @@ def presets() -> List[Custom]
     ),
     Custom(name: "groq", base_url: "https://api.groq.com/openai/v1", key_env: "GROQ_API_KEY"),
     Custom(name: "deepseek", base_url: "https://api.deepseek.com/v1", key_env: "DEEPSEEK_API_KEY"),
-    Custom(name: "opencode-go", base_url: "https://opencode.ai/inference/go/v1", key_env: "OPENCODE_API_KEY"),
+    # Its docs fetch the model list without a key, so a login may not tell a wrong key. Its session header serves the
+    # routing and the prompt cache.
+    Custom(
+      name: "opencode-go",
+      base_url: "https://opencode.ai/inference/go/v1",
+      key_env: "OPENCODE_API_KEY",
+      model: "deepseek-v4.1-flash",
+      reasoning_back: ["deepseek-"],
+      headers: {"x-opencode-client": "finn", "x-opencode-session": "${session}"},
+    ),
   ]
 end
 
@@ -157,7 +174,7 @@ struct CustomWire
   models: Optional[List[String]] = none
 end
 
-# An entry that replaces a preset keeps where the preset checks a key.
+# An entry that replaces a preset keeps where the preset checks a key, and what it does for its models.
 def custom_of(wire: CustomWire) -> Custom
   custom = Custom(
     name: wire.name,
@@ -168,7 +185,12 @@ def custom_of(wire: CustomWire) -> Custom
   )
 
   for preset in (presets().select { |p| p.name == custom.name })
-    return custom.with(check_path: preset.check_path)
+    return custom.with(
+      check_path: preset.check_path,
+      model: preset.model,
+      reasoning_back: preset.reasoning_back,
+      headers: preset.headers,
+    )
   end
 
   custom
@@ -191,8 +213,21 @@ def checked(path: String, customs: List[Custom]) -> Result[List[Custom]]
 end
 
 def provider_of(custom: Custom, key: String, options: LLM.Options) -> Provider
-  chat = ModelApi(provider: LLM.openai_chat(custom.base_url, key, options), local: false)
-  responses = ModelApi(provider: LLM.openai_responses(custom.base_url, key, options), extra: stateless(), local: false)
+  chat = ModelApi(
+    provider: LLM.openai_chat(custom.base_url, key, options, custom.reasoning_back),
+    model: custom.model,
+    headers: custom.headers,
+    local: false,
+  )
+
+  responses = ModelApi(
+    provider: LLM.openai_responses(custom.base_url, key, options),
+    extra: stateless(),
+    model: custom.model,
+    headers: custom.headers,
+    local: false,
+  )
+
   apis = {"openai": chat}
   if custom.api == "openai_responses"
     apis = {"openai_responses": responses, "openai": chat}

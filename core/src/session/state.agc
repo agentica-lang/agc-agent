@@ -22,6 +22,7 @@ struct Endpoint
   provider: LLM.Provider
   extra: Map[String, JSON.Value] = {}
   cache: Bool = false
+  headers: Map[String, String] = {}
   refresh: Optional[Fn[Result[LLM.Provider]]] = none
   props_url: String = ""
   api_key: String = ""
@@ -56,6 +57,8 @@ struct Setup
   take_ms: Int = 5000
   ## Ask the provider for its prompt cache.
   cache: Bool = false
+  ## HTTP headers of every call; `${session}` in a value is the session's id.
+  headers: Map[String, String] = {}
   ## A provider with a fresh token, after a 401.
   refresh: Optional[Fn[Result[LLM.Provider]]] = none
   ## What the core's own extensions (the skills) give the session.

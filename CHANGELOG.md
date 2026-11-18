@@ -29,7 +29,8 @@
 
 ### Added
 
-- Provider `opencode-go` (OpenCode Go): `finn login opencode-go` or `OPENCODE_API_KEY`, then `--provider opencode-go --model deepseek-v4.1-flash`.
+- Provider `opencode-go` (OpenCode Go): `finn login opencode-go` or `OPENCODE_API_KEY`, then `--provider opencode-go`; its default model is `deepseek-v4.1-flash`.
+- A model that models.dev gives its own API (Anthropic, Responses, Google) on an OpenAI-compatible provider is not listed by `/model`.
 - An extension tool's `Core.Call` names its session (`session`).
 - Extensions can change or stop a tool call before its approval: `Core.Event.ToolBefore(fn)` gives `Core.Check.Go`, `Input(json)` or `Stop(reason)`.
 - Extensions can observe the sessions: `Core.Event.Seen(names, fn)` gets the events it names, with `session_started` and `session_ended`, and never slows a turn.

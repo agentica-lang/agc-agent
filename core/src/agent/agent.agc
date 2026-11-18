@@ -76,6 +76,8 @@ struct Turn
   extra: Map[String, JSON.Value] = {}
   ## Ask the provider for its prompt cache: the system prompt and the tools, and the conversation so far.
   cache: Bool = false
+  ## HTTP headers of every request.
+  headers: Map[String, String] = {}
   ## A provider with a fresh token, after a 401 (the token of `ant`).
   refresh: Optional[Fn[Result[LLM.Provider]]] = none
   ## The session sends no thinking blocks until its next fold.
@@ -415,6 +417,7 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
     tools: tools,
     extra: turn.extra,
     cache: turn.cache,
+    headers: turn.headers,
     effort: turn.effort,
     max_tokens: output_limit(turn),
   )

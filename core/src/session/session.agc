@@ -803,6 +803,7 @@ def endpoint_of(options: Config.Options, provider: String, api: String) -> Resul
       provider: model_api.provider,
       extra: model_api.extra,
       cache: model_api.cache,
+      headers: model_api.headers,
       refresh: refresh_of(model_api),
       props_url: if_local(model_api, options.props_url),
       api_key: if_local(model_api, options.api_key),

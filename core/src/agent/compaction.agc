@@ -49,6 +49,7 @@ struct Settings
   api_key: String = ""
   ## Fields of every request, as the turn's.
   extra: Map[String, JSON.Value] = {}
+  headers: Map[String, String] = {}
 end
 
 def due?(settings: Settings, context: Int) -> Bool
@@ -105,6 +106,7 @@ def summarize(
       system: SYSTEM,
       messages: [prompt],
       extra: settings.extra,
+      headers: settings.headers,
       max_tokens: some(SUMMARY_MAX_TOKENS),
     ),
   )

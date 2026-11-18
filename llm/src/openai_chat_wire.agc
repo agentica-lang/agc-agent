@@ -42,11 +42,15 @@ end
 def new_turn() -> Turn = Turn(usage: Types.Usage())
 
 ## The JSON body of a streamed call. Error `llm.unsupported`: a `Custom` tool, which only Responses has.
-def request_body(request: Types.Request) -> Result[String]
+def request_body(request: Types.Request) -> Result[String] = request_body_with(request, false)
+
+## `request_body`; with `reasoning_back` each assistant message carries its thinking as `reasoning_content` (empty
+## when it had none), which DeepSeek-style APIs ask for on every assistant message once thinking is on.
+def request_body_with(request: Types.Request, reasoning_back: Bool) -> Result[String]
   try check_custom(request)
   body: Map[String, JSON.Value] = {
     "model": JSON.from(request.model),
-    "messages": JSON.array(messages(request)),
+    "messages": JSON.array(messages(request, reasoning_back)),
     "stream": JSON.from(true),
     "stream_options": JSON.object({"include_usage": JSON.from(true)}),
   }
@@ -203,7 +207,7 @@ def tool_json(tool: Types.Tool) -> JSON.Value
   JSON.object({"type": JSON.from("function"), "function": function})
 end
 
-def messages(request: Types.Request) -> List[JSON.Value]
+def messages(request: Types.Request, reasoning_back: Bool) -> List[JSON.Value]
   out: List[JSON.Value] = []
   if not request.system.empty?
     out = out.push(role_text("system", request.system))
@@ -212,7 +216,7 @@ def messages(request: Types.Request) -> List[JSON.Value]
   for message in request.messages
     case message.role
       Types.Role.User -> out = out + user_messages(message.content)
-      Types.Role.Assistant -> out = out.push(assistant_message(message.content))
+      Types.Role.Assistant -> out = out.push(assistant_message(message.content, reasoning_back))
     end
   end
 
@@ -250,13 +254,15 @@ def tool_message(result: Types.ToolOutput) -> JSON.Value
   })
 end
 
-# Thinking is not sent back: the chat completions API takes no reasoning in a request.
-def assistant_message(blocks: List[Types.Block]) -> JSON.Value
+# Thinking is not sent back, unless the API asks for it (`reasoning_back`): the chat completions API takes none.
+def assistant_message(blocks: List[Types.Block], reasoning_back: Bool) -> JSON.Value
   texts: List[String] = []
+  thoughts: List[String] = []
   calls: List[JSON.Value] = []
   for block in blocks
     case block
       Types.Block.Text(part) -> texts = texts.push(part.text)
+      Types.Block.Thinking(part) -> thoughts = thoughts.push(part.text)
       Types.Block.ToolUse(call) -> calls = calls.push(call_json(call))
       _ -> nil
     end
@@ -271,6 +277,10 @@ def assistant_message(blocks: List[Types.Block]) -> JSON.Value
 
   if not calls.empty?
     fields = fields.put("tool_calls", JSON.array(calls))
+  end
+
+  if reasoning_back
+    fields = fields.put("reasoning_content", JSON.from(thoughts.join("")))
   end
 
   JSON.object(fields)

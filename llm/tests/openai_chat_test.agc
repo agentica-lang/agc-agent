@@ -69,6 +69,39 @@ def test_max_tokens_is_left_out_unless_given_except_on_anthropic() -> Result[Voi
   Test.eq(limits, ["", "", "64000", "384000", "384000", "384000"])
 end
 
+# A provider told so sends the thinking of each assistant message back as `reasoning_content` to the models it names
+# (an empty one when the message had none), and to no other: a model of another name gets none.
+def test_thinking_goes_back_as_reasoning_content_only_to_the_models_named() -> Result[Void]
+  fake = try Fake.start([try Fake.sse("openai_chat/text.sse"), try Fake.sse("openai_chat/text.sse")])
+  thought = LLM.Block.Thinking(LLM.ThinkingPart(text: "Plan it."))
+  said = Ev.text_block("Done.")
+  history = [
+    Ev.user("Hi."),
+    LLM.Message(role: LLM.Role.Assistant, content: [thought, said]),
+    LLM.Message(role: LLM.Role.Assistant, content: [said]),
+    Ev.user("Again."),
+  ]
+
+  back = LLM.openai_chat(fake.url, KEY, LLM.Options(timeout_ms: 5000, retry_base_ms: 1), ["deepseek-"])
+  for model in ["deepseek-v4", "qwen3"]
+    _ = try LLM.response(try LLM.stream(back, LLM.Request(model: model, messages: history)))
+  end
+
+  first = try messages_of(try Fake.next_request(fake))
+  second = try messages_of(try Fake.next_request(fake))
+  try Fake.stop(fake)
+  try Test.eq(
+    first.map { |m| JSON.get(m, "reasoning_content").unwrap_or(JSON.from("-")) },
+    [JSON.from("-"), JSON.from("Plan it."), JSON.from(""), JSON.from("-")],
+  )
+
+  Test.eq(second.select { |m| JSON.get(m, "reasoning_content").ok? }.size, 0)
+end
+
+def messages_of(seen: Fake.Seen) -> Result[List[JSON.Value]]
+  JSON.list(try JSON.get(try JSON.parse(seen.body), "messages"))
+end
+
 # The tool call of the answer, sent back with its result, is the next request: what the read gives is written back.
 def test_streams_a_tool_call_in_pieces_and_sends_it_back() -> Result[Void]
   fake = try Fake.start([
