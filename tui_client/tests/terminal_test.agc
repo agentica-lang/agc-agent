@@ -856,7 +856,8 @@ end
 # A selection over the cap is not sent: terminals and multiplexers cut a longer sequence.
 def test_a_selection_too_large_to_copy_says_so() -> Result[Void]
   written: Channel[String] = Channel.new(4)
-  text = (0...16000).to_a.map { |n| "word#{n}" }.join(" ")
+  word = (0...39).to_a.map { |_| "é" }.join("")
+  text = (0...1000).to_a.map { |_| word }.join(" ")
   model = App.seed(Client.unreachable_backend(), options(), Channel.new(1), 40, 12).with(
     entries: Transcript.from_history([Protocol.Message(role: Protocol.Role.User, text: text)]),
     write: ->(sent: String) { _ = written.send(sent, 0) },
