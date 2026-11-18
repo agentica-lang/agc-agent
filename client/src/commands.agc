@@ -33,6 +33,12 @@ COMMANDS = [
   ),
   Usage(name: "/thinking", args: "[low|medium|high|default]", about: "the thinking level, or change it"),
   Usage(
+    name: "/confine",
+    args: "[on|off]",
+    about: "keep the file tools in the session folder (on) or let them reach any path (off); alone: show it",
+    more: "the rules of approval apply either way; it lasts until the server restarts",
+  ),
+  Usage(
     name: "/profile",
     args: "[NAME]",
     about: "change the tools the model sees (and its model) from the next turn on; alone: list the profiles",
@@ -83,6 +89,8 @@ enum Command
   Model(Optional[String])
   ## Shows the thinking level without an argument.
   Thinking(Optional[String])
+  ## Shows whether the file tools stay in the session folder without an argument.
+  Confine(Optional[Bool])
   ## Lists the profiles without an argument.
   Profile(Optional[String])
   Compact
@@ -375,6 +383,7 @@ def command(name: String, argument: String) -> Result[Command]
     "/export" -> exporting(argument)
     "/model" -> model(argument)
     "/thinking" -> thinking(argument)
+    "/confine" -> confine(argument)
     "/profile" -> ok(Command.Profile(given(argument)))
     "/compact" -> bare(Command.Compact, name, argument)
     "/logs" -> logs(argument)
@@ -428,6 +437,15 @@ def model(argument: String) -> Result[Command]
   return error("a model name has no spaces", kind: KIND_COMMAND) if argument.include?(" ")
 
   ok(Command.Model(given(argument)))
+end
+
+def confine(argument: String) -> Result[Command]
+  case argument
+    "" -> ok(Command.Confine(none))
+    "on" -> ok(Command.Confine(some(true)))
+    "off" -> ok(Command.Confine(some(false)))
+    _ -> error("/confine takes on or off", kind: KIND_COMMAND)
+  end
 end
 
 def thinking(argument: String) -> Result[Command]

@@ -36,6 +36,19 @@ struct Scan
   always: List[Resource]
 end
 
+## The `external_directory` glob of a file tool's target: the folder of a file, or the folder itself, when the target
+## (as the tool shows it: relative to `root` inside it, absolute outside) is outside `root`.
+def external(root: String, target: String) -> Optional[String]
+  return none if not target.start_with?("/") or Sandbox.inside?(root, target)
+
+  folder = target
+  if not directory?(target)
+    folder = Sandbox.parent(target)
+  end
+
+  some(glob_of(folder))
+end
+
 def scan(root: String, command: String) -> Scan
   parsed = Bash.parse(command)
   return Scan(clear: false, asked: [], always: []) if not parsed.ok?

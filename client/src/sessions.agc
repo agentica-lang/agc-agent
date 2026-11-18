@@ -48,6 +48,13 @@ end
 ## The thinking level of `session`, as a client says it.
 def thinking(session: Protocol.Session) -> String = "thinking #{session.effort.unwrap_or("as the model's default")}"
 
+## Whether the file tools of `session` stay in its folder, as a client says it.
+def confined(session: Protocol.Session) -> String
+  return "the file tools stay in the session folder (/confine off lets them reach any path)" if session.confine
+
+  "the file tools reach any path (/confine on keeps them in the session folder)"
+end
+
 ## What a compaction did: `folded` the history, or found nothing to fold.
 def compacted(folded: Bool) -> String
   return "compacted" if folded

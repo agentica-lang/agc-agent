@@ -307,7 +307,7 @@ def bare_setup() -> Result[SessionActor.Setup]
   nothing: List[LLM.Model] = []
   provider = LLM.Provider(name: "none", stream: ->(_r: LLM.Request) { error("no model") }, models: -> { ok(nothing) })
   dir = try fresh()
-  ctx = try Tools.context(dir, ->(_name: String) { error("not set") })
+  ctx = try Tools.context(dir, ->(_name: String) { error("not set") }, true)
   ok(
     SessionActor.Setup(
       id: "s",

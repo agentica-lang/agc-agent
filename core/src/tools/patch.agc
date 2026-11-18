@@ -142,7 +142,7 @@ def apply(ctx: Spec.Context, input: JSON.Value) -> Result[String]
     left = left - plan.spent
   end
 
-  undo = Undo(saved: [], folders: new_folders(ctx.root, changes), aside: [])
+  undo = Undo(saved: [], folders: new_folders(changes), aside: [])
   for change in changes
     for path in option_list(change.write)
       undo = undo.with(saved: undo.saved.push(Saved(path: path, content: present(path))))
@@ -421,7 +421,7 @@ def touches(ctx: Spec.Context, hunks: List[Hunk]) -> Result[List[Touched]]
   out: List[Touched] = []
   for hunk in hunks
     for t in touches_of(hunk)
-      relative = Sandbox.relative(ctx.root, try Sandbox.resolve(ctx.root, t.path))
+      relative = Sandbox.relative(ctx.root, try Sandbox.reach(ctx.root, t.path, ctx.confine))
       return error("the patch touches #{relative} twice") if (out.any? { |o| o.path == relative })
 
       out = out.push(t.with(path: relative))
@@ -450,7 +450,7 @@ end
 # What a hunk will do, checked against the files as they are now, and the line comparisons its search took (at most
 # `budget`); nothing is written yet.
 def planned(ctx: Spec.Context, hunk: Hunk, budget: Int) -> Result[Plan]
-  path = try Sandbox.resolve(ctx.root, hunk.path)
+  path = try Sandbox.reach(ctx.root, hunk.path, ctx.confine)
   relative = Sandbox.relative(ctx.root, path)
   case hunk.kind
     Kind.Add ->
@@ -472,7 +472,7 @@ def planned(ctx: Spec.Context, hunk: Hunk, budget: Int) -> Result[Plan]
       content = text_of(placed.lines, line_end(text))
       case hunk.move_to
         some(to) ->
-          moved = try Sandbox.resolve(ctx.root, to)
+          moved = try Sandbox.reach(ctx.root, to, ctx.confine)
           shown = Sandbox.relative(ctx.root, moved)
           return error("#{shown} exists: the move would replace it") if File.lstat(moved).ok?
 
@@ -496,13 +496,13 @@ def written(path: String, content: String) -> Result[Void]
   File.write_text(path, content)
 end
 
-# The folders above the written files that are not there yet, inside the session folder, deepest first.
-def new_folders(root: String, changes: List[Change]) -> List[String]
+# The folders above the written files that are not there yet, deepest first.
+def new_folders(changes: List[Change]) -> List[String]
   out: List[String] = []
   for change in changes
     for path in option_list(change.write)
       folder = Sandbox.parent(path)
-      while Sandbox.inside?(root, folder) and folder != root and not File.lstat(folder).ok?
+      while not File.lstat(folder).ok?
         if not out.include?(folder)
           out = out.push(folder)
         end

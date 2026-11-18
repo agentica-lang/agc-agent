@@ -48,7 +48,7 @@ end
 
 def write_file(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, WriteFileArgs.codec)
-  path = try Sandbox.resolve(ctx.root, args.path)
+  path = try Sandbox.reach(ctx.root, args.path, ctx.confine)
   try Dir.mkdir(Sandbox.parent(path))
   try File.write_text(path, args.content)
   ok("wrote #{args.content.bytesize} bytes to #{Sandbox.relative(ctx.root, path)}")
@@ -66,7 +66,7 @@ def edit_file(ctx: Spec.Context, input: JSON.Value) -> Result[String]
     return error("old_string found #{count} times in #{args.path}: add context or set replace_all")
   end
 
-  path = try Sandbox.resolve(ctx.root, args.path)
+  path = try Sandbox.reach(ctx.root, args.path, ctx.confine)
   try File.replace(path, text.replace(args.old_string, args.new_string).bytes)
   ok("replaced #{count} in #{args.path}")
 end
@@ -74,15 +74,12 @@ end
 ## The path of each call, relative to the session folder, for the approval rules and the preview.
 def read_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, ReadFileArgs.codec)
-  path = try readable(ctx, args.path)
-  return ok(path) if not Sandbox.inside?(ctx.root, path)
-
-  ok(Sandbox.relative(ctx.root, path))
+  ok(Sandbox.relative(ctx.root, try readable(ctx, args.path)))
 end
 
 ## The path `read_file` reads: in the session folder, or in a folder of `read_roots` when it is absolute.
 def readable(ctx: Spec.Context, path: String) -> Result[String]
-  inside = Sandbox.resolve(ctx.root, path)
+  inside = Sandbox.reach(ctx.root, path, ctx.confine)
   return inside if inside.ok? or not path.start_with?("/")
 
   for root in ctx.read_roots
@@ -104,7 +101,7 @@ def edit_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
 end
 
 def relative_path(ctx: Spec.Context, path: String) -> Result[String]
-  ok(Sandbox.relative(ctx.root, try Sandbox.resolve(ctx.root, path)))
+  ok(Sandbox.relative(ctx.root, try Sandbox.reach(ctx.root, path, ctx.confine)))
 end
 
 private
@@ -209,7 +206,7 @@ def long_line_note(page: Page) -> String
 end
 
 def read(ctx: Spec.Context, requested: String) -> Result[String]
-  path = try Sandbox.resolve(ctx.root, requested)
+  path = try Sandbox.reach(ctx.root, requested, ctx.confine)
   info = try File.stat(path)
   return error("not a file: #{requested}") if info.kind != "file"
 

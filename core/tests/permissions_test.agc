@@ -155,7 +155,7 @@ def test_a_deny_rule_after_an_allow_rule_wins_for_bash() -> Result[Void]
   allowed = try Approval.parse_rules(["allow bash(*)"] + deny)
   bare = try Approval.parse_rules(deny)
   root = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
-  ctx = try Tools.context(root, ->(_name: String) { error("unset") })
+  ctx = try Tools.context(root, ->(_name: String) { error("unset") }, true)
   commands = ["rm -rf x", "ls && rm x", "cat .env", "git status"]
   shown = [allowed, bare].flat_map do |rules|
     [false, true].map do |asking|
@@ -344,7 +344,35 @@ def rule_sizes(dir: String, config: String, switch: String) -> Result[List[Int]]
     asking = 1
   end
 
-  ok([rules.all.size, asking])
+  ok([rules.all.select { |r| not r.pattern.start_with?(dir) }.size, asking])
+end
+
+# The server's rules deny Finn's own files by their absolute path: the folder of the keys and the config file,
+# the state
+# and the data folders, and a `FINN_CONFIG` file of any name.
+def test_the_server_rules_deny_the_files_of_finns_folders() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-secret-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  try File.write_text("#{dir}/mine.json", "{}")
+  options = try Config.from_env(->(n) { env(dir, n, "#{dir}/mine.json", "") })
+  real = try Path.real(dir)
+  rules = try options.approvals.to_result("no rules")
+  paths = [
+    "#{dir}/.config/finn/auth.json",
+    "#{dir}/.config/finn/config.json",
+    "#{dir}/mine.json",
+    "#{options.state_dir}/server.json",
+    "#{options.state_dir}/chatgpt.json",
+    "#{options.data_dir}/auth.json",
+  ]
+
+  denied = paths.map { |path| Approval.evaluate(rules, "read_file", path) == some(Tools.Verdict.Deny) }
+  written = Approval.evaluate(rules, "write_file", "#{dir}/.config/finn/auth.json")
+  other = Approval.evaluate(rules, "read_file", "#{real}/notes.txt")
+  _ = Path.remove(dir)
+  try Test.eq(denied, [true, true, true, true, true, true])
+  try Test.eq([written, other], [some(Tools.Verdict.Deny), none])
+  ok()
 end
 
 def env(dir: String, name: String, config: String, switch: String) -> Result[String]

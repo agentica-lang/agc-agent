@@ -214,7 +214,7 @@ def test_wrappers_run_in_order_around_every_tool() -> Result[Void]
     target: ->(_ctx: Spec.Context, _input: JSON.Value) { ok("") },
   )
 
-  ctx = try Tools.context(base, &unset, [echo], wrap: Extensions.wrap(registry))
+  ctx = try Tools.context(base, &unset, true, [echo], wrap: Extensions.wrap(registry))
   read = Tools.run(ctx, "read_file", JSON.object({"path": JSON.from("a.txt")}))
   mcp = Tools.run(ctx, "mcp__s__echo", JSON.object({}))
   _ = Path.remove(base)
@@ -237,9 +237,9 @@ def test_a_wrapper_or_a_tool_that_fails_fails_its_call() -> Result[Void]
 
   tools = Extensions.spec_tools(Core.registry() |> Core.add_tool(crashing_tool()))
   outputs = [
-    Tools.run(try Tools.context(base, &unset, wrap: Extensions.wrap(crashing)), "glob", JSON.object({})),
-    Tools.run(try Tools.context(base, &unset, wrap: Extensions.wrap(hanging)), "glob", JSON.object({})),
-    Tools.run(try Tools.context(base, &unset, tools), "word_count", JSON.object({})),
+    Tools.run(try Tools.context(base, &unset, true, wrap: Extensions.wrap(crashing)), "glob", JSON.object({})),
+    Tools.run(try Tools.context(base, &unset, true, wrap: Extensions.wrap(hanging)), "glob", JSON.object({})),
+    Tools.run(try Tools.context(base, &unset, true, tools), "word_count", JSON.object({})),
   ]
 
   _ = Path.remove(base)
@@ -450,7 +450,7 @@ def test_resolve_keeps_the_read_deny_rules() -> Result[Void]
     target: ->(_call: Core.Call) { ok("") },
   )
 
-  open = try Tools.context(base, &unset, Extensions.spec_tools(Core.registry() |> Core.add_tool(probe)))
+  open = try Tools.context(base, &unset, true, Extensions.spec_tools(Core.registry() |> Core.add_tool(probe)))
   denied = open.with(hidden: some(->(path: String) { path == ".env" }))
   paths = [".env", "./.env", "sub/../.env", "#{base}/.env", "secret"]
   results = [open, denied].map do |ctx|

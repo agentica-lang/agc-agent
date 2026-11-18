@@ -75,6 +75,7 @@ Type them in either client:
 | `/export [--force] [PATH]` | write the session to a Markdown file ([Sessions](sessions.md#export)) |
 | `/model [PROVIDER/]NAME` | change the model (and provider) from the next turn on; alone, pick or show it |
 | `/thinking [low\|medium\|high\|default]` | show or change the thinking level |
+| `/confine [on\|off]` | keep the file tools in the session folder, or let them reach any path; alone: show it |
 | `/profile [NAME]` | change the [profile](tools.md#profiles) between turns (Tab completes it in `finn`); alone, list them |
 | `/compact` | fold the history into a summary now |
 | `/login [PROVIDER]` | set up a provider (`finn`) |

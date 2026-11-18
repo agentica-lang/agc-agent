@@ -1,4 +1,5 @@
-## The path rule: a tool reaches only files whose real path is inside the session folder.
+## The path rule: with the confinement on, a tool reaches only files whose real path is inside the session folder; with
+## it off, any path.
 
 struct Found
   real: String
@@ -15,7 +16,11 @@ end
 
 ## The absolute path of `path` (relative to `root`, or absolute) with `..` and links resolved, or an error when it
 ## leaves `root`. The path may not exist yet: its last existing folder is resolved, the rest must be plain names.
-def resolve(root: String, path: String) -> Result[String]
+def resolve(root: String, path: String) -> Result[String] = reach(root, path, true)
+
+## `resolve`, where `confine` off lets the path be anywhere: the other checks (control characters, `..` in the part
+## that does not exist, a broken link) stay.
+def reach(root: String, path: String, confine: Bool) -> Result[String]
   return error("empty path") if path == ""
 
   control = path.split("").any? { |char| char.code < 32 or char.code == 127 }
@@ -31,13 +36,15 @@ def resolve(root: String, path: String) -> Result[String]
   end
 
   resolved = join(found.real, found.tail)
-  return error("outside the session folder: #{path}") if not inside?(root, found.real)
+  return error("outside the session folder: #{path}") if confine and not inside?(root, found.real)
 
   ok(resolved)
 end
 
+## `path` relative to `root`; a path outside it stays absolute.
 def relative(root: String, path: String) -> String
   return "." if path == root
+  return path if not inside?(root, path)
   return path.slice(1, path.length - 1) if root == "/"
 
   path.slice(root.length + 1, path.length - root.length - 1)

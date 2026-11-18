@@ -36,6 +36,7 @@ def on_command(app: State.Model, command: Client.Command) -> State.Model
     Client.Command.Export(path, force) -> export_command(app, path, force)
     Client.Command.Model(model) -> model_command(app, model)
     Client.Command.Thinking(level) -> thinking_command(app, level)
+    Client.Command.Confine(on) -> confine_command(app, on)
     Client.Command.Profile(name) -> State.tried(app, profile_command(app, name))
     Client.Command.Compact -> compact_command(app)
     Client.Command.Logs(count) -> State.tried(app, logs_command(app, count))
@@ -215,6 +216,23 @@ def thinking_command(app: State.Model, level: Optional[String]) -> State.Model
       State.tried(app, changed(app, Protocol.UpdateSession(effort: level), "thinking #{text} from the next turn"))
     none -> State.tried(app, shown_thinking(app))
   end
+end
+
+def confine_command(app: State.Model, on: Optional[Bool]) -> State.Model
+  case on
+    some(wanted) -> State.tried(app, changed(app, Protocol.UpdateSession(confine: on), confine_note(wanted)))
+    none -> State.tried(app, shown_confine(app))
+  end
+end
+
+def confine_note(on: Bool) -> String
+  return "the file tools stay in the session folder from the next turn" if on
+
+  "the file tools reach any path from the next turn"
+end
+
+def shown_confine(app: State.Model) -> Result[State.Model]
+  ok(State.noted(app, Client.confined(try app.backend.session.call(app.id))))
 end
 
 def shown_thinking(app: State.Model) -> Result[State.Model]
