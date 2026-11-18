@@ -68,6 +68,7 @@ def presets() -> List[Custom]
     ),
     Custom(name: "groq", base_url: "https://api.groq.com/openai/v1", key_env: "GROQ_API_KEY"),
     Custom(name: "deepseek", base_url: "https://api.deepseek.com/v1", key_env: "DEEPSEEK_API_KEY"),
+    Custom(name: "opencode-go", base_url: "https://opencode.ai/inference/go/v1", key_env: "OPENCODE_API_KEY"),
   ]
 end
 

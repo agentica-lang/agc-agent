@@ -46,11 +46,11 @@ USAGE = <<~TEXT
   until the server restarts; PATCH {"accept_edits": true} runs the edits of files without asking. None of them reaches
   into .git/ or past a deny rule. A bash rule matches each command of the line (best effort, not a sandbox), and a file
   rule covers only the file tools. Providers: local (FINN_BASE_URL with FINN_API_KEY) and anthropic always; openai,
-  fireworks, openrouter, groq and deepseek when OPENAI_API_KEY, FIREWORKS_API_KEY, OPENROUTER_API_KEY, GROQ_API_KEY or
-  DEEPSEEK_API_KEY is set; and those of "providers" in the config file ([{"name", "api", "base_url", "key_env",
-  "models"}], api openai or openai_responses; one with key_env only when that variable is set). FINN_PROVIDER is the
-  provider of a session that names none (finn --provider names one); PATCH {"provider", "model"} moves a session to
-  another. Logins: finn login (or /login in finn) checks a key with GET /models at the provider and stores it in
+  fireworks, openrouter, groq, deepseek and opencode-go when OPENAI_API_KEY, FIREWORKS_API_KEY, OPENROUTER_API_KEY,
+  GROQ_API_KEY, DEEPSEEK_API_KEY or OPENCODE_API_KEY is set; and those of "providers" in the config file
+  ([{"name", "api", "base_url", "key_env", "models"}], api openai or openai_responses; one with key_env only when that
+  variable is set). FINN_PROVIDER is the provider of a session that names none (finn --provider names one); PATCH
+  {"provider", "model"} moves a session to another. Logins: finn login (or /login in finn) checks a key with GET /models at the provider and stores it in
   $XDG_CONFIG_HOME/finn/auth.json (else ~/.config/finn/auth.json), mode 0600; a file others may read, or of another
   user, is not used. The key variable wins over a stored key. finn logout [NAME] removes stored keys.
 TEXT

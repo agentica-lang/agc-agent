@@ -212,7 +212,7 @@ def test_a_stored_key_offers_its_provider_unless_the_file_is_open() -> Result[Vo
   chosen = try Config.from_env(->(n) { located({"XDG_CONFIG_HOME": dir, "FINN_BASE_URL": "http://box/v1"}, n) })
   try Test.eq([private.login.map { |l| l.chosen }, chosen.login.map { |l| l.chosen }], [some(false), some(true)])
   names = private.login.map { |l| l.entries.map { |e| e.name } }.unwrap_or([])
-  Test.eq(names, ["anthropic", "openai", "fireworks", "openrouter", "groq", "deepseek"])
+  Test.eq(names, ["anthropic", "openai", "fireworks", "openrouter", "groq", "deepseek", "opencode-go"])
 end
 
 def chmod(mode: String, path: String) -> Result[Void]
