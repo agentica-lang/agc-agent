@@ -41,6 +41,8 @@ export Providers.Provider
 
 STATE_DIR_ENV = "FINN_STATE_DIR"
 DATA_DIR_ENV = "FINN_DATA_DIR"
+## The provider and model last picked, in the state folder.
+CHOICE_FILE = "choice.json"
 PREFIX = "FINN_"
 OLD_PREFIX = "AGC_AGENT_"
 DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
@@ -121,6 +123,12 @@ struct Options
   trusted: List[String] = []
   ## The program and arguments that list the files for `@`, from the user's config only; empty for the built-in walk.
   files_command: List[String] = []
+  ## The provider is set (`FINN_PROVIDER`, `FINN_API` or `FINN_BASE_URL`) and `FINN_MODEL` is: they win over the provider and
+  ## model last picked.
+  provider_pinned: Bool = false
+  model_pinned: Bool = false
+  ## The model of `picked` is none the user named: the provider has no model of its own, so the first of its list.
+  model_unset: Bool = false
 end
 
 def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_with(read, &Offered.ant_token)
@@ -168,6 +176,29 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   }
 
   providers = try rebuild.call(stored.keys, stored.urls)
+  choice_path = "#{states}/#{CHOICE_FILE}"
+  choice = Logins.load_choice(choice_path)
+  stale: List[String] = []
+  for found in option_list(choice)
+    if providers.has_key?(found.provider) and not found.model.empty? and not providers[found.provider].models.empty?
+      if not providers[found.provider].models.include?(found.model)
+        stale = stale.push(
+          "the model of the last choice, #{found.model}, is not in the models of #{found.provider}: new sessions use its default",
+        )
+
+        choice = some(Logins.Choice(provider: found.provider))
+      end
+    end
+
+    if not providers.has_key?(found.provider)
+      stale = stale.push(
+        "the provider of the last choice, #{found.provider}, is not offered (is its key set?): new sessions use the default",
+      )
+
+      choice = none
+    end
+  end
+
   anthropic_url = set(read, "ANTHROPIC_BASE_URL").unwrap_or(LLM.ANTHROPIC_URL)
   login = Logins.Setup(
     path: auth_path,
@@ -181,6 +212,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     local_key: api_key,
     chosen: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
     chatgpt: some(chatgpt),
+    choice: choice,
+    choice_file: some(choice_path),
   )
 
   provider = set(read, "FINN_PROVIDER").unwrap_or(Offered.default_provider(api))
@@ -210,6 +243,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
         Providers.shared_keys(customs) +
         [stored.refused].select { |w| not w.empty? } +
         option_list(Chatgpt.refusal(chatgpt)) +
+        stale +
         moved
       ),
       login: some(login),
@@ -231,6 +265,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       docs: docs_folder(read),
       trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
       files_command: try files_command(read),
+      provider_pinned: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
+      model_pinned: set(read, "FINN_MODEL").some?,
     ),
   )
 end
@@ -240,10 +276,55 @@ end
 def now(options: Options) -> Options
   for holder in option_list(options.logins)
     case Logins.current(holder)
-      ok(current) if current.local_url.empty? -> return options.with(providers: current.providers)
-      ok(current) -> return options.with(providers: current.providers, props_url: props_url(current.local_url))
+      ok(current) -> return picked(offered_now(options, current), current)
       error(_) -> nil
     end
+  end
+
+  options
+end
+
+## `now` without the last choice: the providers as they are listed, the server's own provider and model.
+def listed(options: Options) -> Options
+  for holder in option_list(options.logins)
+    case Logins.current(holder)
+      ok(current) -> return offered_now(options, current)
+      error(_) -> nil
+    end
+  end
+
+  options
+end
+
+def offered_now(options: Options, current: Logins.Current) -> Options
+  return options.with(providers: current.providers) if current.local_url.empty?
+
+  options.with(providers: current.providers, props_url: props_url(current.local_url))
+end
+
+# The provider and model last picked are those of new sessions, unless `FINN_PROVIDER` is set (and `FINN_MODEL` for the
+# model) or the provider is not offered any more.
+def picked(options: Options, current: Logins.Current) -> Options
+  for choice in option_list(current.choice)
+    return options if options.provider_pinned or not options.providers.has_key?(choice.provider)
+
+    found = options.providers[choice.provider]
+    model = choice.model
+    if options.model_pinned
+      model = options.model
+    elsif model.empty?
+      model = found.apis[found.api].model
+      if model.empty? and not found.models.empty?
+        model = found.models[0]
+      end
+    end
+
+    unset = model.empty?
+    if unset
+      model = DEFAULT_MODEL
+    end
+
+    return options.with(provider: choice.provider, model: model, model_unset: unset)
   end
 
   options

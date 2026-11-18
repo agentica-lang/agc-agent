@@ -52,8 +52,9 @@ def on_secret_key(app: State.Model, name: String, event: TUI.Event) -> State.Mod
     TUI.Event.Key(TUI.Key.Backspace, _) ->
       app.with(secret: app.secret.slice(0, [app.secret.length - 1, 0].max.unwrap!))
     TUI.Event.Key(TUI.Key.Escape, _) if app.asking_url ->
-      login_closed(State.noted(app.with(key_for: none, secret: "", asking_url: false), "no URL given"))
-    TUI.Event.Key(TUI.Key.Escape, _) -> login_closed(State.noted(app.with(key_for: none, secret: ""), "no key given"))
+      login_cancelled(State.noted(app.with(key_for: none, secret: "", asking_url: false), "no URL given"))
+    TUI.Event.Key(TUI.Key.Escape, _) ->
+      login_cancelled(State.noted(app.with(key_for: none, secret: ""), "no key given"))
     TUI.Event.Key(TUI.Key.Enter, _) if app.asking_url and not app.secret.strip.empty? ->
       backend = app.backend
       url = app.secret.strip
@@ -77,7 +78,7 @@ def on_device_key(app: State.Model, event: TUI.Event) -> State.Model
   case event
     TUI.Event.Key(TUI.Key.Escape, _) ->
       stopped = app.with(device: none, device_serial: app.device_serial + 1)
-      login_closed(State.noted(stopped, "the login of #{app.device_for} is cancelled"))
+      login_cancelled(State.noted(stopped, "the login of #{app.device_for} is cancelled"))
     _ -> app
   end
 end
@@ -106,7 +107,8 @@ def device_polled(app: State.Model, name: String, serial: Int, result: Result[Pr
   stopped = app.with(device: none, device_serial: serial + 1)
   case result
     ok(state) if state.state == Protocol.DEVICE_WAITING -> State.effect(app, poll(app, name, serial))
-    ok(state) if state.state == Protocol.DEVICE_DONE -> ended(moved(stopped, name, "#{name} is set up"), true)
+    ok(state) if state.state == Protocol.DEVICE_DONE ->
+      ended(lined(moved(stopped, name, "#{name} is set up", state.made_default), name, state.made_default), true)
     ok(state) if state.state == Protocol.DEVICE_FAILED ->
       ended(State.noted(stopped, "error: the login of #{name} failed: #{state.message}"), false)
     ok(_) -> ended(State.noted(stopped, "error: the login of #{name} is no longer waited for"), false)
@@ -117,11 +119,26 @@ end
 def logged_in(app: State.Model, name: String, result: Result[Protocol.LoginStatus]) -> State.Model
   done = case result
     ok(status) if status.asks == Protocol.ASKS_URL and status.from == "env" ->
-      State.noted(app, "#{name}: the URL is stored, but #{status.key_env} is set and wins over it")
-    ok(status) if status.asks == Protocol.ASKS_URL -> moved(app, name, "#{name} is set up at #{status.base_url}")
+      env_wins(
+        State.noted(app, "#{name}: the URL is stored, but #{status.key_env} is set and wins over it"),
+        name,
+        status,
+      )
+    ok(status) if status.asks == Protocol.ASKS_URL ->
+      lined(
+        moved(app, name, "#{name} is set up at #{status.base_url}", status.made_default),
+        name,
+        status.made_default,
+      )
     ok(status) if status.from == "env" ->
-      State.noted(app, "#{name}: the key is stored, but #{status.key_env} is set and wins over it")
-    ok(status) -> moved(app, name, "#{name} is set up (#{status.key_env} would also work)")
+      env_wins(
+        State.noted(app, "#{name}: the key is stored, but #{status.key_env} is set and wins over it"),
+        name,
+        status,
+      )
+    ok(status) ->
+      said = "#{name} is set up (#{status.key_env} would also work)"
+      lined(moved(app, name, said, status.made_default), name, status.made_default)
     error(e) -> State.noted(app, "error: #{e.message}")
   end
 
@@ -134,6 +151,13 @@ def ended(done: State.Model, succeeded: Bool) -> State.Model
   return done.with(exit: some(0)) if succeeded
 
   done.with(exit: some(1))
+end
+
+## `finn login` ended by Esc: not a failure, so the status is 0, and the console says it.
+def login_cancelled(app: State.Model) -> State.Model
+  return login_closed(app) if not app.login_only
+
+  app.with(exit: some(0), line: some("finn: login cancelled"))
 end
 
 ## A first-start login closed with no key stores an empty key file, so it is offered once; `finn login` ends.
@@ -158,8 +182,9 @@ DEVICE_POLL_MS = 2000
 # A session on `local` (the fallback of a first start) is offered the models of the provider just set up, in the
 # picker: Enter moves it there from the next turn, Esc keeps it on `local`, which may be on purpose. Another session
 # stays where it is; `said` then tells how to pick a model.
-def moved(app: State.Model, name: String, said: String) -> State.Model
+def moved(app: State.Model, name: String, said: String, made_default: Bool) -> State.Model
   return State.noted(app, "#{said}: /model lists its models") if app.login_only or app.id == ""
+  return switched(app, name, said) if app.first_login and made_default and name != LOCAL and provider_of(app) == LOCAL
 
   case app.backend.list_providers.call()
     ok(list) ->
@@ -172,6 +197,54 @@ def moved(app: State.Model, name: String, said: String) -> State.Model
       shown.with(picker: some(Picker.models(list.with(providers: own), "")))
     error(e) -> State.noted(State.noted(app, said), "error: #{e.message}")
   end
+end
+
+# The login made `name` the default provider: the session of the first start, which is on `local`, goes there too.
+def switched(app: State.Model, name: String, said: String) -> State.Model
+  models = case app.backend.list_providers.call()
+    ok(list) -> list.providers.select { |p| p.name == name }.flat_map { |p| p.models }
+    error(_) -> []
+  end
+
+  change = Protocol.UpdateSession(provider: some(name))
+  if not models.empty?
+    change = change.with(model: some(models[0]))
+  end
+
+  case app.backend.update_session.call(app.id, change)
+    ok(_) ->
+      case app.backend.session.call(app.id)
+        ok(session) ->
+          State.noted(
+            app.with(serving: State.serving_of(session)),
+            "#{said}: the session is on #{State.serving_of(session)} from the next turn",
+          )
+        error(e) -> State.noted(app, "#{said}: error: #{e.message}")
+      end
+
+    error(e) -> State.noted(app, "#{said}: /model #{name}/NAME picks a model (error: #{e.message})")
+  end
+end
+
+# `finn login` when the environment's key (or URL) wins over the stored one: it says so, not that the login is in use.
+def env_wins(app: State.Model, name: String, status: Protocol.LoginStatus) -> State.Model
+  return app if not app.login_only
+
+  app.with(line: some("finn: logged in to #{name}; #{status.key_env} is set in the environment and wins over it"))
+end
+
+# What `finn login` prints once the screen is closed.
+def lined(app: State.Model, name: String, made_default: Bool) -> State.Model
+  return app if not app.login_only
+
+  text = "finn: logged in to #{name}"
+  if made_default
+    text = "#{text}; run `finn` to start"
+  elsif name != LOCAL
+    text = "#{text}; use `finn --provider #{name}`, or /model, to use it"
+  end
+
+  app.with(line: some(text))
 end
 
 def provider_of(app: State.Model) -> String = app.serving.split("/")[0]

@@ -49,6 +49,11 @@ def finish(result: Result[App.Ended]) -> Void
         IO.warn("finn: #{reason}")
       end
 
+      for line in option_list(ended.line)
+        Task.sleep(RESTORE_MS)
+        puts(line)
+      end
+
       case ended.hint
         some(hint) ->
           Task.sleep(RESTORE_MS)

@@ -48,6 +48,7 @@ The login list also shows `Claude Pro/Max: coming`. It is listed but cannot be u
 - In a session: `/model` alone lists the models or shows the current one. `/model NAME` changes the model on the session's provider, and `/model PROVIDER/NAME` changes both, from the next turn on. On OpenRouter, `/model openrouter/anthropic/NAME` keeps the session on OpenRouter.
 - For a new session: `finn --provider NAME --model NAME` (or `finn chat` with the same options).
 - For the server: `FINN_PROVIDER` (`finn serve --provider`) is the provider of a session that names none, and `FINN_MODEL` (`--model`) its model.
+- A session that names none, with no variable set, uses the provider and model last picked ([the order](config.md#the-provider-and-model-of-a-new-session)). `finn login X` says `use finn --provider X, or /model, to use it` when a choice or `FINN_PROVIDER` is already set.
 
 The server takes any model name. `/model NAME` with a name that the session's provider does not list but another provider does, whole or in part, changes nothing and names those models (`/model local/NAME` keeps the name on `local`). When the first turn after `/model` fails, the client says so; check the name. When the local server does not answer, the client says that `/model PROVIDER/NAME` picks another provider.
 

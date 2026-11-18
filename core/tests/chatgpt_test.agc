@@ -37,7 +37,7 @@ def test_a_device_login_stores_the_tokens_and_each_401_refreshes_them() -> Resul
     try Test.eq(try chatgpt_listed(h), "chatgpt  device false")
     started = try Protocol.decode_device_login((try H.post(h, Protocol.auth_path("chatgpt"), "{}")).text)
     try Test.eq([started.user_code, started.url], ["ABCD-1234", "#{H.fake_root(h.fake)}/auth/codex/device"])
-    try Test.eq(try waited(h), Protocol.DeviceState(state: "done", message: ""))
+    try Test.eq(try waited(h), Protocol.DeviceState(state: "done", message: "", made_default: true))
     try Test.eq(try chatgpt_listed(h), "chatgpt stored device false")
     try Test.eq((try File.stat(path)).mode, 384)
     providers = try Protocol.decode_provider_list((try H.get(h, Protocol.PROVIDERS_PATH)).text)

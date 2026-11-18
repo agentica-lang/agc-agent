@@ -170,6 +170,29 @@ def test_the_list_leaves_out_the_models_of_another_api() -> Result[Void]
   end
 end
 
+# A login of a provider with no model of its own (a name the catalog knows) makes it the choice, and a new
+# session starts
+# on the first model its catalog lists, not on `default`.
+def test_a_login_with_no_model_of_its_own_starts_on_the_first_model_of_the_catalog() -> Result[Void]
+  within_models do |served, dir|
+    catalog = Catalog.start(Catalog.Options(url: served.url, cache: "#{dir}/models.json"))
+    try Test.assert(Catalog.wait(catalog, 10_000), "the catalog did not load")
+    listed = Catalog.models(catalog, "openai")
+    setup = H.Setup(replies: ["models_small.json"], logins: ["openai"], catalog: some(catalog))
+    result = H.using(setup) do |h|
+      answer = try H.post(h, Protocol.auth_path("openai"), Protocol.encode_login(Protocol.Login(key: "sk-1")))
+      try Test.eq(answer.status, 200)
+      made = try H.session(h, try H.new_session(h))
+      try Test.eq(made.provider, "openai")
+      try Test.assert(made.model != "default" and listed.include?(made.model), "model #{made.model}")
+      ok()
+    end
+
+    Catalog.stop(catalog)
+    result
+  end
+end
+
 # A cache file of an older format (no `version`) is not read: the catalog is fetched again.
 def test_a_cache_of_an_older_format_is_fetched_again() -> Result[Void]
   within_models do |served, dir|

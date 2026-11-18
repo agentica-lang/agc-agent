@@ -94,6 +94,7 @@ def test_requests_round_trip() -> Result[Void]
     api: some("openai_responses"),
     provider: some("fireworks"),
     profile: some("plan"),
+    remember: some(true),
   )
 
   try Test.eq(new_session, expected)

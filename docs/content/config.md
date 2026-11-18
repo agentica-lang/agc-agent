@@ -63,6 +63,17 @@ The deny rules of a project count everywhere.
 
 The server makes the state and data folders with mode 0700, and refuses one that others can open or that is a link. Only the folder itself is checked: a link higher up its path is fine.
 
+## The provider and model of a new session
+
+A new session takes its provider and model from the first of these that names them:
+
+1. the request that opens it (`--provider` and `--model` of `finn`, `/new`, or the API);
+2. `FINN_PROVIDER` (or `FINN_API` or `FINN_BASE_URL`, which choose the provider too) and `FINN_MODEL`, which win over the choice below, each for what it names;
+3. the choice last made: the server keeps the provider and model you picked with `/model`, with `finn --provider P --model M`, or by a login with no choice yet (the provider's first model) in `choice.json` of its state folder (mode 0600);
+4. `local`.
+
+A one-shot run (`finn -p`) never changes the choice, so a script does not reset your default. `/new` opens the next session with the options of the start, so `finn --model x` keeps `x` through `/new` and makes it the choice again. A choice whose provider is not offered any more (its key is gone), or whose model is not in the `models` list of its provider, is skipped with one warning at the start. Delete `choice.json` to forget it.
+
 ## Environment variables
 
 | Variable | What it does |
@@ -70,8 +81,8 @@ The server makes the state and data folders with mode 0700, and refuses one that
 | `FINN_API` | the API of `local`: `openai` (chat completions, the default) or `openai_responses`; `anthropic` makes Anthropic the server's provider |
 | `FINN_BASE_URL` | where `local` is: `http://127.0.0.1:8080/v1` by default |
 | `FINN_API_KEY` | the key of `local` |
-| `FINN_PROVIDER` | the provider of a session that names none |
-| `FINN_MODEL` | the model of a session that names none |
+| `FINN_PROVIDER` | the provider of a session that names none (wins over the last choice) |
+| `FINN_MODEL` | the model of a session that names none (wins over the last choice) |
 | `FINN_APPROVALS` | `1` turns the approvals on; `0` keeps them off over the config file |
 | `FINN_CONFIG` | the user's config file |
 | `FINN_TRUSTED_DIRS` | the [trusted folders](#trusted-folders) |

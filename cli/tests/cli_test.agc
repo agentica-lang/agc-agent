@@ -72,7 +72,14 @@ def test_a_new_session_names_its_model_api_and_profile() -> Result[Void]
     try Driver.read_until(cli, "[session")
     _ = try Driver.finish(cli)
     create = try Fake.request(rig.fake, "POST", Protocol.SESSIONS_PATH)
-    asked = Protocol.NewSession(cwd: "/work", model: some("m"), api: some("openai_responses"), profile: some("plan"))
+    asked = Protocol.NewSession(
+      cwd: "/work",
+      model: some("m"),
+      api: some("openai_responses"),
+      profile: some("plan"),
+      remember: some(true),
+    )
+
     Test.eq(Protocol.decode_new_session(create.body), ok(asked))
   end
 end
@@ -99,7 +106,11 @@ def a_turn(rig: Driver.Rig) -> Result[Void]
   try Test.eq(lines, expected)
   try Test.eq(done.code, 0)
   try Test.eq(done.lines, ["[to come back: finn chat --session s1]"])
-  try Test.eq(Protocol.decode_new_session(create.body), ok(Protocol.NewSession(cwd: "/work", model: none)))
+  try Test.eq(
+    Protocol.decode_new_session(create.body),
+    ok(Protocol.NewSession(cwd: "/work", model: none, remember: some(true))),
+  )
+
   try Test.eq(Protocol.decode_send_message(message.body), ok(Protocol.SendMessage(text: "hello")))
   try Test.eq(Driver.header(events, Protocol.LAST_EVENT_ID_HEADER), ["0"])
   try Test.assert(Driver.authorized?(create) and Driver.authorized?(message), "every request carries the token")
