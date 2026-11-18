@@ -1,0 +1,245 @@
+name: bash native
+
+# The prebuilt libraries of bash's native module, one per target, for [native.bash.prebuilt] of bash/agentica.toml. On
+# a push of a tag bash-native-<key>, which the coordinator pushes (this workflow never tags), they are attached to the
+# release of that tag; <key> must be the source key of bash as a fetch sees it (`agentica native source bash`). A pull
+# request that changes the C of the module builds and tests them on every target, with no release.
+on:
+  push:
+    tags: ['bash-native-*']
+  pull_request:
+    paths:
+      - 'bash/native/**'
+      - 'bash/src/**'
+      - 'bash/tests/**'
+      - 'bash/agentica.toml'
+      - 'vendor/tree-sitter-bash'
+      - 'vendor/tree-sitter-bash/**'
+      - '.gitmodules'
+      - 'Makefile'
+      - 'scripts/prebuilt_e2e.agc'
+      - 'scripts/check-library.sh'
+      - '.github/workflows/bash-native.yml'
+
+permissions:
+  contents: read
+
+env:
+  AGENTICA_VERSION: 0.34.0
+
+jobs:
+  key:
+    name: source key
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      source: ${{ steps.key.outputs.source }}
+      api: ${{ steps.key.outputs.api }}
+    steps:
+      # The whole history: a release is only made from a commit that is on main or on the integration branch.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: agentica-lang/setup-agentica@2d68f4c3d20ca2c6567bf9dc2378543132f872a8 # v1
+        with:
+          version: ${{ env.AGENTICA_VERSION }}
+          sha256: d3623164ef097f1cada71749f50440de836f7a943a44336e57ef19b108ae8aa5
+      - name: The tag is on main or on bash-prebuilt-base
+        if: github.event_name == 'push'
+        run: |
+          for branch in main bash-prebuilt-base; do
+            if git merge-base --is-ancestor "$GITHUB_SHA" "origin/$branch" 2>/dev/null; then exit 0; fi
+          done
+          echo "::error::$GITHUB_SHA is on neither main nor bash-prebuilt-base" >&2
+          exit 1
+      # The stub of the parser names the sha256 of the submodule's parser (and so is part of the source key): the
+      # submodule must hold that parser, and the copied files and the header must be the committed ones.
+      - name: The submodule and the header match the commit
+        run: make native-check
+      # The files of bash/ at the commit: what a fetch copies (vendor/ is outside it).
+      - id: key
+        run: |
+          git archive "$GITHUB_SHA" bash | tar -x -C "$RUNNER_TEMP"
+          out=$(cd "$RUNNER_TEMP/bash" && agentica native source bash)
+          echo "$out"
+          source=$(echo "$out" | awk '$1 == "source" { print $2 }')
+          api=$(echo "$out" | awk '$1 == "api" { print $2 }')
+          if ! echo "$source" | grep -Eq '^[0-9a-f]{16}$' || ! echo "$api" | grep -Eq '^[0-9]+\.[0-9]+$'; then
+            echo "::error::source key '$source' or api '$api' is not of the expected form" >&2
+            exit 1
+          fi
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$GITHUB_REF_NAME" != "bash-native-$source" ]; then
+            echo "::error::the tag $GITHUB_REF_NAME is not bash-native-$source, the source key of this commit" >&2
+            exit 1
+          fi
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          echo "api=$api" >> "$GITHUB_OUTPUT"
+      # The licenses of the C code in the libraries, for the release.
+      - name: The licenses
+        run: |
+          for f in bash/native/runtime/LICENSE bash/native/runtime/unicode/LICENSE bash/native/grammar/LICENSE; do
+            printf '=== %s ===\n' "$f"; cat "$f"; echo
+          done > LICENSES.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: licenses
+          path: LICENSES.txt
+          if-no-files-found: error
+
+  build:
+    name: build (${{ matrix.target }})
+    needs: key
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux-x86_64
+            shell: bash
+            runner: ubuntu-24.04
+            agentica_sha256: d3623164ef097f1cada71749f50440de836f7a943a44336e57ef19b108ae8aa5
+            zig_arch: x86_64
+            zig_sha256: 02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239
+          - target: linux-arm64
+            shell: bash
+            runner: ubuntu-24.04-arm
+            agentica_sha256: 37031de1a836ed3bce710f363ca4874945952b957fcf30ca107321a94b64e6b2
+            zig_arch: aarch64
+            zig_sha256: 958ed7d1e00d0ea76590d27666efbf7a932281b3d7ba0c6b01b0ff26498f667f
+          - target: macos-x86_64
+            shell: bash
+            runner: macos-15-intel
+            agentica_sha256: deca8a980ea5f178cb3f42e104a0ebbb38efe5a401c4e393cd075378b0b39a17
+          - target: macos-arm64
+            shell: bash
+            runner: macos-15
+            agentica_sha256: c0b180b7abfa56a9af3a570261f1eb59310738a503a293111ebdf9e26a315594
+          - target: windows-x86_64
+            shell: msys2 {0}
+            runner: windows-2025
+            agentica_sha256: d10cc105f395677ca26da1c459235d99390812981a29fde15755cd4dc41b9249
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
+    env:
+      # As the release of Agentica builds its binaries: Linux with zig against glibc 2.28, macOS for 12.0 on.
+      ZIG_VERSION: 0.15.2
+      GLIBC: '2.28'
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+      ASSET: libbash-${{ needs.key.outputs.api }}-${{ matrix.target }}
+    defaults:
+      run:
+        shell: ${{ matrix.shell }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: agentica-lang/setup-agentica@2d68f4c3d20ca2c6567bf9dc2378543132f872a8 # v1
+        with:
+          version: ${{ env.AGENTICA_VERSION }}
+          sha256: ${{ matrix.agentica_sha256 }}
+      # The packages are those of the msys2 repository of the day (its mirrors keep no old versions to pin); the compiler
+      # that built a library is printed in the log of the build.
+      - if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2.33.0
+        with:
+          msystem: UCRT64
+          path-type: inherit
+          install: make mingw-w64-ucrt-x86_64-gcc
+      - if: runner.os == 'Linux'
+        name: Install the pinned zig
+        run: |
+          dir="$RUNNER_TEMP/zig"
+          curl -sSfL --retry 5 --retry-delay 10 --retry-all-errors "https://ziglang.org/download/$ZIG_VERSION/zig-${{ matrix.zig_arch }}-linux-$ZIG_VERSION.tar.xz" -o zig.tar.xz
+          echo "${{ matrix.zig_sha256 }}  zig.tar.xz" | sha256sum -c
+          mkdir -p "$dir" && tar -xJf zig.tar.xz -C "$dir" --strip-components=1 && rm zig.tar.xz
+          # zig's clang refuses the glibc version in the target when it is only asked --version or -dumpmachine, which
+          # agentica asks for the key of a build.
+          printf '%s\n' '#!/bin/sh' \
+            "case \"\$1\" in --version|-dumpmachine) exec '$dir/zig' cc \"\$@\" ;; esac" \
+            "exec '$dir/zig' cc -target ${{ matrix.zig_arch }}-linux-gnu.$GLIBC \"\$@\"" > "$dir/cc"
+          chmod +x "$dir/cc"
+          cat "$dir/cc"
+          echo "CC=$dir/cc" >> "$GITHUB_ENV"
+      - name: Build the library
+        run: |
+          cache="$PWD/tmp/native-cache"
+          if [ "$RUNNER_OS" = Windows ]; then cache=$(cygpath -m "$cache"); fi
+          echo "NATIVE_CACHE=$cache" >> "$GITHUB_ENV"
+          ${CC:-cc} --version | head -n 1
+          make native-lib NATIVE_CACHE="$cache"
+          for file in tmp/native-lib/*; do cp "$file" "$ASSET.${file##*.}"; done
+          ls -l libbash-*
+      - name: Check what the library needs
+        run: |
+          make check-library-test
+          scripts/check-library.sh libbash-*
+      # The same cache as the build: the library that the tests load is the one that is uploaded, so a run that has
+      # to build again fails.
+      - name: Test the module
+        run: |
+          set -o pipefail
+          cd bash
+          XDG_CACHE_HOME="$NATIVE_CACHE" LOCALAPPDATA="$NATIVE_CACHE" agentica test tests 2>&1 | tee ../tmp/test.log
+          if grep -q '^built native' ../tmp/test.log; then echo "::error::the tests built the library again" >&2; exit 1; fi
+      # A fresh project that downloads the file that is uploaded, with no compiler (Windows has no tar of this kind).
+      - name: Use the library as a fetched package does
+        if: runner.os != 'Windows'
+        run: make prebuilt-e2e-run
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ env.ASSET }}
+          path: libbash-*
+          if-no-files-found: error
+
+  release:
+    name: release
+    needs: [key, build]
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      SOURCE: ${{ needs.key.outputs.source }}
+      API: ${{ needs.key.outputs.api }}
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          path: dist
+          merge-multiple: true
+      # The release is a draft until every file is attached, so a client never sees a part of it. One that exists
+      # already fails the job: a published library never changes under its key.
+      - name: Publish the libraries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd dist
+          for target in linux-x86_64 linux-arm64 macos-x86_64 macos-arm64 windows-x86_64; do
+            test "$(ls libbash-$API-$target.* | wc -l)" -eq 1
+          done
+          test "$(ls libbash-* | wc -l)" -eq 5
+          sha256sum libbash-* > SHA256SUMS
+          cat SHA256SUMS
+          # A failure leaves no draft behind (a rerun is clean); a release that is published is never deleted.
+          if ! { gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag --draft --latest=false \
+              --title "$GITHUB_REF_NAME" --notes "The libraries of bash's native module for source key $SOURCE." \
+              libbash-* SHA256SUMS LICENSES.txt &&
+              gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false; }; then
+            if [ "$(gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --json isDraft -q .isDraft)" = true ]; then
+              gh release delete "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --yes
+            fi
+            exit 1
+          fi
+      - name: The rows of bash/agentica.toml
+        run: |
+          {
+            echo '```toml'
+            echo '[native.bash.prebuilt]'
+            echo "url = \"https://github.com/$GITHUB_REPOSITORY/releases/download/bash-native-{source}/lib{name}-{api}-{target}{ext}\""
+            echo "source = \"$SOURCE\""
+            echo "api = \"$API\""
+            rows=$(awk '{ name = $2; sub(/^libbash-[0-9.]+-/, "", name); sub(/\.(so|dylib|dll)$/, "", name);
+              printf "%s%s = \"%s\"", (NR > 1 ? ", " : ""), name, $1 }' dist/SHA256SUMS)
+            echo "sha256 = { $rows }"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
