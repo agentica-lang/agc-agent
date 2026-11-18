@@ -241,7 +241,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   user_settings = try settings(read)
   secret_folders = [states, try data_dir(read)] + auth_path.map { |path| [Sandbox.parent(path)] }.unwrap_or([])
   secret_files = option_list(Permissions.config_path(read))
-  denies = try Approval.parse_rules(Approval.finn_denies(secret_folders, secret_files))
+  denies = Approval.finn_denies(secret_folders, secret_files)
   ok(
     Options(
       state_dir: states,
@@ -259,7 +259,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       login: some(login),
       model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,
-      approvals: some(Approval.Rules(all: denies.all + user.rules.all)),
+      approvals: some(Approval.Rules(all: denies + user.rules.all)),
       asking: user.asking,
       context_window: try context_window(read),
       max_tokens: try tokens_of(read, "FINN_MAX_TOKENS"),

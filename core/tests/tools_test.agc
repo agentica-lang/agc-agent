@@ -1,4 +1,5 @@
 import Approval from "../src/approval/approval"
+import Extension from "../src/approval/extension"
 import Permissions from "../src/approval/permissions"
 import Diff from "../src/tools/diff"
 import Search from "../src/tools/search"
@@ -185,8 +186,9 @@ def test_the_defaults_deny_finn_files_whatever_the_session_folder() -> Result[Vo
   try File.write_text("#{config}/finn/notes.txt", "x")
   try link("#{config}/finn", "#{s.base}/linked")
   secrets = Approval.finn_denies(["#{config}/finn", "#{s.base}/state", "#{s.base}/linked"], ["#{s.base}/mine.json"])
-  defaults = try Approval.parse_rules(Approval.DEFAULTS + secrets)
-  later = try Approval.parse_rules(Approval.DEFAULTS + secrets + ["allow read_file(*finn/auth.json)"])
+  base = try Approval.parse_rules(Approval.DEFAULTS)
+  defaults = Approval.Rules(all: base.all + secrets)
+  later = Approval.Rules(all: defaults.all + (try Approval.parse_rules(["allow read_file(*finn/auth.json)"])).all)
   ctx = try Tools.context(config, &fake_env, false)
   in_config = defaults.with(root: config)
   read = ->(rules: Approval.Rules, path: String) {
@@ -202,7 +204,7 @@ def test_the_defaults_deny_finn_files_whatever_the_session_folder() -> Result[Vo
   written = Approval.verdict(in_config, ctx, "write_file", JSON.from({"path": "finn/config.json", "content": ""}))
 
   try Test.eq(written, Tools.Verdict.Deny)
-  try Test.eq(read.call(later.with(root: config), "finn/auth.json") == Tools.Verdict.Deny, false)
+  try Test.eq(read.call(later.with(root: config), "finn/auth.json"), Tools.Verdict.Allow)
   # From a session folder elsewhere, the file is outside it: lifted from the deny, it asks as any outside path does.
   elsewhere = Approval.verdict(
     later.with(root: s.root),
@@ -227,6 +229,40 @@ def test_a_walk_from_the_root_joins_paths_with_one_slash() -> Result[Void]
   try Test.eq([Search.skipped?(Search.child("/", "proc")), Search.skipped?(Search.child("/", "home"))], [true, false])
   shown = Search.readable(s.ctx, "/", ["home/u/.ssh/id_rsa", "home/u/notes.txt"])
   try Test.eq(shown, ["home/u/notes.txt"])
+  done(s)
+end
+
+# The extension of a session in the parent of the config folder, with the generated denies and the asking off:
+# a relative
+# `finn/auth.json` is denied to every file tool, a patch and a `glob`, and its listing hides it.
+def test_the_extension_denies_finn_files_named_relative_to_the_session_folder() -> Result[Void]
+  s = try setup_with([], [], false)
+  config = "#{s.base}/config"
+  try Dir.mkdir_private(config)
+  try Dir.mkdir_private("#{config}/finn")
+  try File.write_text("#{config}/finn/auth.json", "{}")
+  base = try Approval.parse_rules(Approval.DEFAULTS)
+  rules = Approval.Rules(all: base.all + Approval.finn_denies(["#{config}/finn"], []))
+  approvals = try Extension.open(rules, config, false, false)
+  ctx = try Tools.context(config, &fake_env, false)
+  patch = JSON.object({"input": JSON.from("*** Begin Patch\n*** Update File: finn/auth.json\n-{}\n+x\n*** End Patch")})
+  verdicts = [
+    Extension.verdict(approvals, ctx, "read_file", JSON.from({"path": "finn/auth.json"})),
+    Extension.verdict(approvals, ctx, "write_file", JSON.from({"path": "finn/auth.json", "content": ""})),
+    Extension.verdict(
+      approvals,
+      ctx,
+      "edit_file",
+      JSON.from({"path": "finn/auth.json", "old_string": "{", "new_string": "["}),
+    ),
+    Extension.verdict(approvals, ctx, "apply_patch", patch),
+  ]
+
+  try Test.eq(verdicts, [Tools.Verdict.Deny, Tools.Verdict.Deny, Tools.Verdict.Deny, Tools.Verdict.Deny])
+  try Test.eq([Extension.gated?(approvals), Extension.hidden?(approvals, "finn/auth.json")], [true, true])
+  # A rule of an absolute path joins the session folder for the tools of a path only: not for a command.
+  commands = try Approval.parse_rules(["allow bash(#{s.root}/*)", "deny bash(/*)"])
+  try Test.eq(Approval.evaluate(commands.with(root: s.root), "bash", "rm -rf x"), none)
   done(s)
 end
 

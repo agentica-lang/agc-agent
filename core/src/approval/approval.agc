@@ -71,8 +71,9 @@ def parse_rule(text: String) -> Result[Rule]
 end
 
 ## The deny rules for the files of `SECRET_FILES` in each of `folders` (the state folder, the folder of the config file
-## and of the stored keys), also by the real path of the folder, and for each of `files` as it is.
-def finn_denies(folders: List[String], files: List[String]) -> List[String]
+## and of the stored keys), also by the real path of the folder and of a file that is a link (a dotfiles manager), and
+## for each of `files` as it is. Made as records, not parsed: a long path never refuses the start.
+def finn_denies(folders: List[String], files: List[String]) -> List[Rule]
   paths = files
   for folder in folders
     for place in [folder, Path.real(folder).unwrap_or(folder)].uniq
@@ -80,14 +81,15 @@ def finn_denies(folders: List[String], files: List[String]) -> List[String]
     end
   end
 
-  texts: List[String] = []
+  paths = paths + paths.flat_map { |path| [Path.real(path).unwrap_or(path)] }
+  rules: List[Rule] = []
   for path in paths.uniq
     for tool in ["read_file", "write_file"]
-      texts = texts.push("deny #{tool}(#{path})")
+      rules = rules.push(Rule(action: Spec.Verdict.Deny, tool: tool, pattern: path))
     end
   end
 
-  texts
+  rules
 end
 
 def parse_rules(texts: List[String]) -> Result[Rules]
@@ -134,9 +136,10 @@ end
 def evaluate(rules: Rules, tool: String, target: String) -> Optional[Spec.Verdict]
   found: Optional[Spec.Verdict] = none
   chars = target.replace("\\", "/").split("")
-  # A path in the session folder is named relative to it: a rule of an absolute path sees it in full.
+  # A path in the session folder is named relative to it: a rule of an absolute path sees it in full. Only the tools
+  # that take a path: a command or the input of an MCP tool is no path.
   full = chars
-  if not chars.empty? and chars[0] != "/"
+  if not chars.empty? and chars[0] != "/" and PATH_TOOLS.include?(tool)
     full = []
     if rules.root != ""
       base = rules.root
@@ -224,6 +227,7 @@ FINN = /\A\.finn\.*\z/
 WRITES = ["write_file", "edit_file", "apply_patch"]
 FILE_TOOLS = ["read_file", "write_file", "edit_file", "glob", "grep"]
 READS = ["read_file", "glob", "grep"]
+PATH_TOOLS = READS + WRITES
 
 # Each path of `apply_patch` decides as the call that does the same would: an updated file as `edit_file`, an added
 # file or the target of a move as `write_file`, each also as `apply_patch`. A deny rule of `edit_file`, `write_file`
