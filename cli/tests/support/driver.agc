@@ -311,9 +311,11 @@ def removed_from(dir: String, servers: List[Served]) -> Result[Void]
 end
 
 # A folder `agc-cli-PID-N` whose test process PID is gone was left by a run that was stopped (a test that timed out
-# ends its file's run with no cleanup): its servers are stopped and it is removed, before a new folder is made.
+# ends its file's run with no cleanup): its servers are stopped and it is removed, before a new folder is made. The
+# folder is a real path, with no symlink in it, as the `FINN_STATE_DIR` that a client gives its server is: the cleanup
+# compares the two as text.
 def make_dir() -> Result[String]
-  base = System.env("TMPDIR").unwrap_or("/tmp")
+  base = try Path.real(System.env("TMPDIR").unwrap_or("/tmp"))
   sweep(base)
   dir = try Path.join([base, "#{FOLDER_PREFIX}#{System.pid()}-#{Random.int(0, 999_999_999)}"])
   try Dir.mkdir_private(dir)
@@ -381,7 +383,9 @@ def stop_all(servers: List[Served]) -> Void
   return if servers.empty?
 
   for server in servers
-    _ = System.signal(server.pid, System.Signal.Term, server.comm)
+    if same_alive?(server)
+      _ = System.signal(server.pid, System.Signal.Term, server.comm)
+    end
   end
 
   return if all_gone_within(servers, STOP_MS)
