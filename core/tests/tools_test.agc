@@ -1,5 +1,8 @@
 import Approval from "../src/approval/approval"
+import Extension from "../src/approval/extension"
+import Permissions from "../src/approval/permissions"
 import Diff from "../src/tools/diff"
+import Search from "../src/tools/search"
 import Tools from "../src/tools/tools"
 
 struct Setup
@@ -31,7 +34,7 @@ end
 # A session folder `work` with a file, a folder and a .git, next to a folder `outside` with a secret.
 def setup() -> Result[Setup] = setup_with([], [])
 
-def setup_with(allow: List[String], deny: List[String]) -> Result[Setup]
+def setup_with(allow: List[String], deny: List[String], confine: Bool = true) -> Result[Setup]
   tmp = System.env("TMPDIR").unwrap_or("/tmp")
   base = "#{tmp}/agc-tools-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(base)
@@ -51,7 +54,7 @@ def setup_with(allow: List[String], deny: List[String]) -> Result[Setup]
   try link("#{outside}/new.txt", "#{root}/dangling")
   try link("#{root}/a.txt", "#{root}/inside_link")
   rules = try Approval.parse_rules(allow.map { |r| "allow #{r}" } + deny.map { |r| "deny #{r}" })
-  ctx = (try Tools.context(root, &fake_env)).with(
+  ctx = (try Tools.context(root, &fake_env, confine)).with(
     hidden: some(->(path: String) { Approval.read_denied?(rules, path) }),
   )
 
@@ -91,6 +94,175 @@ def test_read_file_reads_inside_and_refuses_every_way_out() -> Result[Void]
   try refused(call(s, "read_file", {"path": "/etc/passwd"}))
   try refused(call(s, "read_file", {"path": "missing.txt"}))
   try refused(call(s, "read_file", {"path": "sub"}))
+  done(s)
+end
+
+# With the confinement off (the default of the server), the file tools reach any path, and the deny rules still refuse.
+def test_the_file_tools_reach_any_path_when_the_confinement_is_off() -> Result[Void]
+  s = try setup_with([], ["read_file(*secret.txt)", "write_file(*/denied.txt)"], false)
+  try File.write_text("#{s.outside}/open.txt", "open outside\n")
+  try Test.eq(call(s, "read_file", {"path": "../outside/open.txt"}).text, "open outside\n")
+  try Test.eq(call(s, "read_file", {"path": "#{s.outside}/open.txt"}).text, "open outside\n")
+  try Test.eq(call(s, "read_file", {"path": "out_dir/open.txt"}).text, "open outside\n")
+  try Test.eq(call(s, "write_file", {"path": "../outside/deep/w.txt", "content": "x"}).is_error, false)
+  try Test.eq(File.read_text("#{s.outside}/deep/w.txt"), ok("x"))
+  edited = call(s, "edit_file", {"path": "../outside/open.txt", "old_string": "open", "new_string": "shut"})
+  try Test.eq(edited.is_error, false)
+  try Test.eq(File.read_text("#{s.outside}/open.txt"), ok("shut outside\n"))
+  try Test.assert(call(s, "grep", {"pattern": "shut", "path": "../outside"}).text.include?("shut outside"), "grep")
+  try Test.assert(call(s, "glob", {"pattern": "**/*.txt", "path": "../outside"}).text.include?("open.txt"), "glob")
+  verdict = Approval.verdict(s.rules, s.ctx, "read_file", JSON.from({"path": "#{s.outside}/secret.txt"}))
+  try Test.eq(verdict, Tools.Verdict.Deny)
+  denied = Approval.verdict(s.rules, s.ctx, "write_file", JSON.from({"path": "../outside/denied.txt", "content": ""}))
+  try Test.eq(denied, Tools.Verdict.Deny)
+  try refused(call(s, "read_file", {"path": "../outside/missing.txt"}))
+  done(s)
+end
+
+# With the confinement off, a file tool that reaches outside the session folder is an `external_directory(FOLDER/*)`
+# too: with no rule it asks (a read as well), an allow rule of the folder lets it run, a deny rule refuses, and the
+# accept-edits mode runs only the writes inside the folder.
+def test_a_file_tool_outside_the_folder_asks_like_bash_does() -> Result[Void]
+  s = try setup_with([], [], false)
+  rules = Approval.Rules(all: [])
+  outside = "#{s.outside}/secret.txt"
+  verdict = ->(tool: String, fields: Map[String, String]) { Approval.verdict(rules, s.ctx, tool, JSON.from(fields)) }
+  try Test.eq(verdict.call("read_file", {"path": outside}), Tools.Verdict.Ask)
+  try Test.eq(verdict.call("grep", {"pattern": "x", "path": s.outside}), Tools.Verdict.Ask)
+  try Test.eq(verdict.call("glob", {"pattern": "*", "path": s.outside}), Tools.Verdict.Ask)
+  try Test.eq(verdict.call("write_file", {"path": "../outside/n.txt", "content": ""}), Tools.Verdict.Ask)
+  try Test.eq(verdict.call("read_file", {"path": "a.txt"}), Tools.Verdict.Allow)
+  try Test.eq(verdict.call("read_file", {"path": "secret_link"}), Tools.Verdict.Ask)
+  try Test.eq(verdict.call("read_file", {"path": "../outside/secret.txt"}), Tools.Verdict.Ask)
+  try Test.eq(verdict.call("grep", {"pattern": "x", "path": "out_dir"}), Tools.Verdict.Ask)
+  # The folders of the skills are read as part of the session, never written.
+  skills = s.ctx.with(read_roots: [s.outside])
+  skill_call = ->(tool: String, fields: Map[String, String]) {
+    Approval.verdict(rules, skills, tool, JSON.from(fields))
+  }
+
+  try Test.eq(skill_call.call("read_file", {"path": outside}), Tools.Verdict.Allow)
+  try Test.eq(skill_call.call("grep", {"pattern": "x", "path": s.outside}), Tools.Verdict.Allow)
+  try Test.eq(skill_call.call("write_file", {"path": outside, "content": ""}), Tools.Verdict.Ask)
+  try Test.eq(skill_call.call("edit_file", {"path": outside, "old_string": "a", "new_string": "b"}), Tools.Verdict.Ask)
+  allowed = try Approval.parse_rules(["allow external_directory(#{s.outside}/*)"])
+  denied = try Approval.parse_rules([
+    "allow external_directory(#{s.outside}/*)",
+    "deny external_directory(#{s.outside}/*)",
+  ])
+
+  try Test.eq(Approval.verdict(allowed, s.ctx, "read_file", JSON.from({"path": outside})), Tools.Verdict.Allow)
+  try Test.eq(Approval.verdict(denied, s.ctx, "read_file", JSON.from({"path": outside})), Tools.Verdict.Deny)
+  edits = Permissions.Allows(accept_edits: true)
+  try Test.eq(Permissions.allows?(edits, rules, s.root, "write_file", "sub/b.txt"), true)
+  try Test.eq(Permissions.allows?(edits, rules, s.root, "write_file", "#{s.outside}/n.txt"), false)
+  try Test.eq(Permissions.allows?(edits, rules, s.root, "apply_patch", "sub/b.txt, #{s.outside}/n.txt"), false)
+  done(s)
+end
+
+# A deny rule beats an outside path, also one written with `~`.
+def test_deny_rules_and_the_defaults_cover_paths_outside_the_folder() -> Result[Void]
+  s = try setup_with([], ["read_file(~/.ssh/*)"], false)
+  home = System.env("HOME").unwrap_or("/root")
+  try Test.eq(
+    Approval.verdict(s.rules, s.ctx, "read_file", JSON.from({"path": "#{home}/.ssh/id_rsa"})),
+    Tools.Verdict.Deny,
+  )
+
+  done(s)
+end
+
+# Finn's own files are denied by their absolute path, also to a session that sits in their parent folder and names them
+# relative to it; the state folder, a `FINN_CONFIG` file and the real path of a linked folder are covered, and an
+# allow rule
+# of the config that comes after lifts it.
+def test_the_defaults_deny_finn_files_whatever_the_session_folder() -> Result[Void]
+  s = try setup_with([], [], false)
+  config = "#{s.base}/config"
+  try Dir.mkdir("#{s.base}/state")
+  try Dir.mkdir_private(config)
+  try Dir.mkdir_private("#{config}/finn")
+  try File.write_text("#{config}/finn/auth.json", "{}")
+  try File.write_text("#{config}/finn/notes.txt", "x")
+  try link("#{config}/finn", "#{s.base}/linked")
+  secrets = Approval.finn_denies(["#{config}/finn", "#{s.base}/state", "#{s.base}/linked"], ["#{s.base}/mine.json"])
+  base = try Approval.parse_rules(Approval.DEFAULTS)
+  defaults = Approval.Rules(all: base.all + secrets)
+  later = Approval.Rules(all: defaults.all + (try Approval.parse_rules(["allow read_file(*finn/auth.json)"])).all)
+  ctx = try Tools.context(config, &fake_env, false)
+  in_config = defaults.with(root: config)
+  read = ->(rules: Approval.Rules, path: String) {
+    Approval.verdict(rules, ctx, "read_file", JSON.from({"path": path}))
+  }
+
+  try Test.eq(read.call(in_config, "finn/auth.json"), Tools.Verdict.Deny)
+  try Test.eq(read.call(in_config, "#{config}/finn/auth.json"), Tools.Verdict.Deny)
+  try Test.eq(read.call(in_config, "#{s.base}/state/server.json"), Tools.Verdict.Deny)
+  try Test.eq(read.call(in_config, "#{s.base}/linked/auth.json"), Tools.Verdict.Deny)
+  try Test.eq(read.call(in_config, "#{s.base}/mine.json"), Tools.Verdict.Deny)
+  try Test.eq(read.call(in_config, "finn/notes.txt") == Tools.Verdict.Deny, false)
+  written = Approval.verdict(in_config, ctx, "write_file", JSON.from({"path": "finn/config.json", "content": ""}))
+
+  try Test.eq(written, Tools.Verdict.Deny)
+  try Test.eq(read.call(later.with(root: config), "finn/auth.json"), Tools.Verdict.Allow)
+  # From a session folder elsewhere, the file is outside it: lifted from the deny, it asks as any outside path does.
+  elsewhere = Approval.verdict(
+    later.with(root: s.root),
+    s.ctx,
+    "read_file",
+    JSON.from({"path": "#{config}/finn/auth.json"}),
+  )
+
+  try Test.eq(elsewhere, Tools.Verdict.Ask)
+  done(s)
+end
+
+# A walk from `/` names `/proc`, not `//proc`, so it is skipped, and a deny rule of an absolute path hides the files it
+# lists: the joined path is the one the rule sees.
+def test_a_walk_from_the_root_joins_paths_with_one_slash() -> Result[Void]
+  s = try setup_with([], ["read_file(/home/u/.ssh/*)"], false)
+  try Test.eq(
+    [Search.child("/", "proc"), Search.child("/home", "u"), Search.child("", "a")],
+    ["/proc", "/home/u", "a"],
+  )
+
+  try Test.eq([Search.skipped?(Search.child("/", "proc")), Search.skipped?(Search.child("/", "home"))], [true, false])
+  shown = Search.readable(s.ctx, "/", ["home/u/.ssh/id_rsa", "home/u/notes.txt"])
+  try Test.eq(shown, ["home/u/notes.txt"])
+  done(s)
+end
+
+# The extension of a session in the parent of the config folder, with the generated denies and the asking off:
+# a relative
+# `finn/auth.json` is denied to every file tool, a patch and a `glob`, and its listing hides it.
+def test_the_extension_denies_finn_files_named_relative_to_the_session_folder() -> Result[Void]
+  s = try setup_with([], [], false)
+  config = "#{s.base}/config"
+  try Dir.mkdir_private(config)
+  try Dir.mkdir_private("#{config}/finn")
+  try File.write_text("#{config}/finn/auth.json", "{}")
+  base = try Approval.parse_rules(Approval.DEFAULTS)
+  rules = Approval.Rules(all: base.all + Approval.finn_denies(["#{config}/finn"], []))
+  approvals = try Extension.open(rules, config, false, false)
+  ctx = try Tools.context(config, &fake_env, false)
+  patch = JSON.object({"input": JSON.from("*** Begin Patch\n*** Update File: finn/auth.json\n-{}\n+x\n*** End Patch")})
+  verdicts = [
+    Extension.verdict(approvals, ctx, "read_file", JSON.from({"path": "finn/auth.json"})),
+    Extension.verdict(approvals, ctx, "write_file", JSON.from({"path": "finn/auth.json", "content": ""})),
+    Extension.verdict(
+      approvals,
+      ctx,
+      "edit_file",
+      JSON.from({"path": "finn/auth.json", "old_string": "{", "new_string": "["}),
+    ),
+    Extension.verdict(approvals, ctx, "apply_patch", patch),
+  ]
+
+  try Test.eq(verdicts, [Tools.Verdict.Deny, Tools.Verdict.Deny, Tools.Verdict.Deny, Tools.Verdict.Deny])
+  try Test.eq([Extension.gated?(approvals), Extension.hidden?(approvals, "finn/auth.json")], [true, true])
+  # A rule of an absolute path joins the session folder for the tools of a path only: not for a command.
+  commands = try Approval.parse_rules(["allow bash(#{s.root}/*)", "deny bash(/*)"])
+  try Test.eq(Approval.evaluate(commands.with(root: s.root), "bash", "rm -rf x"), none)
   done(s)
 end
 
@@ -510,7 +682,7 @@ end
 # (spaces, NBSP, a zero-width space, an ideographic space, a soft hyphen, a Hangul filler, a blank braille cell, VS16,
 # a tag character) or has a control character, an unknown status, two in progress. A line end or a tab is a space.
 def test_todo_write_refuses_a_bad_list() -> Result[Void]
-  ctx = try Tools.context(System.env("TMPDIR").unwrap_or("/tmp"), &fake_env)
+  ctx = try Tools.context(System.env("TMPDIR").unwrap_or("/tmp"), &fake_env, true)
   item = ->(content: String, status: String) {
     JSON.object({"content": JSON.from(content), "status": JSON.from(status)})
   }

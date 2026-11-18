@@ -357,6 +357,7 @@ def session(state: Session.State) -> Protocol.Session
     pending_approvals: state.pending.map { |w| w.request },
     history: state.turn.map { |t| state.display.take(t.shown) }.unwrap_or(state.display),
     accept_edits: state.setup.approver.map { |a| a.accept_edits }.unwrap_or(false),
+    confine: state.setup.ctx.confine,
     cost: state.cost,
     effort: state.setup.effort,
     provider: state.setup.provider_name,
@@ -404,6 +405,10 @@ def update_setup(state: Session.State, change: Protocol.UpdateSession, reply: Ch
   setup = setup.with(model: change.model.unwrap_or(setup.model))
   for on in option_list(change.accept_edits)
     setup = setup.with(approver: setup.approver.map { |a| a.with_accept_edits.call(on) })
+  end
+
+  for on in option_list(change.confine)
+    setup = setup.with(ctx: setup.ctx.with(confine: on))
   end
 
   case change.effort

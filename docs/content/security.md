@@ -10,7 +10,7 @@ Finn's model runs commands and edits files as you. Know what it can reach before
 
 ## The default: no approvals
 
-The approvals are off by default. The model runs any command and edits any file that no deny rule refuses, without asking. Its file tools stay in the session folder ([Tools](tools.md#the-session-folder)), but `bash` can do whatever you can ([bash](tools.md#bash)).
+The approvals are off by default. The model runs any command and edits any file that no deny rule refuses, without asking. Its file tools reach any path you can, like `bash` ([Tools](tools.md#the-session-folder) says how to keep them in the session folder).
 
 So run Finn where a mistake costs little:
 
@@ -31,7 +31,7 @@ Any of these:
 
 With the approvals on, a call of these tools waits for your answer unless a rule or an earlier answer allows it: `write_file`, `edit_file`, `apply_patch`, `bash`, the MCP tools, and the tools of an [extension](extensions.md) that has `asks: true`.
 
-`read_file`, `glob`, `grep`, `todo_write`, `activate_skill` and `run_script` never ask. The calls that a `run_script` script makes are checked one by one, as direct calls.
+`read_file`, `glob`, `grep`, `todo_write`, `activate_skill` and `run_script` never ask, except for a path outside the session folder: a file tool that reaches there asks like `bash` does, with the approvals on and no rule for the folder (unlike a `bash` command, which runs): an allow rule of `external_directory(FOLDER/*)` covers the folder, and a deny rule refuses it. The folders of the skills the session can load are read without asking, and never written. The calls that a `run_script` script makes are checked one by one, as direct calls.
 
 Every `bash` call asks unless an allow rule or an earlier answer allows each of its commands, even one that only reads. A read of a `.env` or `.env.*` file asks too, but `.env.example`, with the `read_file` tool or, best effort, with `cat .env` and the like; an `allow read_file(*)` rule turns that off.
 
@@ -49,13 +49,15 @@ The [HTTP API](server.md#routes) takes two more answers:
 - `allow_prefix` ("always") allows, for each command of the line, its name and ` *` (`ls *`) when the program is one of `echo`, `ls`, `pwd`, `sleep`, `which` and `df`. The request shows them. Any other program, a command with an assignment before its name (`FOO=1 rm x`), or a word with `$` or a substitution (`ls $(pwd)`), gets the same command only, and a later command of that kind is not allowed by a name and ` *`. A line with a `>` or `<` anywhere (`echo hi > f`, `{ echo hi; } > f`) is always asked exactly: each of its commands gets the same command only. For a line that tree-sitter-bash cannot read clearly, it allows the same call only.
 - `allow_tool` allows every call of the tool.
 
-The accept-edits mode (`PATCH /v1/sessions/ID` with `{"accept_edits": true}`) runs the calls of `write_file`, `edit_file` and `apply_patch` without asking.
+The accept-edits mode (`PATCH /v1/sessions/ID` with `{"accept_edits": true}`) runs the calls of `write_file`, `edit_file` and `apply_patch` without asking, for paths in the session folder; a path outside it still asks.
 
 Answers and the accept-edits mode last until the server restarts. With the approvals on, a change under `.git/` or `.finn/` always asks, even when an allow rule, an answer or accept-edits covers it, since git's config and hooks run programs and `.finn/` holds the project's rules, skills, profiles and slash commands; only a deny rule refuses it instead. With the approvals off it runs.
 
 ## Rules
 
 Finn's rules are [OpenCode's](https://opencode.ai/docs/permissions/), with Finn's tool names. A rule is `ACTION TOOL(PATTERN)`: the action `allow`, `ask` or `deny`, and `TOOL` alone means `TOOL(*)`. In the pattern and the tool, `*` matches any text and `?` one character; a pattern that ends in ` *` also matches without it, so `git *` matches `git`. `~` or `$HOME` at the start of a pattern is your home folder. For the file tools the pattern matches the path, for `bash` each command, and for an MCP tool its JSON input.
+
+A rule matches the real path of a file, links followed: `~` or `$HOME` at the start of a pattern is the home folder (and its real path when that is a link). By default no tool reads or writes `auth.json`, `server.json`, `config.json` and `chatgpt.json` in Finn's own folders (the config folder, the state folder and the data folder, and the file of `FINN_CONFIG`; the key and token files, the server's address and its token), whatever the session folder: a session in `~/.config` is denied `finn/auth.json` too. A pattern of an absolute path also matches the files inside the session folder, which the tools name relative to it (`deny write_file(/*)` denies the writes there too; a `bash` or MCP rule never does). The last rule that matches wins, so an `allow` rule in your config file, which comes after, lets one through (`allow read_file(*)` lifts them all).
 
 An [extension](extensions.md#prompts-and-events) that changes a call (`Core.Event.ToolBefore`) does so before the rules check it: the rules and the approval see the input that will run, and the call's result in the session file starts with the input that ran.
 
@@ -87,7 +89,7 @@ An [extension](extensions.md#prompts-and-events) that changes a call (`Core.Even
 
 Finn reads a `bash` command with [tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash) and checks each command of the line by its text: the parts of `;`, `&&`, `||`, `|`, a line end, `( )` and `$( )`. `deny bash(rm *)` refuses `ls && rm x` and `echo $(rm x)`. If any command is denied the call is denied, else if any asks the call asks. A rule matches the command's text as written, so `deny bash(rm *)` does not match `FOO=1 rm x` or `>log rm x`.
 
-A command of `cd`, `rm`, `cp`, `mv`, `mkdir`, `touch`, `chmod`, `chown`, `cat`, `head`, `tail`, `grep`, `wc`, `diff` or `du` with a path outside the session folder also checks `external_directory(FOLDER/*)`, which runs unless a rule says otherwise: `"ask external_directory(*)"` asks for each such folder. A `cd` is checked only by its folder. OpenCode asks for such folders by default; Finn runs them. A path with `$` or a backtick is not followed, and a `cd` does not move the paths of the commands after it.
+A command of `cd`, `rm`, `cp`, `mv`, `mkdir`, `touch`, `chmod`, `chown`, `cat`, `head`, `tail`, `grep`, `wc`, `diff` or `du` with a path outside the session folder also checks `external_directory(FOLDER/*)`, which runs unless a rule says otherwise: `"ask external_directory(*)"` asks for each such folder. A `cd` is checked only by its folder. OpenCode asks for such folders by default; Finn runs them. The `external_directory` rules govern the file tools too (see [What asks](#what-asks)). A path with `$` or a backtick is not followed, and a `cd` does not move the paths of the commands after it.
 
 The files that `cat`, `head`, `tail`, `grep`, `wc`, `diff` and `cp` read also check `read_file(FILE)`: `cat .env` asks like the `read_file` tool, and `deny read_file(*.env)` denies it. Options and numbers are not files, nor the first word of `grep` (its pattern) unless `-e`, `-f` or `--` is there, nor the last argument of `cp` unless `-t` is there. This is best effort: a glob (`cat .en*`), `$`, `--opt=FILE`, a link, a folder read whole (`grep -r x .`) and other programs (`sed`, `awk`) are not seen. Under `ask *` a read such as `cat README.md` asks, since `read_file(*)` asks. "Always" on these programs allows the same command only.
 

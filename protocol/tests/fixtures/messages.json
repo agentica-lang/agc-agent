@@ -30,6 +30,7 @@
       {"role": "assistant", "text": "Done."}
     ],
     "accept_edits": false,
+    "confine": false,
     "cost": 0.42,
     "todos": []
   },
@@ -53,6 +54,7 @@
       {"role": "user", "text": "Now delete the build folder."}
     ],
     "accept_edits": true,
+    "confine": true,
     "todos": [{"content": "Delete the build folder", "status": "in_progress"}],
     "profile": {"name": "ro", "source": "user", "description": "Reads", "warnings": ["profile ro: no tool is named gerp"]}
   },

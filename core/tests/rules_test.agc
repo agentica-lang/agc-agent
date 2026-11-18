@@ -199,7 +199,7 @@ def test_an_untrusted_project_ask_cannot_weaken_a_user_deny() -> Result[Void]
   try Dir.mkdir("#{dir}/.finn")
   try File.write_text("#{dir}/.finn/config.json", "{\"permission\": [\"ask bash\", \"ask *\"]}")
   user = try Approval.parse_rules(["deny bash(rm *)", "deny read_file(*.pem)"])
-  ctx = try Tools.context(dir, ->(_name: String) { error("unset") })
+  ctx = try Tools.context(dir, ->(_name: String) { error("unset") }, true)
   a = try Extension.open(user, dir, false, false)
   rm = Extension.verdict(a, ctx, "bash", JSON.object({"command": JSON.from("rm -rf x")}))
   hidden = Extension.hidden?(a, "key.pem")

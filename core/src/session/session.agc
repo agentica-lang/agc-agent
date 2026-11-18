@@ -231,7 +231,7 @@ def branch(sessions: Sessions, id: String, entry: Int) -> Result[Protocol.Branch
 end
 
 ## A new session with the history of session `id` up to `entry` of its tree, all of it when none. It keeps the
-## session's folder, system prompt, model API, model and thinking level.
+## session's folder, system prompt, model API, model, thinking level and confinement of the file tools.
 def fork(sessions: Sessions, id: String, entry: Optional[Int]) -> Result[Protocol.Branched]
   address = try find(sessions, id)
   registry = sessions.registry.address
@@ -246,6 +246,18 @@ def fork(sessions: Sessions, id: String, entry: Optional[Int]) -> Result[Protoco
   end
 
   _ = try adopted
+  # The confinement of the file tools is a setting of the session that the file does not keep.
+  confined = (try SessionActor.snapshot(address)).confine
+  if confined != sessions.options.confine_files
+    case update(sessions, header.id, Protocol.UpdateSession(confine: some(confined)))
+      ok(_) -> nil
+      error(e) ->
+        # A fork that is not as confined as its source must not stay.
+        _ = delete(sessions, header.id)
+        return error(e.message, kind: e.kind)
+    end
+  end
+
   ok(Protocol.Branched(id: header.id, text: copied.text))
 end
 
@@ -475,7 +487,15 @@ end
 
 def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]
   options = Config.now(registry.options)
-  ctx = case Tools.context(request.cwd, options.env, options.tools, late_of(options), options.diff, wrap_of(options))
+  ctx = case Tools.context(
+    request.cwd,
+    options.env,
+    options.confine_files,
+    options.tools,
+    late_of(options),
+    options.diff,
+    wrap_of(options),
+  )
     ok(ctx) -> ok(ctx)
     error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
   end
@@ -562,6 +582,7 @@ def read(options: Config.Options, listed: Entry) -> Result[Loaded]
   context = try Tools.context(
     saved.header.cwd,
     options.env,
+    options.confine_files,
     options.tools,
     late_of(options),
     options.diff,

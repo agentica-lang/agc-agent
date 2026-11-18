@@ -1,7 +1,7 @@
 ## The base tools, and what a call touches.
 ##
-## Security model. The tools keep a call inside the session folder and the approval rules (when the approval extension
-## is on) decide what asks, but neither is a sandbox:
+## Security model. The file tools reach any path (inside the session folder only with `confine_files`) and the approval
+## rules (when the approval extension is on) decide what asks, but neither is a sandbox:
 ## - An allow pattern is a convenience. Allowing a program allows every option it takes and every config file it reads:
 ##   `bash(git diff *)` allows `git diff --output=../x`, which writes outside the folder, `bash(git *)` allows
 ##   `git -c alias.x=!cmd x`, which runs `cmd`, and `bash(cat src/*)` allows `cat src/../../outside/secret`. Allow only
@@ -36,18 +36,19 @@ BASH = "bash"
 ## The longest a `bash` call may run.
 MAX_BASH_TIMEOUT_MS = Shell.MAX_TIMEOUT_MS
 
-## The context of a session in `cwd`: the real path of the folder, where bash reads its few environment variables, and
-## the tools `more` after the base ones.
+## The context of a session in `cwd`: the real path of the folder, where bash reads its few environment variables, whether
+## the file tools stay in it (`confine`: no default, so a caller says it), and the tools `more` after the base ones.
 def context(
   cwd: String,
   env: Fn[String, Result[String]],
+  confine: Bool,
   more: List[Spec.Tool] = [],
   late: Optional[Fn[List[Spec.Tool]]] = none,
   diff: Optional[Fn[String, JSON.Value, String]] = none,
   wrap: Optional[Fn[String, Spec.Run, Spec.Run]] = none,
 ) -> Result[Spec.Context]
   root = try Sandbox.open(cwd)
-  ok(Spec.Context(root: root, env: env, tools: more, late: late, diff: diff, wrap: wrap))
+  ok(Spec.Context(root: root, env: env, tools: more, late: late, diff: diff, wrap: wrap, confine: confine))
 end
 
 ## The tools a session offers the model: the base ones, then those of its context.
@@ -58,7 +59,7 @@ def all() -> List[Spec.Tool]
     Spec.Tool(
       name: "read_file",
       description: (
-        "Read a text file of the session folder. Lines from `offset` (0 is the first), at most `limit` " +
+        "Read a text file. Lines from `offset` (0 is the first), at most `limit` " +
         "(5000) and 27000 characters; the answer says where to continue. Over 1 MiB, line ends are not shown, " +
         "and a line over 1 MiB stops the read, with a note."
       ),
@@ -215,7 +216,7 @@ OUTPUT_LINES = 40
 
 # The text of a file in the session folder, "" when it cannot be read.
 def text_of(ctx: Spec.Context, path: String) -> String
-  case Sandbox.resolve(ctx.root, path)
+  case Sandbox.reach(ctx.root, path, ctx.confine)
     ok(found) -> File.read_text(found).unwrap_or("")
     error(_) -> ""
   end

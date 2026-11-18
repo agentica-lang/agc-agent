@@ -203,6 +203,8 @@ struct Session
   history: List[Message]
   ## The edits of files run without asking (`PATCH` with `accept_edits`).
   accept_edits: Bool = false
+  ## The file tools reach only the session folder (`PATCH` with `confine`).
+  confine: Bool = false
   ## What the session cost so far in USD, when the model catalog has its prices.
   cost: Optional[Float] = none
   ## The thinking level of the session's calls; none leaves it to the model.
@@ -398,6 +400,7 @@ def encode_session(reply: Session) -> String
       pending_approvals: reply.pending_approvals,
       history: history,
       accept_edits: some(reply.accept_edits),
+      confine: some(reply.confine),
       cost: Wire.field(reply.cost),
       effort: reply.effort,
       provider: some(reply.provider),
@@ -437,6 +440,7 @@ def decode_session(text: String) -> Result[Session]
       pending_approvals: wire.pending_approvals,
       history: history,
       accept_edits: wire.accept_edits.unwrap_or(false),
+      confine: wire.confine.unwrap_or(false),
       cost: Wire.optional(wire.cost),
       effort: wire.effort,
       provider: wire.provider.unwrap_or(""),
@@ -510,6 +514,7 @@ struct SessionWire
   pending_approvals: List[Events.ApprovalRequested]
   history: List[MessageWire]
   accept_edits: Optional[Bool] = none
+  confine: Optional[Bool] = none
   cost: JSON.Field[Float]
   effort: Optional[String] = none
   provider: Optional[String] = none

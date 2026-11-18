@@ -20,7 +20,7 @@ end
 def open(rules: Approval.Rules, root: String, trusted: Bool, asking: Bool) -> Result[Approvals]
   defaults = try Approval.parse_rules(Approval.DEFAULTS)
   all = try Permissions.with_project(Approval.Rules(all: defaults.all + rules.all), root, trusted)
-  ok(Approvals(rules: all, allows: Permissions.Allows(), root: root, asking: asking))
+  ok(Approvals(rules: all.with(root: root), allows: Permissions.Allows(), root: root, asking: asking))
 end
 
 ## Whether tool calls pass the hook: when it asks, or when a deny rule may refuse one.
