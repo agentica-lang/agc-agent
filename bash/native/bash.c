@@ -240,10 +240,14 @@ static TSNode statement_of(const path *p) {
 }
 
 /* A monotonic clock in milliseconds. On Windows not clock_gettime: MinGW takes it from libwinpthread, a DLL that the
-   loader does not find beside a prebuilt library. */
+   loader does not find beside a prebuilt library; and not GetTickCount64, which moves in steps of 15.6 ms. */
 static int64_t now_ms(void) {
 #ifdef _WIN32
-  return (int64_t)GetTickCount64();
+  LARGE_INTEGER frequency, count;
+  QueryPerformanceFrequency(&frequency);
+  QueryPerformanceCounter(&count);
+  return (int64_t)(count.QuadPart / frequency.QuadPart) * 1000 +
+         (int64_t)(count.QuadPart % frequency.QuadPart) * 1000 / frequency.QuadPart;
 #else
   struct timespec now;
   clock_gettime(CLOCK_MONOTONIC, &now);

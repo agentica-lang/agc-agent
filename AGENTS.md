@@ -85,8 +85,12 @@ A package is added by the phase that needs it, never as an empty folder.
   fetched file may be over 1 MiB. The workflow `bash-native.yml` builds the
   library per target on a pushed tag `bash-native-<key>` (the coordinator
   pushes it; `<key>` is `agentica native source bash`) and attaches it, with
-  `SHA256SUMS`, to the release of the tag; its summary prints the rows for
-  `[native.bash.prebuilt]` of `bash/agentica.toml`.
+  `SHA256SUMS` and `LICENSES.txt`, to the release of the tag (a draft until all
+  are attached; the tag must be on main or `bash-prebuilt-base`); its summary prints
+  the rows for `[native.bash.prebuilt]` of `bash/agentica.toml`. It tests the
+  library it ships (the same cache, `prebuilt-e2e-run`) and
+  `scripts/check-library.sh` checks what the library needs (glibc 2.28 at most,
+  no libwinpthread).
 - `cli` tests run the client as a child process on pipes (the Makefile
   exports `AGENTICA` for it) against a fake protocol server in
   `cli/tests/support/`. The client finds the server in the state folder

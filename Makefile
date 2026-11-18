@@ -45,7 +45,7 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check native-source native-gen native-header native-check native-lib prebuilt-e2e unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
+.PHONY: install check coupling fmt-check native-source native-gen native-header native-check native-lib prebuilt-e2e prebuilt-e2e-run unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
 install: native-source
@@ -121,15 +121,21 @@ native-source:
 # library is the path that agentica prints.
 NATIVE_CACHE ?= $(CURDIR)/tmp/native-cache
 native-lib: native-source
-	mkdir -p tmp/native-lib && rm -f tmp/native-lib/* && rm -r -f '$(NATIVE_CACHE)'
-	built=$$(cd bash && XDG_CACHE_HOME='$(NATIVE_CACHE)' LOCALAPPDATA='$(NATIVE_CACHE)' AGENTICA_NATIVE_BUILD=bash \
-	  $(AGENTICA) install 2>&1 | tr -d '\r' | sed -n 's/^built native bash: //p'); \
+	@case '$(NATIVE_CACHE)' in */tmp/native-cache) ;; *) echo 'native-lib: NATIVE_CACHE must be a tmp/native-cache folder' >&2; exit 1 ;; esac
+	mkdir -p tmp/native-lib && rm -f tmp/native-lib/* tmp/native-build.log && rm -r -f '$(NATIVE_CACHE)'
+	cd bash && XDG_CACHE_HOME='$(NATIVE_CACHE)' LOCALAPPDATA='$(NATIVE_CACHE)' AGENTICA_NATIVE_BUILD=bash \
+	  $(AGENTICA) install > ../tmp/native-build.log 2>&1; status=$$?; tr -d '\r' < ../tmp/native-build.log; \
+	  [ $$status -eq 0 ] || { echo 'native-lib: the build failed' >&2; exit 1; }
+	built=$$(tr -d '\r' < tmp/native-build.log | sed -n 's/^built native bash: //p'); \
 	[ -n "$$built" ] || { echo 'native-lib: agentica built no library' >&2; exit 1; }; \
 	cp "$$built" tmp/native-lib/
 
-# A fresh project fetches bash from a copy of this repository and uses a library served on 127.0.0.1, with no
-# compiler, as one that reads [native.bash.prebuilt] does.
+# A fresh project fetches bash from a copy of this repository and uses the library of tmp/native-lib, served on
+# 127.0.0.1, with no compiler, as one that reads [native.bash.prebuilt] does. prebuilt-e2e builds the library first;
+# prebuilt-e2e-run takes the one that is there (the workflow tests the library that it ships).
 prebuilt-e2e: native-lib
+	$(MAKE) --no-print-directory prebuilt-e2e-run
+prebuilt-e2e-run:
 	$(AGENTICA) scripts/prebuilt_e2e.agc '$(AGENTICA)' tmp/native-lib
 
 fmt-check:
