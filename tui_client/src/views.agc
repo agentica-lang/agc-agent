@@ -9,6 +9,7 @@ import Layout from "panel"
 import Prompt from "prompt"
 import Rate from "rate"
 import Screen from "screen"
+import Select from "select"
 import Transcript from "transcript"
 import State from "state"
 import Files from "files"
@@ -46,13 +47,15 @@ def framed(app: State.Model) -> Screen.Frame
     queued: app.follow_ups.map { |text| "follow-up: #{Client.printable(text)}" },
   )
 
-  Screen.frame(
+  frame = Screen.frame(
     app.width,
     app.height,
     Transcript.tail(app.entries, app.width, State.folds(app), app.height + app.scroll),
     app.scroll,
     parts,
   )
+
+  frame.with(marks: Select.marks(app.selection, frame.base, frame.transcript.size))
 end
 
 ## The rows of the approval panel, without the transcript: a key needs only these.

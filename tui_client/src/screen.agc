@@ -8,6 +8,7 @@ import TUI from "pkg/tui/tui"
 import Layout from "panel"
 import Markdown from "markdown"
 import Prompt from "prompt"
+import Select from "select"
 import Theme from "theme"
 import Transcript from "transcript"
 import Width from "width"
@@ -41,6 +42,10 @@ struct Frame
   width: Int
   height: Int
   transcript: List[Transcript.Line]
+  ## The number of the row at the top of `transcript`, counted from the last row of the transcript (0).
+  base: Int
+  ## The columns of each row of `transcript` that a selection covers (from, to), or an empty list.
+  marks: List[List[Int]] = []
   area: Int
   queued: List[String]
   label: String
@@ -90,6 +95,7 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
     width: width,
     height: height,
     transcript: lines.drop(top).take(area),
+    base: lines.size - 1 - top,
     area: area,
     queued: queued.map { |text| Width.cut(" #{text}", width)[0] },
     label: parts.label,
@@ -103,7 +109,10 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
 end
 
 def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
-  rows = frame.transcript.map { |line| transcript_row(line, theme.transcript) }
+  rows = (0...frame.transcript.size).to_a.map { |y|
+    chosen_row(frame.transcript[y], theme.transcript, mark_of(frame, y))
+  }
+
   blank = (rows.size...frame.area).to_a.map { |_| TUI.line([]) }
   rule = rule_style(frame.level, theme.rules)
   editor = frame.picker.map { |row| panel_row(row, theme.panel) }
@@ -209,6 +218,39 @@ def text_style(kind: Transcript.Kind, look: Markdown.Look, colors: Theme.Transcr
 
     _ -> colors.tool
   end
+end
+
+# The columns of row y that the selection covers.
+def mark_of(frame: Frame, y: Int) -> List[Int]
+  return [] if y >= frame.marks.size
+
+  frame.marks[y]
+end
+
+# A row of the transcript with the part a selection covers reversed.
+def chosen_row(line: Transcript.Line, colors: Theme.TranscriptColors, mark: List[Int]) -> TUI.Node
+  return transcript_row(line, colors) if mark.empty?
+
+  col = 0
+  nodes: List[TUI.Span] = []
+  for span in line.spans
+    look = style(line.kind, span.look, colors)
+    parts = Select.split_at(span.text, mark[0] - col, mark[1] - col)
+    for at in 0...3
+      next if parts[at] == ""
+
+      shown = look
+      if at == 1
+        shown = look.with(reverse: true)
+      end
+
+      nodes = nodes.push(TUI.span(parts[at], shown))
+    end
+
+    col = col + Width.text(span.text)
+  end
+
+  TUI.line(nodes)
 end
 
 def transcript_row(line: Transcript.Line, colors: Theme.TranscriptColors) -> TUI.Node

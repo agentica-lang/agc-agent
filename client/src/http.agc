@@ -45,6 +45,14 @@ def server_status(server: Server) -> Result[Protocol.ServerStatus]
   Protocol.decode_server_status(body)
 end
 
+## Whether the config of the server leaves the mouse on; on when the server does not say.
+def mouse(server: Server) -> Bool
+  case server_status(server)
+    ok(status) -> status.mouse.unwrap_or(true)
+    error(_) -> true
+  end
+end
+
 ## The last `lines` lines of the server log, and the warnings it logged since it started.
 def server_log(server: Server, lines: Int) -> Result[Protocol.ServerLog]
   body = try call_within(server, "GET", "#{Protocol.LOGS_PATH}?lines=#{lines}", "", PROBE_TIMEOUT_MS)

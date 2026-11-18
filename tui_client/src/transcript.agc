@@ -49,6 +49,12 @@ struct Line
   soft: Bool = false
 end
 
+## A row of a wrapped text, and whether it goes on the one before.
+struct Cut
+  text: String
+  soft: Bool
+end
+
 struct Wrapped
   width: Int
   folds: Folds
@@ -221,12 +227,6 @@ end
 
 ## `text` cut into rows of at most `width` columns, at spaces when it can.
 def wrap(text: String, width: Int) -> List[String] = wrap_marked(text, width).map { |row| row.text }
-
-## A row of a wrapped text, and whether it goes on the one before.
-struct Cut
-  text: String
-  soft: Bool
-end
 
 def wrap_marked(text: String, width: Int) -> List[Cut]
   rows: List[Cut] = []

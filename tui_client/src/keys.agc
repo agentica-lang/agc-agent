@@ -5,6 +5,8 @@ import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
 import Input from "input"
 import Prompt from "prompt"
+import Select from "select"
+import Selecting from "selecting"
 import Screen from "screen"
 import Transcript from "transcript"
 import State from "state"
@@ -97,7 +99,10 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     TUI.Event.Key(TUI.Key.Right, _) -> app.with(cursor: Prompt.next_char(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Home, _) -> app.with(cursor: 0)
     TUI.Event.Key(TUI.Key.End, _) -> app.with(cursor: app.prompt.length)
-    TUI.Event.Mouse(TUI.Mouse.Left, x, y, mods) if not mods.motion -> clicked(app, x, y)
+    TUI.Event.Mouse(TUI.Mouse.Left, x, y, mods) if mods.motion -> dragged(app, x, y)
+    TUI.Event.Mouse(TUI.Mouse.Left, x, y, _) -> pressed(app, x, y)
+    TUI.Event.Mouse(TUI.Mouse.Release, _, _, _) -> released(app)
+    TUI.Event.Key(TUI.Key.Escape, _) if app.selection.some? -> app.with(selection: none, pressed: none)
     TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals, app.now))
     TUI.Event.Key(TUI.Key.BackTab, _) -> Level.leveled(app)
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
@@ -232,6 +237,49 @@ end
 # that key (with the same rules); in the prompt it moves the cursor. The click is matched against the regions of the
 # model as drawn.
 def clicked(app: State.Model, x: Int, y: Int) -> State.Model = clicked_on(app, Views.framed(app), x, y)
+
+# A button down on the transcript may start a drag, so it acts when it goes up; on anything else it acts at once.
+def pressed(app: State.Model, x: Int, y: Int) -> State.Model
+  frame = Views.framed(app)
+  case Screen.hit(frame, x, y)
+    Screen.Hit.Entry(index) ->
+      press = Select.Press(cell: Select.cell_at(frame.base, x, y), entry: index)
+      app.with(pressed: some(press), selection: none)
+    _ -> clicked_on(app.with(selection: none, pressed: none), frame, x, y)
+  end
+end
+
+# The button moves down: the cells from where it went down to this one are selected, the rows of the transcript that
+# are on the screen at most.
+def dragged(app: State.Model, x: Int, y: Int) -> State.Model
+  frame = Views.framed(app)
+  case app.pressed
+    some(press) if not frame.transcript.empty? ->
+      row = [[y, 0].max.unwrap!, frame.transcript.size - 1].min.unwrap!
+      head = Select.cell_at(frame.base, x, row)
+      return app if head == press.cell and app.selection.none?
+
+      app.with(selection: some(Select.Selection(anchor: press.cell, head: head)))
+    _ -> app
+  end
+end
+
+# The button goes up: a drag copies what it selected; with no drag it was a click, or the second of a double click.
+def released(app: State.Model) -> State.Model
+  case app.pressed
+    some(press) ->
+      done = app.with(pressed: none)
+      return Selecting.copied(done) if done.selection.some?
+
+      return Selecting.double(done, press.cell) if Selecting.double?(done, press.cell)
+
+      toggled = done.with(click: some(Select.Click(cell: press.cell, at_ms: app.now)))
+      return toggled if press.entry < 0
+
+      toggled.with(entries: Transcript.toggle(app.entries, press.entry, State.folds(app)))
+    none -> app
+  end
+end
 
 def clicked_on(app: State.Model, frame: Screen.Frame, x: Int, y: Int) -> State.Model
   case Screen.hit(frame, x, y)

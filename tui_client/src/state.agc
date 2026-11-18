@@ -9,6 +9,8 @@ import Input from "input"
 import Picker from "picker"
 import Prompt from "prompt"
 import Rate from "rate"
+import Select from "select"
+import Terminal from "terminal"
 import Theme from "theme"
 import Transcript from "transcript"
 import Yolo from "pkg/client/yolo"
@@ -146,6 +148,15 @@ struct Model
   editing: Bool = false
   ## The private folder the edits of Ctrl+G go in; "" when there is none.
   edits: String = ""
+  ## The text a drag selected, and where the button went down while it may still drag.
+  selection: Optional[Select.Selection] = none
+  pressed: Optional[Select.Press] = none
+  ## The last click that ended where it began, for a double click.
+  click: Optional[Select.Click] = none
+  ## The terminal reports the mouse; off, it selects text itself.
+  mouse: Bool = true
+  ## Writes to the terminal outside the grid (the copy and the mouse reporting); a test gives its own.
+  write: Fn[String, Void]
   ## The monotonic ms and the wall clock s of the message being handled.
   now: Int = 0
   clock_s: Int = 0
@@ -218,6 +229,7 @@ def seed(
     yolo: Yolo.Yolo(on: options.yolo),
     theme: Theme.default(),
     home: System.env("HOME").unwrap_or(""),
+    write: &Terminal.write,
     editor: editor_of(System.env("VISUAL").unwrap_or(""), System.env("EDITOR").unwrap_or("")),
     now: Time.monotonic_ms,
     clock_s: Time.now_ms / 1000,

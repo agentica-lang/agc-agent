@@ -121,6 +121,8 @@ struct Options
   trusted: List[String] = []
   ## The program and arguments that list the files for `@`, from the user's config only; empty for the built-in walk.
   files_command: List[String] = []
+  ## The full screen turns the mouse on: `"mouse": false` of the user's config file turns it off.
+  mouse: Bool = true
 end
 
 def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_with(read, &Offered.ant_token)
@@ -231,6 +233,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       docs: docs_folder(read),
       trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
       files_command: try files_command(read),
+      mouse: try mouse_setting(read),
     ),
   )
 end
@@ -275,6 +278,18 @@ def files_command(read: Fn[String, Result[String]]) -> Result[List[String]]
   end
 
   ok([])
+end
+
+## `mouse` of the user's config file: `false` leaves the mouse to the terminal; anything else, or no file, is on.
+def mouse_setting(read: Fn[String, Result[String]]) -> Result[Bool]
+  for path in option_list(Permissions.config_path(read))
+    case JSON.decode(try File.read_text(path), MouseFile)
+      ok(file) -> return ok(file.mouse.unwrap_or(true))
+      error(e) -> return error("#{path}: mouse: #{e.message}")
+    end
+  end
+
+  ok(true)
 end
 
 ## Code mode unless `FINN_CODE_MODE` is `0`, when there is a worker for this machine: `FINN_MONTY`, or a pinned wheel
@@ -364,6 +379,10 @@ end
 def data_dir(read: Fn[String, Result[String]]) -> Result[String] = folder(read, DATA_DIR_ENV, "XDG_DATA_HOME", "share")
 
 private
+
+struct MouseFile
+  mouse: Optional[Bool] = none
+end
 
 struct FilesFile
   files: Optional[FilesKey] = none

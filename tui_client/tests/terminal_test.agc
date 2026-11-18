@@ -7,12 +7,15 @@ import Protocol from "pkg/protocol/protocol"
 import Yolo from "pkg/client/yolo"
 import TUI from "pkg/tui/tui"
 import App from "../src/app"
+import Terminal from "../src/terminal"
+import Transcript from "../src/transcript"
 import Approvals from "../src/approvals"
 import Args from "../src/args"
 import Logins from "../src/logins"
 
 ## The base URL of `local` when nothing sets another.
 DEFAULT_URL = "http://127.0.0.1:8080/v1"
+TEXT = "alpha beta gamma delta epsilon zeta eta theta"
 SSE_HEADERS = [HTTP.Header(name: "Content-Type", value: "text/event-stream")]
 
 struct Rig
@@ -21,6 +24,8 @@ struct Rig
   # The method and path of each call the app made on the server, and the body of each, in the same order.
   requests: Channel[String]
   bodies: Channel[String]
+  # What the app wrote to the terminal outside the grid: the copies and the mouse reporting.
+  written: Channel[String]
 end
 
 def test_a_tiny_terminal_draws_the_panel_and_a_resize_redraws_it() -> Result[Void] = within(24, 6, &tiny)
@@ -422,6 +427,7 @@ def within(
   requests: Channel[String] = Channel.new(32)
   streams: Channel[Channel[Bytes]] = Channel.new(8)
   bodies: Channel[String] = Channel.new(32)
+  written: Channel[String] = Channel.new(32)
   handler = ->(request: HTTP.Request, sent: HTTP.RequestBody) {
     call = "#{request.method} #{request.path}"
     _ = requests.send(call, 0)
@@ -446,6 +452,7 @@ def within(
     feed: some(feed),
     effects: [App.read_feed(1, feed)],
     approvals: Approvals.Panel(guard_ms: 0),
+    write: ->(text: String) { _ = written.send(text, 1000) },
   )
 
   for change in option_list(first)
@@ -454,7 +461,7 @@ def within(
 
   fake = TUI.Testing.fake(width, height)
   runner = Task.spawn(-> { App.drive(TUI.Testing.backend(fake), model) })
-  result = body.call(Rig(fake: fake, feed: feed, requests: requests, bodies: bodies))
+  result = body.call(Rig(fake: fake, feed: feed, requests: requests, bodies: bodies, written: written))
   _ = fake.events.send(TUI.Event.Key(TUI.Key.Ctrl("c"), TUI.Mods()), 1000)
   _ = Task.await(runner)
   feed.close
@@ -578,3 +585,114 @@ def test_the_report_of_the_warnings_comes_before_the_hint_that_follows() -> Resu
   try Test.eq(App.joined(none, some("hint")), some("hint"))
   Test.eq(App.joined(none, none), none)
 end
+
+def said(text: String) -> Fn[App.Model, App.Model]
+  ->(model: App.Model) {
+    model.with(entries: Transcript.from_history([Protocol.Message(role: Protocol.Role.User, text: text)]))
+  }
+end
+
+def mouse(button: TUI.Mouse, at: List[Int], motion: Bool = false) -> TUI.Event
+  TUI.Event.Mouse(button, at[0], at[1], TUI.Mods(motion: motion))
+end
+
+def reversed_at?(fake: TUI.Testing.Fake, x: Int, y: Int) -> Bool
+  case TUI.Testing.style_at(fake, x, y)
+    some(style) -> style.reverse
+    none -> false
+  end
+end
+
+# A drag over wrapped rows selects them and the release copies the text as it was written, with no gutter and no break
+# where the screen cut it, as an OSC 52 sequence; a note says how much. Esc clears the selection.
+def test_a_drag_copies_the_text_across_wrapped_rows_and_esc_clears_the_selection() -> Result[Void]
+  within(20, 12, &dragged, first: some(said(TEXT)))
+end
+
+def dragged(rig: Rig) -> Result[Void]
+  start = try find(rig, "alpha beta gamma")
+  last = try find(rig, "eta theta")
+  try press(rig, mouse(TUI.Mouse.Left, [start[1], start[0]]))
+  try press(rig, mouse(TUI.Mouse.Left, [last[1] + 8, last[0]], motion: true))
+  try TUI.Testing.wait_for(rig.fake, ->(_rows: List[String]) { reversed_at?(rig.fake, start[1], start[0]) })
+  try press(rig, mouse(TUI.Mouse.Release, [last[1] + 8, last[0]]))
+  try Test.eq(try rig.written.recv(2000), Terminal.osc52(TEXT))
+  try shows(rig, "copied #{TEXT.length}")
+  try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
+  try TUI.Testing.wait_for(rig.fake, ->(_rows: List[String]) { not reversed_at?(rig.fake, start[1], start[0]) })
+  ok()
+end
+
+# The selection keeps the rows it was made on when the transcript scrolls under the drag, and runs from the earlier
+# row to the later one whichever way the button went.
+def test_a_drag_across_a_scroll_copies_the_rows_between() -> Result[Void]
+  texts = (10...30).to_a.map { |n| "m#{n}" }
+  entries = ->(model: App.Model) {
+    model.with(
+      entries: Transcript.from_history(texts.map { |text| Protocol.Message(role: Protocol.Role.User, text: text) }),
+    )
+  }
+
+  within(30, 12, &scrolled, first: some(entries))
+end
+
+def scrolled(rig: Rig) -> Result[Void]
+  bottom = try find(rig, "m29")
+  try press(rig, mouse(TUI.Mouse.Left, [bottom[1] + 2, bottom[0]]))
+  try press(rig, mouse(TUI.Mouse.WheelUp, [0, 0]))
+  top = try find(rig, "m25")
+  try press(rig, mouse(TUI.Mouse.Left, [top[1], top[0]], motion: true))
+  try press(rig, mouse(TUI.Mouse.Release, [top[1], top[0]]))
+  Test.eq(try rig.written.recv(2000), Terminal.osc52("m25\n\nm26\n\nm27\n\nm28\n\nm29"))
+end
+
+# A double click selects the word under it and copies it.
+def test_a_double_click_copies_the_word() -> Result[Void] = within(40, 12, &doubled, first: some(said(TEXT)))
+
+def doubled(rig: Rig) -> Result[Void]
+  at = try find(rig, "alpha beta gamma")
+  cell = [at[1] + 12, at[0]]
+  for _ in 0...2
+    try press(rig, mouse(TUI.Mouse.Left, cell))
+    try press(rig, mouse(TUI.Mouse.Release, cell))
+  end
+
+  Test.eq(try rig.written.recv(2000), Terminal.osc52("gamma"))
+end
+
+# `/mouse` turns the mouse reporting off and on again, and the terminal is told each time.
+def test_mouse_turns_the_reporting_off_and_on() -> Result[Void] = within(60, 12, &toggled)
+
+def toggled(rig: Rig) -> Result[Void]
+  for text in ["/mouse", "/mouse"]
+    for char in text.split("")
+      try press(rig, TUI.Event.Char(char, TUI.Mods()))
+    end
+
+    try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+  end
+
+  try Test.eq(try rig.written.recv(2000), Terminal.mouse(false))
+  try shows(rig, "mouse off: the terminal selects text")
+  try Test.eq(try rig.written.recv(2000), Terminal.mouse(true))
+  try shows(rig, "mouse on: drag to select and copy")
+  ok()
+end
+
+# `"mouse": false` in the config of the server (its status says so) turns the reporting off when the app starts.
+def test_the_config_can_turn_the_mouse_off() -> Result[Void]
+  status = Protocol.ServerStatus(
+    pid: 1,
+    version: "v",
+    started_s: 0,
+    sessions: 0,
+    running_turns: 0,
+    stopping: false,
+    mouse: some(false),
+  )
+
+  replies = {"GET #{Protocol.SERVER_PATH}": Protocol.encode_server_status(status)}
+  within(60, 12, &configured, replies: replies, first: some(&App.configured))
+end
+
+def configured(rig: Rig) -> Result[Void] = Test.eq(try rig.written.recv(2000), Terminal.mouse(false))

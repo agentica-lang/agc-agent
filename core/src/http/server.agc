@@ -42,6 +42,7 @@ struct Control
   approvals: Bool = false
   code_mode: Bool = false
   no_worker: Bool = false
+  mouse: Bool = true
 end
 
 struct Server
@@ -189,6 +190,7 @@ def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handl
     approvals: options.asking,
     code_mode: options.code_mode.some?,
     no_worker: options.no_worker,
+    mouse: options.mouse,
   )
 
   http = try Bond.start_with(
@@ -271,6 +273,7 @@ def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
         approvals: some(control.approvals),
         code_mode: some(control.code_mode),
         no_worker: some(control.no_worker),
+        mouse: some(control.mouse),
       ),
     ),
   )
