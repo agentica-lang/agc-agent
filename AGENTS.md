@@ -19,6 +19,8 @@ monty/               Python scripts in pydantic's Monty sandbox: the pinned `mon
 bash/                the simple commands of a bash line, read by tree-sitter-bash; native/ holds the vendored C
                      (runtime/, grammar/, MIT) and the module, whose header native-gen makes (`make native-header`);
                      bash.agc is its public module; tests/test_bash_peer.py checks it against real bash
+vendor/              tree-sitter-bash's parser.c (9.5 MB), which bash/native/grammar/parser.c includes: outside
+                     bash/, as a fetched package holds no file over 1 MiB (a fetched bash downloads its library)
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point, core.agc the public module (`Core.serve` with a registry
                      of extensions)
@@ -45,12 +47,14 @@ docs/                the user guide (Hugo, the docs theme as a submodule in docs
 llm/smoke/           tests against a real llama-server (make smoke-llama): local only, never in CI
 llm/live/, core/live/ tests against a paid API (live-fireworks, smoke-anthropic, live-anthropic-core): never in CI
 scripts/             fetch the pinned llama.cpp release and model into .tools/ (sha256); leftovers.agc, the check
-                     that no test left a server running
+                     that no test left a server running; prebuilt_e2e.agc (make prebuilt-e2e)
 Makefile             check, fmt-check, unit, smoke, test over every package; smoke-llama, live-fireworks,
                      smoke-anthropic, live-anthropic-core
 .github/workflows/   ci.yml, on GitHub-hosted ubuntu-24.04: the pinned Agentica release, the cached packages and compile
                      caches (`_build/`), then fmt-check and test (no real-model job); `tag-version` tags each
-                     merge to main that passed as `finn-<ts>` (the one job with `contents: write`)
+                     merge to main that passed as `finn-<ts>` (the one job with `contents: write`);
+                     bash-native.yml builds bash's library for the five targets (on a PR that changes its C) and
+                     attaches them to the release of a `bash-native-<key>` tag, which the coordinator pushes
 ```
 
 A package is added by the phase that needs it, never as an empty folder.
@@ -71,9 +75,15 @@ A package is added by the phase that needs it, never as an empty folder.
   server runs in `Driver.within_dir` (cli), which stops every server of its
   state folder and removes the folder.
   `native-check` fails when `bash/native/bash_native.h` is stale (native-gen,
-  cloned into `.tools/`). `install` fetches bond into `core/deps/` and
-  agentica-tui into `tui_client/deps/` (gitignored); `check`, `smoke` and `pty`
-  run it first.
+  cloned into `.tools/`), or when `bash/native/grammar/parser.c` does not
+  name the sha256 of the vendored parser (the line puts it in the source
+  key). `prebuilt-e2e`: a fresh project fetches bash from a local copy of the
+  repository and uses the library of `native-lib`, served on 127.0.0.1, with
+  `CC=false`. A change to the C of bash needs a new `bash-native-<key>`
+  release and new `[native.bash.prebuilt]` rows (`agentica native source
+  bash` in `bash/` prints the key). `install` fetches bond into `core/deps/`
+  and agentica-tui into `tui_client/deps/` (gitignored); `check`, `smoke` and
+  `pty` run it first.
 - `cli` tests run the client as a child process on pipes (the Makefile
   exports `AGENTICA` for it) against a fake protocol server in
   `cli/tests/support/`. The client finds the server in the state folder

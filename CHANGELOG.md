@@ -4,6 +4,7 @@
 
 ### Changed
 
+- bash's parser of tree-sitter-bash is vendored outside the `bash` package, so the package can be fetched; a fetched `bash` downloads its prebuilt library (one per target, from a `bash-native-<key>` release) and needs no C compiler.
 - The version of Finn is the UTC time of its commit (`20261118123456`), with a `finn-` tag per merge to main; a client says when its server is older or newer and names `finn server restart`, never a `kill`. `finn server stop` ends a server that does not take the request by its pid (`--now` forces it).
 - **Breaking:** Finn needs Agentica 0.34.0. A model stream that is silent for 2 minutes now fails, rather than hanging; the event stream of a session has no read limit.
 - A resumed session shows the thinking, tool calls and stop notes of its turns, not only the messages; the session line comes first.

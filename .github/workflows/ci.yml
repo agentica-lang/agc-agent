@@ -65,7 +65,7 @@ jobs:
           - name: core
             run: make fmt-check check unit PACKAGES=core
           - name: packages
-            run: make fmt-check check native-check unit PACKAGES="sse llm mcp protocol monty bash client cli tui_client"
+            run: make fmt-check check native-check unit prebuilt-e2e PACKAGES="sse llm mcp protocol monty bash client cli tui_client"
           - name: pty and smoke
             run: make pty smoke peer
     steps:
@@ -82,7 +82,7 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: ~/.cache/agentica/pkg
-          key: packages-${{ hashFiles('**/agentica.lock', 'bash/native/**', 'bash/agentica.toml') }}
+          key: packages-${{ hashFiles('**/agentica.lock', 'bash/native/**', 'bash/agentica.toml', 'vendor/tree-sitter-bash/**') }}
 
       # The compile cache of each package (_build/, 75 MB for core) is named by the hash of the sources, so a stale file
       # is never used; the last cache of the job and the Agentica version is the start of the next one.

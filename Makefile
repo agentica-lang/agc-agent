@@ -45,7 +45,7 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check native-gen native-header native-check unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
+.PHONY: install check coupling fmt-check native-gen native-header native-check native-lib prebuilt-e2e unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
 install:
@@ -97,6 +97,33 @@ native-header: native-gen
 	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h
 native-check: native-gen
 	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h --check
+	@grep -qx "// sha256 $$($(SHA256) $(PARSER) | cut -d ' ' -f 1)" bash/native/grammar/parser.c || \
+	  { echo 'native-check: bash/native/grammar/parser.c does not name the sha256 of $(PARSER)' >&2; exit 1; }
+	@cmp -s vendor/tree-sitter-bash/tree_sitter/parser.h bash/native/grammar/tree_sitter/parser.h || \
+	  { echo 'native-check: the two copies of tree_sitter/parser.h differ' >&2; exit 1; }
+
+# tree-sitter-bash's parser (9.5 MB), which bash/native/grammar/parser.c includes: outside bash/, since a fetched
+# package holds no file over 1 MiB. A fetched bash downloads its library ([native.bash.prebuilt], made by
+# .github/workflows/bash-native.yml); a checkout builds it from source.
+PARSER = vendor/tree-sitter-bash/parser.c
+SHA256 = $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
+
+# bash's library for this machine, built by agentica (with CC, else cc) in a package cache of its own, then copied into
+# NATIVE_LIB_DIR: libbash.so, libbash.dylib or bash.dll. NATIVE_CACHE is that cache (on Windows, a Windows path).
+NATIVE_LIB_DIR = tmp/native-lib
+NATIVE_CACHE ?= $(CURDIR)/$(NATIVE_LIB_DIR)/cache
+native-lib:
+	rm -rf tmp/native-lib && mkdir -p tmp/native-lib/cache
+	cd bash && XDG_CACHE_HOME='$(NATIVE_CACHE)' LOCALAPPDATA='$(NATIVE_CACHE)' $(AGENTICA) install
+	find '$(NATIVE_LIB_DIR)/cache' -path '*/native-build/*' \( -name libbash.so -o -name libbash.dylib -o -name bash.dll \) \
+	  -exec cp {} '$(NATIVE_LIB_DIR)/' ';'
+	ls '$(NATIVE_LIB_DIR)' | grep -Eqx 'libbash\.(so|dylib)|bash\.dll' || { echo 'native-lib: no library was built' >&2; exit 1; }
+
+# A fresh project fetches bash by `subdir` from a copy of this repository (git `insteadOf`), whose manifest names the
+# library of native-lib, served on 127.0.0.1: `update` downloads it and checks its sha256, and a run uses it with
+# CC=false, so no compiler runs (scripts/prebuilt_e2e.agc).
+prebuilt-e2e: native-lib
+	$(AGENTICA) scripts/prebuilt_e2e.agc '$(AGENTICA)' '$(CURDIR)/$(NATIVE_LIB_DIR)'
 
 fmt-check:
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} sh -c 'cd {} && $(AGENTICA) fmt --check .'
@@ -154,7 +181,7 @@ pty: install
 peer:
 	python3 -m unittest bash/tests/test_bash_peer.py -v
 
-test: check native-check unit smoke pty peer
+test: check native-check unit smoke pty peer prebuilt-e2e
 
 # The llm tests against a real llama-server with Qwen2.5-0.5B (fetched and checked by sha256 first), or the one at
 # LLAMA_URL. Local only, never in CI.
