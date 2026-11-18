@@ -44,6 +44,8 @@ end
 struct Found
   skills: List[Skill]
   warnings: List[String]
+  ## The real skills folders walked so far: one that several roots lead to is walked once.
+  roots: List[String] = []
 end
 
 struct Frontmatter
@@ -61,7 +63,7 @@ end
 ## `MAX_SKILLS`; then the built-in `finn` when `docs` is a folder with pages of Finn's and there is room for it (the
 ## user's and the project's skills count first). A project skill shadows a user skill of the same name, and either the
 ## built-in one; in one scope the first root wins. A skills root may be a link, which is resolved once; a link inside
-## it is not followed.
+## it is not followed. A folder or a SKILL.md that two roots lead to counts once, with no warning.
 def discover(root: String, home: String, trusted: Bool, docs: String = "") -> Found
   found = Found(skills: [], warnings: [])
   if trusted
@@ -317,9 +319,13 @@ def scope(found: Found, base: String) -> Found
     next if not real.ok? or not directory?(real.unwrap!)
 
     dir = real.unwrap!
+    next if scoped.roots.include?(dir)
 
+    scoped = scoped.with(roots: scoped.roots.push(dir))
     walk = walked(Walk(found: Found(skills: [], warnings: []), dirs: 0), dir, 0)
     for skill in walk.found.skills
+      next if (scoped.skills.any? { |s| s.location == skill.location })
+
       if (scoped.skills.any? { |s| s.name == skill.name })
         kind = "a skill of the same name"
         if names.include?(skill.name)

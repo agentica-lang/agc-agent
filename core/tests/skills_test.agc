@@ -222,6 +222,31 @@ def test_discovery_skips_what_it_cannot_use_with_a_warning() -> Result[Void]
   ok()
 end
 
+# A folder that several roots lead to is walked once, and a SKILL.md reached twice counts once: no warning for a skill
+# that is its own shadow. Two different skills of one name still warn.
+def test_a_folder_reached_twice_gives_each_skill_once() -> Result[Void]
+  base = try fresh()
+  try write("#{base}/shared/release/SKILL.md", RELEASE)
+  try write("#{base}/shared/lint/SKILL.md", LINT_PROJECT)
+  try link("#{base}/shared", "#{base}/home/.agents/skills")
+  try link("#{base}/shared", "#{base}/home/.claude/skills")
+  twice = Skills.discover("#{base}/work", "#{base}/home", false)
+  try Test.eq([twice.skills.map { |s| s.name }, twice.warnings], [["lint", "release"], []])
+  try write("#{base}/own/.agents/skills/group/deep/SKILL.md", "---\ndescription: nested\n---\n")
+  try link("#{base}/own/.agents/skills/group", "#{base}/own/.claude/skills")
+  nested = Skills.discover("#{base}/work", "#{base}/own", false)
+  try Test.eq([nested.skills.map { |s| s.name }, nested.warnings], [["deep"], []])
+  try link("#{base}/shared", "#{base}/work/.agents/skills")
+  project = Skills.discover("#{base}/work", "#{base}/home", true)
+  try Test.eq([project.skills.map { |s| s.name }, project.warnings], [["lint", "release"], []])
+  try write("#{base}/apart/.agents/skills/lint/SKILL.md", LINT_HOME)
+  try write("#{base}/apart/.claude/skills/lint/SKILL.md", LINT_PROJECT)
+  apart = Skills.discover("#{base}/none", "#{base}/apart", false)
+  _ = Path.remove(base)
+  try Test.eq(apart.skills.size, 1)
+  Test.eq(apart.warnings.size, 1)
+end
+
 # At most 100 skills are used, the first by name; a warning says how many there were.
 def test_discovery_keeps_at_most_100_skills() -> Result[Void]
   base = try fresh()
