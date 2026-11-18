@@ -29,6 +29,8 @@ struct NewSession
   provider: Optional[String] = none
   ## The profile of the session: the tools its model sees (default: `build`, every tool).
   profile: Optional[String] = none
+  ## An interactive client opened it: its provider and model become the choice of the next new sessions.
+  remember: Optional[Bool] = none
 end
 
 ## `POST /v1/sessions/ID/messages`.

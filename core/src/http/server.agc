@@ -329,7 +329,12 @@ def create(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   request = try Protocol.decode_new_session(try String.from_bytes(conn.body))
   id = try Sessions.create(sessions, request)
   profile = case Sessions.snapshot(sessions, id)
-    ok(session) -> session.profile
+    ok(session) ->
+      if request.remember == some(true) and (request.provider.some? or request.model.some?)
+        remember(sessions, session)
+      end
+
+      session.profile
     error(_) -> none
   end
 
@@ -346,8 +351,24 @@ end
 
 def update(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   change = try Protocol.decode_update_session(try String.from_bytes(conn.body))
-  try Sessions.update(sessions, try Bond.param(conn, "id"), change)
+  id = try Bond.param(conn, "id")
+  try Sessions.update(sessions, id, change)
+  if change.provider.some? or change.model.some?
+    case Sessions.snapshot(sessions, id)
+      ok(session) -> remember(sessions, session)
+      error(_) -> nil
+    end
+  end
+
   ok("{}")
+end
+
+# The provider and model a user picked for a session are those of the next new session.
+def remember(sessions: Sessions.Sessions, session: Protocol.Session) -> Void
+  case holder(sessions)
+    ok(held) -> Logins.remember(held, session.provider, session.model)
+    error(_) -> nil
+  end
 end
 
 def delete(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
@@ -446,7 +467,11 @@ def device_state(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   return error("only #{Chatgpt.NAME} has a login to wait for", kind: Protocol.KIND_INVALID) if name != Chatgpt.NAME
 
   found = try Logins.device_state(try holder(sessions))
-  ok(Protocol.encode_device_state(Protocol.DeviceState(state: found.state, message: found.message)))
+  ok(
+    Protocol.encode_device_state(
+      Protocol.DeviceState(state: found.state, message: found.message, made_default: found.made_default),
+    ),
+  )
 end
 
 def logout(sessions: Sessions.Sessions, name: Optional[String]) -> Result[String]
@@ -472,6 +497,7 @@ def login_status(found: Logins.Status) -> Protocol.LoginStatus
     coming: found.coming,
     asks: found.asks,
     base_url: found.base_url,
+    made_default: found.made_default,
   )
 end
 

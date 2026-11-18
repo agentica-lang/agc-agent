@@ -117,6 +117,8 @@ struct Model
   ## `login_only` (`finn login`), the app ends after the login.
   first_login: Bool = false
   login_only: Bool = false
+  ## What the console gets on stdout once the screen is closed (the end of `finn login`).
+  line: Optional[String] = none
   ## The model `/model` set, until the turn after it ends: a failed call there gets a warning.
   new_model: Optional[String] = none
   yolo: Yolo.Yolo
