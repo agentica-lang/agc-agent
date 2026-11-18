@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [finn-20261118140503] - 2026-11-18
+
 ### Fixed
 
 - Skills folders that are links to one folder (such as `~/.agents/skills` and `~/.claude/skills`) are read once, with no "shadowed by a skill of the same name" warning for each skill.
