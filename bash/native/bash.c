@@ -5,7 +5,12 @@
 
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <time.h>
+#endif
 
 #include "runtime/tree_sitter/api.h"
 
@@ -234,20 +239,21 @@ static TSNode statement_of(const path *p) {
   return (TSNode){0};
 }
 
-static struct timespec deadline_of(int64_t limit_ms) {
+/* A monotonic clock in milliseconds. On Windows not clock_gettime: MinGW takes it from libwinpthread, a DLL that the
+   loader does not find beside a prebuilt library. */
+static int64_t now_ms(void) {
+#ifdef _WIN32
+  return (int64_t)GetTickCount64();
+#else
   struct timespec now;
   clock_gettime(CLOCK_MONOTONIC, &now);
-  int64_t ns = (int64_t)now.tv_nsec + (limit_ms % 1000) * 1000000;
-  now.tv_sec += (time_t)(limit_ms / 1000 + ns / 1000000000);
-  now.tv_nsec = (long)(ns % 1000000000);
-  return now;
+  return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+#endif
 }
 
 static bool cancel(TSParseState *state) {
-  const struct timespec *deadline = state->payload;
-  struct timespec now;
-  clock_gettime(CLOCK_MONOTONIC, &now);
-  return now.tv_sec > deadline->tv_sec || (now.tv_sec == deadline->tv_sec && now.tv_nsec >= deadline->tv_nsec);
+  const int64_t *deadline = state->payload;
+  return now_ms() >= *deadline;
 }
 
 static const char *read_line(void *payload, uint32_t byte, TSPoint point, uint32_t *read) {
@@ -271,7 +277,7 @@ an_term bash_commands(an_env *env, ng_str line, int64_t limit_ms) {
     ts_parser_delete(parser);
     return failed(env, "tree-sitter-bash does not load");
   }
-  struct timespec deadline = deadline_of(limit_ms);
+  int64_t deadline = now_ms() + limit_ms;
   TSInput input = {&line, read_line, TSInputEncodingUTF8, NULL};
   TSParseOptions options = {&deadline, cancel};
   TSTree *tree = ts_parser_parse_with_options(parser, NULL, input, options);

@@ -110,12 +110,18 @@ jobs:
           curl -sSfL "https://ziglang.org/download/$ZIG_VERSION/zig-${{ matrix.zig_arch }}-linux-$ZIG_VERSION.tar.xz" -o zig.tar.xz
           echo "${{ matrix.zig_sha256 }}  zig.tar.xz" | sha256sum -c
           mkdir -p "$dir" && tar -xJf zig.tar.xz -C "$dir" --strip-components=1 && rm zig.tar.xz
-          echo "CC=$dir/zig cc -target ${{ matrix.zig_arch }}-linux-gnu.$GLIBC" >> "$GITHUB_ENV"
+          # zig's clang refuses the glibc version in the target when it is only asked --version or -dumpmachine, which
+          # agentica asks for the key of a build.
+          printf '%s\n' '#!/bin/sh' \
+            "case \"\$1\" in --version|-dumpmachine) exec '$dir/zig' cc \"\$@\" ;; esac" \
+            "exec '$dir/zig' cc -target ${{ matrix.zig_arch }}-linux-gnu.$GLIBC \"\$@\"" > "$dir/cc"
+          chmod +x "$dir/cc"
+          cat "$dir/cc"
+          echo "CC=$dir/cc" >> "$GITHUB_ENV"
       - name: Build the library
         run: |
           cache="$PWD/tmp/native-lib/cache"
           if [ "$RUNNER_OS" = Windows ]; then cache=$(cygpath -m "$cache"); fi
-          if [ -n "${CC:-}" ]; then $CC --version || echo "status $?"; $CC -dumpmachine || echo "status $?"; fi
           make native-lib NATIVE_CACHE="$cache"
           for name in libbash.so libbash.dylib bash.dll; do
             if [ -f "tmp/native-lib/$name" ]; then cp "tmp/native-lib/$name" "$ASSET.${name##*.}"; fi
