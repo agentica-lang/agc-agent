@@ -7,6 +7,7 @@ import SSE from "pkg/sse/sse"
 import Extensions from "../config/registry"
 import Session from "state"
 import Store from "store"
+import Logger from "std/logger"
 
 ## Room in a subscriber's channel past its replay; a client that falls this far behind is dropped.
 LIVE_ROOM = 1024
@@ -138,7 +139,7 @@ end
 ## A write failed: the clients are told without an id, which only a saved event gets, and the running turn stops.
 def broke(state: Session.State, e: Error) -> Session.State
   message = "the session file cannot be written: #{e.message}"
-  IO.warn("session #{state.setup.id}: #{message}")
+  Logger.warning("session #{state.setup.id}: #{message}")
   failure = Protocol.Failure(kind: Protocol.KIND_SESSION_STORAGE, message: message)
   error_frame = unsaved(state, Protocol.Event.Error(failure))
   out = state.with(broken: some(message), subscribers: broadcast(state, error_frame))

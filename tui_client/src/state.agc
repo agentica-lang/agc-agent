@@ -267,6 +267,14 @@ def tried(app: Model, result: Result[Model]) -> Model
   end
 end
 
+## The text of the last note on the screen.
+def last_notice(app: Model) -> Optional[String]
+  notices = app.entries.select { |entry| entry.kind == Transcript.Kind.Notice }
+  return none if notices.empty?
+
+  some(notices.last.text)
+end
+
 def noted(app: Model, text: String) -> Model = app.with(entries: Transcript.note(app.entries, text))
 
 def busy?(app: Model) -> Bool = app.turn or app.shell

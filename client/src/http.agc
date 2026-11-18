@@ -45,6 +45,12 @@ def server_status(server: Server) -> Result[Protocol.ServerStatus]
   Protocol.decode_server_status(body)
 end
 
+## The last `lines` lines of the server log, and the warnings it logged since it started.
+def server_log(server: Server, lines: Int) -> Result[Protocol.ServerLog]
+  body = try call_within(server, "GET", "#{Protocol.LOGS_PATH}?lines=#{lines}", "", PROBE_TIMEOUT_MS)
+  Protocol.decode_server_log(body)
+end
+
 ## What `--yolo` does on this server, for the warning at the start: nothing when its approvals are off.
 def yolo_warning(server: Server) -> String
   case server_status(server)

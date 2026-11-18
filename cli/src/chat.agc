@@ -126,10 +126,40 @@ def watch_signals(inbox: Channel[Inbox.Input]) -> Void
 end
 
 def open(chat: Chat, options: Args.Options) -> Result[Chat]
-  case options.session
-    some(id) -> resume(chat.with(id: id), id)
-    none -> create(chat, options)
+  opened = case options.session
+    some(id) -> try resume(chat.with(id: id), id)
+    none -> try create(chat, options)
   end
+
+  ok(server_warnings(opened))
+end
+
+# The warnings the server logged since it started (the last of them) are notes of a session that starts or resumes; a
+# one-shot run keeps its output to the answer.
+def server_warnings(chat: Chat) -> Chat
+  return chat if chat.once
+
+  shown = chat
+  case Client.server_log(chat.server, 0)
+    ok(log) ->
+      for line in Client.warning_notes(log)
+        shown = note(shown, "[#{line}]")
+      end
+
+    error(_) -> nil
+  end
+
+  shown
+end
+
+def logs_command(chat: Chat, count: Int) -> Result[Step]
+  log = try Client.server_log(chat.server, count)
+  shown = chat
+  for line in log.lines
+    shown = note(shown, line)
+  end
+
+  ok(Step(chat: shown))
 end
 
 def create(chat: Chat, options: Args.Options) -> Result[Chat]
@@ -374,6 +404,7 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Thinking(level) -> setting_command(chat, "thinking", level, Protocol.UpdateSession(effort: level))
     Client.Command.Profile(name) -> tried(chat, profile_command(chat, name))
     Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
+    Client.Command.Logs(count) -> logs_command(chat, count)
   end
 end
 
@@ -604,6 +635,15 @@ def left(chat: Chat, code: Int) -> Int
 
   for hint in option_list(Client.resume_hint("finn chat", chat.id, not chat.used))
     _ = note(chat, "[#{hint}]")
+  end
+
+  case Client.server_log(chat.server, 0)
+    ok(log) ->
+      for report in option_list(Client.warning_report(log))
+        _ = note(chat, report)
+      end
+
+    error(_) -> nil
   end
 
   code

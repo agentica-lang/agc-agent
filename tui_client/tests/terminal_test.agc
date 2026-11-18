@@ -9,6 +9,7 @@ import TUI from "pkg/tui/tui"
 import App from "../src/app"
 import Approvals from "../src/approvals"
 import Args from "../src/args"
+import Logins from "../src/logins"
 
 ## The base URL of `local` when nothing sets another.
 DEFAULT_URL = "http://127.0.0.1:8080/v1"
@@ -498,4 +499,82 @@ def find(rig: Rig, text: String) -> Result[List[Int]]
   rows = try shows(rig, text)
   y = rows.find_index { |row| row.include?(text) }.unwrap!
   ok([y, rows[y].index_of(text).unwrap!])
+end
+
+# `finn login` of a provider whose login the server refuses ends with 1, and the reason is not left on the screen that
+# the end wipes: the outcome carries it, for the line written once the screen is closed. A signal says so too.
+def test_a_login_the_server_refuses_ends_with_a_reason() -> Result[Void]
+  chatgpt = Protocol.LoginStatus(
+    name: "chatgpt",
+    label: "ChatGPT Plus or Pro (Codex)",
+    key_env: "",
+    from: "",
+    coming: false,
+    asks: Protocol.ASKS_DEVICE,
+  )
+
+  listed = Protocol.encode_login_list(Protocol.LoginList(providers: [chatgpt], first: false))
+  refusal = Protocol.Failure(
+    kind: Protocol.KIND_LOGIN_REJECTED,
+    message: "the ChatGPT login answered what is not read",
+  )
+
+  handler = ->(request: HTTP.Request, _sent: HTTP.RequestBody) {
+    if request.method == "POST"
+      return ok(
+        HTTP.Answer.Whole(HTTP.Response(status: 400, headers: [], body: Protocol.encode_failure(refusal).bytes)),
+      )
+    end
+
+    ok(HTTP.Answer.Whole(HTTP.Response(status: 200, headers: [], body: listed.bytes)))
+  }
+
+  http = try HTTP.serve("127.0.0.1", 0, handler)
+  server = Client.Server(url: "http://127.0.0.1:#{HTTP.local_port(http)}", token: "t")
+  signals: Channel[System.Signal] = Channel.new(1)
+  seeded = App.seed(Client.http_backend(server), options(), signals, 80, 24)
+  start = try Logins.login_only(seeded, some("chatgpt"))
+  # No signal comes: the wait for one ends at once, so no task of it is left.
+  signals.close
+  fake = TUI.Testing.fake(80, 24)
+  runner = Task.spawn(-> { App.drive_outcome(TUI.Testing.backend(fake), start) })
+  outcome = try Task.await(runner)
+  fake.events.close
+  HTTP.shutdown(http, 1000)
+  try Test.eq(outcome.code, 1)
+  try Test.assert(outcome.reason.unwrap_or("").include?("the ChatGPT login answered what is not read"), "#{outcome}")
+  signalled = try App.outcome(start.with(exit: some(143)))
+  Test.eq(["#{signalled.code}", signalled.reason.unwrap_or("").include?("signal").to_s], ["143", "true"])
+end
+
+# The warnings of the server are the last notes of a started app, and `/logs N` shows the end of the log.
+def test_the_warnings_of_the_server_are_notes_and_logs_shows_the_log() -> Result[Void]
+  log = Protocol.ServerLog(
+    lines: ["2026-11-18T10:00:00.000Z INFO older", "2026-11-18T10:00:01.000Z WARNING bad skill"],
+    warnings: ["2026-11-18T10:00:01.000Z WARNING bad skill"],
+    warning_count: 4,
+  )
+
+  replies = {"GET /v1/logs": Protocol.encode_server_log(log)}
+  within(100, 24, &logs_shown, replies: replies, first: some(&App.server_notes))
+end
+
+def logs_shown(rig: Rig) -> Result[Void]
+  try shows(rig, "WARNING bad skill")
+  try shows(rig, "4 warnings when the server started: /logs shows them")
+  for char in "/logs 2".split("")
+    try press(rig, TUI.Event.Char(char, TUI.Mods()))
+  end
+
+  try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+  try shows(rig, "INFO older")
+  ok()
+end
+
+# What the console gets after the screen closes: the warnings of the server, then how to come back.
+def test_the_report_of_the_warnings_comes_before_the_hint_that_follows() -> Result[Void]
+  try Test.eq(App.joined(some("report"), some("hint")), some("report\nhint"))
+  try Test.eq(App.joined(some("report"), none), some("report"))
+  try Test.eq(App.joined(none, some("hint")), some("hint"))
+  Test.eq(App.joined(none, none), none)
 end

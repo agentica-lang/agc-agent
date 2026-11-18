@@ -838,13 +838,21 @@ def decode_header(json: JSON.Value) -> Result[Header]
       id: try field(json, "id"),
       cwd: try field(json, "cwd"),
       model: try field(json, "model"),
-      created_ms: try JSON.int(try JSON.get(json, "created_ms")),
+      created_ms: created_ms_of(json),
       system: optional_string(json, "system"),
       api: optional_string(json, "api"),
       provider: optional_string(json, "provider"),
       profile: optional_string(json, "profile"),
     ),
   )
+end
+
+# A session of an early version has no time: it counts as the oldest.
+def created_ms_of(json: JSON.Value) -> Int
+  case JSON.get(json, "created_ms")
+    ok(value) -> JSON.int(value).unwrap_or(0)
+    error(_) -> 0
+  end
 end
 
 def added(saved: Saved, json: JSON.Value) -> Result[Saved]

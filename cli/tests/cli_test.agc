@@ -1147,3 +1147,27 @@ end
 def docs(dir: String, args: List[String], env: Map[String, String]) -> Result[Driver.Done]
   Driver.exited(try Driver.start(dir, ["docs"] + args, extra: env, state_dir: false))
 end
+
+# A session that starts on a server with load warnings shows the last of them as notes, `/logs N` shows the end of the
+# log, and leaving prints the report with the way to the whole log.
+def test_the_chat_shows_the_server_warnings_and_logs() -> Result[Void]
+  warning = "2026-11-18T10:00:01.000Z WARNING bad skill"
+  log = Protocol.ServerLog(
+    lines: ["2026-11-18T10:00:00.000Z INFO older", warning],
+    warnings: [warning],
+    warning_count: 4,
+  )
+
+  answer = Fake.Reply(body: Protocol.encode_server_log(log))
+  logs = Fake.Route(method: "GET", path: Protocol.LOGS_PATH, replies: [answer, answer, answer])
+  Driver.within([Routes.created(), Routes.held_events(), logs]) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN)
+    try Driver.read_until(cli, "[4 warnings when the server started: /logs shows them]")
+    try Driver.say(cli, "/logs 2")
+    try Driver.read_until(cli, "INFO older")
+    try Driver.say(cli, "/quit")
+    done = try Driver.finish(cli)
+    try Test.assert(done.lines.any? { |line| line == "finn server logs shows all of them" }, "#{done.lines}")
+    Test.assert(done.lines.any? { |line| line == "4 warnings in the server log, the last 1:" }, "#{done.lines}")
+  end
+end
