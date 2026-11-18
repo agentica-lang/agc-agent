@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [finn-20261118122340] - 2026-11-18
+
 ### Changed
 
 - The `bash` package, and so `core`, no longer holds a file over 1 MiB and downloads a prebuilt native library (release `bash-native-d63bc6fb66ee45a8`) for linux x86_64 and arm64, macos x86_64 and arm64, and windows x86_64, so a fetched package needs no C compiler; a tag `bash-native-<key>` builds and releases them.
