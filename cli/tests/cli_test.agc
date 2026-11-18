@@ -1094,3 +1094,56 @@ def idle(id: String, history: List[Protocol.Message]) -> Protocol.Session
     history: history,
   )
 end
+
+# `finn docs` lists the pages of the install (its `docs/content`, `FINN_HOME`), prints one without its front
+# matter, and
+# lists them when the name is not one; it needs no server.
+def test_docs_lists_and_prints_the_pages_of_the_install() -> Result[Void] = Driver.within_dir(&docs_pages)
+
+def docs_pages(dir: String) -> Result[Void]
+  install = "#{dir}/install"
+  pages = "#{install}/docs/content"
+  try Dir.mkdir(install)
+  try Dir.mkdir("#{install}/docs")
+  try Dir.mkdir(pages)
+  try File.write_text(
+    "#{pages}/extensions.md",
+    "---\ntitle: Extensions\ndescription: Extend Finn.\n---\n\n# Extensions\n\nText.\n",
+  )
+
+  try File.write_text("#{pages}/tools.md", "---\ndescription: \"What: the model calls.\"\n---\n\n# Tools\n")
+  try File.write_text("#{pages}/mcp.md", "---\ndescription: >\n  Connect\n  servers.\n---\n")
+  try File.write_text("#{pages}/_index.md", "---\ntitle: Finn\ndescription: Home.\n---\nHome text.\n")
+  try File.write_text("#{dir}/secret.md", "secret text\n")
+  try Process.wait(try Process.spawn("ln", ["-s", "#{dir}/secret.md", "#{pages}/secret.md"]), 5000)
+  env = {"FINN_HOME": install}
+  listed = try docs(dir, [], env)
+  expected = [
+    "extensions.md  Extend Finn.", "mcp.md         Connect servers.", "tools.md       What: the model calls.",
+  ]
+
+  try Test.eq([listed.lines, [listed.code.to_s]], [expected, ["0"]])
+  page = try docs(dir, ["extensions"], env)
+  try Test.eq([page.lines, [page.code.to_s]], [["# Extensions", "", "Text."], ["0"]])
+  suffixed = try docs(dir, ["extensions.md"], env)
+  try Test.eq(suffixed.lines, page.lines)
+  for name in ["nope", "../install/docs/content/tools", "#{pages}/tools", "_index", "_index.md", "secret", "secret.md"]
+    refused = try docs(dir, [name], env)
+    try Test.eq(
+      [refused.code.to_s, refused.lines.size.to_s, refused.errors.include?("no page").to_s],
+      ["1", "0", "true"],
+    )
+
+    listed_pages = refused.errors.split("\n").drop(1).join("\n")
+    try Test.assert(listed_pages.include?("tools.md") and not listed_pages.include?("secret"), refused.errors)
+  end
+
+  lost = try docs(dir, [], {"FINN_HOME": ""})
+  try Test.eq([lost.code.to_s, lost.errors.include?("FINN_HOME").to_s], ["1", "true"])
+  help = try docs(dir, ["--help"], env)
+  Test.assert(not help.lines.any? { |line| line.include?("state-dir") }, "#{help.lines}")
+end
+
+def docs(dir: String, args: List[String], env: Map[String, String]) -> Result[Driver.Done]
+  Driver.exited(try Driver.start(dir, ["docs"] + args, extra: env, state_dir: false))
+end

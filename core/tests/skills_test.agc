@@ -13,6 +13,12 @@ LINT_HOME = "---\nname: lint\ndescription: The user's <lint> & more.\n---\nUser 
 LINT_PROJECT = "---\nname: lint\ndescription: The project's lint.\n---\nProject lint.\n"
 HEADING = "\n\nThe skills loaded in this session:\n\n"
 DEPLOY = "---\nname: deploy\ndescription: Deploy it.\ndisable-model-invocation: true\n---\nDeploy steps.\n"
+EXTENSIONS_PAGE = (
+  "---\ntitle: Extensions\ndescription: Extend Finn with a program of your own.\n---\n\n# Extensions\n\n" +
+  "Serve the core with your tools.\n"
+)
+TOOLS_PAGE = "---\ntitle: Tools\ndescription: What the model can call.\n---\n\n# Tools\n"
+OWN_FINN = "---\nname: finn\ndescription: My own notes on Finn.\n---\nMine.\n"
 
 # A skill loads once a session, by the model or by the user, and stays loaded after a restart; the model cannot load
 # a skill that only the user loads.
@@ -59,6 +65,55 @@ def test_the_model_and_the_user_load_skills_once() -> Result[Void]
       Test.eq((try H.session(r, id)).history.map { |m| m.text }.select { |t| t.include?("deploy") }.size, 2)
     end
   end
+end
+
+# Finn's own pages are the resources of the built-in skill `finn`: a task about extending Finn makes the model load
+# it and read the page, in place; its index has a line a page, without the home page.
+def test_the_model_reads_the_docs_of_finn_through_the_built_in_skill() -> Result[Void]
+  replies = ["activate_finn.sse", "read_docs_page.sse", "read_docs_link.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, docs: true)) do |h|
+    docs = "#{h.base}/docs"
+    try write("#{docs}/extensions.md", EXTENSIONS_PAGE)
+    try write("#{docs}/tools.md", TOOLS_PAGE)
+    try write("#{h.base}/outside.md", "outside the docs\n")
+    try link("#{h.base}/outside.md", "#{docs}/secret.md")
+    try write("#{docs}/_index.md", "---\ntitle: Finn\ndescription: The home page.\n---\n")
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write an extension that adds a tool.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    first = try JSON.parse((try H.next_request(h)).body)
+    system = try JSON.string(try JSON.get(try JSON.at(try JSON.get(first, "messages"), 0), "content"))
+    try Test.assert(system.include?("<name>finn</name>"), system)
+    try Test.eq(enum_of(first), ok(["finn"]))
+    loaded = try last_content(h)
+    try Test.assert(loaded.start_with?("<skill_content name=\"finn\">\n"), loaded)
+    try Test.assert(
+      loaded.include?(
+        "- extensions.md: Extend Finn with a program of your own.\n- tools.md: What the model can call.",
+      ),
+      loaded,
+    )
+
+    try Test.assert(not loaded.include?("_index") and not loaded.include?("secret"), loaded)
+    try Test.assert(loaded.include?("Skill directory: #{docs}"), loaded)
+    try Test.eq(last_content(h), ok(EXTENSIONS_PAGE))
+    refused = try last_content(h)
+    Test.assert(refused.start_with?("Error:") and not refused.include?("outside the docs"), refused)
+  end
+end
+
+# A skill of the user or the project named `finn` hides the built-in one; without a folder of pages there is none.
+def test_a_skill_of_the_same_name_hides_the_built_in_one() -> Result[Void]
+  base = try fresh()
+  try write("#{base}/docs/extensions.md", EXTENSIONS_PAGE)
+  try write("#{base}/home/.agents/skills/finn/SKILL.md", OWN_FINN)
+  mine = Skills.discover("#{base}/work", "#{base}/home", false, "#{base}/docs").skills
+  try Test.eq(mine.map { |skill| skill.description }, ["My own notes on Finn."])
+  built_in = Skills.discover("#{base}/work", "#{base}/nohome", false, "#{base}/docs").skills
+  try Test.eq(built_in.map { |skill| skill.name }, ["finn"])
+  Test.eq(Skills.discover("#{base}/work", "#{base}/nohome", false, "#{base}/nodocs").skills.size, 0)
 end
 
 # A `Message` handler of an extension gets the message after the skills it names are expanded.
@@ -179,6 +234,42 @@ def test_discovery_keeps_at_most_100_skills() -> Result[Void]
   _ = Path.remove(base)
   try Test.eq([found.skills.size.to_s, found.skills.last.name], ["100", "s1099"])
   Test.assert(found.warnings.any? { |w| w.include?("101 skills") }, "#{found.warnings}")
+end
+
+# The built-in skill takes the room that the user's and the project's skills leave: with 100 of them it is not added,
+# and with 99 it is.
+def test_the_built_in_skill_never_takes_the_place_of_another() -> Result[Void]
+  base = try fresh()
+  try write("#{base}/docs/extensions.md", EXTENSIONS_PAGE)
+  for i in 0...100
+    name = "s#{(1000 + i).to_s}"
+    try write("#{base}/home/.agents/skills/#{name}/SKILL.md", "---\ndescription: d\n---\n")
+  end
+
+  full = Skills.discover(base, "#{base}/home", false, "#{base}/docs")
+  try Test.eq([full.skills.size.to_s, full.skills.any? { |skill| skill.name == "finn" }.to_s], ["100", "false"])
+  try Test.eq(full.warnings, [])
+  _ = Path.remove("#{base}/home/.agents/skills/s1099")
+  room = Skills.discover(base, "#{base}/home", false, "#{base}/docs")
+  _ = Path.remove(base)
+  try Test.eq([room.skills.size.to_s, room.skills.any? { |skill| skill.name == "finn" }.to_s], ["100", "true"])
+  Test.eq(room.skills.map { |skill| skill.name }, room.skills.map { |skill| skill.name }.sort)
+end
+
+# Only regular files of the folder are pages: a link (that could lead out of it) is neither listed nor read, and a
+# folder with no page gives no skill.
+def test_the_built_in_skill_lists_only_regular_pages() -> Result[Void]
+  base = try fresh()
+  try write("#{base}/outside.md", "secret\n")
+  try write("#{base}/docs/extensions.md", EXTENSIONS_PAGE)
+  try link("#{base}/outside.md", "#{base}/docs/secret.md")
+  skills = Skills.discover("#{base}/work", "", false, "#{base}/docs").skills
+  loaded = Skills.on_message("/finn", skills, []).text
+  try Test.assert(loaded.include?("- extensions.md:"), loaded)
+  try Test.assert(not loaded.include?("secret"), loaded)
+  try write("#{base}/only/_index.md", "---\ndescription: Home.\n---\n")
+  try link("#{base}/outside.md", "#{base}/only/secret.md")
+  Test.eq(Skills.discover("#{base}/work", "", false, "#{base}/only").skills.size, 0)
 end
 
 # A session reads a loaded skill's files by their absolute path, not a relative one; a `/name` marks the skill at once,

@@ -108,7 +108,7 @@ end
 
 ## The client on `dir`, with `NO_COLOR` set to `no_color` ("" turns the colors on), run from the folder `chdir`. It runs
 ## the bytecode that `make` compiled once (CLI_BYTECODE) unless `compiled` is false: a client finds the core by the path of
-## its source.
+## its source. `state_dir` false leaves out `--state-dir`, for a command that has no such option.
 def start(
   dir: String,
   args: List[String],
@@ -116,11 +116,17 @@ def start(
   chdir: String = ".",
   compiled: Bool = true,
   extra: Map[String, String] = {},
+  state_dir: Bool = true,
 ) -> Result[Process]
   program = try program_words(ENTRIES, "CLI_BYTECODE", compiled)
+  state: List[String] = []
+  if state_dir
+    state = ["--state-dir", dir]
+  end
+
   Process.spawn_captured(
     program[0],
-    program.drop(1) + ["--state-dir", dir] + args,
+    program.drop(1) + state + args,
     Process.Options(env: with_extra(environment(no_color, dir), extra), chdir: chdir),
   )
 end

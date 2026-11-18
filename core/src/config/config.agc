@@ -115,6 +115,8 @@ struct Options
   catalog_wait_ms: Int = 1500
   ## The home folder, whose skills every session has; empty for none.
   home: String = ""
+  ## The folder of Finn's own documentation pages, which the built-in skill `finn` reads in place; empty for none.
+  docs: String = ""
   ## The folders whose sessions load the skills of their own folder: a project's skills are its instructions.
   trusted: List[String] = []
   ## The program and arguments that list the files for `@`, from the user's config only; empty for the built-in walk.
@@ -226,6 +228,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       models_url: set(read, "FINN_MODELS_URL").unwrap_or(Catalog.URL),
       models_provider: set(read, "FINN_MODELS_PROVIDER").unwrap_or(""),
       home: set(read, "HOME").unwrap_or(""),
+      docs: docs_folder(read),
       trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
       files_command: try files_command(read),
     ),
@@ -416,6 +419,14 @@ def left_behind(read: Fn[String, Result[String]]) -> Result[List[String]]
   return error(moving.call("config.json")) if not given.call("FINN_CONFIG") and left.call("config.json")
 
   ok(["auth.json"].select { |file| left.call(file) }.map { |file| moving.call(file) })
+end
+
+# The pages of `docs/content` in the install `FINN_HOME` names (`bin/finn` sets it); none without it.
+def docs_folder(read: Fn[String, Result[String]]) -> String
+  case set(read, "FINN_HOME")
+    some(home) if home != "" -> "#{home}/docs/content"
+    _ -> ""
+  end
 end
 
 def set(read: Fn[String, Result[String]], name: String) -> Optional[String]

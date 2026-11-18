@@ -33,5 +33,7 @@ The fake LLM of the server tests streams these, in the order a test gives.
   `deploy`. `read_skill_file.sse` and `read_relative.sse` are `read_file` calls
   of a skill's file, by its absolute path (`@BASE@` is the test's folder) and
   relative to the skill.
+- `activate_finn.sse` is an `activate_skill` call of the built-in `finn`, and
+  `read_docs_page.sse` a `read_file` of `@BASE@/docs/extensions.md`.
 - `apply_patch.sse` is written by hand in the shape of `write_file.sse`: an
   `apply_patch` call as a function, which only the Responses API is offered.

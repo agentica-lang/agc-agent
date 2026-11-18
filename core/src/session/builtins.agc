@@ -115,6 +115,6 @@ def command_message(place: Extensions.Place, user_dir: String, text: String) -> 
   Extensions.Noted(text: Commands.expanded(Commands.load(user_dir, place.root, place.trusted), text), names: [])
 end
 
-def found(place: Extensions.Place) -> Skills.Found = Skills.discover(place.root, place.home, place.trusted)
+def found(place: Extensions.Place) -> Skills.Found = Skills.discover(place.root, place.home, place.trusted, place.docs)
 
 def noted(expanded: Skills.Expanded) -> Extensions.Noted = Extensions.Noted(text: expanded.text, names: expanded.names)

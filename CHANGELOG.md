@@ -33,6 +33,7 @@
 
 ### Added
 
+- Finn reads its own documentation: a built-in skill `finn` (lowest precedence) lists the pages of `docs/content` of the install for the model to read in place, and `finn docs [PAGE]` prints them.
 - Provider `opencode-go` (OpenCode Go): `finn login opencode-go` or `OPENCODE_API_KEY`, then `--provider opencode-go`; its default model is `deepseek-v4.1-flash`.
 - A model that models.dev gives its own API (Anthropic, Responses, Google) on an OpenAI-compatible provider is not listed by `/model`.
 - An extension tool's `Core.Call` names its session (`session`).

@@ -20,9 +20,10 @@ Finn has two clients for a session: `finn`, a full-screen one, and `finn chat`, 
 | `finn logout [PROVIDER]` | remove a stored key, or all of them |
 | `finn server ACTION` | `status`, `start`, `stop`, `restart` or `logs` of the server |
 | `finn export SESSION [PATH]` | write a session to a Markdown file ([Sessions](sessions.md#export)) |
+| `finn docs [PAGE]` | list the pages of Finn's own documentation, or print one as Markdown, without its front matter; they are the files of `docs/content` in the install that runs, so they match its version. A name that is no page exits 1 with the list. [The skill `finn`](skills.md#the-finn-skill) gives the model the same pages |
 | `finn --version` | the versions of the server and the client |
 
-`finn --help`, `finn chat --help`, `finn tui --help`, `finn serve --help`, `finn server --help` and `finn export --help` list every option.
+`finn --help`, `finn chat --help`, `finn tui --help`, `finn serve --help`, `finn server --help`, `finn export --help` and `finn docs --help` list every option.
 
 ### Options of a session
 

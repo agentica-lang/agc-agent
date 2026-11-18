@@ -1,6 +1,7 @@
 import Client from "pkg/client/client"
 import App from "src/app"
 import Args from "src/args"
+import Docs from "src/docs"
 import ServerCmd from "src/server_cmd"
 
 def main() -> Void
@@ -23,6 +24,7 @@ def dispatch(command: Args.Command) -> Void
     Args.Command.Delete(options, id) -> finish(App.delete(options, id))
     Args.Command.Export(options, id, path, force) -> finish(App.export_session(options, id, path, force))
     Args.Command.Logout(options, name) -> finish(App.logout(options, name))
+    Args.Command.Docs(page) -> finish(Docs.run(page))
   end
 end
 

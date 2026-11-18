@@ -35,7 +35,8 @@ USAGE = <<~TEXT
   come once it lists them, from the next turn. Skills (SKILL.md folders under .finn/skills, .agents/skills and
   .claude/skills) come from the home folder, and from the session folder only when it is under a folder of
   FINN_TRUSTED_DIRS (separated by :); the model loads one with activate_skill, the user with /name in a message. The
-  catalog of models.dev (FINN_MODELS_URL, "off" for none), loaded at the start and kept a day in models.json of the
+  built-in skill finn has the pages of the docs/content folder of the install that FINN_HOME names (bin/finn sets
+  it). The catalog of models.dev (FINN_MODELS_URL, "off" for none), loaded at the start and kept a day in models.json of the
   state folder, gives each usage event its cost in USD (FINN_MODELS_PROVIDER names the provider there; by default
   anthropic for that API, else openai). Approvals: off by default, so the model runs any command and edits any file
   that no deny rule refuses, without asking (use a sandbox or a container). FINN_APPROVALS=1 (finn serve --approvals),

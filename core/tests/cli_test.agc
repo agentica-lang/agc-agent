@@ -236,6 +236,25 @@ def test_the_trusted_folders_come_from_finn_trusted_dirs() -> Result[Void]
   Test.eq(set.home, "/home/me")
 end
 
+# The pages of Finn's own docs are `docs/content` of the install that `FINN_HOME` names; none when it is unset
+# or empty.
+def test_the_docs_folder_comes_from_finn_home() -> Result[Void]
+  for value in ["", "-"]
+    unset = try Config.from_env(->(name) { home_env(name, value) })
+    try Test.eq(unset.docs, "")
+  end
+
+  set = try Config.from_env(->(name) { home_env(name, "/opt/finn") })
+  Test.eq(set.docs, "/opt/finn/docs/content")
+end
+
+def home_env(name: String, home: String) -> Result[String]
+  return ok(home) if name == "FINN_HOME" and home != "-"
+  return error("not set") if name == "FINN_HOME"
+
+  env(name, "")
+end
+
 def trusted_env(name: String, dirs: String) -> Result[String]
   return ok(dirs) if name == "FINN_TRUSTED_DIRS"
   return ok("/home/me") if name == "HOME"
