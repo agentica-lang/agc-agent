@@ -9,6 +9,8 @@ CALL_TIMEOUT_MS = 10_000
 LOGIN_TIMEOUT_MS = 20_000
 PROBE_TIMEOUT_MS = 2_000
 COMPACT_TIMEOUT_MS = 600_000
+## A reload waits up to 150 s for another one that runs, then reads the files.
+RELOAD_TIMEOUT_MS = 180_000
 EXPORT_TIMEOUT_MS = 120_000
 ## The most a client takes of an export, the limit of `HTTP`.
 EXPORT_BODY_BYTES = 67_108_864
@@ -57,6 +59,12 @@ end
 def server_log(server: Server, lines: Int) -> Result[Protocol.ServerLog]
   body = try call_within(server, "GET", "#{Protocol.LOGS_PATH}?lines=#{lines}", "", PROBE_TIMEOUT_MS)
   Protocol.decode_server_log(body)
+end
+
+## The server reads its config file, MCP servers, skills and project instructions again; it may wait up to 150 s for
+## another reload that runs.
+def reload(server: Server) -> Result[Protocol.Reloaded]
+  Protocol.decode_reloaded(try call_within(server, "POST", Protocol.RELOAD_PATH, "", RELOAD_TIMEOUT_MS))
 end
 
 ## What `--yolo` does on this server, for the warning at the start: nothing when its approvals are off.

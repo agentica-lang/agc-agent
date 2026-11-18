@@ -631,6 +631,24 @@ def gone(rig: Rig) -> Result[Void]
   ok()
 end
 
+# `/reload` asks the server to read its config, skills and MCP servers again: one note says what changed, and each
+# warning has its own.
+def test_reload_notes_what_the_server_read_again() -> Result[Void]
+  done = Protocol.Reloaded(skills_added: ["lint"], skills_removed: ["old"], config: "unchanged", warnings: ["w"])
+  within(120, 24, &reloaded, {"POST /v1/reload": Protocol.encode_reloaded(done)})
+end
+
+def reloaded(rig: Rig) -> Result[Void]
+  for char in "/reload".split("")
+    try press(rig, TUI.Event.Char(char, TUI.Mods()))
+  end
+
+  try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+  try shows(rig, "skills: 1 added (lint), 1 removed (old); config unchanged (0 rules, approvals off)")
+  try shows(rig, "warning: w")
+  ok()
+end
+
 # What the console gets after the screen closes: the warnings of the server, then how to come back.
 def test_the_report_of_the_warnings_comes_before_the_hint_that_follows() -> Result[Void]
   try Test.eq(App.joined(some("report"), some("hint")), some("report\nhint"))

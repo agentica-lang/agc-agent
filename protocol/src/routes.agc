@@ -6,6 +6,8 @@ SERVER_PATH = "/v1/server"
 SERVER_STOP_PATH = "/v1/server/stop"
 ## `GET`: the end of the server log (`?lines=N`), and the warnings the server logged since it started.
 LOGS_PATH = "/v1/logs"
+## `POST`: the server reads its config file, extensions, skills and project instructions again.
+RELOAD_PATH = "/v1/reload"
 PROVIDERS_PATH = "/v1/providers"
 AUTH_PATH = "/v1/auth"
 
@@ -55,6 +57,7 @@ def shape() -> List[String]
     SERVER_PATH,
     SERVER_STOP_PATH,
     LOGS_PATH,
+    RELOAD_PATH,
     PROVIDERS_PATH,
     AUTH_PATH,
     LAST_EVENT_ID_HEADER,

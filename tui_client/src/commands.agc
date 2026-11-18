@@ -40,6 +40,7 @@ def on_command(app: State.Model, command: Client.Command) -> State.Model
     Client.Command.Profile(name) -> State.tried(app, profile_command(app, name))
     Client.Command.Compact -> compact_command(app)
     Client.Command.Logs(count) -> State.tried(app, logs_command(app, count))
+    Client.Command.Reload -> State.tried(app, reload_command(app))
     Client.Command.Mouse -> mouse_command(app)
     Client.Command.Login(name) -> Logins.login_command(app, name)
     Client.Command.Logout(name) -> State.tried(app, Logins.logout_command(app, name))
@@ -270,6 +271,16 @@ def changed(app: State.Model, change: Protocol.UpdateSession, done: String) -> R
   return ok(shown) if change.model.none?
 
   ok(shown.with(new_model: change.model))
+end
+
+## What the server read again, as notes: one line, then each warning.
+def reload_command(app: State.Model) -> Result[State.Model]
+  shown = app
+  for line in Client.reload_report(try app.backend.reload.call())
+    shown = State.noted(shown, line)
+  end
+
+  ok(shown)
 end
 
 ## The last lines of the server log, as notes.

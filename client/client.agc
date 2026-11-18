@@ -29,6 +29,7 @@ export Http.KIND_TIMEOUT
 export Http.health
 export Http.server_status
 export Http.server_log
+export Http.reload
 export Http.yolo_warning
 export Http.stop_server
 export Http.create_session
@@ -90,6 +91,7 @@ export Commands.help
 export Commands.custom
 export Commands.warning_notes
 export Commands.warning_banner
+export Commands.reload_report
 export Commands.warning_report
 export Commands.DEFAULT_LOG_LINES
 export Commands.profile_lines

@@ -82,7 +82,7 @@ def serve(registry: Extensions.Registry) -> Void
   case start(registry)
     ok(server) ->
       Logger.info("#{Log.STARTED} 127.0.0.1:#{server.port}")
-      if not server.control.approvals
+      if not Config.applied(server.sessions.options).asking
         Logger.info("approvals are off: tools run without asking (finn serve --approvals turns them on)")
       end
 
@@ -136,15 +136,18 @@ def start(registry: Extensions.Registry) -> Result[Server.Server]
     Extensions.Served(registry: registry)
     |> Builtins.commands(read)
     |> Builtins.skills()
-    |> Builtins.approvals(options.approvals, options.asking)
+    |> Builtins.approvals(options.approvals, options.asking, options.live)
   )
 
-  all = try Builtins.mcp(own, read, options.state_dir)
+  mounted = try Builtins.mcp(own, read, options.state_dir)
+  all = mounted.served
   catalog = Catalog.start(
     Catalog.Options(url: options.models_url, cache: "#{options.state_dir}/#{Catalog.CACHE_FILE}"),
   )
 
   extended = options.with(
+    reloads: [mounted.reload],
+    stops: [mounted.stop],
     tools: options.tools + Extensions.spec_tools(registry),
     registry: some(all),
     catalog: some(catalog),

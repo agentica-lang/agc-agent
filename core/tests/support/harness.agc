@@ -102,6 +102,12 @@ struct Setup
   ## When given, the rules and the mode come from this environment as the server reads them (`Config.from_env`), in
   ## place of `approvals` and `deny`.
   approvals_env: Optional[Fn[String, Result[String]]] = none
+  ## The settings of the config file that `FINN_CONFIG` of `env` names are live: a reload reads them again.
+  live: Bool = false
+  ## What else a reload does (the MCP servers of `Builtins.mcp`).
+  reloads: List[Fn[Result[String]]] = []
+  ## How long a reload waits for another one that runs.
+  reload_wait_ms: Int = 150_000
   ## The command that lists the files for `@` (`files.command` of the user's config).
   files_command: List[String] = []
   ## The file tools reach only the session folder.
@@ -310,6 +316,14 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     user = try Permissions.user_rules(read, try Config.approvals_switch(read))
   end
 
+  live: Optional[Config.Live] = none
+  if setup.live
+    read = env_of(setup, base)
+    user = try Permissions.user_rules(read, try Config.approvals_switch(read))
+    stub = ->(_more: List[Providers.Custom]) { Logins.Replacement(entries: [], rebuild: ->(_k, _u) { ok({}) }) }
+    live = some(try Config.live_from(read, stub))
+  end
+
   login = login_setup(setup, fake, base)
   options = Config.Options(
     state_dir: "#{base}/state",
@@ -330,7 +344,10 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     env: env_of(setup, base),
     approvals: some(user.rules),
     asking: user.asking,
-    registry: some(served_of(setup, user, env_of(setup, base))),
+    registry: some(served_of(setup, user, env_of(setup, base), live)),
+    live: live,
+    reloads: setup.reloads,
+    reload_wait_ms: setup.reload_wait_ms,
     keep_events: setup.keep_events,
     approval_timeout_ms: setup.approval_timeout_ms,
     drain_ms: setup.drain_ms,
@@ -420,9 +437,14 @@ def code_mode(fixture: String) -> Optional[CodeMode.Settings]
 end
 
 # The extensions of the setup with the core's own, as `Core.serve` adds them.
-def served_of(setup: Setup, user: Permissions.User, env: Fn[String, Result[String]]) -> Extensions.Served
+def served_of(
+  setup: Setup,
+  user: Permissions.User,
+  env: Fn[String, Result[String]],
+  live: Optional[Config.Live],
+) -> Extensions.Served
   served = Extensions.Served(registry: setup.registry.unwrap_or(Extensions.Registry()))
-  served = Builtins.approvals(Builtins.skills(Builtins.commands(served, env)), some(user.rules), user.asking)
+  served = Builtins.approvals(Builtins.skills(Builtins.commands(served, env)), some(user.rules), user.asking, live)
   for late in option_list(setup.late_tools)
     served = Extensions.add_late_tools(served, late)
   end

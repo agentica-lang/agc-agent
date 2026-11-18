@@ -17,6 +17,7 @@ import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Agent from "../agent/agent"
 import Compaction from "../agent/compaction"
+import Extensions from "../config/registry"
 import Branch from "branch"
 import Export from "export"
 import Profiles from "../config/profiles"
@@ -28,6 +29,8 @@ import Turn from "turn"
 
 export Session.Endpoint
 export Session.Setup
+export Session.Reopened
+export Session.Reloaded
 export Session.Msg
 export Session.State
 export Session.Load
@@ -94,6 +97,16 @@ def update(address: Address[Session.Msg], change: Protocol.UpdateSession) -> Res
   updated: Result[Result[Void]] = Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Update(change, reply) end
   try try updated
   ok()
+end
+
+## Reads the session's system prompt (`AGENTS.md` and the skills), extensions and approval again. A turn that runs keeps
+## what it started with: the next one uses them.
+def reload(address: Address[Session.Msg]) -> Result[Session.Reloaded]
+  reloaded: Result[Result[Session.Reloaded]] = Actor.call(address, Session.CALL_MS) do |reply|
+    Session.Msg.Reload(reply)
+  end
+
+  ok(try try reloaded)
 end
 
 ## `setup` on `endpoint`, with its default model.
@@ -292,6 +305,7 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
     Session.Msg.Finished(turn_id, reason, limit) ->
       Actor.continue(if_current(state, turn_id, ->(s) { Turn.finish(s, reason, limit) }))
     Session.Msg.Update(change, reply) -> Actor.continue(update_setup(state, change, reply))
+    Session.Msg.Reload(reply) -> Actor.continue(reload_setup(state, reply))
     Session.Msg.Fold(reply) -> Actor.continue(Turn.start_fold(state, reply))
     Session.Msg.Folded(found, reply) -> Actor.continue(Turn.end_fold(state, found, reply))
     Session.Msg.Exported(reply) ->
@@ -429,6 +443,55 @@ def update_setup(state: Session.State, change: Protocol.UpdateSession, reply: Ch
 
       state.with(broken: some(e.message))
   end
+end
+
+# The setup with what a reload read again; the accept-edits mode stays, the answers of "allow" do not. A session that
+# cannot read it again keeps its setup and says why.
+def reload_setup(state: Session.State, reply: Channel[Result[Session.Reloaded]]) -> Session.State
+  setup = state.setup
+  for read in option_list(setup.reopen)
+    case read.call()
+      error(e) ->
+        Actor.reply(reply, error(e.message, kind: e.kind))
+        return state
+      ok(fresh) ->
+        approver = fresh.approver
+        for old in option_list(setup.approver)
+          approver = fresh.approver.map { |a| a.with_accept_edits.call(old.accept_edits) }
+        end
+
+        ctx = setup.ctx.with(read_roots: Extensions.read_roots(fresh.builtins), hidden: approver.map { |a| a.hidden })
+        next = setup.with(
+          system: fresh.system,
+          base_system: fresh.system,
+          builtins: fresh.builtins,
+          approver: approver,
+          ctx: ctx,
+          skills: fresh.skills,
+        )
+
+        for profile in option_list(setup.profile)
+          loaded = setup.profiles.map { |load| load.call() }.unwrap_or(Profiles.Loaded(profiles: Profiles.builtins()))
+          next = applied(next, loaded, profile.name)
+        end
+
+        Actor.reply(
+          reply,
+          ok(
+            Session.Reloaded(
+              added: fresh.skills.select { |name| not setup.skills.include?(name) },
+              removed: setup.skills.select { |name| not fresh.skills.include?(name) },
+              warnings: fresh.warnings,
+            ),
+          ),
+        )
+
+        return state.with(setup: next)
+    end
+  end
+
+  Actor.reply(reply, ok(Session.Reloaded()))
+  state
 end
 
 # `setup` with the profile `name`, and its model and thinking level when it sets them: `PROVIDER/NAME` moves to that

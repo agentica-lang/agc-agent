@@ -34,6 +34,8 @@ struct Backend
   logout: Fn[Optional[String], Result[Void]]
   ## The last lines of the server log (as many as asked) and its load warnings.
   server_log: Fn[Int, Result[Protocol.ServerLog]]
+  ## The server reads its config, skills, extensions and project instructions again.
+  reload: Fn[Result[Protocol.Reloaded]]
   skip_login: Fn[Result[Void]]
   ## The server is still the one of this version, before its stream is read again.
   recheck: Fn[Result[Void]]
@@ -72,6 +74,7 @@ def http_backend(server: Http.Server) -> Backend
     device_state: ->(provider) { Http.device_state(server, provider) },
     logout: ->(provider) { Http.logout(server, provider) },
     server_log: ->(lines) { Http.server_log(server, lines) },
+    reload: -> { Http.reload(server) },
     skip_login: -> { Http.skip_login(server) },
     recheck: -> { Discovery.recheck(server) },
     subscribe: ->(id, from, tell) {
@@ -110,6 +113,7 @@ def unreachable_backend() -> Backend
     device_state: ->(_provider) { failed() },
     logout: ->(_provider) { failed() },
     server_log: ->(_lines) { failed() },
+    reload: -> { failed() },
     skip_login: -> { failed() },
     recheck: -> { failed() },
     subscribe: ->(_id, _from, tell) { Task.spawn(-> { _ = tell.call(Events.Item.Ended("no server")) }) },

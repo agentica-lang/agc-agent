@@ -39,6 +39,10 @@ struct Sessions
   registry: Actor.Ref[Registry, Msg]
   options: Config.Options
   dir: String
+  ## One token: a reload holds it, so two reloads do not run at once.
+  reloading: Channel[Bool]
+  ## How long a reload waits for the one that runs.
+  reload_wait_ms: Int
 end
 
 ## How many sessions the server has, how many of them work now (a turn or a shell command; only a loaded session can),
@@ -65,7 +69,15 @@ def start(given: Config.Options, store: Optional[Store.Port] = none) -> Sessions
   }
 
   registry = Actor.start(Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate)))
-  Sessions(registry: registry, options: options, dir: folder(options))
+  gate: Channel[Bool] = Channel.new(1)
+  _ = gate.send(true, 0)
+  Sessions(
+    registry: registry,
+    options: options,
+    dir: folder(options),
+    reloading: gate,
+    reload_wait_ms: options.reload_wait_ms,
+  )
 end
 
 ## Stops the registry and the sessions it runs.
@@ -175,6 +187,18 @@ def cancel_turns(sessions: Sessions) -> Result[Int]
   ok(stopped)
 end
 
+## Reads the config file, the MCP servers, the skills and the project instructions again. The sessions that run read
+## their system prompt and approval again for their next turn (a turn that runs keeps what it started with), the others
+## when they load. A config file that does not read stays as it was, said in the answer. One reload runs at a time.
+def reload(sessions: Sessions) -> Result[Protocol.Reloaded]
+  token = sessions.reloading.recv(sessions.reload_wait_ms)
+  return error("another reload is running", kind: Protocol.KIND_RELOAD_BUSY) if not token.ok?
+
+  done = reloaded(sessions)
+  _ = sessions.reloading.send(true, 0)
+  done
+end
+
 ## Deletes a session and its file, refused while a turn runs.
 def delete(sessions: Sessions, id: String) -> Result[Void]
   deleted: Result[Result[Void]] = Actor.call(sessions.registry.address, CALL_MS) do |reply| Msg.Delete(id, reply) end
@@ -209,7 +233,8 @@ end
 ## The files of the session's folder that its rules do not hide, read in the caller's task.
 def files(sessions: Sessions, id: String) -> Result[Protocol.FileList]
   place = try SessionActor.place(try find(sessions, id))
-  ok(Folder.listed(place.root, place.hidden, sessions.options.files_command, sessions.options.env))
+  now = Config.applied(sessions.options)
+  ok(Folder.listed(place.root, place.hidden, now.files_command, now.env))
 end
 
 def answer(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
@@ -689,6 +714,8 @@ def entry(
     origin: "#{chosen.provider}/#{chosen.api}",
     endpoint: some(->(name: String, now: String) { switched_endpoint(Config.now(options), name, now) }),
     profiles: some(-> { profiles_of(options, context.root) }),
+    reopen: some(-> { reopened(options, context.root) }),
+    skills: skill_names(options, context.root, system),
   )
 
   setup = SessionActor.switched(base, endpoint).with(model: header.model, refused: refusal(options, provider))
@@ -960,6 +987,33 @@ def new_system(options: Config.Options, root: String) -> String
   options.registry.map { |r| Extensions.new_system(r, place_of(options, root), system) }.unwrap_or(system)
 end
 
+# The names of the skills a session with `system` has.
+def skill_names(options: Config.Options, root: String, system: String) -> List[String]
+  place = place_of(options, root)
+  found = Skills.discover(place.root, place.home, place.trusted, place.docs)
+  Skills.restrict(found.skills, system).map { |skill| skill.name }
+end
+
+# What a reload gives the session in `root`: the system prompt of a new session there (`AGENTS.md` and the skills read
+# again) with its extensions and its approval, under the options of now.
+def reopened(options: Config.Options, root: String) -> Result[SessionActor.Reopened]
+  now = Config.now(options)
+  system = new_system(now, root)
+  approver = try approver_of(now, root)
+  builtins = builtins_of(now, root, system)
+  warnings = builtins.flat_map { |b| b.warnings }
+
+  ok(
+    SessionActor.Reopened(
+      system: system,
+      builtins: builtins,
+      approver: approver,
+      skills: skill_names(now, root, system),
+      warnings: warnings,
+    ),
+  )
+end
+
 def builtins_of(options: Config.Options, root: String, system: String) -> List[Extensions.Opened]
   options.registry.map { |r| Extensions.open(r, place_of(options, root), system) }.unwrap_or([])
 end
@@ -1036,4 +1090,51 @@ def find(sessions: Sessions, id: String) -> Result[Address[SessionActor.Msg]]
         error(_) -> error("session #{id} is still loading", kind: Protocol.KIND_SESSION_UNAVAILABLE)
       end
   end
+end
+
+def reloaded(sessions: Sessions) -> Result[Protocol.Reloaded]
+  config = Config.reload(sessions.options)
+  extensions: List[String] = []
+  warnings: List[String] = []
+  for step in sessions.options.reloads
+    case step.call()
+      ok(said) if said != "" -> extensions = extensions.push(said)
+      ok(_) -> nil
+      error(e) -> warnings = warnings.push("extensions: #{e.message}")
+    end
+  end
+
+  added: List[String] = []
+  removed: List[String] = []
+  running = loaded(try entries(sessions))
+  for address in running
+    case SessionActor.reload(address)
+      ok(found) ->
+        added = (added + found.added).uniq
+        removed = (removed + found.removed).uniq
+        warnings = (warnings + found.warnings).uniq
+      error(e) -> warnings = (warnings + ["session: #{e.message}"]).uniq
+    end
+  end
+
+  if config.config.start_with?("kept")
+    warnings = warnings.push("config: #{config.config}")
+  end
+
+  for warning in warnings
+    Logger.warning("reload: #{warning}")
+  end
+
+  ok(
+    Protocol.Reloaded(
+      skills_added: added.sort,
+      skills_removed: removed.sort,
+      config: config.config,
+      extensions: extensions,
+      sessions: running.size,
+      warnings: warnings,
+      rules: config.rules,
+      approvals: config.asking,
+    ),
+  )
 end

@@ -50,6 +50,7 @@ COMMANDS = [
     about: "set up a provider with its key, or local with its base URL (the full screen); alone: pick one",
   ),
   Usage(name: "/logout", args: "[PROVIDER]", about: "remove a stored key or base URL; alone: every one"),
+  Usage(name: "/reload", about: "read the config, skills, extensions and AGENTS.md again, for the next turns"),
   Usage(name: "/logs", args: "[N]", about: "the last N lines (default 50) of the server log, which has its warnings"),
   Usage(
     name: "/mouse",
@@ -96,6 +97,8 @@ enum Command
   Compact
   ## The last lines of the server log.
   Logs(Int)
+  ## Reads the config, the skills, the extensions and the project instructions again.
+  Reload
   ## Turns the mouse reporting of the full screen off or on.
   Mouse
   Stop
@@ -189,6 +192,49 @@ def warning_banner(log: Protocol.ServerLog, mouse: Bool = true) -> List[String]
 
   head = "#{counted(log.warning_count)} when the server started (/logs shows all): #{closes}"
   [head] + log.warnings.map { |line| printable(line) }
+end
+
+## What a reload did, in one line, and a line for each warning: `skills: 2 added, 1 removed; config reloaded (3 rules,
+## approvals on); restarting 1 MCP server(s); the next turn of 3 running sessions uses it`.
+def reload_report(done: Protocol.Reloaded) -> List[String]
+  skills = "skills: unchanged"
+  if not done.skills_added.empty? or not done.skills_removed.empty?
+    parts: List[String] = []
+    if not done.skills_added.empty?
+      parts = parts.push("#{done.skills_added.size} added (#{done.skills_added.map { |n| printable(n) }.join(", ")})")
+    end
+
+    if not done.skills_removed.empty?
+      parts = parts.push(
+        "#{done.skills_removed.size} removed (#{done.skills_removed.map { |n| printable(n) }.join(", ")})",
+      )
+    end
+
+    skills = "skills: #{parts.join(", ")}"
+  end
+
+  rules = "#{done.rules} rules"
+  if done.rules == 1
+    rules = "1 rule"
+  end
+
+  approvals = "approvals off"
+  if done.approvals
+    approvals = "approvals on"
+  end
+
+  config = "config #{done.config.split(":")[0]} (#{rules}, #{approvals})"
+  line = ([skills, config] + done.extensions.map { |text| printable(text) }).join("; ")
+  if done.sessions > 0
+    running = "#{done.sessions} running sessions"
+    if done.sessions == 1
+      running = "1 running session"
+    end
+
+    line = "#{line}; the next turn of #{running} uses it"
+  end
+
+  [line] + done.warnings.map { |warning| "warning: #{printable(warning)}" }
 end
 
 ## What a client prints on the console after its screen is closed, when the server has warnings: the last of them, the
@@ -401,6 +447,7 @@ def command(name: String, argument: String) -> Result[Command]
     "/profile" -> ok(Command.Profile(given(argument)))
     "/compact" -> bare(Command.Compact, name, argument)
     "/logs" -> logs(argument)
+    "/reload" -> bare(Command.Reload, name, argument)
     "/mouse" -> bare(Command.Mouse, name, argument)
     "/stop" -> bare(Command.Stop, name, argument)
     "/cost" -> bare(Command.Cost, name, argument)

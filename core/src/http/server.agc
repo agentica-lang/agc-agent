@@ -39,10 +39,8 @@ struct Control
   flags: ATS[String, Bool]
   drain_ms: Int
   state_dir: String = ""
-  approvals: Bool = false
   code_mode: Bool = false
   no_worker: Bool = false
-  mouse: Bool = true
 end
 
 struct Server
@@ -126,6 +124,10 @@ def shutdown(server: Server, now: Bool, http_ms: Int = SHUTDOWN_MS) -> Void
   Sessions.stop(server.sessions)
   HTTP.shutdown(server.http, http_ms)
   Extensions.stop_services(server.services)
+  for stop in server.sessions.options.stops
+    stop.call()
+  end
+
   _ = Path.remove("#{server.state_dir}/#{SERVER_JSON}")
   _ = File.close(server.lock)
 end
@@ -135,6 +137,10 @@ def stop(server: Server) -> Void
   _ = Bond.wait(server.http)
   Sessions.stop(server.sessions)
   Extensions.stop_services(server.services)
+  for stop in server.sessions.options.stops
+    stop.call()
+  end
+
   _ = Path.remove("#{server.state_dir}/#{SERVER_JSON}")
   _ = File.close(server.lock)
 end
@@ -150,6 +156,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.get(Protocol.HEALTH_PATH, &health)
     |> Bond.get(Protocol.SERVER_PATH, ->(conn) { reply(conn, 200, status(sessions, control)) })
     |> Bond.get(Protocol.LOGS_PATH, ->(conn) { reply(conn, 200, logs(control, conn)) })
+    |> Bond.post(Protocol.RELOAD_PATH, ->(conn) { reply(conn, 200, reload(sessions)) })
     |> Bond.post(Protocol.SERVER_STOP_PATH, ->(conn) { reply(conn, 200, stop_route(control, conn)) })
     |> Bond.post(all, ->(conn) { reply(conn, 201, create(sessions, conn)) })
     |> Bond.get(all, ->(conn) { reply(conn, 200, list(sessions)) })
@@ -187,10 +194,8 @@ def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handl
   token = OpenSSL.Random.hex(32)
   control = new_control(options.drain_ms).with(
     state_dir: options.state_dir,
-    approvals: options.asking,
     code_mode: options.code_mode.some?,
     no_worker: options.no_worker,
-    mouse: options.mouse,
   )
 
   http = try Bond.start_with(
@@ -261,6 +266,7 @@ end
 
 def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
   activity = try Sessions.activity(sessions)
+  now = Config.applied(sessions.options)
   ok(
     Protocol.encode_server_status(
       Protocol.ServerStatus(
@@ -270,14 +276,17 @@ def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
         sessions: activity.sessions,
         running_turns: activity.running,
         stopping: flag?(control, "draining"),
-        approvals: some(control.approvals),
+        approvals: some(now.asking),
         code_mode: some(control.code_mode),
         no_worker: some(control.no_worker),
-        mouse: some(control.mouse),
+        mouse: some(now.mouse),
       ),
     ),
   )
 end
+
+# The server reads its config file, MCP servers, skills and project instructions again.
+def reload(sessions: Sessions.Sessions) -> Result[String] = ok(Protocol.encode_reloaded(try Sessions.reload(sessions)))
 
 # The answer goes out first: the task that owns the server stops it after, without cutting this request.
 def stop_route(control: Control, conn: Bond.Conn) -> Result[String]
@@ -553,6 +562,7 @@ def starts_work?(conn: Bond.Conn) -> Bool
 
   (
     conn.path == Protocol.SESSIONS_PATH or
+    conn.path == Protocol.RELOAD_PATH or
     ["/messages", "/shell", "/compact", "/branch", "/fork"].any? { |end_| conn.path.end_with?(end_) }
   )
 end
@@ -599,7 +609,7 @@ def status_of(kind: String) -> Int
   return 400 if [Protocol.KIND_INVALID, Protocol.KIND_UNKNOWN, Protocol.KIND_LOGIN_REJECTED].include?(kind)
   return 403 if kind == Protocol.KIND_SHELL_DENIED
   return 404 if [Protocol.KIND_SESSION_NOT_FOUND, Protocol.KIND_APPROVAL_NOT_FOUND].include?(kind)
-  return 409 if [Protocol.KIND_SESSION_BUSY, Protocol.KIND_APPROVAL_RESOLVED].include?(kind)
+  return 409 if [Protocol.KIND_SESSION_BUSY, Protocol.KIND_APPROVAL_RESOLVED, Protocol.KIND_RELOAD_BUSY].include?(kind)
   return 503 if kind == Protocol.KIND_SESSION_UNAVAILABLE
 
   500

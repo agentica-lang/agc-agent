@@ -152,6 +152,15 @@ def server_warnings(chat: Chat) -> Chat
   shown
 end
 
+def reload_command(chat: Chat) -> Result[Step]
+  shown = chat
+  for line in Client.reload_report(try Client.reload(chat.server))
+    shown = note(shown, line)
+  end
+
+  ok(Step(chat: shown))
+end
+
 def logs_command(chat: Chat, count: Int) -> Result[Step]
   log = try Client.server_log(chat.server, count)
   shown = chat
@@ -415,6 +424,7 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Profile(name) -> tried(chat, profile_command(chat, name))
     Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
     Client.Command.Logs(count) -> logs_command(chat, count)
+    Client.Command.Reload -> reload_command(chat)
     Client.Command.Mouse -> said(chat, "[/mouse is for the full screen: finn]")
   end
 end

@@ -82,6 +82,7 @@ Type them in either client:
 | `/logout [PROVIDER]` | remove a stored key; alone, every one |
 | `/mouse` | turn the mouse of `finn` off or on; off, the terminal selects text ([Copying text](#copying-text)) |
 | `/logs [N]` | the last N lines (default 50) of the server log, read through the server; the warnings of the server show in a yellow banner when `finn` opens, which a click or Esc (empty prompt) closes |
+| `/reload` | the server reads its config file, MCP servers, skills and `AGENTS.md` again, without a restart ([what it covers](config.md#reload)); the answer is one line and a line for each warning |
 | `/stop` | stop the running turn |
 | `/help` | the list |
 | `/quit` | leave; a session with something in it prints how to come back to it (`finn --session ID`, `finn chat --session ID`) |

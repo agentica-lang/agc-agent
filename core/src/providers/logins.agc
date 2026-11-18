@@ -88,6 +88,12 @@ struct Holder
   ref: Actor.Ref[State, Msg]
 end
 
+## The providers of the config file read again: the ones a key logs in to, and how to build every provider with them.
+struct Replacement
+  entries: List[Providers.Custom]
+  rebuild: Fn[Map[String, String], Map[String, String], Result[Map[String, Providers.Provider]]]
+end
+
 ## The providers the server offers now, and the base URL `local` uses now (empty when no login sets it).
 struct Current
   providers: Map[String, Providers.Provider]
@@ -250,6 +256,13 @@ def device_state(holder: Holder) -> Result[DeviceState]
   end
 end
 
+## Takes the providers of the config file read again in place of those of the start.
+def replace(holder: Holder, found: Replacement) -> Result[Void]
+  replaced: Result[Result[Void]] = Actor.call(holder.ref.address, CALL_MS) do |reply| Msg.Replace(found, reply) end
+  try try replaced
+  ok()
+end
+
 ## Checks `key` at the provider's own base URL, once, without following a redirect: `GET /models` of Anthropic, else
 ## `GET` of its `check_path` with the key as a Bearer token. What the provider said goes back only as its status or
 ## kind: a body might quote the request.
@@ -307,6 +320,7 @@ enum Msg
   Remove(Optional[String], Channel[Result[Void]])
   Skip(Channel[Result[Void]])
   Remember(Choice)
+  Replace(Replacement, Channel[Result[Void]])
   DeviceStarted(Task[Void], Channel[Int])
   DeviceEnded(Int, Result[Chatgpt.Tokens])
 end
@@ -377,6 +391,10 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
       Actor.reply(reply, done(changed))
       Actor.continue(changed.unwrap_or(state))
     Msg.Remember(choice) -> Actor.continue(remembered(state, choice))
+    Msg.Replace(found, reply) ->
+      changed = replaced(state, found)
+      Actor.reply(reply, done(changed))
+      Actor.continue(changed.unwrap_or(state))
     Msg.Skip(reply) ->
       changed = skipped(state)
       Actor.reply(reply, done(changed))
@@ -450,6 +468,14 @@ def chatgpt_removed(state: State, alone: Bool) -> Result[State]
 
   providers = try setup.rebuild.call(state.stored.keys, state.stored.urls)
   ok(state.with(providers: providers, device: DeviceRun.Idle, serial: state.serial + 1))
+end
+
+# The providers of the config file replaced, built with the keys and URLs the server holds; a build that fails keeps
+# the old ones.
+def replaced(state: State, found: Replacement) -> Result[State]
+  setup = try usable(state)
+  providers = try found.rebuild.call(state.stored.keys, state.stored.urls)
+  ok(state.with(providers: providers, setup: some(setup.with(entries: found.entries, rebuild: found.rebuild))))
 end
 
 def removed(now: Auth.Stored, name: Optional[String]) -> Result[Auth.Stored]

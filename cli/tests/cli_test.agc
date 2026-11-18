@@ -1155,6 +1155,40 @@ def docs_pages(dir: String) -> Result[Void]
   Test.assert(not help.lines.any? { |line| line.include?("state-dir") }, "#{help.lines}")
 end
 
+# `/reload` asks the server to read its config, skills and MCP servers again, and says in one line what changed, with a
+# line for each warning.
+def test_the_chat_reload_command_reports_what_the_server_read_again() -> Result[Void]
+  done = Protocol.Reloaded(
+    skills_added: ["lint"],
+    config: "reloaded",
+    extensions: ["restarting 1 MCP server(s)"],
+    rules: 3,
+    approvals: true,
+    sessions: 1,
+    warnings: ["config: kept: bad file"],
+  )
+
+  reload = Fake.Route(
+    method: "POST",
+    path: Protocol.RELOAD_PATH,
+    replies: [Fake.Reply(body: Protocol.encode_reloaded(done))],
+  )
+
+  Driver.within([Routes.created(), Routes.held_events(), reload]) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN)
+    try Driver.say(cli, "/reload")
+    try Driver.read_until(
+      cli,
+      "skills: 1 added (lint); config reloaded (3 rules, approvals on); restarting 1 MCP server(s); the next turn of 1 running session uses it",
+    )
+
+    try Driver.read_until(cli, "warning: config: kept: bad file")
+    try Driver.say(cli, "/quit")
+    _ = try Driver.finish(cli)
+    ok()
+  end
+end
+
 def docs(dir: String, args: List[String], env: Map[String, String]) -> Result[Driver.Done]
   Driver.exited(try Driver.start(dir, ["docs"] + args, extra: env, state_dir: false))
 end

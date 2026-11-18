@@ -88,6 +88,27 @@ struct Setup
   base_system: String = ""
   ## The profiles of the session's folders, read again at each call.
   profiles: Optional[Fn[Profiles.Loaded]] = none
+  ## What a reload reads again: the system prompt, the extensions' parts and the approval; none for a session that
+  ## cannot reload. `skills` are the names the catalog of `system` lists now.
+  reopen: Optional[Fn[Result[Reopened]]] = none
+  skills: List[String] = []
+end
+
+## What a reload gives a session: its system prompt with the project's `AGENTS.md` and the skills catalog read again,
+## the extensions' parts and the approval of the rules now, and the names of the skills.
+struct Reopened
+  system: String
+  builtins: List[Extensions.Opened]
+  approver: Optional[Extensions.Approver]
+  skills: List[String]
+  warnings: List[String] = []
+end
+
+## The skills a reload added to a session and took away; they apply from its next turn.
+struct Reloaded
+  added: List[String] = []
+  removed: List[String] = []
+  warnings: List[String] = []
 end
 
 enum Msg
@@ -108,6 +129,8 @@ enum Msg
   Finished(String, Protocol.StopReason, Optional[Int])
   Take(String, Int, Channel[List[Agent.Queued]])
   Update(Protocol.UpdateSession, Channel[Result[Void]])
+  ## Reads the system prompt, the skills and the approval again, for the next turn.
+  Reload(Channel[Result[Reloaded]])
   Fold(Channel[Result[Fold]])
   Folded(Optional[Compaction.Compaction], Channel[Result[Void]])
   Stripped(String)

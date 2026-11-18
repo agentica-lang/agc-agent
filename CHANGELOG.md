@@ -5,6 +5,7 @@
 ### Added
 
 - `/confine [on|off]` keeps the file tools in the session folder (or lets them reach any path) for one session; `confine_files` in the config file and `FINN_CONFINE_FILES=1` do it for every session.
+- `/reload` in `finn` and `finn chat` (`POST /v1/reload`) makes the server read the config file (rules, `approvals`, `files.command`, `mouse`, providers), the MCP servers, the skills and the `AGENTS.md` again without a restart: sessions that run use them from their next turn, a turn that runs is not stopped, and a config file that does not read is kept back with the reason. Only MCP servers reload, all of them when the list changed.
 - In `finn`, a drag over the transcript selects text and letting go copies it (OSC 52) with a note; a double click selects a word and Esc clears the selection. `/mouse` turns the mouse reporting off and on, and `"mouse": false` in the config file starts with it off; Shift+drag (Option+drag in iTerm2) is the terminal's own selection.
 - Every line of the server log starts with its UTC time and level (`2026-11-18T17:30:02.345Z WARNING ...`); `GET /v1/logs` gives its end and the warnings since the server started.
 - `finn` and `finn chat` show the last 3 warnings of the server as notes when a session starts, `/logs [N]` shows the end of the server log, and leaving prints the warnings and `finn server logs` after the screen closes.
