@@ -100,7 +100,8 @@ def screen_rows(output: bytes, rows: int = ROWS, cols: int = COLS) -> list[str]:
     return ["".join(line).rstrip() for line in grid]
 
 
-KEPT_ENV = ("PATH", "LANG", "TMPDIR", "AGENTICA")
+# FINN_TEST_RUN marks the servers of this test run, which `make leftovers` looks for after it.
+KEPT_ENV = ("PATH", "LANG", "TMPDIR", "AGENTICA", "FINN_TEST_RUN")
 
 
 def env_for(base: Path, model: "FakeModel") -> dict[str, str]:
