@@ -91,7 +91,7 @@ A command of `cd`, `rm`, `cp`, `mv`, `mkdir`, `touch`, `chmod`, `chown`, `cat`, 
 
 The files that `cat`, `head`, `tail`, `grep`, `wc`, `diff` and `cp` read also check `read_file(FILE)`: `cat .env` asks like the `read_file` tool, and `deny read_file(*.env)` denies it. Options and numbers are not files, nor the first word of `grep` (its pattern) unless `-e`, `-f` or `--` is there, nor the last argument of `cp` unless `-t` is there. This is best effort: a glob (`cat .en*`), `$`, `--opt=FILE`, a link, a folder read whole (`grep -r x .`) and other programs (`sed`, `awk`) are not seen. Under `ask *` a read such as `cat README.md` asks, since `read_file(*)` asks. "Always" on these programs allows the same command only.
 
-A line that tree-sitter-bash cannot read, or one it is known to misread (such as nested backticks), asks even when an allow rule matches; a deny rule that matches the line or one of its commands still denies it. Without a C compiler the parser cannot be built, and every line is unclear.
+A line that tree-sitter-bash cannot read, or one it is known to misread (such as nested backticks), asks even when an allow rule matches; a deny rule that matches the line or one of its commands still denies it. Where the parser is missing, every line is unclear: a clone with no C compiler, or a target that has no prebuilt library (a fetched `bash` has one for linux x86_64 and arm64, macos x86_64 and arm64, and windows x86_64).
 
 A `!` command in the clients follows the same rules as a call of `bash`; it never asks, since you typed it.
 

@@ -1,9 +1,10 @@
 ## The commands of a bash line, read by tree-sitter-bash (vendored in native/, MIT): each with its text and its words
 ## as written. It reads only; what a command means is for the caller to decide.
 ##
-## The module is built by the first run on a machine with a C compiler (a fetched package never builds it from
-## source: it uses a prebuilt library where its manifest names one). Without the module, `parse` gives an error, and so
-## does a line over `MAX_LINE` bytes, one with over `MAX_PIPES` `|`, or one whose parse takes over `LIMIT_MS`.
+## The module is built by the first run on a machine with a C compiler. A fetched package never builds it from source:
+## it downloads the prebuilt library of its target, one of five; other targets have no module. Without the module,
+## `parse` gives an error, and so does a line over `MAX_LINE` bytes, one with over `MAX_PIPES` `|`, or one whose parse
+## takes over `LIMIT_MS`.
 ##
 ## tree-sitter-bash 0.25.1 misreads some lines; `Parsed.unclear` is set for those known, and a caller should not
 ## trust the commands of such a line, nor of one with `Parsed.error` (an error may drop commands, `case ... esac | x`):
