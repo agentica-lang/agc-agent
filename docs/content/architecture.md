@@ -37,7 +37,7 @@ One server runs per state folder: it holds a lock there, and a client that finds
 | `mcp` | the client for MCP servers, on stdio and streamable HTTP |
 | `protocol` | the commands, replies and events between the server and its clients, with JSON codecs |
 | `monty` | Python scripts in pydantic's Monty sandbox, for code mode |
-| `bash` | the simple commands of a bash line, read by tree-sitter-bash (a native module built on first use) |
+| `bash` | the simple commands of a bash line, read by tree-sitter-bash (a native module: built on first use in a clone, a prebuilt library when fetched) |
 | `core` | the server: agent loop, tools, approval, sessions, extensions |
 | `client` | what the clients share: finding or starting the server, the HTTP calls, the event reader |
 | `cli` | the line-mode client |

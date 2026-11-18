@@ -45,10 +45,10 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check native-gen native-header native-check unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
+.PHONY: install check coupling fmt-check native-source native-gen native-header native-check native-lib prebuilt-e2e prebuilt-e2e-run check-library-test unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
-install:
+install: native-source
 	cd core && $(AGENTICA) install
 	cd tui_client && $(AGENTICA) install
 	cd examples/extension && $(AGENTICA) install
@@ -65,6 +65,10 @@ coupling:
 	  -e 'subdir *= *"($(SERVER_AND_CLIENTS))"' -e '"pkg/($(SERVER_AND_CLIENTS))/' .)
 	@$(call none,a client depends on the server or the llm or another client,-g 'client/**' -g 'cli/**' -g 'tui_client/**' \
 	  -e 'subdir *= *"($(NOT_FOR_CLIENTS))"' -e '"pkg/($(NOT_FOR_CLIENTS))/' .)
+	@$(call none,a dependency on this repository whose tag is not finn-<ts> (there are no member tags),-P -g '**/agentica.toml' \
+	  '^[^#\n]*\{(?=[^}]*agentica-lang/agc-agent")(?=[^}]*\bsubdir\b)(?![^}]*\btag *= *"finn-[0-9]+")[^}]*\}' .)
+	@pins=$$(rg -o --no-filename -g '**/agentica.toml' 'tag *= *"finn-[0-9]+"' . | sort -u | wc -l); \
+	  [ "$$pins" -le 1 ] || { echo "coupling: the packages pin $$pins different finn tags (one tag for all)" >&2; exit 1; }
 	@$(call none,a package imports another package's src/ (use its public module),-g '*.agc' 'pkg/[a-z0-9_-]+/src/' .)
 	@$(call none,core/src/tools imports another core folder,$(call core_imports,tools,tools))
 	@$(call none,core/src/approval imports a core folder but tools,$(call core_imports,approval,tools))
@@ -95,15 +99,53 @@ native-gen:
 	fi
 native-header: native-gen
 	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h
-native-check: native-gen
+native-check: native-gen native-source
 	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h --check
+	@diff -r -x LICENSE -x parser.c -x grammar.json -x node-types.json bash/native/grammar $(TREE_SITTER_BASH)/src || \
+	  { echo 'native-check: bash/native/grammar is not src/ of $(TREE_SITTER_BASH) (but its LICENSE and the stub parser.c)' >&2; exit 1; }
+
+# tree-sitter-bash's parser (9.5 MB), which bash/native/grammar/parser.c includes, is in the submodule
+# TREE_SITTER_BASH, outside bash/: a fetched package holds no file over 1 MiB. native-source (scripts/native-source.sh)
+# makes sure that the submodule holds the parser that the stub names by its sha256, and fails outside a git clone.
+TREE_SITTER_BASH = vendor/tree-sitter-bash
+native-source:
+	@sh scripts/native-source.sh
+
+# The library of bash's native module for this system, built from source by agentica (the C compiler is CC) into
+# tmp/native-lib/, the file that [native.bash.prebuilt] names. NATIVE_CACHE is the package cache of the build; the
+# library is the path that agentica prints.
+NATIVE_CACHE ?= $(CURDIR)/tmp/native-cache
+native-lib: native-source
+	@case '$(NATIVE_CACHE)' in */tmp/native-cache) ;; *) echo 'native-lib: NATIVE_CACHE must be a tmp/native-cache folder' >&2; exit 1 ;; esac
+	mkdir -p tmp/native-lib && rm -f tmp/native-lib/* tmp/native-build.log && rm -r -f '$(NATIVE_CACHE)'
+	cd bash && XDG_CACHE_HOME='$(NATIVE_CACHE)' LOCALAPPDATA='$(NATIVE_CACHE)' AGENTICA_NATIVE_BUILD=bash \
+	  $(AGENTICA) install > ../tmp/native-build.log 2>&1; status=$$?; tr -d '\r' < ../tmp/native-build.log; \
+	  [ $$status -eq 0 ] || { echo 'native-lib: the build failed' >&2; exit 1; }
+	built=$$(tr -d '\r' < tmp/native-build.log | sed -n 's/^built native bash: //p'); \
+	[ -n "$$built" ] || { echo 'native-lib: agentica built no library' >&2; exit 1; }; \
+	cp "$$built" tmp/native-lib/
+
+# check-library.sh fails closed: with no tool on PATH it is exit 2, never a pass.
+check-library-test:
+	@for ext in so dylib dll; do \
+	  env PATH=/nonexistent /bin/sh scripts/check-library.sh x.$$ext >/dev/null 2>&1; \
+	  [ $$? -eq 2 ] || { echo "check-library-test: x.$$ext without its tool did not exit 2" >&2; exit 1; }; \
+	done
+
+# A fresh project fetches bash from a copy of this repository and uses the library of tmp/native-lib, served on
+# 127.0.0.1, with no compiler, as one that reads [native.bash.prebuilt] does. prebuilt-e2e builds the library first;
+# prebuilt-e2e-run takes the one that is there (the workflow tests the library that it ships).
+prebuilt-e2e: native-lib
+	$(MAKE) --no-print-directory prebuilt-e2e-run
+prebuilt-e2e-run:
+	$(AGENTICA) scripts/prebuilt_e2e.agc '$(AGENTICA)' tmp/native-lib
 
 fmt-check:
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} sh -c 'cd {} && $(AGENTICA) fmt --check .'
 
 # The packages run at once, and the files of each (`agentica test --jobs`).
 # After them, whether they passed or not, `leftovers` fails the run when one left a server running.
-unit:
+unit: native-source
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} $(MAKE) --no-print-directory unit-package PACKAGE={}; \
 	  status=$$?; $(MAKE) --no-print-directory leftovers || exit 1; exit $$status
 
@@ -151,10 +193,10 @@ pty: install
 	  exit $$status
 
 # The commands bash's parser finds against those real bash runs (Python standard library only).
-peer:
+peer: native-source
 	python3 -m unittest bash/tests/test_bash_peer.py -v
 
-test: check native-check unit smoke pty peer
+test: check native-check unit smoke pty peer prebuilt-e2e
 
 # The llm tests against a real llama-server with Qwen2.5-0.5B (fetched and checked by sha256 first), or the one at
 # LLAMA_URL. Local only, never in CI.

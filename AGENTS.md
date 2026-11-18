@@ -19,6 +19,8 @@ monty/               Python scripts in pydantic's Monty sandbox: the pinned `mon
 bash/                the simple commands of a bash line, read by tree-sitter-bash; native/ holds the vendored C
                      (runtime/, grammar/, MIT) and the module, whose header native-gen makes (`make native-header`);
                      bash.agc is its public module; tests/test_bash_peer.py checks it against real bash
+vendor/              tree-sitter-bash, a submodule that `make install` fetches: the parser (9.5 MB) that
+                     bash/native/grammar/parser.c includes, kept outside bash/ (a fetched file is at most 1 MiB)
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point, core.agc the public module (`Core.serve` with a registry
                      of extensions)
@@ -51,6 +53,8 @@ Makefile             check, fmt-check, unit, smoke, test over every package; smo
 .github/workflows/   ci.yml, on GitHub-hosted ubuntu-24.04: the pinned Agentica release, the cached packages and compile
                      caches (`_build/`), then fmt-check and test (no real-model job); `tag-version` tags each
                      merge to main that passed as `finn-<ts>` (the one job with `contents: write`)
+                     CI runs on Linux; `bash-native.yml` runs all five targets only when the native module, its
+                     submodule or its build changes (never add macOS or Windows runners to `ci.yml`)
 ```
 
 A package is added by the phase that needs it, never as an empty folder.
@@ -71,9 +75,24 @@ A package is added by the phase that needs it, never as an empty folder.
   server runs in `Driver.within_dir` (cli), which stops every server of its
   state folder and removes the folder.
   `native-check` fails when `bash/native/bash_native.h` is stale (native-gen,
-  cloned into `.tools/`). `install` fetches bond into `core/deps/` and
+  cloned into `.tools/`), or when `bash/native/grammar/parser.c` does not
+  name the sha256 of the submodule's parser (the line puts it in the source
+  key of the module). `install` fetches bond into `core/deps/` and
   agentica-tui into `tui_client/deps/` (gitignored); `check`, `smoke` and `pty`
   run it first.
+  `prebuilt-e2e` (`scripts/prebuilt_e2e.agc`, after `native-lib`, which builds
+  bash's library into `tmp/native-lib/`) fetches bash into a fresh project
+  from a git copy, with the library served on 127.0.0.1, `CC=false` and
+  `--native-prebuilt-only=bash`: a parse must work with no compiler, and no
+  fetched file may be over 1 MiB. The workflow `bash-native.yml` builds the
+  library per target on a pushed tag `bash-native-<key>` (the coordinator
+  pushes it; `<key>` is `agentica native source bash`) and attaches it, with
+  `SHA256SUMS` and `LICENSES.txt`, to the release of the tag (a draft until all
+  are attached; the tag must be on main or `bash-prebuilt-base`); its summary prints
+  the rows for `[native.bash.prebuilt]` of `bash/agentica.toml`. It tests the
+  library it ships (the same cache, `prebuilt-e2e-run`) and
+  `scripts/check-library.sh` checks what the library needs (glibc 2.28 at most,
+  no libwinpthread).
 - `cli` tests run the client as a child process on pipes (the Makefile
   exports `AGENTICA` for it) against a fake protocol server in
   `cli/tests/support/`. The client finds the server in the state folder
@@ -120,7 +139,8 @@ A package is added by the phase that needs it, never as an empty folder.
     root `[workspace]` `members` and in `PACKAGES` of the `Makefile`.
   - Names are Ruby style: short, lowercase, `snake_case`.
   - A package depends on another with a normal entry: `git` is this repo,
-    `subdir` the folder, `tag` `NAME-VERSION`. The workspace reads it in place.
+    `subdir` the folder, `tag` the current `finn-<ts>` tag (there are no member
+    tags; `make coupling` checks it). The workspace reads it in place.
   - Keep them loosely coupled, so one can move to its own repo: `llm`, `mcp`,
     `sse` and `protocol` never depend on `core` or a client, and a package imports
     another only through its public module (`pkg/llm/llm`), never its `src/`.
@@ -137,10 +157,11 @@ A package is added by the phase that needs it, never as an empty folder.
     `session`, only the actor's files (`actor`, `turn`, `stream`, `branch`,
     `state`) import `turn`, `stream`, `branch` and `state`. An import never
     has a `..` after its first folder.
-  - Each package has one `VERSION` constant in its public module, equal to its
-    tag (`llm-0.0.1` is `VERSION = "0.0.1"`). A release goes in this order: tag
-    the dependency (`llm-X`), then a PR that bumps the dependent's entry and
-    `agentica.lock`, then tag the dependent (`core-Y`).
+  - There are no member tags, only `finn-<ts>` (below). A member's pin of a
+    sibling names a `finn-<ts>` tag; inside the workspace it is read in place,
+    so the pin only matters outside the repository. The `VERSION` constant of
+    a package is informational (`finn --version` shows llm's, `mcp` sends its
+    own to MCP servers), and no tag follows it.
   - The version of Finn itself is the UTC time of the commit
     (`YYYYMMDDhhmmss`): `bin/finn` exports it as `FINN_VERSION` (from git, or
     from `bin/commit-time` in an archive), and the core and the clients report
@@ -177,7 +198,7 @@ A package is added by the phase that needs it, never as an empty folder.
   `docs/content/` (`make docs` builds it). A page keeps one line per paragraph
   or list item, as the other sites of the docs theme do; a link to another
   page names its file (`[Tools](tools.md)`).
-- The repo is private. Do not create other repos.
+- The repo is public. Do not create other repos.
 - A line that is only `end` is followed by an empty line, except before
   another `end`, `else`, `elsif`, a closing `)` or `]`, or the end of the file
   (`[style] blank_line_after_end`).

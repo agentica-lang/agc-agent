@@ -4,6 +4,9 @@
 
 ### Changed
 
+- The `bash` package, and so `core`, no longer holds a file over 1 MiB and downloads a prebuilt native library (release `bash-native-d63bc6fb66ee45a8`) for linux x86_64 and arm64, macos x86_64 and arm64, and windows x86_64, so a fetched package needs no C compiler; a tag `bash-native-<key>` builds and releases them.
+- tree-sitter-bash's parser comes from a git submodule: after updating a clone, run `make install` once to fetch it.
+- The packages of the repository have no tags of their own any more, only `finn-<ts>`; using `core` from outside the repository waits for agentica#1850.
 - The version of Finn is the UTC time of its commit (`20261118123456`), with a `finn-` tag per merge to main; a client says when its server is older or newer and names `finn server restart`, never a `kill`. `finn server stop` ends a server that does not take the request by its pid (`--now` forces it).
 - **Breaking:** Finn needs Agentica 0.34.0. A model stream that is silent for 2 minutes now fails, rather than hanging; the event stream of a session has no read limit.
 - A resumed session shows the thinking, tool calls and stop notes of its turns, not only the messages; the session line comes first.
