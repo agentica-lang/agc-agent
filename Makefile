@@ -45,10 +45,10 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check native-gen native-header native-check unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
+.PHONY: install check coupling fmt-check native-source native-gen native-header native-check unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
-install:
+install: native-source
 	cd core && $(AGENTICA) install
 	cd tui_client && $(AGENTICA) install
 	cd examples/extension && $(AGENTICA) install
@@ -95,15 +95,28 @@ native-gen:
 	fi
 native-header: native-gen
 	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h
-native-check: native-gen
+native-check: native-gen native-source
 	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h --check
+	@grep -qx "// sha256 $$($(SHA256) $(PARSER) | cut -d ' ' -f 1)" bash/native/grammar/parser.c || \
+	  { echo 'native-check: bash/native/grammar/parser.c does not name the sha256 of $(PARSER)' >&2; exit 1; }
+	@cmp -s $(TREE_SITTER_BASH)/src/tree_sitter/parser.h bash/native/grammar/tree_sitter/parser.h || \
+	  { echo 'native-check: bash/native/grammar/tree_sitter/parser.h is not the one of $(TREE_SITTER_BASH)' >&2; exit 1; }
+
+# tree-sitter-bash's parser (9.5 MB), which bash/native/grammar/parser.c includes, is in the submodule
+# TREE_SITTER_BASH, outside bash/: a fetched package holds no file over 1 MiB. native-source fetches the submodule when
+# it is missing.
+TREE_SITTER_BASH = vendor/tree-sitter-bash
+PARSER = $(TREE_SITTER_BASH)/src/parser.c
+SHA256 = $(if $(shell command -v sha256sum),sha256sum,shasum -a 256)
+native-source:
+	@[ -f $(PARSER) ] || git submodule update --init $(TREE_SITTER_BASH)
 
 fmt-check:
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} sh -c 'cd {} && $(AGENTICA) fmt --check .'
 
 # The packages run at once, and the files of each (`agentica test --jobs`).
 # After them, whether they passed or not, `leftovers` fails the run when one left a server running.
-unit:
+unit: native-source
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} $(MAKE) --no-print-directory unit-package PACKAGE={}; \
 	  status=$$?; $(MAKE) --no-print-directory leftovers || exit 1; exit $$status
 
@@ -151,7 +164,7 @@ pty: install
 	  exit $$status
 
 # The commands bash's parser finds against those real bash runs (Python standard library only).
-peer:
+peer: native-source
 	python3 -m unittest bash/tests/test_bash_peer.py -v
 
 test: check native-check unit smoke pty peer

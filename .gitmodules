@@ -1,3 +1,7 @@
 [submodule "docs/themes/docs-theme"]
 	path = docs/themes/docs-theme
 	url = https://github.com/agentica-lang/docs-theme.git
+# tree-sitter-bash v0.25.1 (MIT, its LICENSE inside): the parser that bash/native/grammar/parser.c includes.
+[submodule "vendor/tree-sitter-bash"]
+	path = vendor/tree-sitter-bash
+	url = https://github.com/tree-sitter/tree-sitter-bash.git
