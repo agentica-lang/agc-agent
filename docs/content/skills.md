@@ -16,7 +16,7 @@ In these folders, of your home folder and of the session folder:
 - `.agents/skills/`
 - `.claude/skills/`
 
-The skills of the session folder count only when it is under a [trusted folder](config.md#trusted-folders). A project skill hides a home skill of the same name. Finn uses 100 skills at most (the built-in one comes after them).
+The skills of the session folder count only when it is under a [trusted folder](config.md#trusted-folders). A project skill hides a home skill of the same name. Folders that are links to one folder (`~/.agents/skills` and `~/.claude/skills`, say) count once, with no warning. Finn uses 100 skills at most (the built-in one comes after them).
 
 ## The finn skill
 
