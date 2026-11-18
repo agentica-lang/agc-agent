@@ -489,9 +489,9 @@ class PtyTest(unittest.TestCase):
         return terminal
 
     def test_a_first_start_login_moves_the_session_to_the_new_provider(self) -> None:
-        """A first start with no provider set up offers a login. A key for a provider of the config file offers its
-        models in the picker, and the pick moves the session from the local fallback, where no server answers, to that
-        provider: the footer names it and the next turn goes to it."""
+        """A first start with no provider set up offers a login. A key for a provider of the config file makes it the
+        default, and the session moves from the local fallback, where no server answers, to that provider and its first
+        model: the footer names it and the next turn goes to it."""
         base = self.folder()
         model = self.model([Reply("text.sse")])
         config = base / "home" / ".config" / "finn"
@@ -508,9 +508,7 @@ class PtyTest(unittest.TestCase):
         terminal.type("\r")
         terminal.wait_for("the key of box")
         terminal.type("sk-test\r")
-        terminal.wait_for("pick a model of box")
-        terminal.type("\r")
-        rows = terminal.wait_for("box/test-model from the next turn")
+        rows = terminal.wait_for("the session is on box/test-model")
         self.assertTrue(any("(box) test-model" in row for row in rows), text_of(rows))
         terminal.type("hello\r")
         terminal.wait_for(ANSWER)

@@ -301,6 +301,9 @@ def picked(options: Options, current: Logins.Current) -> Options
       model = options.model
     elsif model.empty?
       model = found.apis[found.api].model
+      if model.empty? and not found.models.empty?
+        model = found.models[0]
+      end
     end
 
     if model.empty?

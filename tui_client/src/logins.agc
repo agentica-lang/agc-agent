@@ -193,7 +193,16 @@ end
 
 # The login made `name` the default provider: the session of the first start, which is on `local`, goes there too.
 def switched(app: State.Model, name: String, said: String) -> State.Model
+  models = case app.backend.list_providers.call()
+    ok(list) -> list.providers.select { |p| p.name == name }.flat_map { |p| p.models }
+    error(_) -> []
+  end
+
   change = Protocol.UpdateSession(provider: some(name))
+  if not models.empty?
+    change = change.with(model: some(models[0]))
+  end
+
   case app.backend.update_session.call(app.id, change)
     ok(_) ->
       case app.backend.session.call(app.id)
