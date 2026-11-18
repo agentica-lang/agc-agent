@@ -47,7 +47,7 @@ end
 
 ## The last `lines` lines of the server log, and the warnings it logged since it started.
 def server_log(server: Server, lines: Int) -> Result[Protocol.ServerLog]
-  body = try call(server, "GET", "#{Protocol.LOGS_PATH}?lines=#{lines}", "")
+  body = try call_within(server, "GET", "#{Protocol.LOGS_PATH}?lines=#{lines}", "", PROBE_TIMEOUT_MS)
   Protocol.decode_server_log(body)
 end
 

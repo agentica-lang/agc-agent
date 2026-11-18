@@ -1,62 +1,91 @@
-## The server log: each line starts with its UTC time (`2026-11-18T17:30:02.345Z`) and its level, as `std/logger` writes
-## them. The server writes it to stderr and stdout, which `finn` sends to `server.log` of the state folder.
+## The server log: `std/logger` writes it, each line as `TIME LEVEL MESSAGE key=value` with the UTC time
+## (`2026-11-18T17:30:02.345Z INFO ...`), to stdout (info) and stderr (warning, error), which `finn` sends to `server.log` of the state folder. `install`
+## makes the handler that does it and also keeps the last warnings of the process in memory, since the first of them
+## come before the server listens; `tail` reads the end of the file.
 
-import UTC from "std/utc"
+import Logger from "std/logger"
 
 FILE = "server.log"
-## The line a server writes when it starts: the warnings after the last one are the ones of this server.
+## The line the server writes when it listens.
 STARTED = "Finn Agent core listening on"
-WARNING = "WARNING"
-INFO = "INFO"
-## The warnings that `tail` gives, the last ones.
-SHOWN_WARNINGS = 3
+## The warnings that `warnings` gives, the last ones.
+SHOWN = 3
+## The end of the file that `tail` reads: a longer file is read through, and only this much of it is kept.
+TAIL_BYTES = 262_144
+READ_BYTES = 65_536
 
-## What `tail` read: the last lines of the log, the warnings since the server started (the last `SHOWN_WARNINGS`) and
-## how many there were.
+# The last warnings by their number modulo `SHOWN`, and how many there were.
+RECENT: ATS[Int, String] = ATS.new()
+COUNTS: ATS[String, Int] = ATS.new()
+WARNINGS = "warnings"
+
+## The warnings (and errors) the process logged: the last `SHOWN`, oldest first, and how many in all.
+struct Warnings
+  lines: List[String]
+  count: Int
+end
+
+## The lines of the log file: the last of them.
 struct Tail
   lines: List[String]
-  warnings: List[String]
-  warning_count: Int
 end
 
-def line(level: String, text: String) -> String = "#{UTC.iso8601(Time.now_ms, 3)} #{level} #{text}"
-
-def info(text: String) -> Void
-  puts(line(INFO, text))
+## Writes every line as `Logger.format_text` makes it, and keeps the warnings. The default handler `console` writes the
+## same lines to stderr, so it goes.
+def install() -> Void
+  _ = Logger.detach("console")
+  _ = Logger.attach("server", Logger.Level.Info, &record)
 end
 
-def warn(text: String) -> Void
-  IO.warn(line(WARNING, text))
+## The warnings the process has logged since `install`.
+def warnings() -> Warnings
+  count = COUNTS.get(WARNINGS).unwrap_or(0)
+  first = [count - SHOWN + 1, 1].max.unwrap!
+  lines: List[String] = []
+  for number in first...(count + 1)
+    lines = lines.push(RECENT.get(number % SHOWN).unwrap_or(""))
+  end
+
+  Warnings(lines: lines, count: count)
 end
 
-## The last `count` lines of the log in `dir`, one pass over the file (rotation keeps it small).
+## The last `count` lines of the log in `dir`; the file is read through in pieces, keeping its last `TAIL_BYTES`.
 def tail(dir: String, count: Int) -> Result[Tail]
   path = "#{dir}/#{FILE}"
-  return ok(Tail(lines: [], warnings: [], warning_count: 0)) if not File.stat(path).ok?
+  return ok(Tail(lines: [])) if not File.stat(path).ok?
 
-  lines: List[String] = []
-  warnings: List[String] = []
-  total = 0
-  for text in (try File.read_text(path)).split("\n")
-    next if text == ""
+  file = try File.open(path)
+  kept = "".bytes
+  cut = false
+  while true
+    piece = File.read_bytes(file, READ_BYTES)
+    break if not piece.ok? or piece.unwrap!.size == 0
 
-    lines = lines.push(text)
-    if lines.size > count * 2 + 1
-      lines = last(lines, count)
-    end
-
-    if text.include?(" #{INFO} #{STARTED}")
-      warnings = []
-      total = 0
-    end
-
-    if text.include?(" #{WARNING} ")
-      warnings = last(warnings.push(text), SHOWN_WARNINGS)
-      total = total + 1
+    kept = Bytes.concat([kept, piece.unwrap!])
+    if kept.size > TAIL_BYTES
+      kept = Bytes.slice(kept, kept.size - TAIL_BYTES, TAIL_BYTES)
+      cut = true
     end
   end
 
-  ok(Tail(lines: last(lines, count), warnings: warnings, warning_count: total))
+  _ = File.close(file)
+  lines = kept.scrub.split("\n").select { |line| line != "" }
+  if cut and not lines.empty?
+    lines = lines.drop(1)
+  end
+
+  ok(Tail(lines: lines.drop([lines.size - count, 0].max.unwrap!)))
 end
 
-def last(list: List[String], count: Int) -> List[String] = list.drop([list.size - count, 0].max.unwrap!)
+private
+
+def record(event: Logger.Event) -> Void
+  line = Logger.format_text(event)
+  case event.level
+    Logger.Level.Warning, Logger.Level.Error ->
+      IO.warn(line)
+      number = COUNTS.add(WARNINGS, 1)
+      RECENT.put(number % SHOWN, line)
+    _ -> puts(line)
+  end
+end

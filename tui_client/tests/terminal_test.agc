@@ -534,14 +534,13 @@ def test_a_login_the_server_refuses_ends_with_a_reason() -> Result[Void]
   signals: Channel[System.Signal] = Channel.new(1)
   seeded = App.seed(Client.http_backend(server), options(), signals, 80, 24)
   start = try Logins.login_only(seeded, some("chatgpt"))
+  # No signal comes: the wait for one ends at once, so no task of it is left.
+  signals.close
   fake = TUI.Testing.fake(80, 24)
   runner = Task.spawn(-> { App.drive_outcome(TUI.Testing.backend(fake), start) })
   outcome = try Task.await(runner)
-  signals.close
   fake.events.close
-  HTTP.close_server(http)
-  _ = HTTP.wait(http)
-  Task.sleep(300)
+  HTTP.shutdown(http, 1000)
   try Test.eq(outcome.code, 1)
   try Test.assert(outcome.reason.unwrap_or("").include?("the ChatGPT login answered what is not read"), "#{outcome}")
   signalled = try App.outcome(start.with(exit: some(143)))
@@ -570,4 +569,12 @@ def logs_shown(rig: Rig) -> Result[Void]
   try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
   try shows(rig, "INFO older")
   ok()
+end
+
+# What the console gets after the screen closes: the warnings of the server, then how to come back.
+def test_the_report_of_the_warnings_comes_before_the_hint_that_follows() -> Result[Void]
+  try Test.eq(App.joined(some("report"), some("hint")), some("report\nhint"))
+  try Test.eq(App.joined(some("report"), none), some("report"))
+  try Test.eq(App.joined(none, some("hint")), some("hint"))
+  Test.eq(App.joined(none, none), none)
 end

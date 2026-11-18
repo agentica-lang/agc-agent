@@ -235,19 +235,24 @@ def health(conn: Bond.Conn) -> Result[Bond.Conn]
   )
 end
 
-# The lines of the log are read through the server: the client may be on the other side of a tunnel.
+# The lines of the log are read through the server: the client may be on the other side of a tunnel. The warnings are
+# those of the process, kept in memory.
 def logs(control: Control, conn: Bond.Conn) -> Result[String]
-  asked = try Bond.query_all(conn, "lines")
   count = DEFAULT_LOG_LINES
-  if not asked.empty?
-    count = try Bond.query_int(conn, "lines")
+  for text in try Bond.query_all(conn, "lines")
+    wanted = text.to_i
+    if not wanted.ok? or wanted.unwrap! < 0 or wanted.unwrap! > MAX_LOG_LINES
+      return error("lines is a number from 0 to #{MAX_LOG_LINES}", kind: Protocol.KIND_INVALID)
+    end
+
+    count = wanted.unwrap!
   end
 
-  count = [[count, 0].max.unwrap!, MAX_LOG_LINES].min.unwrap!
   tail = try Log.tail(control.state_dir, count)
+  warned = Log.warnings()
   ok(
     Protocol.encode_server_log(
-      Protocol.ServerLog(lines: tail.lines, warnings: tail.warnings, warning_count: tail.warning_count),
+      Protocol.ServerLog(lines: tail.lines, warnings: warned.lines, warning_count: warned.count),
     ),
   )
 end

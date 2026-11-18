@@ -8,7 +8,7 @@ import URI from "std/uri"
 import LLM from "pkg/llm/llm"
 import Auth from "auth"
 import Providers from "providers"
-import Log from "../log"
+import Logger from "std/logger"
 
 NAME = "chatgpt"
 LABEL = "ChatGPT Plus or Pro (Codex)"
@@ -23,6 +23,8 @@ BASE_URL_ENV = "FINN_CHATGPT_URL"
 CALL_MS = 15_000
 ## How often a device login polls when the login does not say, in seconds.
 DEFAULT_INTERVAL_S = 5
+MIN_INTERVAL_S = 1
+MAX_INTERVAL_S = 60
 ## A device login waits this long for the user at most.
 DEVICE_MS = 900_000
 ## The key of the lock in `Login.lock`.
@@ -255,6 +257,31 @@ def refusal(login: Login) -> Optional[String]
   end
 end
 
+## The device code the login answered: `interval` is a number of seconds or the text of one (the login answers `"5"`),
+## and may be left out; it is kept between 1 and 60 so that a wait is never long nor an overflow.
+def usercode(text: String) -> Result[UserCode]
+  json = try answered(JSON.parse(text))
+  id = try answered(JSON.string(try answered(JSON.get(json, "device_auth_id"))))
+  code = try answered(JSON.string(try answered(JSON.get(json, "user_code"))))
+  interval = DEFAULT_INTERVAL_S
+  case JSON.get(json, "interval")
+    ok(value) -> interval = seconds_of(JSON.node(value))
+    error(_) -> nil
+  end
+
+  ok(UserCode(device_auth_id: id, user_code: code, interval: interval))
+end
+
+def seconds_of(node: JSON.Node) -> Int
+  case node
+    JSON.Node.Int(n) -> clamped(n)
+    JSON.Node.String(text) -> clamped(text.strip.to_i.unwrap_or(DEFAULT_INTERVAL_S))
+    _ -> DEFAULT_INTERVAL_S
+  end
+end
+
+def clamped(seconds: Int) -> Int = [[seconds, MIN_INTERVAL_S].max.unwrap!, MAX_INTERVAL_S].min.unwrap!
+
 private
 
 LOOPBACK = ["http://127.0.0.1:", "http://127.0.0.1/", "http://localhost:", "http://localhost/", "http://[::1]:"]
@@ -348,7 +375,7 @@ def renewed_locked(login: Login, used: String) -> Result[Tokens]
   fresh = try refreshed(login.endpoints, now)
   case save(login, fresh)
     ok(_) -> nil
-    error(e) -> Log.warn("the refreshed ChatGPT login was not saved: #{e.message}")
+    error(e) -> Logger.warning("the refreshed ChatGPT login was not saved: #{e.message}")
   end
 
   ok(fresh)
@@ -456,28 +483,6 @@ def post(endpoints: Endpoints, path: String, body: String, kind: String) -> Resu
   case answer
     ok(response) -> ok(response)
     error(_) -> error("#{endpoints.issuer} cannot be reached")
-  end
-end
-
-# The `interval` is a number or the text of one (the login answers `"5"`), and may be left out.
-def usercode(text: String) -> Result[UserCode]
-  json = try answered(JSON.parse(text))
-  id = try answered(JSON.string(try answered(JSON.get(json, "device_auth_id"))))
-  code = try answered(JSON.string(try answered(JSON.get(json, "user_code"))))
-  interval = DEFAULT_INTERVAL_S
-  case JSON.get(json, "interval")
-    ok(value) -> interval = seconds_of(JSON.node(value))
-    error(_) -> nil
-  end
-
-  ok(UserCode(device_auth_id: id, user_code: code, interval: interval))
-end
-
-def seconds_of(node: JSON.Node) -> Int
-  case node
-    JSON.Node.Int(n) -> n
-    JSON.Node.String(text) -> text.strip.to_i.unwrap_or(DEFAULT_INTERVAL_S)
-    _ -> DEFAULT_INTERVAL_S
   end
 end
 

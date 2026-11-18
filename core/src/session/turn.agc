@@ -13,7 +13,7 @@ import Store from "store"
 import Stream from "stream"
 import Todos from "../tools/todos"
 import Tools from "../tools/tools"
-import Log from "../log"
+import Logger from "std/logger"
 
 ## A message sent while a turn runs waits in the queue, which the turn reads before its next model call. The user's
 ## `/name` of a skill puts its content before the message, unless the session has it already.
@@ -49,7 +49,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
 
   handled = on_message(state.setup, typed, state.marks)
   if not handled.ok?
-    Log.warn("session #{state.setup.id}: #{handled.message}")
+    Logger.warning("session #{state.setup.id}: #{handled.message}")
     Actor.reply(reply, error("an extension refused the message: #{handled.message}", kind: Protocol.KIND_INVALID))
     return state
   end
@@ -153,7 +153,7 @@ def take(state: Session.State, turn_id: String, after: Int, reply: Channel[List[
       # Accepted already: a handler that fails leaves it as the skills made it.
       handled = on_message(state.setup, typed, marks)
       if not handled.ok?
-        Log.warn("session #{state.setup.id}: #{handled.message}")
+        Logger.warning("session #{state.setup.id}: #{handled.message}")
       end
 
       expanded = handled.unwrap_or(Extensions.noted(state.setup.builtins, typed, marks))

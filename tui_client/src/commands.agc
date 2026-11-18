@@ -238,7 +238,6 @@ def changed(app: State.Model, change: Protocol.UpdateSession, done: String) -> R
   ok(shown.with(new_model: change.model))
 end
 
-# The summary takes as long as a turn: a command asks for it and gives the outcome as a note.
 ## The last lines of the server log, as notes.
 def logs_command(app: State.Model, count: Int) -> Result[State.Model]
   shown = app
@@ -249,6 +248,7 @@ def logs_command(app: State.Model, count: Int) -> Result[State.Model]
   ok(shown)
 end
 
+# The summary takes as long as a turn: a command asks for it and gives the outcome as a note.
 def compact_command(app: State.Model) -> State.Model
   backend = app.backend
   id = app.id
