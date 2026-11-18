@@ -10,8 +10,8 @@ weight: 10
 
 Finn runs on [Agentica](https://github.com/agentica-lang/agentica) 0.34.0 or later: `agentica` on your `PATH`, or `AGENTICA` set to the binary.
 
-1. Clone the repository: `git clone https://github.com/agentica-lang/agc-agent`.
-2. In the clone, run `make install`. It fetches the packages that the server and the TUI depend on.
+1. Clone the repository: `git clone https://github.com/agentica-lang/agc-agent`. Use a git clone, not an archive of the source: the parser of the `bash` package is a submodule, and a `bash` fetched as a package never builds from source (it uses a prebuilt library where its manifest names one).
+2. In the clone, run `make install`. It fetches the packages that the server and the TUI depend on, and the submodule.
 3. Use `bin/finn` from any folder, or link it into your `PATH`: `ln -s "$PWD/bin/finn" ~/.local/bin/finn`.
 
 `finn --version` prints the versions of the server and the client: the UTC time of the commit, as `20261118123456` ([Versions](cli.md#versions)).

@@ -4,6 +4,7 @@
 
 ### Changed
 
+- tree-sitter-bash's parser comes from a git submodule: after updating a clone, run `make install` once to fetch it.
 - The packages of the repository have no tags of their own any more, only `finn-<ts>`; using `core` from outside the repository waits for agc-agent#290 and agentica#1850.
 - The version of Finn is the UTC time of its commit (`20261118123456`), with a `finn-` tag per merge to main; a client says when its server is older or newer and names `finn server restart`, never a `kill`. `finn server stop` ends a server that does not take the request by its pid (`--now` forces it).
 - **Breaking:** Finn needs Agentica 0.34.0. A model stream that is silent for 2 minutes now fails, rather than hanging; the event stream of a session has no read limit.

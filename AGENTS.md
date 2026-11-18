@@ -19,6 +19,8 @@ monty/               Python scripts in pydantic's Monty sandbox: the pinned `mon
 bash/                the simple commands of a bash line, read by tree-sitter-bash; native/ holds the vendored C
                      (runtime/, grammar/, MIT) and the module, whose header native-gen makes (`make native-header`);
                      bash.agc is its public module; tests/test_bash_peer.py checks it against real bash
+vendor/              tree-sitter-bash, a submodule that `make install` fetches: the parser (9.5 MB) that
+                     bash/native/grammar/parser.c includes, kept outside bash/ (a fetched file is at most 1 MiB)
 core/                the server: agent loop, tools, approval, sessions, extensions;
                      main.agc is the entry point, core.agc the public module (`Core.serve` with a registry
                      of extensions)
@@ -71,7 +73,9 @@ A package is added by the phase that needs it, never as an empty folder.
   server runs in `Driver.within_dir` (cli), which stops every server of its
   state folder and removes the folder.
   `native-check` fails when `bash/native/bash_native.h` is stale (native-gen,
-  cloned into `.tools/`). `install` fetches bond into `core/deps/` and
+  cloned into `.tools/`), or when `bash/native/grammar/parser.c` does not
+  name the sha256 of the submodule's parser (the line puts it in the source
+  key of the module). `install` fetches bond into `core/deps/` and
   agentica-tui into `tui_client/deps/` (gitignored); `check`, `smoke` and `pty`
   run it first.
 - `cli` tests run the client as a child process on pipes (the Makefile

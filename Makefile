@@ -45,10 +45,10 @@ FIREWORKS_MODEL ?= accounts/fireworks/models/deepseek-v4p1-flash-1017
 tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); status=$$?; echo "$$out"; [ $$status -eq 0 ] || exit 1; \
   echo "$$out" | tail -n 1 | grep -Eq '^[1-9][0-9]* passed' || { echo "no test passed in $(1)/$(2)" >&2; exit 1; }
 
-.PHONY: install check coupling fmt-check native-gen native-header native-check unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
+.PHONY: install check coupling fmt-check native-source native-gen native-header native-check unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
 # The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
-install:
+install: native-source
 	cd core && $(AGENTICA) install
 	cd tui_client && $(AGENTICA) install
 	cd examples/extension && $(AGENTICA) install
@@ -97,15 +97,24 @@ native-gen:
 	fi
 native-header: native-gen
 	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h
-native-check: native-gen
+native-check: native-gen native-source
 	cd bash && $(AGENTICA) ../$(NATIVE_GEN)/native-gen/cli.agc src/tree.agc --output native/bash_native.h --check
+	@diff -r -x LICENSE -x parser.c -x grammar.json -x node-types.json bash/native/grammar $(TREE_SITTER_BASH)/src || \
+	  { echo 'native-check: bash/native/grammar is not src/ of $(TREE_SITTER_BASH) (but its LICENSE and the stub parser.c)' >&2; exit 1; }
+
+# tree-sitter-bash's parser (9.5 MB), which bash/native/grammar/parser.c includes, is in the submodule
+# TREE_SITTER_BASH, outside bash/: a fetched package holds no file over 1 MiB. native-source (scripts/native-source.sh)
+# makes sure that the submodule holds the parser that the stub names by its sha256, and fails outside a git clone.
+TREE_SITTER_BASH = vendor/tree-sitter-bash
+native-source:
+	@sh scripts/native-source.sh
 
 fmt-check:
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} sh -c 'cd {} && $(AGENTICA) fmt --check .'
 
 # The packages run at once, and the files of each (`agentica test --jobs`).
 # After them, whether they passed or not, `leftovers` fails the run when one left a server running.
-unit:
+unit: native-source
 	printf '%s\n' $(PACKAGES) | xargs -P $(JOBS) -I{} $(MAKE) --no-print-directory unit-package PACKAGE={}; \
 	  status=$$?; $(MAKE) --no-print-directory leftovers || exit 1; exit $$status
 
@@ -153,7 +162,7 @@ pty: install
 	  exit $$status
 
 # The commands bash's parser finds against those real bash runs (Python standard library only).
-peer:
+peer: native-source
 	python3 -m unittest bash/tests/test_bash_peer.py -v
 
 test: check native-check unit smoke pty peer
