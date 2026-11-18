@@ -104,9 +104,10 @@ def test_a_login_says_whether_it_made_the_provider_the_default() -> Result[Void]
   end
 end
 
-# The choice file is read at the start; a choice whose provider is not offered any more, or whose model is not in the
-# provider's list, is dropped with one note.
-def test_a_last_choice_of_a_provider_that_is_not_offered_is_dropped_with_a_note() -> Result[Void]
+# The choice file is read at the start; a choice whose provider is not offered any more is dropped with one note;
+# a model
+# that is not in the provider's list is kept, with one note.
+def test_a_last_choice_of_a_provider_that_is_not_offered_is_dropped_and_an_unlisted_model_kept() -> Result[Void]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-choice-#{Random.int(0, 999999999)}"
   try Dir.mkdir(dir)
   never = -> { ok("tok") }
@@ -122,7 +123,7 @@ def test_a_last_choice_of_a_provider_that_is_not_offered_is_dropped_with_a_note(
   _ = Path.remove(dir)
   try Test.eq(ghost.login.map { |l| l.choice.none? }, some(true))
   try Test.eq(ghost.warnings.select { |w| w.include?("ghost") }.size, 1)
-  try Test.eq(gone.login.map { |l| l.choice.map { |c| c.model } }, some(some("")))
+  try Test.eq(gone.login.map { |l| l.choice.map { |c| c.model } }, some(some("gone")))
   try Test.eq(gone.warnings.select { |w| w.include?("gone") }.size, 1)
   try Test.eq(kept.login.map { |l| l.choice.map { |c| c.model } }, some(some("m1")))
   Test.eq([kept.provider_pinned, pinned.provider_pinned, based.provider_pinned], [false, true, true])
@@ -174,6 +175,25 @@ def test_a_refusal_of_the_local_provider_says_to_pick_a_provider() -> Result[Voi
     )
 
     Test.eq(texts[1].include?("the local provider"), false)
+  end
+end
+
+# With `FINN_BASE_URL` set, the refusal of `local` names the key of that URL, not a login.
+def test_a_refusal_with_a_base_url_set_names_the_key() -> Result[Void]
+  setup = H.Setup(replies: ["401:bad_request.json"], env: {"FINN_BASE_URL": "http://127.0.0.1:9/v1"})
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Hi.")
+    a = try H.until(a, Protocol.EventKind.Error)
+    H.close(a)
+    text = "#{a.seen.map { |s| s.event }}"
+    try Test.eq(
+      text.include?("the local provider refused the request (HTTP 401): check FINN_API_KEY, or pick a provider"),
+      true,
+    )
+
+    Test.eq(text.include?("log in with /login"), false)
   end
 end
 

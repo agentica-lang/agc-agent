@@ -43,6 +43,8 @@ STATE_DIR_ENV = "FINN_STATE_DIR"
 DATA_DIR_ENV = "FINN_DATA_DIR"
 ## The provider and model last picked, in the state folder.
 CHOICE_FILE = "choice.json"
+## The variables that name the provider: one of them set wins over the last choice.
+PROVIDER_PINS = ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"]
 PREFIX = "FINN_"
 OLD_PREFIX = "AGC_AGENT_"
 DEFAULT_BASE_URL = "http://127.0.0.1:8080/v1"
@@ -185,10 +187,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     if providers.has_key?(found.provider) and not found.model.empty? and not providers[found.provider].models.empty?
       if not providers[found.provider].models.include?(found.model)
         stale = stale.push(
-          "the model of the last choice, #{found.model}, is not in the models of #{found.provider}: new sessions use its default",
+          "the model of the last choice, #{found.model}, is not in the models of #{found.provider}: new sessions still use it",
         )
-
-        choice = some(Logins.Choice(provider: found.provider))
       end
     end
 
@@ -212,7 +212,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     local_url: base_url,
     local_env: set_name(read, "FINN_BASE_URL").unwrap_or(""),
     local_key: api_key,
-    chosen: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
+    chosen: provider_pinned?(read),
     chatgpt: some(chatgpt),
     choice: choice,
     choice_file: some(choice_path),
@@ -268,7 +268,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
       files_command: try files_command(read),
       mouse: try mouse_setting(read),
-      provider_pinned: ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"].any? { |name| set(read, name).some? },
+      provider_pinned: provider_pinned?(read),
       model_pinned: set(read, "FINN_MODEL").some?,
     ),
   )
@@ -472,6 +472,8 @@ end
 struct FilesKey
   command: List[String]
 end
+
+def provider_pinned?(read: Fn[String, Result[String]]) -> Bool = PROVIDER_PINS.any? { |name| set(read, name).some? }
 
 def local_url(fallback: String, env_url: Optional[String], urls: Map[String, String]) -> String
   env_url.unwrap_or(urls.get(Providers.LOCAL).unwrap_or(fallback))

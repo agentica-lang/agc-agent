@@ -508,8 +508,15 @@ def save_choice(path: String, choice: Choice) -> Result[Void]
 
   # Never a half written file where the next start reads: made aside, then moved.
   temp = "#{path}.#{Random.int(0, 999999999)}.tmp"
-  try File.open(temp, "create_private") do |handle| File.write(handle, text) end
-  Path.rename(temp, path)
+  written = File.open(temp, "create_private") do |handle| File.write(handle, text) end
+  moved = Path.rename(temp, path)
+  if not written.ok? or not moved.ok?
+    _ = Path.remove(temp)
+  end
+
+  return written if not written.ok?
+
+  moved
 end
 
 def done(changed: Result[State]) -> Result[Void]

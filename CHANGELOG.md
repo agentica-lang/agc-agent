@@ -17,6 +17,7 @@
 
 ### Fixed
 
+- A new session on a provider with no model of its own waits for the model catalog (up to 1.5 s) before taking the first model it lists, instead of starting on `default`; a model you picked that is not in the provider's `models` list is kept, with a warning, and a failed write of `choice.json` leaves no temp file behind.
 - A refusal or a connection failure of the `local` provider says `pick a provider with /model, or log in with /login` (and is a warning in `/logs`); a successful `finn login chatgpt` followed by `finn` no longer opens a session on `local` that fails with HTTP 401.
 - `finn login chatgpt` works again: OpenAI answers the device code with its `interval` as text, which the login did not read.
 - A `finn` that ends with an error prints why after the screen closes, also a failed `finn login`; it ended with code 1 and said nothing.

@@ -684,7 +684,13 @@ end
 # model on the server's provider, and `default` on another.
 def default_model(options: Config.Options, provider: String, api: String) -> String
   if options.model_unset and provider == options.provider
-    # The provider of the last choice has no model of its own: the first model it lists, which the clients show too.
+    # The provider of the last choice has no model of its own: the first model it lists, which the clients show too,
+    # so a
+    # catalog that still loads is waited for.
+    for catalog in option_list(options.catalog)
+      _ = Catalog.wait(catalog, options.catalog_wait_ms)
+    end
+
     listed = provider_info(options, provider).models.select { |m| m != Config.DEFAULT_MODEL }
     return listed[0] if not listed.empty?
   end

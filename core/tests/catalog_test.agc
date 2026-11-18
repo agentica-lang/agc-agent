@@ -193,6 +193,41 @@ def test_a_login_with_no_model_of_its_own_starts_on_the_first_model_of_the_catal
   end
 end
 
+# The first session after such a login waits for a catalog that still loads, up to `catalog_wait_ms`, so it does
+# not start
+# on `default`.
+def test_a_new_session_waits_for_the_catalog_before_taking_its_first_model() -> Result[Void]
+  within_models do |served, dir|
+    slow = served.url.replace("/api.json", "/slow.json")
+    catalog = Catalog.start(Catalog.Options(url: slow, cache: "#{dir}/models.json"))
+    setup = H.Setup(
+      replies: ["models_small.json"],
+      logins: ["openai"],
+      catalog: some(catalog),
+      catalog_wait_ms: 10_000,
+    )
+
+    result = H.using(setup) do |h|
+      answer = try H.post(h, Protocol.auth_path("openai"), Protocol.encode_login(Protocol.Login(key: "sk-1")))
+      try Test.eq(answer.status, 200)
+      try Test.eq(Catalog.models(catalog, "openai"), [])
+      opener = Task.spawn do
+        Task.sleep(300)
+        served.gate.close
+      end
+
+      made = try H.session(h, try H.new_session(h))
+      _ = Task.await(opener, 5000)
+      listed = Catalog.models(catalog, "openai")
+      try Test.assert(not listed.empty? and listed.include?(made.model), "model #{made.model}")
+      ok()
+    end
+
+    Catalog.stop(catalog)
+    result
+  end
+end
+
 # A cache file of an older format (no `version`) is not read: the catalog is fetched again.
 def test_a_cache_of_an_older_format_is_fetched_again() -> Result[Void]
   within_models do |served, dir|
