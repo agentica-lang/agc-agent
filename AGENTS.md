@@ -194,6 +194,9 @@ A package is added by the phase that needs it, never as an empty folder.
   follow-up issues there, not work here.
 - Every user-visible change adds a line under `## [Unreleased]` of
   `CHANGELOG.md`.
+- Releases are made by hand at milestones, from the CHANGELOG, over an existing
+  `finn-<ts>` tag (the Latest release); `bash-native-*` releases are
+  pre-releases, so they never show as Latest.
 - A user-visible change updates its page of the user guide in
   `docs/content/` (`make docs` builds it). A page keeps one line per paragraph
   or list item, as the other sites of the docs theme do; a link to another
