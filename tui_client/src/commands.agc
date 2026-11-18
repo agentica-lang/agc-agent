@@ -7,6 +7,7 @@ import Picker from "picker"
 import State from "state"
 import Logins from "logins"
 import Turn from "turn"
+import Terminal from "terminal"
 import Session from "session"
 
 def on_picker_key(app: State.Model, picker: Picker.Picker, event: TUI.Event) -> State.Model
@@ -38,6 +39,7 @@ def on_command(app: State.Model, command: Client.Command) -> State.Model
     Client.Command.Profile(name) -> State.tried(app, profile_command(app, name))
     Client.Command.Compact -> compact_command(app)
     Client.Command.Logs(count) -> State.tried(app, logs_command(app, count))
+    Client.Command.Mouse -> mouse_command(app)
     Client.Command.Login(name) -> Logins.login_command(app, name)
     Client.Command.Logout(name) -> State.tried(app, Logins.logout_command(app, name))
   end
@@ -92,6 +94,20 @@ def moved(app: State.Model, result: Result[Protocol.Branched]) -> State.Model
       State.noted(filled, "went back before a message: it is in the prompt (typing replaces it, an arrow keeps it)")
     error(e) -> State.noted(app.with(moving: false), "error: #{e.message}")
   end
+end
+
+## The mouse reporting goes off or on: off, the terminal selects text itself, and the app only draws.
+def mouse_command(app: State.Model) -> State.Model
+  turned = turn_mouse(app, not app.mouse)
+  return State.noted(turned, "mouse on: drag to select and copy, click to fold; /mouse turns it off") if turned.mouse
+
+  State.noted(turned, "mouse off: the terminal selects text; /mouse turns it on")
+end
+
+## The model with the mouse reporting set, the terminal told.
+def turn_mouse(app: State.Model, on: Bool) -> State.Model
+  app.write.call(Terminal.mouse(on))
+  app.with(mouse: on, selection: none, pressed: none, click: none)
 end
 
 private

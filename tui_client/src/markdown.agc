@@ -5,6 +5,11 @@ import Width from "width"
 
 FENCE = "```"
 BULLET = "• "
+## How a row goes on from the one before: it starts a line of the text, or the text was cut there to fit the width, at
+## a space that is not drawn (`JOIN_SPACE`), or inside a word or a code line (`JOIN_DIRECT`).
+JOIN_NEW = 0
+JOIN_SPACE = 1
+JOIN_DIRECT = 2
 
 ## How a span looks: the markdown of an answer, and the parts of a tool call (its title, its argument, its output and
 ## the removed and added lines of its diff).
@@ -25,22 +30,44 @@ struct Span
   look: Look
 end
 
+## A row of the text, and how it goes on from the row before.
+struct Marked
+  spans: List[Span]
+  join: Int = 0
+  ## The columns of indent a row of a list item starts with after the first: drawn, but not part of the text.
+  indent: Int = 0
+end
+
 ## The rows of `text` in `width` columns, each a list of spans.
-def rows(text: String, width: Int) -> List[List[Span]]
+def rows(text: String, width: Int) -> List[List[Span]] = marked(text, width).map { |row| row.spans }
+
+## The same rows, each with whether it goes on the one before.
+def marked(text: String, width: Int) -> List[Marked]
   columns = [width, 1].max.unwrap!
-  out: List[List[Span]] = []
+  out: List[Marked] = []
   code = false
   for line in text.split("\n")
     if line.strip.start_with?(FENCE)
       code = not code
     elsif code
-      out = out + chunks(line, columns).map { |piece| [Span(text: piece, look: Look.Code)] }
+      pieces = chunks(line, columns)
+      out = (
+        out +
+        (0...pieces.size).to_a.map { |at| Marked(spans: [Span(text: pieces[at], look: Look.Code)], join: if_cut(at)) }
+      )
     else
       out = out + block(line, columns)
     end
   end
 
   out
+end
+
+# A row of a code line, which is cut at any character: each but the first goes on directly.
+def if_cut(at: Int) -> Int
+  return JOIN_NEW if at == 0
+
+  JOIN_DIRECT
 end
 
 ## A code line in rows of `columns`, cut at any character so its spaces stay.
@@ -86,7 +113,7 @@ def bold_if(bold: Bool, look: Look) -> Look
   look
 end
 
-def block(line: String, width: Int) -> List[List[Span]]
+def block(line: String, width: Int) -> List[Marked]
   heading = heading_text(line)
   return wrapped(inline(heading.unwrap!, Look.Heading), width) if heading.some?
 
@@ -97,8 +124,14 @@ def block(line: String, width: Int) -> List[List[Span]]
   rest = item.unwrap![1]
   body = wrapped(inline(rest, Look.Plain), width - Width.text(lead))
   indent = " " * Width.text(lead)
-  first = merged([Span(text: lead, look: Look.Plain)] + body[0])
-  [first] + body.drop(1).map { |row| merged([Span(text: indent, look: Look.Plain)] + row) }
+  first = Marked(spans: merged([Span(text: lead, look: Look.Plain)] + body[0].spans), join: body[0].join)
+  width_of_lead = Width.text(lead)
+  later = body.drop(1)
+    .map do |row|
+      Marked(spans: merged([Span(text: indent, look: Look.Plain)] + row.spans), join: row.join, indent: width_of_lead)
+    end
+
+  [first] + later
 end
 
 # `# Title` to `###### Title`: the title.
@@ -128,9 +161,10 @@ def list_item(line: String) -> Optional[List[String]]
 end
 
 # The spans cut into rows at spaces, a word longer than a row cut where it must.
-def wrapped(spans: List[Span], width: Int) -> List[List[Span]]
+def wrapped(spans: List[Span], width: Int) -> List[Marked]
   columns = [width, 1].max.unwrap!
-  rows: List[List[Span]] = []
+  rows: List[Marked] = []
+  join = JOIN_NEW
   row: List[Span] = []
   used = 0
   for word in words(spans)
@@ -149,7 +183,8 @@ def wrapped(spans: List[Span], width: Int) -> List[List[Span]]
       used = used + gap + size
     else
       if used > 0
-        rows = rows.push(merged(row))
+        rows = rows.push(Marked(spans: merged(row), join: join))
+        join = JOIN_SPACE
       end
 
       row = word
@@ -163,7 +198,8 @@ def wrapped(spans: List[Span], width: Int) -> List[List[Span]]
             cut = [text.slice(0, 1), text.slice(1, text.length - 1)]
           end
 
-          rows = rows.push([Span(text: cut[0], look: look)])
+          rows = rows.push(Marked(spans: [Span(text: cut[0], look: look)], join: join))
+          join = JOIN_DIRECT
           text = cut[1]
         end
 
@@ -173,7 +209,7 @@ def wrapped(spans: List[Span], width: Int) -> List[List[Span]]
     end
   end
 
-  rows.push(merged(row))
+  rows.push(Marked(spans: merged(row), join: join))
 end
 
 # The words of the spans, each a list of spans: `**bold**,` is one word of two looks.
