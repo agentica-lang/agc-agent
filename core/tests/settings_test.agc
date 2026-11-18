@@ -179,6 +179,8 @@ def test_a_session_switches_the_confinement_of_its_file_tools() -> Result[Void]
     try Test.eq((try patch(h, id, "{\"confine\": true}")).status, 200)
     try Test.eq((try H.session(h, id)).confine, true)
     try Test.eq((try H.session(h, try H.new_session(h))).confine, false)
+    forked = try H.post(h, Protocol.fork_path(id), Protocol.encode_fork(Protocol.Fork(entry: none)))
+    try Test.eq((try H.session(h, (try Protocol.decode_branched(forked.text)).id)).confine, true)
     try Test.eq((try patch(h, id, "{\"confine\": false}")).status, 200)
     Test.eq((try H.session(h, id)).confine, false)
   end
