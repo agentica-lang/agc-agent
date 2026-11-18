@@ -57,10 +57,11 @@ struct Expanded
   names: List[String]
 end
 
-## The skills of the session folder `root` (when `trusted`) and of `home` (none when empty), then the built-in `finn`
-## when `docs` is the folder of Finn's pages, sorted by name, at most `MAX_SKILLS`. A project skill shadows a user
-## skill of the same name, and either the built-in one; in one scope the first root wins. A skills root may be a link,
-## which is resolved once; a link inside it is not followed.
+## The skills of the session folder `root` (when `trusted`) and of `home` (none when empty), sorted by name, at most
+## `MAX_SKILLS`; then the built-in `finn` when `docs` is a folder with pages of Finn's and there is room for it (the
+## user's and the project's skills count first). A project skill shadows a user skill of the same name, and either the
+## built-in one; in one scope the first root wins. A skills root may be a link, which is resolved once; a link inside
+## it is not followed.
 def discover(root: String, home: String, trusted: Bool, docs: String = "") -> Found
   found = Found(skills: [], warnings: [])
   if trusted
@@ -71,12 +72,17 @@ def discover(root: String, home: String, trusted: Bool, docs: String = "") -> Fo
     found = scope(found, home)
   end
 
-  found = bundled(found, docs)
-
   sorted = found.skills.sort_by { |skill| skill.name }
-  return found.with(skills: sorted) if sorted.size <= MAX_SKILLS
+  found = found.with(skills: sorted)
+  if sorted.size > MAX_SKILLS
+    found = warned(
+      found.with(skills: sorted.take(MAX_SKILLS)),
+      "#{sorted.size} skills: only the first #{MAX_SKILLS} are used",
+    )
+  end
 
-  warned(found.with(skills: sorted.take(MAX_SKILLS)), "#{sorted.size} skills: only the first #{MAX_SKILLS} are used")
+  found = bundled(found, docs)
+  found.with(skills: found.skills.sort_by { |skill| skill.name })
 end
 
 ## The catalog for the system prompt: the skills the model may load, sorted; empty when there is none.
@@ -388,20 +394,35 @@ def read_skill(found: Found, dir: String) -> Found
 end
 
 def bundled(found: Found, docs: String) -> Found
-  return found if (docs == "" or found.skills.any? { |skill| skill.name == BUNDLED })
+  return found if docs == "" or found.skills.size >= MAX_SKILLS
+  return found if (found.skills.any? { |skill| skill.name == BUNDLED })
 
   real = Path.real(docs)
   return found if not real.ok? or not directory?(real.unwrap!)
 
   dir = real.unwrap!
+  return found if pages(dir).empty?
+
   skill = Skill(name: BUNDLED, description: BUNDLED_DESCRIPTION, location: "", dir: dir, for_model: true)
   found.with(skills: found.skills.push(skill))
 end
 
+# The pages of the built-in skill: the Markdown files of `dir` itself, sorted, but those that start with `_` (the home
+# page) and any that is not a regular file (a link may lead out of the folder, and `read_file` would follow it).
+def pages(dir: String) -> List[String]
+  names_in(dir).select { |name| name.end_with?(".md") and not name.start_with?("_") and regular?("#{dir}/#{name}") }
+end
+
+def regular?(path: String) -> Bool
+  case File.lstat(path)
+    ok(info) -> info.kind == "file"
+    error(_) -> false
+  end
+end
+
 # The body of the built-in skill: one line a page, from the descriptions in the pages' frontmatter.
 def bundled_body(dir: String) -> String
-  pages = names_in(dir).select { |name| name.end_with?(".md") and not name.start_with?("_") }
-  lines = pages.map { |name| "- #{name}: #{page_description(dir, name)}" }
+  lines = pages(dir).map { |name| "- #{name}: #{page_description(dir, name)}" }
   (
     "Finn's documentation is the Markdown pages of the folder below, of the version that runs. Pick the page that " +
     "fits the task, read it with read_file (the skill directory and the page name make the path), and follow its " +

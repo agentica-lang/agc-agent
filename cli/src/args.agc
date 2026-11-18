@@ -186,7 +186,7 @@ def parse_docs(args: List[String]) -> Result[Command]
     "finn docs lists the pages of Finn's own documentation, in the version that runs; finn docs PAGE prints one as " +
     "Markdown, without its front matter (a link in it names a page of the same folder).",
     [],
-    [Opt(name: "state-dir", help: "not used: the pages are files of the install")],
+    [],
     "PAGE",
   )
 

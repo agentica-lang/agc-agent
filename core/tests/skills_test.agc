@@ -70,11 +70,13 @@ end
 # Finn's own pages are the resources of the built-in skill `finn`: a task about extending Finn makes the model load
 # it and read the page, in place; its index has a line a page, without the home page.
 def test_the_model_reads_the_docs_of_finn_through_the_built_in_skill() -> Result[Void]
-  replies = ["activate_finn.sse", "read_docs_page.sse", "text.sse"]
+  replies = ["activate_finn.sse", "read_docs_page.sse", "read_docs_link.sse", "text.sse"]
   H.using(H.Setup(replies: replies, docs: true)) do |h|
     docs = "#{h.base}/docs"
     try write("#{docs}/extensions.md", EXTENSIONS_PAGE)
     try write("#{docs}/tools.md", TOOLS_PAGE)
+    try write("#{h.base}/outside.md", "outside the docs\n")
+    try link("#{h.base}/outside.md", "#{docs}/secret.md")
     try write("#{docs}/_index.md", "---\ntitle: Finn\ndescription: The home page.\n---\n")
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
@@ -94,9 +96,11 @@ def test_the_model_reads_the_docs_of_finn_through_the_built_in_skill() -> Result
       loaded,
     )
 
-    try Test.assert(not loaded.include?("_index"), loaded)
+    try Test.assert(not loaded.include?("_index") and not loaded.include?("secret"), loaded)
     try Test.assert(loaded.include?("Skill directory: #{docs}"), loaded)
-    Test.eq(last_content(h), ok(EXTENSIONS_PAGE))
+    try Test.eq(last_content(h), ok(EXTENSIONS_PAGE))
+    refused = try last_content(h)
+    Test.assert(refused.start_with?("Error:") and not refused.include?("outside the docs"), refused)
   end
 end
 
@@ -230,6 +234,42 @@ def test_discovery_keeps_at_most_100_skills() -> Result[Void]
   _ = Path.remove(base)
   try Test.eq([found.skills.size.to_s, found.skills.last.name], ["100", "s1099"])
   Test.assert(found.warnings.any? { |w| w.include?("101 skills") }, "#{found.warnings}")
+end
+
+# The built-in skill takes the room that the user's and the project's skills leave: with 100 of them it is not added,
+# and with 99 it is.
+def test_the_built_in_skill_never_takes_the_place_of_another() -> Result[Void]
+  base = try fresh()
+  try write("#{base}/docs/extensions.md", EXTENSIONS_PAGE)
+  for i in 0...100
+    name = "s#{(1000 + i).to_s}"
+    try write("#{base}/home/.agents/skills/#{name}/SKILL.md", "---\ndescription: d\n---\n")
+  end
+
+  full = Skills.discover(base, "#{base}/home", false, "#{base}/docs")
+  try Test.eq([full.skills.size.to_s, full.skills.any? { |skill| skill.name == "finn" }.to_s], ["100", "false"])
+  try Test.eq(full.warnings, [])
+  _ = Path.remove("#{base}/home/.agents/skills/s1099")
+  room = Skills.discover(base, "#{base}/home", false, "#{base}/docs")
+  _ = Path.remove(base)
+  try Test.eq([room.skills.size.to_s, room.skills.any? { |skill| skill.name == "finn" }.to_s], ["100", "true"])
+  Test.eq(room.skills.map { |skill| skill.name }, room.skills.map { |skill| skill.name }.sort)
+end
+
+# Only regular files of the folder are pages: a link (that could lead out of it) is neither listed nor read, and a
+# folder with no page gives no skill.
+def test_the_built_in_skill_lists_only_regular_pages() -> Result[Void]
+  base = try fresh()
+  try write("#{base}/outside.md", "secret\n")
+  try write("#{base}/docs/extensions.md", EXTENSIONS_PAGE)
+  try link("#{base}/outside.md", "#{base}/docs/secret.md")
+  skills = Skills.discover("#{base}/work", "", false, "#{base}/docs").skills
+  loaded = Skills.on_message("/finn", skills, []).text
+  try Test.assert(loaded.include?("- extensions.md:"), loaded)
+  try Test.assert(not loaded.include?("secret"), loaded)
+  try write("#{base}/only/_index.md", "---\ndescription: Home.\n---\n")
+  try link("#{base}/outside.md", "#{base}/only/secret.md")
+  Test.eq(Skills.discover("#{base}/work", "", false, "#{base}/only").skills.size, 0)
 end
 
 # A session reads a loaded skill's files by their absolute path, not a relative one; a `/name` marks the skill at once,
