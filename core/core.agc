@@ -20,8 +20,8 @@ import Server from "src/http/server"
 import Builtins from "src/session/builtins"
 import Tools from "src/tools/tools"
 
-## The version of the core package, as its tag (`core-0.0.1`). The version of Finn that a server runs is the time of its
-## commit (`/v1/health`).
+## The version of the core package, informational (no tag follows it). A server runs the version of Finn, the time of
+## its commit (`/v1/health`).
 VERSION = "0.0.1"
 
 export Extensions.Registry
