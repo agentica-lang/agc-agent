@@ -597,6 +597,45 @@ def test_yolo_says_it_changes_nothing_when_the_approvals_are_off() -> Result[Voi
   end
 end
 
+# A server of this client's protocol but another version serves it, with one line that says which side is older; an
+# older server's line names the restart. Equal versions say nothing.
+def test_a_server_of_another_version_serves_the_client_with_a_note() -> Result[Void]
+  client = "20261118000000"
+  restart = "`finn server restart --state-dir "
+  cases = [
+    ["20260101000000", "the server runs an older Finn (20260101000000) than this client (#{client}): #{restart}"],
+    ["0.0.1", "the server runs an older Finn (0.0.1) than this client (#{client})"],
+    ["20270101000000", "this client (#{client}) is older than the server (20270101000000): start the client again"],
+    [client, ""],
+  ]
+
+  for pair in cases
+    health = Protocol.encode_health(Protocol.Health(version: pair[0], wire: some(Protocol.wire_digest())))
+    answers = [Fake.Reply(body: health), Fake.Reply(body: health), Fake.Reply(body: health)]
+    routes = [
+      Fake.Route(method: "GET", path: Protocol.HEALTH_PATH, replies: answers),
+      Routes.created(),
+      Routes.held_events(),
+      Routes.accepting(["turn.sse"]),
+    ]
+
+    try Driver.within(routes) do |rig|
+      done = try Driver.exited(try Driver.start(rig.dir, PLAIN + ["-p", "hello"], extra: {"FINN_VERSION": client}))
+      try Test.eq(done.code, 0)
+      try Test.eq(done.lines, ["I'll read the file.", "It says \"agc-agent\"."])
+      if pair[1].empty?
+        try Test.assert(not done.errors.include?("Finn ("), "no note: #{done.errors}")
+      else
+        try Test.assert(done.errors.include?(pair[1]), "the note: #{done.errors}")
+      end
+
+      ok()
+    end
+  end
+
+  ok()
+end
+
 def test_one_shot_denies_approvals_and_yolo_allows_them() -> Result[Void]
   for yolo in [false, true]
     end_pushes = ["denied_end.sse"]

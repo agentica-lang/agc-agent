@@ -52,7 +52,13 @@ These work for `finn` and `finn chat`:
 
 ### The server
 
-`finn server stop` waits for the running turns to end (`FINN_DRAIN_MS`, a minute by default), and `--now` cancels them. `finn server logs` prints the end of the server's log, and `-f` follows it.
+`finn server stop` waits for the running turns to end (`FINN_DRAIN_MS`, a minute by default), and `--now` cancels them. A server that does not take the request (one of another version, or one that does not answer) gets `SIGTERM` by the pid of its `server.json`, and with `--now` `SIGKILL`; when it is still there after 30 s, the error names `finn server stop --now`. The sessions are kept. `finn server logs` prints the end of the server's log, and `-f` follows it.
+
+### Versions
+
+The version of Finn is the UTC time of the commit it runs, `YYYYMMDDhhmmss`, and each one on `main` has the tag `finn-YYYYMMDDhhmmss`. `bin/finn` reads it from git (or, in an archive without `.git`, from `bin/commit-time`) and passes it to the server and the clients in `FINN_VERSION`; a program started without it says `unknown`.
+
+A server keeps running the code it started with, so after a `git pull` it can be older than the client. The client then says which side is older. A server of the same protocol still serves it, with one line such as `the server runs an older Finn (20261101093000) than this client (20261118123456)`, and `finn server restart` starts the new one; a server of another protocol is not used, and the client says the same. `finn server status` shows the comparison next to the server's version.
 
 ## Slash commands
 

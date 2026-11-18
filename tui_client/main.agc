@@ -18,7 +18,7 @@ private
 
 def dispatch(command: Args.Command) -> Void
   case command
-    Args.Command.Version -> puts("Finn Agent tui #{Args.VERSION}")
+    Args.Command.Version -> puts("Finn Agent tui #{Client.finn_version()}")
     Args.Command.Help(text) -> puts(text)
     Args.Command.Run(options) -> finish(run(options))
     Args.Command.Login(options) -> finish(login(options))
@@ -27,8 +27,10 @@ end
 
 def run(options: Args.Options) -> Result[App.Ended]
   launch = Args.launch(options)
-  server = try Client.connect(launch, try Client.state_dir(launch))
-  noted = options.with(server_note: Client.code_mode_note(server, options.code_mode))
+  dir = try Client.state_dir(launch)
+  server = try Client.connect(launch, dir)
+  notes = [Client.code_mode_note(server, options.code_mode), Client.version_note(server, dir)]
+  noted = options.with(server_notes: notes.select { |note| not note.empty? })
   TUI.Raw.open(->(screen) { App.run(screen, Client.http_backend(server), noted) })
 end
 

@@ -117,17 +117,19 @@ unit-package:
 	$(call tests,$(PACKAGE),tests)
 
 # The entry points run, with their packages read from the workspace; bin/finn also from another folder, through a
-# relative symlink to the bin folder and one to the script (in .tools/, gitignored).
+# relative symlink to the bin folder and one to the script (in .tools/, gitignored). Run directly, a program has no
+# version; bin/finn gives it the time of the commit.
 smoke: install
-	out=$$($(AGENTICA) core/main.agc --version) && echo "$$out" | grep -qx 'Finn Agent core [0-9.]* (llm [0-9.]*)'
-	out=$$($(AGENTICA) cli/main.agc --version) && echo "$$out" | grep -qx 'Finn Agent cli [0-9.]*'
+	out=$$(FINN_VERSION= $(AGENTICA) core/main.agc --version) && echo "$$out" | grep -qx 'Finn Agent core unknown (llm [0-9.]*)'
+	out=$$(FINN_VERSION= $(AGENTICA) cli/main.agc --version) && echo "$$out" | grep -qx 'Finn Agent cli unknown'
 	mkdir -p .tools/smoke && ln -sfn ../../bin .tools/smoke/bin && ln -sf '$(CURDIR)/bin/finn' .tools/smoke/finn
 	cd / && finn='$(CURDIR)/.tools/smoke/bin/finn' && out=$$("$$finn" --version) && \
-	  echo "$$out" | grep -qx 'Finn Agent core [0-9.]* (llm [0-9.]*)' && echo "$$out" | grep -qx 'Finn Agent cli [0-9.]*' && \
+	  echo "$$out" | grep -Eqx 'Finn Agent core [0-9]{14} \(llm [0-9.]*\)' && \
+	  echo "$$out" | grep -Eqx 'Finn Agent cli [0-9]{14}' && \
 	  "$$finn" --help | grep -q '^usage: finn' && "$$finn" serve --help | grep -q '^usage: finn serve' && \
 	  "$$finn" chat --help | grep -q '^Usage: finn' && ! "$$finn" serve --bogus 2>/dev/null && \
-	  '$(CURDIR)/.tools/smoke/finn' --version | grep -qx 'Finn Agent cli [0-9.]*'
-	out=$$('$(CURDIR)/bin/finn' tui --version) && echo "$$out" | grep -qx 'Finn Agent tui [0-9.]*'
+	  '$(CURDIR)/.tools/smoke/finn' --version | grep -Eqx 'Finn Agent cli [0-9]{14}'
+	out=$$('$(CURDIR)/bin/finn' tui --version) && echo "$$out" | grep -Eqx 'Finn Agent tui [0-9]{14}'
 
 # The TUI client under a pseudo-terminal, against the server against a fake model (Python, standard library only). The
 # client and the core are compiled once, and the tests run JOBS at a time, one process each.

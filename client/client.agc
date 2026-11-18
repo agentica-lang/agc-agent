@@ -10,6 +10,7 @@ import Events from "src/feed"
 import Http from "src/http"
 import Sessions from "src/sessions"
 import Tree from "src/tree"
+import Version from "src/version"
 
 VERSION = "0.0.1"
 
@@ -68,6 +69,11 @@ export Discovery.log_file
 export Discovery.server_pid
 export Discovery.exited?
 export Discovery.recheck
+export Discovery.version_note
+export Discovery.other_version_text
+export Discovery.server_command
+export Version.finn_version
+export Version.version_suffix
 
 export Control.stop_and_wait
 export Control.restart

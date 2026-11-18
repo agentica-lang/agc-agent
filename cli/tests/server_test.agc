@@ -294,6 +294,32 @@ def shows(cli: Process, word: String) -> Result[Void]
   ok()
 end
 
+# A server that does not take the stop request is stopped by the pid of its `server.json`: one of another protocol, and
+# one that holds the lock of its folder but answers badly.
+def test_a_server_that_does_not_take_the_stop_request_is_stopped_by_its_pid() -> Result[Void]
+  for health in [{"FAKE_HEALTH_VERSION": "20260101000000"}, {"FAKE_HEALTH_STATUS": "500"}]
+    try Driver.within_dir(->(dir) { stopped_by_pid(dir, health) })
+  end
+
+  ok()
+end
+
+def stopped_by_pid(dir: String, health: Map[String, String]) -> Result[Void]
+  words = try Driver.fake_command()
+  server = try Process.spawn_captured(words[0], words.drop(1), Process.Options(env: health.put("FINN_STATE_DIR", dir)))
+  result = stop_steps(dir, server)
+  Process.close(server)
+  result
+end
+
+def stop_steps(dir: String, server: Process) -> Result[Void]
+  try Test.eq(try Process.read_line(server, 15_000), "ready")
+  stopped = try run(dir, ["stop"])
+  try Test.assert(stopped.code == 0, "stop: #{stopped.errors}")
+  try Test.eq(stopped.lines, ["server stopped"])
+  Test.eq(try Process.wait(server, 5000), 143)
+end
+
 # A restart that cannot start a server says whether an old one was stopped.
 def test_a_restart_that_fails_to_start_says_no_server_ran() -> Result[Void] = Driver.within_dir(&failed_restart)
 

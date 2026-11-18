@@ -31,14 +31,15 @@ def run(options: Args.ServerOptions) -> Result[Int]
   end
 end
 
-## `status`: the lines of `render`, from the server's answer.
-def render(status: Protocol.ServerStatus, url: String, dir: String, now_s: Int) -> List[String]
+## `status`: the lines of `render`, from the server's answer; its version is compared with `client`, this client's.
+def render(status: Protocol.ServerStatus, url: String, dir: String, now_s: Int, client: String) -> List[String]
+  restart = Client.server_command(dir, "restart")
   (
     [
       "server running",
       "  address #{url}",
       "  pid #{status.pid}",
-      "  version #{status.version}",
+      "  version #{status.version}#{Client.version_suffix(client, status.version, restart)}",
       "  uptime #{uptime(now_s - status.started_s)}",
       "  sessions #{status.sessions}",
       "  running turns #{status.running_turns}",
@@ -93,8 +94,8 @@ end
 def status(dir: String) -> Result[Int]
   case try Client.find(dir)
     Client.Found.Running(server) -> shown(server, dir)
-    Client.Found.Other(pid) ->
-      puts("a server of another version of Finn Agent runs (pid #{pid}): `finn server restart` replaces it")
+    Client.Found.Other(pid, version) ->
+      puts(Client.other_version_text(dir, pid, version))
       ok(0)
     Client.Found.Absent(reason) ->
       puts("no server runs (#{reason})")
@@ -104,7 +105,7 @@ end
 
 def shown(server: Client.Server, dir: String) -> Result[Int]
   info = try Client.server_status(server)
-  for line in render(info, server.url, dir, Time.now_ms / 1000)
+  for line in render(info, server.url, dir, Time.now_ms / 1000, Client.finn_version())
     puts(line)
   end
 
