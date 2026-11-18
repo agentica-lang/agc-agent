@@ -87,7 +87,7 @@ jobs:
       ZIG_VERSION: 0.15.2
       GLIBC: '2.28'
       MACOSX_DEPLOYMENT_TARGET: '12.0'
-      LIBRARY: libbash-${{ needs.key.outputs.api }}-${{ matrix.target }}
+      ASSET: libbash-${{ needs.key.outputs.api }}-${{ matrix.target }}
     defaults:
       run:
         shell: ${{ matrix.shell }}
@@ -115,16 +115,17 @@ jobs:
         run: |
           cache="$PWD/tmp/native-lib/cache"
           if [ "$RUNNER_OS" = Windows ]; then cache=$(cygpath -m "$cache"); fi
+          if [ -n "${CC:-}" ]; then $CC --version || echo "status $?"; $CC -dumpmachine || echo "status $?"; fi
           make native-lib NATIVE_CACHE="$cache"
           for name in libbash.so libbash.dylib bash.dll; do
-            [ -f "tmp/native-lib/$name" ] && cp "tmp/native-lib/$name" "$LIBRARY.${name##*.}"
+            if [ -f "tmp/native-lib/$name" ]; then cp "tmp/native-lib/$name" "$ASSET.${name##*.}"; fi
           done
           ls -l libbash-*
       - name: Test the module
         run: cd bash && agentica test tests
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ env.LIBRARY }}
+          name: ${{ env.ASSET }}
           path: libbash-*
           if-no-files-found: error
 
