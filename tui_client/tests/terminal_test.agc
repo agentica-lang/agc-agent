@@ -560,20 +560,12 @@ def test_a_login_the_server_refuses_ends_with_a_reason() -> Result[Void]
 end
 
 # The warnings of the server are a yellow banner at the top of a started app, not notes of the transcript: the last of
-# them, each text once with its times, and the count. A click on it, or Esc with an empty prompt, closes it; a
-# server with
-# no warnings has none. `/logs N` shows the end of the log.
+# them, each text once with its times, and the count. A click on it, or Esc with an empty prompt, closes it, and a
+# click below it still reaches the transcript.
 def test_the_warnings_of_the_server_are_a_banner_that_a_click_or_esc_closes() -> Result[Void]
   replies = {"GET /v1/logs": Protocol.encode_server_log(warned_log(4))}
-  try within(100, 24, &banner_closed_by_a_click, replies: replies, first: some(&App.server_notes))
-  try within(100, 24, &banner_closed_by_esc, replies: replies, first: some(&App.server_notes))
-  within(
-    100,
-    24,
-    &no_banner,
-    replies: {"GET /v1/logs": Protocol.encode_server_log(warned_log(0))},
-    first: some(&App.server_notes),
-  )
+  try within(100, 16, &banner_closed_by_a_click, replies: replies, first: some(&App.server_notes))
+  within(100, 16, &banner_closed_by_esc, replies: replies, first: some(&App.server_notes))
 end
 
 def warned_log(count: Int) -> Protocol.ServerLog
@@ -598,6 +590,15 @@ def banner_closed_by_a_click(rig: Rig) -> Result[Void]
   )
 
   try Test.assert(rows[0].strip.end_with?("x"), "the first row ends with the x: #{rows[0]}")
+  started = Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "seq 10")
+  output = (1..10).to_a.map { |i| "line #{i}" }.join("\n")
+  finished = Protocol.ToolFinished(call_id: "c1", ok: true, summary: "exit 0", duration_ms: 5, output: some(output))
+  try rig.feed.send(Client.Item.Event(some(1), Protocol.Event.ToolStarted(started)), 1000)
+  try rig.feed.send(Client.Item.Event(some(2), Protocol.Event.ToolFinished(finished)), 1000)
+  try shows(rig, "6 more lines")
+  try click(rig, try find(rig, "$ seq 10"))
+  rows = try shows(rig, "line 10")
+  try Test.assert(rows[0].include?("when the server started"), "a click below the banner leaves it: #{rows[0]}")
   try click(rig, [1, 5])
   gone(rig)
 end
@@ -607,7 +608,7 @@ def banner_closed_by_esc(rig: Rig) -> Result[Void]
   try press(rig, TUI.Event.Char("a", TUI.Mods()))
   try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
   rows = try shows(rig, "pr-reviewer is shadowed (×3)")
-  try Test.assert(rows.any? { |row| row.include?("a") }, "Esc with text in the prompt keeps the banner")
+  try Test.assert(rows[0].include?("when the server started"), "Esc with text in the prompt keeps the banner")
   try press(rig, TUI.Event.Key(TUI.Key.Backspace, TUI.Mods()))
   try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
   try gone(rig)
@@ -618,15 +619,6 @@ def banner_closed_by_esc(rig: Rig) -> Result[Void]
   try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
   try shows(rig, "INFO older")
   ok()
-end
-
-def no_banner(rig: Rig) -> Result[Void]
-  try press(rig, TUI.Event.Char("a", TUI.Mods()))
-  rows = try shows(rig, "a")
-  Test.assert(
-    not rows.any? { |row| row.include?("warnings when the server started") or row.include?("warning when") },
-    "no banner",
-  )
 end
 
 # Waits until the banner is not on the screen.

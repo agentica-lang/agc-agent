@@ -1527,11 +1527,9 @@ def test_finn_login_ends_with_a_line_for_the_console() -> Result[Void]
   Test.eq(["#{failed.code}", "#{failed.line}"], ["1", "none"])
 end
 
-# Enter on the untouched list of `/model`, `/resume`, `/tree` and `/fork` runs the command with the first row
-# shown (the
-# session's model for `/model`): one step, no picker. Tab only completes. `/thinking` still sends the line as
-# typed, and
-# a row moved to in the list of one command does not count once the command changes.
+# Enter on the untouched list of `/model`, `/resume`, `/tree` and `/fork` runs the command with the first row shown
+# (the session's model for `/model`): one step, no picker. Tab only completes. `/thinking` still sends the line as
+# typed, and a row moved to in the list of one command does not count once the command changes.
 def test_enter_on_an_argument_list_runs_the_row() -> Result[Void]
   providers = Protocol.ProviderList(
     provider: "p",
@@ -1632,6 +1630,92 @@ def test_enter_on_an_argument_list_runs_the_row() -> Result[Void]
       "/thinking  high",
     ],
   )
+end
+
+# An argument typed whole is run as typed on Enter, though a row before it also matches (`/model p/gpt-5` with a
+# `gpt-5-mini` above it, `/tree 2` with a node whose text holds a 2); a prompt of more than one line is sent as typed.
+def test_enter_runs_an_argument_typed_whole_and_not_a_longer_row() -> Result[Void]
+  providers = Protocol.ProviderList(
+    provider: "p",
+    providers: [Protocol.ProviderInfo(name: "p", api: "chat", models: ["gpt-5-mini", "gpt-5"])],
+  )
+
+  tree = Protocol.SessionTree(
+    nodes: [
+      Protocol.TreeNode(id: 1, text: "about 2 things", last: 2),
+      Protocol.TreeNode(id: 2, text: "next", last: 2),
+    ],
+  )
+
+  calls: Channel[String] = Channel.new(16)
+  backend = Client.unreachable_backend().with(
+    list_providers: -> { ok(providers) },
+    tree: ->(_id: String) { ok(tree) },
+    session: ->(_id: String) { error("no session here") },
+    update_session: ->(_id: String, change: Protocol.UpdateSession) {
+      _ = calls.send("update #{change.model.unwrap_or("")}", 0)
+      ok()
+    },
+    branch: ->(_id: String, entry: Int) {
+      _ = calls.send("branch #{entry}", 0)
+      error("no branch here")
+    },
+  )
+
+  base = model_of(80, 20).with(backend: backend, id: "s1")
+  ran: List[String] = []
+  for line in ["/model p/gpt-5", "/tree 2", "/model gpt\nmore"]
+    name = line.split(" ")[0]
+    asking = App.update(base.with(prompt: name, cursor: name.length), key_char(" "))
+    listed = asking.model
+    for cmd in asking.cmds
+      listed = App.update(listed, run(cmd)[0]).model
+    end
+
+    first = line.split("\n")[0]
+    typed = listed
+    for c in first.slice(name.length + 1, first.length - name.length - 1).split("")
+      typed = App.update(typed, key_char(c)).model
+    end
+
+    typed = typed.with(prompt: line)
+    sent = App.update(typed, enter())
+    after = sent.model
+    for cmd in sent.cmds
+      for msg in run(cmd)
+        after = App.update(after, msg).model
+      end
+    end
+
+    got: List[String] = []
+    while true
+      case calls.recv(0)
+        ok(call) -> got = got.push(call)
+        error(_) -> break
+      end
+    end
+
+    ran = ran.push("#{first}: #{got.join(",")}")
+  end
+
+  Test.eq(ran, ["/model p/gpt-5: update gpt-5", "/tree 2: branch 2", "/model gpt: update gpt\nmore"])
+end
+
+# The banner of the warnings of the server: none for a log without them, and the head says what closes it (a click only
+# with the mouse on).
+def test_the_banner_head_names_what_closes_it() -> Result[Void]
+  warned = Protocol.ServerLog(lines: [], warnings: ["WARNING bad skill"], warning_count: 2)
+  quiet = Protocol.ServerLog(lines: [], warnings: [], warning_count: 0)
+  clicked = banner_of(warned, true)
+  try Test.eq(clicked.size, 2)
+  try Test.assert(clicked[0].end_with?(": click here or Esc closes this"), clicked[0])
+  try Test.assert(banner_of(warned, false)[0].end_with?(": Esc closes this"), "no click without the mouse")
+  Test.eq(banner_of(quiet, true), [])
+end
+
+def banner_of(log: Protocol.ServerLog, mouse: Bool) -> List[String]
+  backend = Client.unreachable_backend().with(server_log: ->(_lines: Int) { ok(log) })
+  App.server_notes(model_of(80, 20).with(backend: backend, mouse: mouse)).banner
 end
 
 # A coming login cannot be given a key; Esc in the key prompt drops what was typed; under `finn login` the answer to

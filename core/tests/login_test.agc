@@ -104,15 +104,15 @@ def test_a_login_says_whether_it_made_the_provider_the_default() -> Result[Void]
   end
 end
 
-# The choice file is read at the start; a choice whose provider is not offered any more is dropped with one note;
-# a model
-# that is not in the provider's list is kept, with one note.
+# The choice file is read at the start; a choice whose provider is not offered any more is dropped with one note; a
+# model that is not in the provider's list is kept, with one note when there is no catalog that may list it.
 def test_a_last_choice_of_a_provider_that_is_not_offered_is_dropped_and_an_unlisted_model_kept() -> Result[Void]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-choice-#{Random.int(0, 999999999)}"
   try Dir.mkdir(dir)
   never = -> { ok("tok") }
   ghost = try Config.from_env_with(->(n) { choice_env(dir, "ghost", "m", n) }, never)
-  gone = try Config.from_env_with(->(n) { choice_env(dir, "box", "gone", n) }, never)
+  gone = try Config.from_env_with(->(n) { choice_env(dir, "box", "gone", n, {"FINN_MODELS_URL": "off"}) }, never)
+  catalogued = try Config.from_env_with(->(n) { choice_env(dir, "box", "gone", n) }, never)
   kept = try Config.from_env_with(->(n) { choice_env(dir, "box", "m1", n) }, never)
   pinned = try Config.from_env_with(->(n) { choice_env(dir, "box", "m1", n, {"FINN_API": "openai"}) }, never)
   based = try Config.from_env_with(
@@ -125,8 +125,21 @@ def test_a_last_choice_of_a_provider_that_is_not_offered_is_dropped_and_an_unlis
   try Test.eq(ghost.warnings.select { |w| w.include?("ghost") }.size, 1)
   try Test.eq(gone.login.map { |l| l.choice.map { |c| c.model } }, some(some("gone")))
   try Test.eq(gone.warnings.select { |w| w.include?("gone") }.size, 1)
+  try Test.eq(catalogued.warnings.select { |w| w.include?("gone") }.size, 0)
   try Test.eq(kept.login.map { |l| l.choice.map { |c| c.model } }, some(some("m1")))
   Test.eq([kept.provider_pinned, pinned.provider_pinned, based.provider_pinned], [false, true, true])
+end
+
+# A choice that cannot be stored does not stop the session, and leaves no temporary file next to it.
+def test_a_choice_that_cannot_be_stored_leaves_no_temp_file() -> Result[Void]
+  setup = H.Setup(replies: [], providers: ["other"])
+  H.using(setup) do |h|
+    try Dir.mkdir_private(H.choice_file(h.base))
+    _ = try H.new_session_in(h, h.work, none, some("other"), model: some("m1"), remember: true)
+    names = try Dir.list("#{h.base}/state")
+    try Test.eq(names.select { |name| name.end_with?(".tmp") }, [])
+    Test.eq(File.stat(H.choice_file(h.base)).ok?, true)
+  end
 end
 
 def choice_env(

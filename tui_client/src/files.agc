@@ -118,17 +118,23 @@ end
 
 ## Enter on a row of the list of `/model`, `/resume`, `/tree` or `/fork` runs the command with that row, the one
 ## moved to or the first shown, so no picker opens after it; on the list of another command, with the row moved to.
-## With no row (no match, or the list not read yet) the line is sent as typed: the command alone opens its picker. Tab
-## only completes.
+## With no row (no match, or the list not read yet), or an argument typed whole that nothing was moved from, the line
+## is sent as typed: the command alone opens its picker. Tab only completes.
 def runs_choice?(app: State.Model, found: Input.Mention, event: TUI.Event) -> Bool
   case event
     TUI.Event.Key(TUI.Key.Enter, mods) if not mods.alt and found.source == Input.Source.Arguments ->
-      (
-        (Input.RUNNING_COMMANDS.include?(found.command) or moved_in?(app, found)) and
-        not mention_choices(app, found).empty?
-      )
+      choices = mention_choices(app, found)
+      return false if choices.empty? or app.prompt.include?("\n")
+      return true if moved_in?(app, found)
+
+      Input.RUNNING_COMMANDS.include?(found.command) and not typed_whole?(found, choices)
     _ -> false
   end
+end
+
+## Whether the argument typed is one of the choices, as it stands.
+def typed_whole?(found: Input.Mention, choices: List[Input.Choice]) -> Bool
+  found.query != "" and choices.any? { |c| c.value == found.query }
 end
 
 ## The selected row of the list: the one moved to; before a move, the session's model or thinking level when the list

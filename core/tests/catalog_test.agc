@@ -193,9 +193,8 @@ def test_a_login_with_no_model_of_its_own_starts_on_the_first_model_of_the_catal
   end
 end
 
-# The first session after such a login waits for a catalog that still loads, up to `catalog_wait_ms`, so it does
-# not start
-# on `default`.
+# The first session after such a login waits for a catalog that still loads, up to `catalog_wait_ms`, so it does not
+# start on `default`.
 def test_a_new_session_waits_for_the_catalog_before_taking_its_first_model() -> Result[Void]
   within_models do |served, dir|
     slow = served.url.replace("/api.json", "/slow.json")

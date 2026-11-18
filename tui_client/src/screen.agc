@@ -1,6 +1,6 @@
-## What the screen shows, top to bottom, each region apart: the banner of warnings, the transcript, the follow-ups waiting, the prompt between
-## two rules (or the session picker in its place), the panel under it (an approval), the place row (folder, branch,
-## session) and the status line. `frame` places them on a screen of a size, `view` draws a
+## What the screen shows, top to bottom, each region apart: the banner of warnings, the transcript, the follow-ups
+## waiting, the prompt between two rules (or the session picker in its place), the panel under it (an approval), the
+## place row (folder, branch, session) and the status line. `frame` places them on a screen of a size, `view` draws a
 ## frame as a view tree, and `hit` tells what a click at a cell of the same frame is on, so a click meets what was
 ## drawn. Pure.
 

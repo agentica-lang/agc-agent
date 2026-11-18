@@ -188,7 +188,13 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   choice = Logins.load_choice(choice_path)
   stale: List[String] = []
   for found in option_list(choice)
-    if providers.has_key?(found.provider) and not found.model.empty? and not providers[found.provider].models.empty?
+    listed = (
+      providers.has_key?(found.provider) and
+      not found.model.empty? and
+      not providers[found.provider].models.empty?
+    )
+
+    if listed and set(read, "FINN_MODELS_URL").unwrap_or(Catalog.URL) == "off"
       if not providers[found.provider].models.include?(found.model)
         stale = stale.push(
           "the model of the last choice, #{found.model}, is not in the models of #{found.provider}: new sessions still use it",

@@ -103,10 +103,9 @@ def record(event: Logger.Event) -> Void
   end
 end
 
-# The warning is kept as its time, level and plain message: the log line quotes a message with a quote or an `=`.
-# A text
-# that is kept already only counts. The slot of the number is written right after the count moves, so a read between
-# the two may see the line it replaces.
+# The warning is kept as its time, level and plain message: the log line quotes a message with a quote or an `=`. A
+# text that is kept already only counts. The slot of the number is written right after the count moves, so a read
+# between the two may see the line it replaces.
 def warned(event: Logger.Event, level: String, line: String) -> Void
   IO.warn(line)
   if TIMES.add(event.message, 1) == 1

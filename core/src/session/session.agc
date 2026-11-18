@@ -520,10 +520,16 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     return error("unknown api #{api.inspect}: one of #{apis.keys.join(", ")}", kind: Protocol.KIND_INVALID)
   end
 
+  model = ""
+  case request.model
+    some(named) -> model = named
+    none -> model = default_model(options, provider, api)
+  end
+
   header = Store.Header(
     id: new_id(registry.sessions.size),
     cwd: context.root,
-    model: request.model.unwrap_or(default_model(options, provider, api)),
+    model: model,
     created_ms: Time.now_ms,
     system: some(new_system(options, context.root)),
     api: some(api),
@@ -706,8 +712,7 @@ end
 def default_model(options: Config.Options, provider: String, api: String) -> String
   if options.model_unset and provider == options.provider
     # The provider of the last choice has no model of its own: the first model it lists, which the clients show too,
-    # so a
-    # catalog that still loads is waited for.
+    # so a catalog that still loads is waited for.
     for catalog in option_list(options.catalog)
       _ = Catalog.wait(catalog, options.catalog_wait_ms)
     end

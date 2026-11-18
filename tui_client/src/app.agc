@@ -166,7 +166,7 @@ end
 ## The last warnings of the server as the banner at the top of the screen, with where the rest is.
 def server_notes(app: State.Model) -> State.Model
   case app.backend.server_log.call(0)
-    ok(log) -> app.with(banner: Client.warning_banner(log))
+    ok(log) -> app.with(banner: Client.warning_banner(log, app.mouse))
     error(_) -> app
   end
 end
