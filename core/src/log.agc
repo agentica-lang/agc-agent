@@ -1,7 +1,7 @@
 ## The server log: `std/logger` writes it, each line as `TIME LEVEL MESSAGE key=value` with the UTC time
-## (`2026-11-18T17:30:02.345Z INFO ...`), to stdout (info) and stderr (warning, error), which `finn` sends to `server.log` of the state folder. `install`
-## makes the handler that does it and also keeps the last warnings of the process in memory, since the first of them
-## come before the server listens; `tail` reads the end of the file.
+## (`2026-11-18T17:30:02.345Z INFO ...`), to stdout (info) and stderr (warning, error), which `finn` sends to
+## `server.log` of the state folder. `install` makes the handler that does it and also keeps the last warnings of the
+## process in memory, since the first of them come before the server listens; `tail` reads the end of the file.
 
 import Logger from "std/logger"
 
@@ -13,6 +13,7 @@ SHOWN = 3
 ## The end of the file that `tail` reads: a longer file is read through, and only this much of it is kept.
 TAIL_BYTES = 262_144
 READ_BYTES = 65_536
+NEWLINE = 10
 
 # The last warnings by their number modulo `SHOWN`, and how many there were.
 RECENT: ATS[Int, String] = ATS.new()
@@ -56,21 +57,22 @@ def tail(dir: String, count: Int) -> Result[Tail]
 
   file = try File.open(path)
   kept = "".bytes
-  cut = false
+  # The start of `kept` is in the middle of a line.
+  partial = false
   while true
     piece = File.read_bytes(file, READ_BYTES)
     break if not piece.ok? or piece.unwrap!.size == 0
 
     kept = Bytes.concat([kept, piece.unwrap!])
     if kept.size > TAIL_BYTES
+      partial = kept.at(kept.size - TAIL_BYTES - 1) != NEWLINE
       kept = Bytes.slice(kept, kept.size - TAIL_BYTES, TAIL_BYTES)
-      cut = true
     end
   end
 
   _ = File.close(file)
   lines = kept.scrub.split("\n").select { |line| line != "" }
-  if cut and not lines.empty?
+  if partial and not lines.empty?
     lines = lines.drop(1)
   end
 
@@ -82,10 +84,16 @@ private
 def record(event: Logger.Event) -> Void
   line = Logger.format_text(event)
   case event.level
-    Logger.Level.Warning, Logger.Level.Error ->
-      IO.warn(line)
-      number = COUNTS.add(WARNINGS, 1)
-      RECENT.put(number % SHOWN, line)
+    Logger.Level.Warning -> warned(event, "WARNING", line)
+    Logger.Level.Error -> warned(event, "ERROR", line)
     _ -> puts(line)
   end
+end
+
+# The warning is kept as its time, level and plain message: the log line quotes a message with a quote or an `=`. The
+# slot of the number is written right after the count moves, so a read between the two may see the line it replaces.
+def warned(event: Logger.Event, level: String, line: String) -> Void
+  IO.warn(line)
+  number = COUNTS.add(WARNINGS, 1)
+  RECENT.put(number % SHOWN, "#{Logger.time_text(event.time_ms)} #{level} #{event.message}")
 end

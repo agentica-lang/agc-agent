@@ -415,6 +415,7 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Profile(name) -> tried(chat, profile_command(chat, name))
     Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
     Client.Command.Logs(count) -> logs_command(chat, count)
+    Client.Command.Mouse -> said(chat, "[/mouse is for the full screen: finn]")
   end
 end
 

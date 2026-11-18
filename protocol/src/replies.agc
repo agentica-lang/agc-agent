@@ -43,6 +43,9 @@ struct ServerStatus
   code_mode: Optional[Bool] = none
   ## Code mode is off because the server's machine has no Monty worker; none from a server older than this field.
   no_worker: Optional[Bool] = none
+  ## Whether the full screen turns the mouse on (`mouse` of the config file, true unless it says `false`); none from a
+  ## server older than this field.
+  mouse: Optional[Bool] = none
 end
 
 ## `GET /v1/logs`: the last lines of the server log, the last of the warnings it logged since it started, and how many

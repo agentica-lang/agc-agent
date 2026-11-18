@@ -216,6 +216,20 @@ def test_the_confinement_of_the_file_tools_is_off_unless_asked() -> Result[Void]
   Test.eq(odd.ok?, false)
 end
 
+# `"mouse": false` in the user's config leaves the mouse to the terminal; no key or file leaves it on, and the status
+# of the server says which.
+def test_the_mouse_is_on_unless_the_user_config_turns_it_off() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-mouse-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  try File.write_text("#{dir}/off.json", "{\"mouse\": false}")
+  try File.write_text("#{dir}/other.json", "{\"approvals\": true}")
+  off = try Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/off.json"}, n) })
+  other = try Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/other.json"}, n) })
+  bare = try Config.from_env(->(n) { located({}, n) })
+  _ = Path.remove(dir)
+  Test.eq([off.mouse, other.mouse, bare.mouse], [false, true, true])
+end
+
 # A key a login stored offers its provider; a key file that others may read is not used, with a warning. The login
 # entries are `anthropic` and the presets.
 def test_a_stored_key_offers_its_provider_unless_the_file_is_open() -> Result[Void]

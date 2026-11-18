@@ -51,6 +51,11 @@ COMMANDS = [
   ),
   Usage(name: "/logout", args: "[PROVIDER]", about: "remove a stored key or base URL; alone: every one"),
   Usage(name: "/logs", args: "[N]", about: "the last N lines (default 50) of the server log, which has its warnings"),
+  Usage(
+    name: "/mouse",
+    about: "turn the mouse of the full screen off or on; off, the terminal selects text",
+    more: "on, a drag copies the text; Shift+drag (Option+drag in iTerm2) is the terminal's own selection",
+  ),
   Usage(name: "/stop", about: "stop the running turn"),
   Usage(name: "/cost", about: "what the session cost", listed: false),
   Usage(name: "/help", about: "this list"),
@@ -91,6 +96,8 @@ enum Command
   Compact
   ## The last lines of the server log.
   Logs(Int)
+  ## Turns the mouse reporting of the full screen off or on.
+  Mouse
   Stop
   ## The cost of the session, once the model catalog gives prices (#88).
   Cost
@@ -380,6 +387,7 @@ def command(name: String, argument: String) -> Result[Command]
     "/profile" -> ok(Command.Profile(given(argument)))
     "/compact" -> bare(Command.Compact, name, argument)
     "/logs" -> logs(argument)
+    "/mouse" -> bare(Command.Mouse, name, argument)
     "/stop" -> bare(Command.Stop, name, argument)
     "/cost" -> bare(Command.Cost, name, argument)
     "/login" -> ok(Command.Login(try provider(argument)))

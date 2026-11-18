@@ -156,6 +156,13 @@ def server_report(backend: Client.Backend) -> Optional[String]
   end
 end
 
+## The mouse off when the config of the server says so.
+def configured(app: State.Model) -> State.Model
+  return app if app.backend.mouse.call()
+
+  Commands.turn_mouse(app, false)
+end
+
 ## The last warnings of the server as notes, with where the rest is.
 def server_notes(app: State.Model) -> State.Model
   shown = app
@@ -182,7 +189,7 @@ def opened(model: State.Model) -> Result[State.Model]
     app = State.noted(app, note)
   end
 
-  ok(State.effect(Logins.welcomed(server_notes(app)), State.listen(app.signals)))
+  ok(State.effect(Logins.welcomed(server_notes(configured(app))), State.listen(app.signals)))
 end
 
 def update(model: State.Model, msg: State.Msg) -> TUI.Step[State.Model, State.Msg]
@@ -222,7 +229,8 @@ private
 
 def handled(app: State.Model, msg: State.Msg) -> State.Model
   case msg
-    State.Msg.Key(TUI.Event.Resize(width, height)) -> app.with(width: width, height: height)
+    State.Msg.Key(TUI.Event.Resize(width, height)) ->
+      app.with(width: width, height: height, selection: none, pressed: none, click: none)
     State.Msg.Key(event) -> Keys.on_key(app, event)
     State.Msg.Signal(signal) -> Session.signalled(app, signal)
     State.Msg.Edited(result) -> Editor.closed(app, result)

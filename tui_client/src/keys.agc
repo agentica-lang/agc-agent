@@ -5,6 +5,8 @@ import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
 import Input from "input"
 import Prompt from "prompt"
+import Select from "select"
+import Selecting from "selecting"
 import Screen from "screen"
 import Transcript from "transcript"
 import State from "state"
@@ -17,11 +19,21 @@ import Turn from "turn"
 import Commands from "commands"
 import Views from "views"
 
-def on_key(model: State.Model, event: TUI.Event) -> State.Model = Files.asked(keyed(aimed(model, event), event))
+def on_key(model: State.Model, event: TUI.Event) -> State.Model
+  Files.asked(keyed(aimed(unmarked(model, event), event), event))
+end
 
 private
 
 SCROLL_STEP = 3
+
+# A key (not the mouse) ends the selection, which the copy left shown: Esc then stops a turn at once.
+def unmarked(app: State.Model, event: TUI.Event) -> State.Model
+  case event
+    TUI.Event.Mouse(_, _, _, _) -> app
+    _ -> app.with(selection: none, pressed: none)
+  end
+end
 
 def keyed(app: State.Model, event: TUI.Event) -> State.Model
   for name in State.option_list(app.key_for)
@@ -97,7 +109,9 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     TUI.Event.Key(TUI.Key.Right, _) -> app.with(cursor: Prompt.next_char(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Home, _) -> app.with(cursor: 0)
     TUI.Event.Key(TUI.Key.End, _) -> app.with(cursor: app.prompt.length)
-    TUI.Event.Mouse(TUI.Mouse.Left, x, y, mods) if not mods.motion -> clicked(app, x, y)
+    TUI.Event.Mouse(TUI.Mouse.Left, x, y, mods) if mods.motion -> dragged(app, x, y)
+    TUI.Event.Mouse(TUI.Mouse.Left, x, y, _) -> pressed(app, x, y)
+    TUI.Event.Mouse(TUI.Mouse.Release, _, _, _) -> released(app)
     TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals, app.now))
     TUI.Event.Key(TUI.Key.BackTab, _) -> Level.leveled(app)
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
@@ -232,6 +246,49 @@ end
 # that key (with the same rules); in the prompt it moves the cursor. The click is matched against the regions of the
 # model as drawn.
 def clicked(app: State.Model, x: Int, y: Int) -> State.Model = clicked_on(app, Views.framed(app), x, y)
+
+# A button down on the transcript may start a drag, so it acts when it goes up; on anything else it acts at once.
+def pressed(app: State.Model, x: Int, y: Int) -> State.Model
+  frame = Views.located(app)
+  case Screen.hit(frame, x, y)
+    Screen.Hit.Entry(index) ->
+      press = Select.Press(cell: Select.cell_at(frame.top, x, y), entry: index)
+      app.with(pressed: some(press), selection: none)
+    _ -> clicked_on(app.with(selection: none, pressed: none), frame, x, y)
+  end
+end
+
+# The button moves down: the cells from where it went down to this one are selected, the rows of the transcript that
+# are on the screen at most.
+def dragged(app: State.Model, x: Int, y: Int) -> State.Model
+  frame = Views.located(app)
+  case app.pressed
+    some(press) if not frame.transcript.empty? ->
+      row = [[y, 0].max.unwrap!, frame.transcript.size - 1].min.unwrap!
+      head = Select.cell_at(frame.top, x, row)
+      return app if head == press.cell and app.selection.none?
+
+      app.with(selection: some(Select.Selection(anchor: press.cell, head: head)))
+    _ -> app
+  end
+end
+
+# The button goes up: a drag copies what it selected; with no drag it was a click, or the second of a double click.
+def released(app: State.Model) -> State.Model
+  case app.pressed
+    some(press) ->
+      done = app.with(pressed: none)
+      return Selecting.copied(done) if done.selection.some?
+
+      return Selecting.double(done, press.cell) if Selecting.double?(done, press.cell)
+
+      toggled = done.with(click: some(Select.Click(cell: press.cell, at_ms: app.now, toggled: press.entry)))
+      return toggled if press.entry < 0
+
+      toggled.with(entries: Transcript.toggle(app.entries, press.entry, State.folds(app)))
+    none -> app
+  end
+end
 
 def clicked_on(app: State.Model, frame: Screen.Frame, x: Int, y: Int) -> State.Model
   case Screen.hit(frame, x, y)
