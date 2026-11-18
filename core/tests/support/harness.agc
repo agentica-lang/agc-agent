@@ -80,6 +80,8 @@ struct Setup
   ## Providers of the config file, each at `/NAME` of the fake with the OpenAI chat API (`NAME:openai_responses` for
   ## the Responses API), the server's provider (empty for that of `api`) and the key variables of providers.
   providers: List[String] = []
+  ## Presets of the server (`Providers.presets`) at `/NAME` of the fake, each with a stored key `sk-NAME`.
+  presets: List[String] = []
   provider: String = ""
   key_envs: Map[String, String] = {}
   ## Providers a login sets up, each at `/NAME` of the fake with the key variable `NAME_KEY` (`NAME=VAR` for another),
@@ -191,9 +193,15 @@ def providers(
     Providers.Custom(name: parts[0], api: parts[1], base_url: "#{root}/#{parts[0]}", models: ["m1"])
   end
 
+  keyed = keys
+  for preset in (Providers.presets().select { |p| setup.presets.include?(p.name) })
+    customs = customs.push(preset.with(base_url: "#{root}/#{preset.name}"))
+    keyed = keyed.put(preset.name, "sk-#{preset.name}")
+  end
+
   customs = customs + login_customs(setup, fake)
   options = LLM.Options(timeout_ms: 5000, retry_base_ms: 1)
-  more = Providers.offered(customs, &fake_env, options, keys)
+  more = Providers.offered(customs, &fake_env, options, keyed)
   for name in more.keys
     all = all.put(name, more[name])
   end

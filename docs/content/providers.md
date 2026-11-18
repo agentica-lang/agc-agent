@@ -19,6 +19,7 @@ A provider is where the model runs: a company's API or a server of your own. The
 | `fireworks` | its key is set or stored | `FIREWORKS_API_KEY` | OpenAI chat completions |
 | `groq` | its key is set or stored | `GROQ_API_KEY` | OpenAI chat completions |
 | `deepseek` | its key is set or stored | `DEEPSEEK_API_KEY` | OpenAI chat completions |
+| `opencode-go` | its key is set or stored | `OPENCODE_API_KEY` | OpenAI chat completions |
 | `chatgpt` | you signed in with `finn login chatgpt` | your ChatGPT plan ([ChatGPT](#chatgpt-plus-or-pro)) | OpenAI Responses (Codex) |
 
 Your config file can add more, or replace one of these: see [Your own provider](#your-own-provider).
@@ -49,6 +50,17 @@ The login list also shows `Claude Pro/Max: coming`. It is listed but cannot be u
 - For the server: `FINN_PROVIDER` (`finn serve --provider`) is the provider of a session that names none, and `FINN_MODEL` (`--model`) its model.
 
 The server takes any model name. `/model NAME` with a name that the session's provider does not list but another provider does, whole or in part, changes nothing and names those models (`/model local/NAME` keeps the name on `local`). When the first turn after `/model` fails, the client says so; check the name. When the local server does not answer, the client says that `/model PROVIDER/NAME` picks another provider.
+
+## OpenCode Go
+
+`opencode-go` is the OpenCode Go subscription, through its OpenAI chat completions endpoint (`https://opencode.ai/inference/go/v1`). Give it the key of your OpenCode account, then pick a model:
+
+```sh
+finn login opencode-go        # or set OPENCODE_API_KEY
+finn --provider opencode-go   # the model is deepseek-v4.1-flash; --model NAME picks another
+```
+
+Finn speaks OpenAI chat completions to it, so `/model` lists only the models of that kind from [models.dev](https://models.dev); the ones that models.dev gives the Anthropic, OpenAI Responses or Google API are left out. Each call carries `x-opencode-client: finn` and `x-opencode-session` with the session id, which OpenCode requires to route a call.
 
 ## Local: llama.cpp and other servers
 
@@ -111,6 +123,8 @@ The `providers` list of your config file (`~/.config/finn/config.json`) adds an 
 - `api` is `openai` (chat completions, the default) or `openai_responses`.
 - With `key_env`, the provider is offered only when that variable is set or a login stored its key. Without it, the provider needs no key.
 - `models` are the names a client offers in `/model`.
+
+An entry that replaces a preset keeps what the preset sets besides the URL, the key variable and the models: the default model and the headers of `opencode-go`, and where a login checks a key.
 
 The server warns when two providers take the same key variable: that key would go to both URLs.
 

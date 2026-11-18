@@ -18,7 +18,7 @@ bin/finn              # chat on the full screen in this folder
 ## What Finn does
 
 - **One server, several clients.** The agent runs as a server on localhost. The full-screen client (`finn`) and the line-mode client (`finn chat`) talk to it over HTTP and Server-Sent Events. A session goes on when a client closes.
-- **Many model providers.** Anthropic, OpenAI, OpenRouter, Fireworks, Groq, DeepSeek, a local llama.cpp server, and any OpenAI-compatible API of your config file.
+- **Many model providers.** Anthropic, OpenAI, OpenRouter, Fireworks, Groq, DeepSeek, OpenCode Go, a local llama.cpp server, and any OpenAI-compatible API of your config file.
 - **Tools.** Read, write and edit files, search them, and run bash commands. Code mode lets the model call the tools from a Python script in a sandbox.
 - **Sessions you can go back in.** Resume a session, go back to an earlier message, fork or clone it. Long histories fold into a summary.
 - **Skills and MCP.** `SKILL.md` folders and MCP servers add what the model can do.

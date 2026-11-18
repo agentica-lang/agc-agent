@@ -106,6 +106,7 @@ def switched(setup: Session.Setup, endpoint: Session.Endpoint) -> Session.Setup
     provider: endpoint.provider,
     extra: endpoint.extra,
     cache: endpoint.cache,
+    headers: endpoint.headers,
     refresh: endpoint.refresh,
     props_url: endpoint.props_url,
     api_key: endpoint.api_key,

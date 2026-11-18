@@ -156,6 +156,32 @@ def test_the_catalog_is_kept_and_read_offline() -> Result[Void]
   end
 end
 
+# A model that an OpenAI-compatible provider gives its own SDK (Anthropic, Responses, Google) is not listed: the
+# provider's chat completions may not serve it. One of that provider's own SDK, or with none, is.
+def test_the_list_leaves_out_the_models_of_another_api() -> Result[Void]
+  within_models do |served, dir|
+    catalog = Catalog.start(Catalog.Options(url: served.url, cache: "#{dir}/models.json"))
+    try Test.assert(Catalog.wait(catalog, 10_000), "the catalog did not load")
+    listed = Catalog.models(catalog, "opencode-go")
+    openai = Catalog.models(catalog, "openai")
+    Catalog.stop(catalog)
+    try Test.eq(listed, ["deepseek-v4.1-flash", "kimi-k3"])
+    Test.eq(openai.include?("gpt-5.1"), true)
+  end
+end
+
+# A cache file of an older format (no `version`) is not read: the catalog is fetched again.
+def test_a_cache_of_an_older_format_is_fetched_again() -> Result[Void]
+  within_models do |served, dir|
+    cache = "#{dir}/models.json"
+    old = "{\"url\": \"#{served.url}\", \"fetched_ms\": #{Time.now_ms()}, \"models\": []}"
+    try File.write_text(cache, old)
+    listed = found(Catalog.Options(url: served.url, cache: cache), "openai", "gpt-5.1")
+    try Test.eq(listed.map { |m| m.id }, some("gpt-5.1"))
+    Test.eq(hits(dir), ["/api.json"])
+  end
+end
+
 # A fetch that hangs holds up no one: `find` answers at once, with nothing while the catalog loads.
 def test_a_slow_fetch_does_not_hold_up_find() -> Result[Void]
   within_models do |served, dir|
@@ -220,7 +246,7 @@ def test_a_cache_out_of_range_is_checked() -> Result[Void]
     cache = "#{dir}/models.json"
     now = Time.now_ms()
     bad = <<~JSON
-      {"url": "#{served.url}", "fetched_ms": #{now},
+      {"url": "#{served.url}", "fetched_ms": #{now}, "version": 1,
         "models": [{"provider": "openai", "id": "gpt-5.1", "prices": {"input": -5.0, "output": 1.0, "cache_read": 0.0, "cache_write": 0.0}, "tiers": [],
           "window": 99000000, "reasoning": false, "tools": false}]}
     JSON

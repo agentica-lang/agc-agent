@@ -94,6 +94,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
     link: link,
     extra: setup.extra,
     cache: setup.cache,
+    headers: headers_of(setup),
     refresh: setup.refresh,
     stripped: state.stripped,
     source: "#{setup.provider_name}/#{setup.api}",
@@ -104,6 +105,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
       props_url: setup.props_url,
       api_key: setup.api_key,
       extra: setup.extra,
+      headers: headers_of(setup),
     ),
     last_context: state.context,
     code_mode: setup.code_mode,
@@ -263,6 +265,7 @@ def start_fold(state: Session.State, reply: Channel[Result[Session.Fold]]) -> Se
     props_url: setup.props_url,
     api_key: setup.api_key,
     extra: setup.extra,
+    headers: headers_of(setup),
   )
 
   fold = Session.Fold(
@@ -513,6 +516,16 @@ def next_turn(state: Session.State) -> Session.State
   return Stream.unsent(started.with(queued: state.queued)) if started.turn.none?
 
   started
+end
+
+# The headers of the provider's calls, with the id of the session where they ask for it.
+def headers_of(setup: Session.Setup) -> Map[String, String]
+  out: Map[String, String] = {}
+  for name in setup.headers.keys
+    out = out.put(name, setup.headers[name].replace("${session}", setup.id))
+  end
+
+  out
 end
 
 def compact_model(setup: Session.Setup) -> String

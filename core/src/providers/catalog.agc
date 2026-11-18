@@ -24,6 +24,9 @@ MIN_WINDOW = 1000
 MAX_WINDOW = 2_000_000
 ## The highest price taken, in USD per million tokens; a model with a price above it, below 0 or not finite has none.
 MAX_PRICE = 10_000.0
+OPENAI_COMPATIBLE = "@ai-sdk/openai-compatible"
+## Raise it when `Model` gains a field that a file of the older format cannot have.
+CACHE_VERSION = 1
 
 ## Prices in USD per million tokens.
 struct Prices
@@ -50,6 +53,9 @@ struct Model
   output: Optional[Int] = none
   reasoning: Bool = false
   tools: Bool = false
+  ## An API of its own: the catalog lists the provider as OpenAI-compatible and the model with another SDK (Anthropic,
+  ## OpenAI Responses, Google). The provider's chat completions may not serve it.
+  other_api: Bool = false
 end
 
 struct Options
@@ -103,7 +109,8 @@ def find(catalog: Catalog, provider: String, id: String) -> Optional[Model]
   end
 end
 
-## The ids of the models of `provider` (a models.dev id) that call tools, from what is loaded now, sorted.
+## The ids of the models of `provider` (a models.dev id) that call tools and are not of another API, from what is
+## loaded now, sorted.
 def models(catalog: Catalog, provider: String) -> List[String]
   none_found: List[String] = []
   answer: Result[List[String]] = Actor.call(catalog.actor.address, CALL_MS) do |reply| Msg.Models(provider, reply) end
@@ -143,9 +150,11 @@ def parse(text: String) -> Result[List[Model]]
   json = try JSON.parse(text)
   out: List[Model] = []
   for provider in fields(json).keys.sort
-    models = fields(JSON.get(fields(json)[provider], "models").unwrap_or(JSON.object({})))
+    listed = fields(json)[provider]
+    models = fields(JSON.get(listed, "models").unwrap_or(JSON.object({})))
+    npm = text(listed, "npm")
     for id in models.keys.sort
-      out = out.push(model(provider, id, models[id]))
+      out = out.push(model(provider, id, models[id]).with(other_api: other_api?(npm, models[id])))
     end
   end
 
@@ -185,6 +194,8 @@ struct Cached
   url: String
   fetched_ms: Int
   models: List[Model]
+  ## The format of `models`: a file of an older one (0) is fetched again.
+  version: Int = 0
 end
 
 def handle(state: State, msg: Msg) -> Actor.Step[State]
@@ -193,7 +204,7 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
       _ = Actor.reply(query.reply, lookup(state.models, query.provider, query.id))
       Actor.continue(load(state))
     Msg.Models(provider, reply) ->
-      ids = state.models.select { |m| m.provider == provider and m.tools }.map { |m| m.id }.sort
+      ids = state.models.select { |m| m.provider == provider and m.tools and not m.other_api }.map { |m| m.id }.sort
       _ = Actor.reply(reply, ids)
       Actor.continue(load(state))
     Msg.Load -> Actor.continue(load(state))
@@ -254,7 +265,7 @@ end
 
 def loaded_models(options: Options) -> Result[List[Model]]
   cached = read_cache(options.cache)
-    .select { |c| c.url == options.url }
+    .select { |c| c.url == options.url and c.version == CACHE_VERSION }
     .map { |c| c.with(models: c.models.map(&bounded)) }
 
   fresh = cached.select { |c| c.fetched_ms <= Time.now_ms() and Time.now_ms() - c.fetched_ms < options.ttl_ms }
@@ -262,7 +273,11 @@ def loaded_models(options: Options) -> Result[List[Model]]
 
   case fetch(options)
     ok(models) ->
-      _ = write_cache(options.cache, Cached(url: options.url, fetched_ms: Time.now_ms(), models: models))
+      _ = write_cache(
+        options.cache,
+        Cached(url: options.url, fetched_ms: Time.now_ms(), models: models, version: CACHE_VERSION),
+      )
+
       ok(models)
     error(_) if not cached.empty? -> ok(cached[0].models)
     error(e) -> error(e)
@@ -313,6 +328,21 @@ def write_cache(path: String, cached: Cached) -> Result[Void]
   end
 
   File.replace(path, JSON.encode(cached).bytes)
+end
+
+# A model of an OpenAI-compatible provider that the catalog gives its own SDK.
+def other_api?(provider_npm: String, json: JSON.Value) -> Bool
+  return false if provider_npm != OPENAI_COMPATIBLE
+
+  own = text(JSON.get(json, "provider").unwrap_or(JSON.object({})), "npm")
+  not own.empty? and own != OPENAI_COMPATIBLE
+end
+
+def text(json: JSON.Value, key: String) -> String
+  case JSON.get(json, key)
+    ok(value) -> JSON.string(value).unwrap_or("")
+    error(_) -> ""
+  end
 end
 
 def fields(json: JSON.Value) -> Map[String, JSON.Value]
