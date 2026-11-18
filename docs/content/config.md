@@ -76,6 +76,18 @@ A new session takes its provider and model from the first of these that names th
 
 A one-shot run (`finn -p`) never changes the choice, so a script does not reset your default. `/new` opens the next session with the options of the start, so `finn --model x` keeps `x` through `/new` and makes it the choice again. A choice whose provider is not offered any more (its key is gone), or whose model is not in the `models` list of its provider, is skipped with one warning at the start. Delete `choice.json` to forget it.
 
+## Reload
+
+`/reload` (`POST /v1/reload`) makes the running server read these again, with no restart and without stopping a turn:
+
+- the user's config file: the permission rules and `approvals`, `files.command`, `mouse` and the providers it adds;
+- the MCP servers (`FINN_MCP_CONFIG`): when the list changed, the old ones stop and the new ones start (a call that runs on a stopped one fails);
+- the skills and the `AGENTS.md` of each running session, and its approval.
+
+A session that runs uses them from its next turn; a turn that runs keeps what it started with. The answers that a session gave with "always" are forgotten, the accept-edits mode stays. A new session, or one that loads later, reads everything fresh. The answer says what changed (`skills: 2 added, 1 removed; config reloaded; 1 MCP server(s) started again`), and the warnings of the load go to `/logs`.
+
+A config file that does not read stays as it was, with the reason as a warning: a reload never leaves the server without a config. Environment variables, the model catalog and `FINN_STATE_DIR` are not read again;
+
 ## Environment variables
 
 | Variable | What it does |

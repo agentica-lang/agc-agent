@@ -150,6 +150,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.get(Protocol.HEALTH_PATH, &health)
     |> Bond.get(Protocol.SERVER_PATH, ->(conn) { reply(conn, 200, status(sessions, control)) })
     |> Bond.get(Protocol.LOGS_PATH, ->(conn) { reply(conn, 200, logs(control, conn)) })
+    |> Bond.post(Protocol.RELOAD_PATH, ->(conn) { reply(conn, 200, reload(sessions)) })
     |> Bond.post(Protocol.SERVER_STOP_PATH, ->(conn) { reply(conn, 200, stop_route(control, conn)) })
     |> Bond.post(all, ->(conn) { reply(conn, 201, create(sessions, conn)) })
     |> Bond.get(all, ->(conn) { reply(conn, 200, list(sessions)) })
@@ -280,6 +281,9 @@ def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
 end
 
 # The answer goes out first: the task that owns the server stops it after, without cutting this request.
+# The server reads its config file, extensions, skills and project instructions again.
+def reload(sessions: Sessions.Sessions) -> Result[String] = ok(Protocol.encode_reloaded(try Sessions.reload(sessions)))
+
 def stop_route(control: Control, conn: Bond.Conn) -> Result[String]
   request = try Protocol.decode_stop_server(try String.from_bytes(conn.body))
   asked(control, request.now.unwrap_or(false))

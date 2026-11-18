@@ -56,6 +56,18 @@ struct ServerLog
   warning_count: Int
 end
 
+## `POST /v1/reload`: what the server read again. `config` is `reloaded`, `unchanged`, or `kept: WHY` when the file did not
+## read; `extensions` says what was started again; `sessions` is how many running sessions read their prompt, skills and
+## approval again for their next turn.
+struct Reloaded
+  skills_added: List[String] = []
+  skills_removed: List[String] = []
+  config: String
+  extensions: List[String] = []
+  sessions: Int = 0
+  warnings: List[String] = []
+end
+
 ## The answer of `POST /v1/sessions`.
 struct SessionCreated
   id: String
@@ -341,6 +353,10 @@ def encode_server_log(reply: ServerLog) -> String = JSON.encode(reply)
 
 def decode_server_log(text: String) -> Result[ServerLog] = Wire.decode(text, ServerLog.codec)
 
+def encode_reloaded(reply: Reloaded) -> String = JSON.encode(reply)
+
+def decode_reloaded(text: String) -> Result[Reloaded] = Wire.decode(text, Reloaded.codec)
+
 def encode_branched(reply: Branched) -> String = JSON.encode(reply)
 
 def decode_branched(text: String) -> Result[Branched] = Wire.decode(text, Branched.codec)
@@ -477,6 +493,7 @@ def shape() -> List[String]
     Wire.record("Branched", Branched.members),
     Wire.record("ServerStatus", ServerStatus.members),
     Wire.record("ServerLog", ServerLog.members),
+    Wire.record("Reloaded", Reloaded.members),
     Wire.record("ShellAccepted", ShellAccepted.members),
     Wire.record("Stopped", Stopped.members),
     Wire.record("FileList", FileList.members),

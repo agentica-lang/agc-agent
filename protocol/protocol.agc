@@ -51,6 +51,7 @@ export Routes.SESSIONS_PATH
 export Routes.SERVER_PATH
 export Routes.SERVER_STOP_PATH
 export Routes.LOGS_PATH
+export Routes.RELOAD_PATH
 export Routes.PROVIDERS_PATH
 export Routes.AUTH_PATH
 export Routes.LAST_EVENT_ID_HEADER
@@ -132,6 +133,7 @@ export Replies.SessionExport
 export Replies.Branched
 export Replies.ServerStatus
 export Replies.ServerLog
+export Replies.Reloaded
 export Replies.ShellAccepted
 export Replies.LoginStatus
 export Replies.LoginList
@@ -171,6 +173,8 @@ export Replies.encode_server_status
 export Replies.decode_server_status
 export Replies.encode_server_log
 export Replies.decode_server_log
+export Replies.encode_reloaded
+export Replies.decode_reloaded
 export Replies.encode_shell_accepted
 export Replies.decode_shell_accepted
 export Replies.Stopped

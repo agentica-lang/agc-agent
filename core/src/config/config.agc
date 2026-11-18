@@ -44,6 +44,8 @@ STATE_DIR_ENV = "FINN_STATE_DIR"
 DATA_DIR_ENV = "FINN_DATA_DIR"
 ## The provider and model last picked, in the state folder.
 CHOICE_FILE = "choice.json"
+## The key of the settings of the config file in the table that `reload` changes.
+LIVE_KEY = "settings"
 ## The variables that name the provider: one of them set wins over the last choice.
 PROVIDER_PINS = ["FINN_BASE_URL", "FINN_PROVIDER", "FINN_API"]
 PREFIX = "FINN_"
@@ -137,6 +139,33 @@ struct Options
   model_pinned: Bool = false
   ## The model of `picked` is none the user named: the provider has no model of its own, so the first of its list.
   model_unset: Bool = false
+  ## The settings of the config file that a reload changes while the server runs.
+  live: Optional[Live] = none
+  ## What else a reload reads again (the MCP servers), each giving what it did, empty for nothing.
+  reloads: List[Fn[Result[String]]] = []
+end
+
+## What the user's config file sets that `reload` reads again: the rules and the asking, the program that lists the
+## files, the mouse, and the providers it adds.
+struct Settings
+  approvals: Approval.Rules
+  asking: Bool
+  files_command: List[String]
+  mouse: Bool
+  customs: List[Providers.Custom]
+end
+
+## The settings now, and how to build the providers for a list of customs.
+struct Live
+  cell: ATS[String, Settings]
+  providers: Fn[List[Providers.Custom], Logins.Replacement]
+end
+
+## What a reload did to the config.
+struct Reloaded
+  ## `reloaded`, `unchanged`, or `kept` with the reason the file was not taken.
+  config: String
+  changed: Bool = false
 end
 
 def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_with(read, &Offered.ant_token)
@@ -155,11 +184,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     model = LLM.ANTHROPIC_MODEL
   end
 
-  customs = Providers.presets()
-  for path in option_list(Permissions.config_path(read))
-    customs = customs + try Providers.from_file(path)
-  end
-
+  first = try settings_of(read)
+  customs = first.customs
   auth_path = Auth.path(read)
   owner = Auth.owner(read)
   states = try state_dir(read)
@@ -177,12 +203,15 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   claude_key = stored.keys.get(Providers.ANTHROPIC).unwrap_or("")
   # `ant` runs here only: a login or a logout later builds the providers without it.
   at_start = try Offered.anthropic_access(read, api == "anthropic", ant, claude_key)
-  rebuild = ->(keys: Map[String, String], urls: Map[String, String]) {
-    current = server.with(base_url: local_url(base_url, env_url, urls))
-    built = Offered.all_providers(current, customs, keys, Offered.access_for(current, keys, claude_key, at_start))
-    Chatgpt.added(built, chatgpt, LLM.Options())
+  rebuilding = ->(more: List[Providers.Custom]) {
+    ->(keys: Map[String, String], urls: Map[String, String]) {
+      current = server.with(base_url: local_url(base_url, env_url, urls))
+      built = Offered.all_providers(current, more, keys, Offered.access_for(current, keys, claude_key, at_start))
+      Chatgpt.added(built, chatgpt, LLM.Options())
+    }
   }
 
+  rebuild = rebuilding.call(customs)
   providers = try rebuild.call(stored.keys, stored.urls)
   choice_path = "#{states}/#{CHOICE_FILE}"
   choice = Logins.load_choice(choice_path)
@@ -212,6 +241,13 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   end
 
   anthropic_url = set(read, "ANTHROPIC_BASE_URL").unwrap_or(LLM.ANTHROPIC_URL)
+  live = live_with(
+    first,
+    ->(more: List[Providers.Custom]) {
+      Logins.Replacement(entries: Offered.login_entries(more, anthropic_url), rebuild: rebuilding.call(more))
+    },
+  )
+
   login = Logins.Setup(
     path: auth_path,
     owner: owner,
@@ -243,11 +279,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
     end
   end
 
-  user = try Permissions.user_rules(read, try approvals_switch(read))
-  user_settings = try settings(read)
-  secret_folders = [states, try data_dir(read)] + auth_path.map { |path| [Sandbox.parent(path)] }.unwrap_or([])
-  secret_files = option_list(Permissions.config_path(read))
-  denies = Approval.finn_denies(secret_folders, secret_files)
+  user_file = try settings(read)
   ok(
     Options(
       state_dir: states,
@@ -265,8 +297,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       login: some(login),
       model: set(read, "FINN_MODEL").unwrap_or(model),
       env: read,
-      approvals: some(Approval.Rules(all: denies + user.rules.all)),
-      asking: user.asking,
+      approvals: some(first.approvals),
+      asking: first.asking,
       context_window: try context_window(read),
       max_tokens: try tokens_of(read, "FINN_MAX_TOKENS"),
       drain_ms: try drain_ms(read),
@@ -280,9 +312,10 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       home: set(read, "HOME").unwrap_or(""),
       docs: docs_folder(read),
       trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
-      files_command: try files_command(user_settings),
-      confine_files: try confine_files(read, user_settings),
-      mouse: try mouse_setting(user_settings),
+      files_command: first.files_command,
+      confine_files: try confine_files(read, user_file),
+      mouse: first.mouse,
+      live: some(live),
       provider_pinned: provider_pinned?(read),
       model_pinned: set(read, "FINN_MODEL").some?,
     ),
@@ -291,15 +324,62 @@ end
 
 ## `options` with the providers the server offers now (a login or a logout changes them), and the `/props` of the
 ## base URL `local` uses now.
-def now(options: Options) -> Options
-  for holder in option_list(options.logins)
-    case Logins.current(holder)
-      ok(current) -> return picked(offered_now(options, current), current)
-      error(_) -> nil
+def now(options: Options) -> Options = lived(logged_in(options))
+
+## The settings `first` as what a reload changes, with how to build the providers of a list of customs.
+def live_with(first: Settings, providers: Fn[List[Providers.Custom], Logins.Replacement]) -> Live
+  cell: ATS[String, Settings] = ATS.new()
+  cell.put(LIVE_KEY, first)
+  Live(cell: cell, providers: providers)
+end
+
+## The settings of the config file `read` names, as what a reload changes: a seam for the tests of the server.
+def live_from(
+  read: Fn[String, Result[String]],
+  providers: Fn[List[Providers.Custom], Logins.Replacement],
+) -> Result[Live]
+  ok(live_with(try settings_of(read), providers))
+end
+
+## The settings of the last read of the config file.
+def current(live: Live) -> Optional[Settings]
+  case live.cell.get(LIVE_KEY)
+    ok(found) -> some(found)
+    error(_) -> none
+  end
+end
+
+## Reads the user's config file again: the rules and the asking, the files program, the mouse and the providers it
+## adds apply from the next request and the next turn. A file that does not read keeps the settings of the last
+## read, with the reason.
+def reload(options: Options) -> Reloaded
+  for live in option_list(options.live)
+    case settings_of(options.env)
+      error(e) -> return Reloaded(config: "kept: #{e.message}")
+      ok(fresh) ->
+        old = live.cell.get(LIVE_KEY)
+        return Reloaded(config: "unchanged") if old == ok(fresh)
+
+        before = fresh.customs
+        for kept in option_list(current(live))
+          before = kept.customs
+        end
+
+        for holder in option_list(options.logins)
+          next if before == fresh.customs
+
+          case Logins.replace(holder, live.providers.call(fresh.customs))
+            ok(_) -> nil
+            error(e) -> return Reloaded(config: "kept: #{e.message}")
+          end
+        end
+
+        live.cell.put(LIVE_KEY, fresh)
+        return Reloaded(config: "reloaded", changed: true)
     end
   end
 
-  options
+  Reloaded(config: "unchanged")
 end
 
 ## `now` without the last choice: the providers as they are listed, the server's own provider and model.
@@ -447,24 +527,24 @@ def data_dir(read: Fn[String, Result[String]]) -> Result[String] = folder(read, 
 private
 
 # The user's config file, read once: each setting takes its own key, so a bad value stops only its own setting.
-struct Settings
+struct UserFile
   path: String
   root: Optional[JSON.Value] = none
 end
 
-def settings(read: Fn[String, Result[String]]) -> Result[Settings]
+def settings(read: Fn[String, Result[String]]) -> Result[UserFile]
   for path in option_list(Permissions.config_path(read))
     case JSON.parse(try File.read_text(path))
-      ok(root) -> return ok(Settings(path: path, root: some(root)))
+      ok(root) -> return ok(UserFile(path: path, root: some(root)))
       error(e) -> return error("#{path}: #{e.message}")
     end
   end
 
-  ok(Settings(path: ""))
+  ok(UserFile(path: ""))
 end
 
 # The value of a key of the file, none when it is not there or is null.
-def setting(found: Settings, key: String) -> Optional[JSON.Value]
+def setting(found: UserFile, key: String) -> Optional[JSON.Value]
   for root in option_list(found.root)
     case JSON.get(root, key)
       ok(value) if not JSON.null?(value) -> return some(value)
@@ -476,7 +556,7 @@ def setting(found: Settings, key: String) -> Optional[JSON.Value]
 end
 
 # `files.command` of the user's config file: a program and its arguments, which the file must name with a program.
-def files_command(found: Settings) -> Result[List[String]]
+def files_command(found: UserFile) -> Result[List[String]]
   for files in option_list(setting(found, "files"))
     case program(files)
       ok(command) -> return ok(command)
@@ -499,7 +579,7 @@ def program(files: JSON.Value) -> Result[List[String]]
 end
 
 # `FINN_CONFINE_FILES` (0 or 1), else `confine_files` of the user's config file, else off.
-def confine_files(read: Fn[String, Result[String]], found: Settings) -> Result[Bool]
+def confine_files(read: Fn[String, Result[String]], found: UserFile) -> Result[Bool]
   case set(read, "FINN_CONFINE_FILES")
     some("1") -> ok(true)
     some("0") -> ok(false)
@@ -509,9 +589,9 @@ def confine_files(read: Fn[String, Result[String]], found: Settings) -> Result[B
 end
 
 # `mouse` of the user's config file: `false` leaves the mouse to the terminal; no key, or no file, is on.
-def mouse_setting(found: Settings) -> Result[Bool] = flag(found, "mouse", true)
+def mouse_setting(found: UserFile) -> Result[Bool] = flag(found, "mouse", true)
 
-def flag(found: Settings, key: String, fallback: Bool) -> Result[Bool]
+def flag(found: UserFile, key: String, fallback: Bool) -> Result[Bool]
   for value in option_list(setting(found, key))
     case JSON.bool(value)
       ok(on) -> return ok(on)
@@ -523,6 +603,60 @@ def flag(found: Settings, key: String, fallback: Bool) -> Result[Bool]
 end
 
 def provider_pinned?(read: Fn[String, Result[String]]) -> Bool = PROVIDER_PINS.any? { |name| set(read, name).some? }
+
+def logged_in(options: Options) -> Options
+  for holder in option_list(options.logins)
+    case Logins.current(holder)
+      ok(current) -> return picked(offered_now(options, current), current)
+      error(_) -> nil
+    end
+  end
+
+  options
+end
+
+def settings_of(read: Fn[String, Result[String]]) -> Result[Settings]
+  user = try Permissions.user_rules(read, try approvals_switch(read))
+  file = try settings(read)
+  customs = Providers.presets()
+  for path in option_list(Permissions.config_path(read))
+    customs = customs + try Providers.from_file(path)
+  end
+
+  folders = (
+    [try state_dir(read), try data_dir(read)] +
+    Auth.path(read).map { |path| [Sandbox.parent(path)] }.unwrap_or([])
+  )
+
+  denies = Approval.finn_denies(folders, option_list(Permissions.config_path(read)))
+  ok(
+    Settings(
+      approvals: Approval.Rules(all: denies + user.rules.all),
+      asking: user.asking,
+      files_command: try files_command(file),
+      mouse: try mouse_setting(file),
+      customs: customs,
+    ),
+  )
+end
+
+# The settings of the last read of the config file over the ones the options were made with.
+def lived(options: Options) -> Options
+  for live in option_list(options.live)
+    case live.cell.get(LIVE_KEY)
+      ok(found) ->
+        return options.with(
+          approvals: some(found.approvals),
+          asking: found.asking,
+          files_command: found.files_command,
+          mouse: found.mouse,
+        )
+      error(_) -> nil
+    end
+  end
+
+  options
+end
 
 def local_url(fallback: String, env_url: Optional[String], urls: Map[String, String]) -> String
   env_url.unwrap_or(urls.get(Providers.LOCAL).unwrap_or(fallback))
