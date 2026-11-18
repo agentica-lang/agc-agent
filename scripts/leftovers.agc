@@ -21,6 +21,11 @@ def main() -> Void
     return
   end
 
+  if not File.stat("/proc/self").ok?
+    puts("leftovers: skipped: this system has no /proc to look in")
+    return
+  end
+
   found = leftovers("#{RUN_ENV}=#{run}")
   if found.empty?
     puts("leftovers: no server of this test run is still running")

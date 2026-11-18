@@ -2,6 +2,7 @@
 
 import HTTP from "std/http"
 import Client from "pkg/client/client"
+import Protocol from "pkg/protocol/protocol"
 import Args from "../src/args"
 import Driver from "support/driver"
 
@@ -266,8 +267,7 @@ def shows(cli: Process, word: String) -> Result[Void]
 end
 
 # A test that fails after its server started leaves nothing behind: `Driver.within_dir` stops the server, which runs
-# in a
-# session of its own and outlives the client, and removes the folder.
+# in a session of its own and outlives the client, and removes the folder.
 def test_a_failed_test_leaves_no_server_and_no_folder() -> Result[Void]
   out: Channel[List[String]] = Channel.new(1)
   failed = Driver.within_dir(->(dir) { started_then_failed(dir, out) })
@@ -288,6 +288,30 @@ def started_then_failed(dir: String, out: Channel[List[String]]) -> Result[Void]
   try Test.assert(started.code == 0, "start: #{started.errors}")
   try out.send([dir, (try Client.server_pid(dir)).to_s], 0)
   error("failed on purpose")
+end
+
+# A sweep stops only the processes whose environment names the folder: an Agentica program that a stale `server.json`
+# names, but that serves no folder of the tests, goes on running, and the folder goes.
+def test_a_sweep_never_stops_a_program_that_a_stale_server_json_names() -> Result[Void]
+  words = try Driver.sleeper_command()
+  sleeper = try Process.spawn_captured(words[0], words.drop(1), Process.Options(env: {"FINN_STATE_DIR": ""}))
+  result = swept_around(sleeper)
+  Process.close(sleeper)
+  result
+end
+
+def swept_around(sleeper: Process) -> Result[Void]
+  ready = try Process.read_line(sleeper, 15_000)
+  try Test.assert(ready.start_with?("ready "), "the sleeper: #{ready}")
+  pid = try ready.replace("ready ", "").to_i
+  # No process has a pid this high (over pid_max), so the folder's test run is gone.
+  stale = try Path.join([System.env("TMPDIR").unwrap_or("/tmp"), "agc-cli-999999999-#{Random.int(0, 999_999)}"])
+  try Dir.mkdir_private(stale)
+  info = Protocol.ServerInfo(port: 9, token: "t", pid: pid)
+  try File.write_text("#{stale}/server.json", Protocol.encode_server_info(info))
+  try Driver.within_dir(->(_dir) { ok() })
+  try Test.assert(not File.stat(stale).ok?, "the stale folder is removed")
+  Test.assert(not Process.wait(sleeper, 10).ok?, "the program it names still runs")
 end
 
 # A restart that cannot start a server says whether an old one was stopped.

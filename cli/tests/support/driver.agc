@@ -1,7 +1,6 @@
 ## Runs the client as a child process on pipes, against a fake server, and reads what it prints.
 
 import HTTP from "std/http"
-import Protocol from "pkg/protocol/protocol"
 import Fake from "fake_server"
 
 READ_MS = 10_000
@@ -32,11 +31,15 @@ SETTINGS = [
 
 OTHER_SETTINGS = ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"]
 FAKE_MAINS = ["tests/support/fake_main.agc", "cli/tests/support/fake_main.agc"]
+SLEEPERS = ["tests/support/sleeper.agc", "cli/tests/support/sleeper.agc"]
 
 ## A process with `FINN_STATE_DIR` in its environment: a server, and the folder it serves.
 struct Served
   pid: Int
   dir: String
+  ## The name and start time it had when it was found: a signal goes only to that process.
+  comm: String
+  started: Int
 end
 
 ## A fake server and the state folder that points at it.
@@ -96,10 +99,10 @@ def within_dir(body: Fn[String, Result[Void]]) -> Result[Void]
 end
 
 ## Stops every server of a state folder: the processes of this user whose environment names the folder
-## (`FINN_STATE_DIR`, which a client gives the server it starts) and the one of its `server.json`. Each gets SIGTERM, and
-## its process group SIGKILL when it is still there after `STOP_MS`. Linux: it reads /proc; elsewhere only `server.json`.
+## (`FINN_STATE_DIR`, which a client gives the server it starts). Each gets SIGTERM, and its process group SIGKILL when
+## it is still there after `STOP_MS`. Linux: it reads /proc; elsewhere it stops nothing.
 def stop_servers(dir: String) -> Void
-  stop_listed(dir, served())
+  stop_all(served().select { |server| server.dir == dir })
 end
 
 ## The client on `dir`, with `NO_COLOR` set to `no_color` ("" turns the colors on), run from the folder `chdir`. It runs
@@ -172,6 +175,9 @@ def core_command() -> Result[List[String]]
   words = try program_words(CORES, "CORE_BYTECODE", true)
   ok(words + ["serve"])
 end
+
+## The words that start a program that serves nothing (`sleeper.agc`), run from its source.
+def sleeper_command() -> Result[List[String]] = ok([binary(), try Path.resolve(try existing(SLEEPERS))])
 
 ## The words that start the fake server program.
 def fake_command() -> Result[List[String]] = program_words(FAKE_MAINS, "FAKE_BYTECODE", true)
@@ -300,7 +306,7 @@ end
 def removed(dir: String) -> Result[Void] = removed_from(dir, served())
 
 def removed_from(dir: String, servers: List[Served]) -> Result[Void]
-  stop_listed(dir, servers)
+  stop_all(servers.select { |server| server.dir == dir })
   Path.remove(dir)
 end
 
@@ -322,10 +328,14 @@ def sweep(base: String) -> Void
 
   servers = served()
   for name in stale
-    _ = removed_from("#{base}/#{name}", servers)
+    case Path.join([base, name])
+      ok(path) -> _ = removed_from(path, servers)
+      error(_) -> nil
+    end
   end
 end
 
+# A folder whose pid now belongs to another process is kept: a leak, which is the safe direction.
 def stale?(name: String) -> Bool
   return false if not name.start_with?(FOLDER_PREFIX)
 
@@ -333,14 +343,8 @@ def stale?(name: String) -> Bool
   owner > 0 and not alive?(owner)
 end
 
-def stop_listed(dir: String, servers: List[Served]) -> Void
-  pids = servers.select { |server| server.dir == dir }.map { |server| server.pid }
-  for pid in pids + recorded(dir, pids)
-    stop_process(pid)
-  end
-end
-
-# The processes of this user with a `FINN_STATE_DIR`, read once from /proc (none where there is no /proc).
+# The processes of this user whose environment has a `FINN_STATE_DIR`, read once from /proc (none where there is no
+# /proc). Only those are ever signalled: the pid of a `server.json` alone may be gone and taken by another program.
 def served() -> List[Served]
   found: List[Served] = []
   names: List[String] = []
@@ -349,7 +353,10 @@ def served() -> List[Served]
     next if pid <= 0 or pid == System.pid()
 
     for dir in option_list(state_dir_of(pid))
-      found = found.push(Served(pid: pid, dir: dir))
+      for started in option_list(start_time(pid))
+        comm = File.read_text("/proc/#{pid}/comm").unwrap_or("").strip
+        found = found.push(Served(pid: pid, dir: dir, comm: comm, started: started))
+      end
     end
   end
 
@@ -367,57 +374,46 @@ def state_dir_of(pid: Int) -> Optional[String]
   end
 end
 
-# The server of `server.json` when no process names the folder: an Agentica one only, since its pid may be gone and
-# taken by another program.
-def recorded(dir: String, known: List[Int]) -> List[Int]
-  case File.read_text("#{dir}/server.json")
-    ok(text) ->
-      case Protocol.decode_server_info(text)
-        ok(info) if info.pid != System.pid() and not known.include?(info.pid) and agentica?(info.pid) -> [info.pid]
-        _ -> []
-      end
+# SIGTERM to each exact process, by the name it had when it was found; once they all had `STOP_MS`, SIGKILL to the
+# process group of each one still there (the server leads none, but runs in the one of the shell that started it, with
+# what it started), unless it is no longer the same process (its start time) or the group is this test's own.
+def stop_all(servers: List[Served]) -> Void
+  return if servers.empty?
 
-    error(_) -> []
-  end
-end
-
-def agentica?(pid: Int) -> Bool = File.read_text("/proc/#{pid}/comm").unwrap_or("").strip == "agentica"
-
-def option_list[T](value: Optional[T]) -> List[T]
-  case value
-    some(v) -> [v]
-    none -> []
-  end
-end
-
-# SIGTERM to the exact process, checked by its name; then SIGKILL to its process group (the server leads none, but runs
-# in the one of the shell that started it, with what it started), unless that group is this test's own.
-def stop_process(pid: Int) -> Void
-  comm = File.read_text("/proc/#{pid}/comm").unwrap_or("agentica").strip
-  _ = System.signal(pid, System.Signal.Term, comm)
-  return if gone_within(pid, STOP_MS)
-
-  group = process_group(pid)
-  if group > 0 and group != process_group(System.pid())
-    _ = run_kill(["-KILL", "--", "-#{group}"])
-  else
-    _ = System.signal(pid, System.Signal.Kill, comm)
+  for server in servers
+    _ = System.signal(server.pid, System.Signal.Term, server.comm)
   end
 
-  _ = gone_within(pid, STOP_MS)
+  return if all_gone_within(servers, STOP_MS)
+
+  own = process_group(System.pid())
+  for server in servers
+    next if start_time(server.pid) != some(server.started)
+
+    group = process_group(server.pid)
+    if group > 0 and group != own
+      _ = run_kill(["-KILL", "--", "-#{group}"])
+    else
+      _ = System.signal(server.pid, System.Signal.Kill, server.comm)
+    end
+  end
+
+  _ = all_gone_within(servers, STOP_MS)
 end
 
-def gone_within(pid: Int, limit_ms: Int) -> Bool
+def all_gone_within(servers: List[Served], limit_ms: Int) -> Bool
   waited = 0
   while waited < limit_ms
-    return true if not alive?(pid)
+    return true if (servers.all? { |server| not same_alive?(server) })
 
     Task.sleep(POLL_MS)
     waited = waited + POLL_MS
   end
 
-  not alive?(pid)
+  servers.all? { |server| not same_alive?(server) }
 end
+
+def same_alive?(server: Served) -> Bool = alive?(server.pid) and start_time(server.pid) == some(server.started)
 
 # A zombie has ended: only its parent's wait is left.
 def alive?(pid: Int) -> Bool
@@ -434,10 +430,31 @@ def process_group(pid: Int) -> Int
   end
 end
 
+# When the process started, in clock ticks after boot (field 22 of /proc/PID/stat): another process that takes the pid
+# has another.
+def start_time(pid: Int) -> Optional[Int]
+  case File.read_text("/proc/#{pid}/stat")
+    ok(stat) ->
+      case stat_fields(stat)[19].to_i
+        ok(ticks) -> some(ticks)
+        error(_) -> none
+      end
+
+    error(_) -> none
+  end
+end
+
 # The fields of /proc/PID/stat after the name, which may hold spaces and parentheses: state, ppid, pgrp, ...
 def stat_fields(stat: String) -> List[String]
   parts = stat.split(") ")
   parts[parts.size - 1].split(" ")
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
 end
 
 def run_kill(args: List[String]) -> Result[Int]
