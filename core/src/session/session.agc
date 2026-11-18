@@ -475,7 +475,15 @@ end
 
 def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Entry]
   options = Config.now(registry.options)
-  ctx = case Tools.context(request.cwd, options.env, options.tools, late_of(options), options.diff, wrap_of(options))
+  ctx = case Tools.context(
+    request.cwd,
+    options.env,
+    options.tools,
+    late_of(options),
+    options.diff,
+    wrap_of(options),
+    options.confine_files,
+  )
     ok(ctx) -> ok(ctx)
     error(e) -> error("cwd: #{e.message}", kind: Protocol.KIND_INVALID)
   end
@@ -566,6 +574,7 @@ def read(options: Config.Options, listed: Entry) -> Result[Loaded]
     late_of(options),
     options.diff,
     wrap_of(options),
+    options.confine_files,
   )
 
   ok(Loaded(saved: saved, opened: opened(context, try approver_of(options, context.root))))

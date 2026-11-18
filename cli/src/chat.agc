@@ -402,6 +402,7 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Export(path, force) -> export_command(chat, path, force)
     Client.Command.Model(model) -> model_command(chat, model)
     Client.Command.Thinking(level) -> setting_command(chat, "thinking", level, Protocol.UpdateSession(effort: level))
+    Client.Command.Confine(on) -> confine_command(chat, on)
     Client.Command.Profile(name) -> tried(chat, profile_command(chat, name))
     Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
     Client.Command.Logs(count) -> logs_command(chat, count)
@@ -520,6 +521,23 @@ def setting_command(chat: Chat, name: String, value: Optional[String], change: P
     some(text) -> tried(chat, changed(chat, change, "[#{name} #{text} from the next turn]"))
     none -> tried(chat, shown_setting(chat, name))
   end
+end
+
+def confine_command(chat: Chat, on: Optional[Bool]) -> Result[Step]
+  case on
+    some(wanted) -> tried(chat, changed(chat, Protocol.UpdateSession(confine: on), confine_note(wanted)))
+    none -> tried(chat, confine_shown(chat))
+  end
+end
+
+def confine_shown(chat: Chat) -> Result[Chat]
+  ok(note(chat, "[#{Client.confined(try Client.session(chat.server, chat.id))}]"))
+end
+
+def confine_note(on: Bool) -> String
+  return "[the file tools stay in the session folder from the next turn]" if on
+
+  "[the file tools reach any path from the next turn]"
 end
 
 def said(chat: Chat, text: String) -> Result[Step] = ok(Step(chat: note(chat, text)))

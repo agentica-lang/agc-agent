@@ -21,6 +21,7 @@ export Sessions.new_session
 export Sessions.replay_from
 export Sessions.resume_hint
 export Sessions.thinking
+export Sessions.confined
 export Sessions.compacted
 export Http.Server
 export Http.KIND_UNREACHABLE

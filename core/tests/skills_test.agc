@@ -71,7 +71,7 @@ end
 # it and read the page, in place; its index has a line a page, without the home page.
 def test_the_model_reads_the_docs_of_finn_through_the_built_in_skill() -> Result[Void]
   replies = ["activate_finn.sse", "read_docs_page.sse", "read_docs_link.sse", "text.sse"]
-  H.using(H.Setup(replies: replies, docs: true)) do |h|
+  H.using(H.Setup(replies: replies, docs: true, confine: true)) do |h|
     docs = "#{h.base}/docs"
     try write("#{docs}/extensions.md", EXTENSIONS_PAGE)
     try write("#{docs}/tools.md", TOOLS_PAGE)
@@ -366,7 +366,7 @@ def test_read_file_reads_in_a_skill_folder_behind_a_link() -> Result[Void]
   try write("#{base}/dot/skills/release/references/steps.md", "1. tag\n")
   try link("#{base}/dot", "#{base}/home/.claude")
   skills = Skills.discover("#{base}/work", "#{base}/home", false).skills
-  ctx = try Tools.context("#{base}/work", ->(_name: String) { error("unset") })
+  ctx = try Tools.context("#{base}/work", ->(_name: String) { error("unset") }, confine: true)
   roots = ctx.with(read_roots: skills.map { |s| s.dir })
   read = ->(path: String, c: Tools.Context) { Tools.run(c, "read_file", JSON.object({"path": JSON.from(path)})) }
   steps = "#{skills[0].dir}/references/steps.md"

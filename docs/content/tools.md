@@ -55,7 +55,9 @@ A profile only hides tools from the model: a call to a hidden one is refused, an
 
 ## The session folder
 
-The file tools reach only files whose real path is inside the session folder: a `..` or a link that leads out is refused. `read_file` also reads the files of a skill the session can load. `glob` and `grep` never follow a link.
+The file tools reach any path the server can: `read_file`, `write_file`, `edit_file`, `apply_patch`, `glob` and `grep` take a path in any folder, as `bash` does. A relative path starts at the session folder. The [deny and ask rules](security.md#rules) apply to every path.
+
+To keep the file tools in the session folder, set `confine_files` to `true` in your [config file](config.md), or `FINN_CONFINE_FILES=1` for the server, or type `/confine on` in a session (`/confine off` undoes it, `/confine` shows it; it lasts until the server restarts). Then a path whose real path is outside the folder is refused, also through a `..` or a link, and `read_file` also reads the files of a skill the session can load. `glob` and `grep` never follow a link either way.
 
 An `apply_patch` call is checked whole before any file changes. When a step fails, every file goes back as it was.
 

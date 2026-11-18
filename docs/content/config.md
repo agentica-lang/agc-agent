@@ -27,6 +27,7 @@ Finn reads environment variables when the server starts, and a few JSON files. A
 | `approvals` | `true` makes a call of a [tool that asks](security.md#what-asks) wait for your answer, unless a rule allows it |
 | `permission` | the rules, in order: the last one that matches a call allows it, asks or denies it; a file rule covers the file tools, and a `read_file` rule also, best effort, the files that `cat`, `grep` and the like name in `bash` ([how they check bash](security.md#how-rules-check-bash)) |
 | `providers` | OpenAI-compatible APIs of your own ([Providers](providers.md#your-own-provider)) |
+| `confine_files` | `true` keeps the file tools in the session folder; by default they reach any path ([The session folder](tools.md#the-session-folder)) |
 | `files` | `{"command": ["rg", "--files"]}`: the program that lists the files for the `@` completion, in place of the built-in walk ([The files command](#the-files-command)) |
 
 Every key is optional, and so is the file. How the rules work is on [Approvals and security](security.md#rules), and where they fall short in [What rules cannot do](security.md#what-rules-cannot-do).
@@ -72,6 +73,7 @@ The server makes the state and data folders with mode 0700, and refuses one that
 | `FINN_API_KEY` | the key of `local` |
 | `FINN_PROVIDER` | the provider of a session that names none |
 | `FINN_MODEL` | the model of a session that names none |
+| `FINN_CONFINE_FILES` | `1` keeps the file tools in the session folder, `0` lets them reach any path, over the config file |
 | `FINN_APPROVALS` | `1` turns the approvals on; `0` keeps them off over the config file |
 | `FINN_CONFIG` | the user's config file |
 | `FINN_TRUSTED_DIRS` | the [trusted folders](#trusted-folders) |

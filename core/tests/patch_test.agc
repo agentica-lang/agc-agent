@@ -263,7 +263,7 @@ end
 
 def update(path: String, body: String) -> String = "*** Begin Patch\n*** Update File: #{path}\n#{body}\n*** End Patch"
 
-def plain(dir: String) -> Result[Tools.Context] = Tools.context(dir, ->(_n: String) { error("unset") })
+def plain(dir: String) -> Result[Tools.Context] = Tools.context(dir, ->(_n: String) { error("unset") }, confine: true)
 
 def run(ctx: Tools.Context, patch: String) -> Tools.Output = Tools.run(ctx, "apply_patch", input(patch))
 

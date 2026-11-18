@@ -102,6 +102,8 @@ struct Setup
   approvals_env: Optional[Fn[String, Result[String]]] = none
   ## The command that lists the files for `@` (`files.command` of the user's config).
   files_command: List[String] = []
+  ## The file tools reach only the session folder.
+  confine: Bool = false
   ## What extensions add (`Core.serve`): its tools join those of the server.
   registry: Optional[Extensions.Registry] = none
   ## The server ends as `Core.serve` ends it (`Server.shutdown`), not at once.
@@ -338,6 +340,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     docs: docs_folder(setup, base),
     trusted: skills_trusted(setup, base),
     files_command: setup.files_command,
+    confine_files: setup.confine,
   )
 
   server = try Server.start(options)

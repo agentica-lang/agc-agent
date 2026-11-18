@@ -49,6 +49,8 @@ struct UpdateSession
   effort: Optional[String] = none
   ## The edits of files in the session folder run without asking.
   accept_edits: Optional[Bool] = none
+  ## The file tools reach only the session folder, or any path.
+  confine: Optional[Bool] = none
   ## The profile from the next turn on, with its model and thinking level when it sets them (`model` and `effort`
   ## given too win).
   profile: Optional[String] = none

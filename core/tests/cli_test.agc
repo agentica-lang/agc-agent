@@ -195,6 +195,27 @@ def test_the_files_command_comes_from_the_user_config() -> Result[Void]
   Test.eq(empty.ok?, false)
 end
 
+# The file tools reach any path unless `FINN_CONFINE_FILES=1` or `confine_files` of the user's config says to keep
+# them in
+# the session folder; the variable wins, and a value that is not 0 or 1 stops the start.
+def test_the_confinement_of_the_file_tools_is_off_unless_asked() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-confine-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  try File.write_text("#{dir}/on.json", "{\"confine_files\": true}")
+  bare = try Config.from_env(->(n) { located({}, n) })
+  from_file = try Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/on.json"}, n) })
+  from_env = try Config.from_env(->(n) { located({"FINN_CONFINE_FILES": "1"}, n) })
+  over = try Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/on.json", "FINN_CONFINE_FILES": "0"}, n) })
+  odd = Config.from_env(->(n) { located({"FINN_CONFINE_FILES": "yes"}, n) })
+  _ = Path.remove(dir)
+  try Test.eq(
+    [bare.confine_files, from_file.confine_files, from_env.confine_files, over.confine_files],
+    [false, true, true, false],
+  )
+
+  Test.eq(odd.ok?, false)
+end
+
 # A key a login stored offers its provider; a key file that others may read is not used, with a warning. The login
 # entries are `anthropic` and the presets.
 def test_a_stored_key_offers_its_provider_unless_the_file_is_open() -> Result[Void]

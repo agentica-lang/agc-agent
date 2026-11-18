@@ -1,5 +1,5 @@
 ## The tools that look for files and text: glob and grep. They list only real files and never follow a link, so
-## nothing outside the session folder is reached through one.
+## nothing outside the folder searched is reached through one.
 
 import Regex from "std/regex"
 import Sandbox from "sandbox"
@@ -56,12 +56,12 @@ end
 
 def glob_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, GlobArgs.codec)
-  ok(Sandbox.relative(ctx.root, try Sandbox.resolve(ctx.root, args.path.unwrap_or("."))))
+  ok(Sandbox.relative(ctx.root, try Sandbox.reach(ctx.root, args.path.unwrap_or("."), ctx.confine)))
 end
 
 def grep_target(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, GrepArgs.codec)
-  ok(Sandbox.relative(ctx.root, try Sandbox.resolve(ctx.root, args.path.unwrap_or("."))))
+  ok(Sandbox.relative(ctx.root, try Sandbox.reach(ctx.root, args.path.unwrap_or("."), ctx.confine)))
 end
 
 ## The regex of a glob: `*` and `?` stay inside a folder name, `**` crosses folders.
@@ -70,7 +70,7 @@ def glob_regex(glob: String) -> Result[Regex.Regex] = Regex.compile("\\A#{transl
 private
 
 def folder(ctx: Spec.Context, path: Optional[String]) -> Result[String]
-  base = try Sandbox.resolve(ctx.root, path.unwrap_or("."))
+  base = try Sandbox.reach(ctx.root, path.unwrap_or("."), ctx.confine)
   info = try File.stat(base)
   return error("not a folder: #{path.unwrap_or(".")}") if info.kind != "directory"
 

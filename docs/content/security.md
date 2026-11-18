@@ -10,7 +10,7 @@ Finn's model runs commands and edits files as you. Know what it can reach before
 
 ## The default: no approvals
 
-The approvals are off by default. The model runs any command and edits any file that no deny rule refuses, without asking. Its file tools stay in the session folder ([Tools](tools.md#the-session-folder)), but `bash` can do whatever you can ([bash](tools.md#bash)).
+The approvals are off by default. The model runs any command and edits any file that no deny rule refuses, without asking. Its file tools reach any path you can, like `bash` ([Tools](tools.md#the-session-folder) says how to keep them in the session folder).
 
 So run Finn where a mistake costs little:
 

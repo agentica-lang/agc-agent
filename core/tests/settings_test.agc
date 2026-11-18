@@ -169,3 +169,17 @@ def asked_with(request: JSON.Value, model: String, effort: String) -> Result[Voi
   try Test.eq(JSON.get(request, "model"), ok(JSON.from(model)))
   Test.eq(JSON.get(try JSON.get(request, "reasoning"), "effort"), ok(JSON.from(effort)))
 end
+
+# `PATCH` with `confine` switches the file tools of one session between its folder and any path: the snapshot shows it,
+# and the server's default (off) applies to the next session.
+def test_a_session_switches_the_confinement_of_its_file_tools() -> Result[Void]
+  H.using(H.Setup(replies: [])) do |h|
+    id = try H.new_session(h)
+    try Test.eq((try H.session(h, id)).confine, false)
+    try Test.eq((try patch(h, id, "{\"confine\": true}")).status, 200)
+    try Test.eq((try H.session(h, id)).confine, true)
+    try Test.eq((try H.session(h, try H.new_session(h))).confine, false)
+    try Test.eq((try patch(h, id, "{\"confine\": false}")).status, 200)
+    Test.eq((try H.session(h, id)).confine, false)
+  end
+end

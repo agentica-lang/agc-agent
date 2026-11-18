@@ -31,7 +31,7 @@ end
 # A session folder `work` with a file, a folder and a .git, next to a folder `outside` with a secret.
 def setup() -> Result[Setup] = setup_with([], [])
 
-def setup_with(allow: List[String], deny: List[String]) -> Result[Setup]
+def setup_with(allow: List[String], deny: List[String], confine: Bool = true) -> Result[Setup]
   tmp = System.env("TMPDIR").unwrap_or("/tmp")
   base = "#{tmp}/agc-tools-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(base)
@@ -53,6 +53,7 @@ def setup_with(allow: List[String], deny: List[String]) -> Result[Setup]
   rules = try Approval.parse_rules(allow.map { |r| "allow #{r}" } + deny.map { |r| "deny #{r}" })
   ctx = (try Tools.context(root, &fake_env)).with(
     hidden: some(->(path: String) { Approval.read_denied?(rules, path) }),
+    confine: confine,
   )
 
   ok(Setup(base: base, root: root, outside: outside, ctx: ctx, rules: rules))
@@ -91,6 +92,28 @@ def test_read_file_reads_inside_and_refuses_every_way_out() -> Result[Void]
   try refused(call(s, "read_file", {"path": "/etc/passwd"}))
   try refused(call(s, "read_file", {"path": "missing.txt"}))
   try refused(call(s, "read_file", {"path": "sub"}))
+  done(s)
+end
+
+# With the confinement off (the default of the server), the file tools reach any path, and the deny rules still refuse.
+def test_the_file_tools_reach_any_path_when_the_confinement_is_off() -> Result[Void]
+  s = try setup_with([], ["read_file(*secret.txt)", "write_file(*/denied.txt)"], false)
+  try File.write_text("#{s.outside}/open.txt", "open outside\n")
+  try Test.eq(call(s, "read_file", {"path": "../outside/open.txt"}).text, "open outside\n")
+  try Test.eq(call(s, "read_file", {"path": "#{s.outside}/open.txt"}).text, "open outside\n")
+  try Test.eq(call(s, "read_file", {"path": "out_dir/open.txt"}).text, "open outside\n")
+  try Test.eq(call(s, "write_file", {"path": "../outside/deep/w.txt", "content": "x"}).is_error, false)
+  try Test.eq(File.read_text("#{s.outside}/deep/w.txt"), ok("x"))
+  edited = call(s, "edit_file", {"path": "../outside/open.txt", "old_string": "open", "new_string": "shut"})
+  try Test.eq(edited.is_error, false)
+  try Test.eq(File.read_text("#{s.outside}/open.txt"), ok("shut outside\n"))
+  try Test.assert(call(s, "grep", {"pattern": "shut", "path": "../outside"}).text.include?("shut outside"), "grep")
+  try Test.assert(call(s, "glob", {"pattern": "**/*.txt", "path": "../outside"}).text.include?("open.txt"), "glob")
+  verdict = Approval.verdict(s.rules, s.ctx, "read_file", JSON.from({"path": "#{s.outside}/secret.txt"}))
+  try Test.eq(verdict, Tools.Verdict.Deny)
+  denied = Approval.verdict(s.rules, s.ctx, "write_file", JSON.from({"path": "../outside/denied.txt", "content": ""}))
+  try Test.eq(denied, Tools.Verdict.Deny)
+  try refused(call(s, "read_file", {"path": "../outside/missing.txt"}))
   done(s)
 end
 

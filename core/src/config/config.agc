@@ -121,6 +121,9 @@ struct Options
   trusted: List[String] = []
   ## The program and arguments that list the files for `@`, from the user's config only; empty for the built-in walk.
   files_command: List[String] = []
+  ## The file tools of new sessions reach only the session folder (`FINN_CONFINE_FILES=1`, `confine_files` of the user's
+  ## config file).
+  confine_files: Bool = false
 end
 
 def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_with(read, &Offered.ant_token)
@@ -231,6 +234,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       docs: docs_folder(read),
       trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
       files_command: try files_command(read),
+      confine_files: try confine_files(read),
     ),
   )
 end
@@ -275,6 +279,25 @@ def files_command(read: Fn[String, Result[String]]) -> Result[List[String]]
   end
 
   ok([])
+end
+
+## `FINN_CONFINE_FILES` (0 or 1), else `confine_files` of the user's config file, else off.
+def confine_files(read: Fn[String, Result[String]]) -> Result[Bool]
+  case set(read, "FINN_CONFINE_FILES")
+    some("1") -> return ok(true)
+    some("0") -> return ok(false)
+    some(other) -> return error("FINN_CONFINE_FILES must be 0 or 1, not #{other.inspect}")
+    none -> nil
+  end
+
+  for path in option_list(Permissions.config_path(read))
+    case JSON.decode(try File.read_text(path), ConfineFile)
+      ok(file) -> return ok(file.confine_files.unwrap_or(false))
+      error(e) -> return error("#{path}: confine_files: #{e.message}")
+    end
+  end
+
+  ok(false)
 end
 
 ## Code mode unless `FINN_CODE_MODE` is `0`, when there is a worker for this machine: `FINN_MONTY`, or a pinned wheel
@@ -364,6 +387,10 @@ end
 def data_dir(read: Fn[String, Result[String]]) -> Result[String] = folder(read, DATA_DIR_ENV, "XDG_DATA_HOME", "share")
 
 private
+
+struct ConfineFile
+  confine_files: Optional[Bool] = none
+end
 
 struct FilesFile
   files: Optional[FilesKey] = none

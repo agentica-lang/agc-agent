@@ -30,6 +30,8 @@ struct Context
   before: Optional[Before] = none
   ## The id of the session, none outside one.
   session: Optional[String] = none
+  ## The file tools reach only the session folder; off, any path (the rules of approval still apply).
+  confine: Bool = false
 end
 
 type Run = Fn[Context, JSON.Value, Result[String]]
