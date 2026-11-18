@@ -1728,7 +1728,7 @@ def test_enter_runs_an_argument_typed_whole_and_not_a_longer_row() -> Result[Voi
     ran,
     [
       "/model p/gpt-5 : update gpt-5",
-      "/model P/GPT-5 : update P/GPT-5",
+      "/model P/GPT-5 : update gpt-5",
       "/model p/gpt-5 down: update gpt-5",
       "/tree 2 : branch 2",
       "/model gpt : update gpt\nmore",

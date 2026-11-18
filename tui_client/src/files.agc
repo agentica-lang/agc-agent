@@ -132,9 +132,9 @@ def runs_choice?(app: State.Model, found: Input.Mention, event: TUI.Event) -> Bo
   end
 end
 
-## Whether the argument typed is one of the choices, as it stands.
+## Whether the argument typed is one of the choices, letter for letter: a model id keeps its case.
 def typed_whole?(found: Input.Mention, choices: List[Input.Choice]) -> Bool
-  found.query != "" and choices.any? { |c| c.value.downcase == found.query.downcase }
+  found.query != "" and choices.any? { |c| c.value == found.query }
 end
 
 ## The selected row of the list: the one moved to; before a move, the one that is the argument typed, else the
