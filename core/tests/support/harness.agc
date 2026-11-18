@@ -106,6 +106,8 @@ struct Setup
   live: Bool = false
   ## What else a reload does (the MCP servers of `Builtins.mcp`).
   reloads: List[Fn[Result[String]]] = []
+  ## How long a reload waits for another one that runs.
+  reload_wait_ms: Int = 150_000
   ## The command that lists the files for `@` (`files.command` of the user's config).
   files_command: List[String] = []
   ## The file tools reach only the session folder.
@@ -345,6 +347,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     registry: some(served_of(setup, user, env_of(setup, base), live)),
     live: live,
     reloads: setup.reloads,
+    reload_wait_ms: setup.reload_wait_ms,
     keep_events: setup.keep_events,
     approval_timeout_ms: setup.approval_timeout_ms,
     drain_ms: setup.drain_ms,

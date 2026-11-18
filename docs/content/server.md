@@ -30,7 +30,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 |---|---|
 | `GET /v1/health` | the server answers, with its version (the UTC time of its commit, `YYYYMMDDhhmmss`, or `unknown`) and the digest of its protocol (`wire`) |
 | `GET /v1/server` | the server's status: its pid, version and start time, how many sessions it has and how many turns run, whether it is stopping, and whether the approvals are on |
-| `POST /v1/reload` | read the config file, the MCP servers, the skills and the project instructions again ([`/reload`](config.md#reload)); gives `{"skills_added", "skills_removed", "config", "extensions", "sessions", "warnings", "rules", "approvals"}` |
+| `POST /v1/reload` | read the config file, the MCP servers, the skills and the project instructions again ([`/reload`](config.md#reload)); gives `{"skills_added", "skills_removed", "config", "extensions", "sessions", "warnings", "rules", "approvals"}`; one reload runs at a time, and one that waits 150 s for another is refused with `409` `reload.busy` |
 | `POST /v1/server/stop` | stop the server, as `finn server stop` does |
 | `GET /v1/logs?lines=N` | the last N lines of the server log (default 50), the last 3 distinct warnings it logged since it started (a text that came again once, with `(×N)` after it), and how many distinct |
 | `GET /v1/providers` | the providers and their models |

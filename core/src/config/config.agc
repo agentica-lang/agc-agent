@@ -143,6 +143,10 @@ struct Options
   live: Optional[Live] = none
   ## What else a reload reads again (the MCP servers), each giving what it did, empty for nothing.
   reloads: List[Fn[Result[String]]] = []
+  ## What the end of the server stops after its sessions (the MCP servers, which run in their own process groups).
+  stops: List[Fn[Void]] = []
+  ## How long a reload waits for another one that runs (tests shorten it).
+  reload_wait_ms: Int = 150_000
 end
 
 ## What the user's config file sets that `reload` reads again: the rules and the asking, the program that lists the

@@ -42,6 +42,9 @@ KIND_LOGIN_REJECTED = "login.rejected"
 ## The key file cannot be read (its mode or owner) or written (`500`).
 KIND_LOGIN_STORAGE = "login.storage"
 
+## A reload asked while another one runs and does not end in time (`409`).
+KIND_RELOAD_BUSY = "reload.busy"
+
 ## A request that would start work, while the server stops (`503`): reads, answers to approvals and stops still work.
 KIND_SERVER_STOPPING = "server.stopping"
 
@@ -62,6 +65,7 @@ def shape() -> List[String]
     KIND_SHELL_DENIED,
     KIND_LOGIN_REJECTED,
     KIND_LOGIN_STORAGE,
+    KIND_RELOAD_BUSY,
     KIND_SERVER_STOPPING,
   ]
 end

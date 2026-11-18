@@ -206,9 +206,7 @@ def test_a_reload_swaps_the_mcp_servers_and_keeps_them_when_the_file_is_bad() ->
       try Test.eq(done.extensions, ["restarting 1 MCP server(s)"])
       try listed(tools, "mcp__other__echo", true)
       try listed(tools, "mcp__fake__echo", false)
-      ctx = try Tools.context(".", &H.fake_env, true, old)
-      gone = Tools.run(ctx, "mcp__fake__echo", JSON.object({"text": JSON.from("hi")}))
-      try Test.eq(gone.is_error, true)
+      try fails(old, "mcp__fake__echo")
       try File.write_text("#{dir}/mcp.json", "{oops")
       bad = try reload(h)
       try Test.assert(bad.warnings.any? { |w| w.start_with?("extensions:") }, "#{bad.warnings}")
@@ -233,4 +231,31 @@ def listed(tools: Fn[List[Tools.Tool]], name: String, wanted: Bool) -> Result[Vo
   end
 
   error("#{name} did not change in 30 seconds")
+end
+
+# Waits until a call of the old tool `name` fails: the old servers are stopped aside, so it takes a moment.
+def fails(old: List[Tools.Tool], name: String) -> Result[Void]
+  ctx = try Tools.context(".", &H.fake_env, true, old)
+  for _ in 0...300
+    return ok() if Tools.run(ctx, name, JSON.object({"text": JSON.from("hi")})).is_error
+
+    Task.sleep(100)
+  end
+
+  error("a call of #{name} still works")
+end
+
+# A reload that finds another one running waits a while and then says so, with the kind that is a 409; the next one
+# runs.
+def test_a_reload_that_waits_too_long_for_another_is_refused() -> Result[Void]
+  H.using(H.Setup(replies: [], reload_wait_ms: 200)) do |h|
+    token = h.server.sessions.reloading.recv(0)
+    try Test.eq(token.ok?, true)
+    busy = try H.post(h, Protocol.RELOAD_PATH, "")
+    try Test.eq(busy.status, 409)
+    try Test.eq((try Protocol.decode_failure(busy.text)).kind, Protocol.KIND_RELOAD_BUSY)
+    _ = h.server.sessions.reloading.send(true, 0)
+    ok_again = try H.post(h, Protocol.RELOAD_PATH, "")
+    Test.eq(ok_again.status, 200)
+  end
 end

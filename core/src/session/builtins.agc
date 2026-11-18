@@ -45,8 +45,7 @@ end
 ## they list them.
 def mcp(served: Extensions.Served, read: Fn[String, Result[String]], state_dir: String) -> Result[Mounted]
   servers = try McpTools.servers(read, state_dir)
-  init = -> { Running(board: some(started(servers)), servers: servers) }
-  holder = Actor.start(Actor.Behaviour(init: init, handle: &handled))
+  holder = start_holder(servers)
   address = holder.address
   tools = -> {
     listed: Result[List[Spec.Tool]] = Actor.call(address, MCP_CALL_MS) do |reply| Held.Tools(reply) end
@@ -91,18 +90,43 @@ private
 MCP_CALL_MS = 5000
 MCP_FINISH_MS = 120_000
 
-# The MCP servers that run, in the actor that a reload changes.
+# The MCP servers that run, in the actor that the tools are read from. A reload only tells the swapper, which stops the
+# old board and then starts the new one, one swap after the other, so two instances of a server never overlap.
 struct Running
   board: Optional[McpTools.Board]
   servers: List[Mcp.Server]
-  # The tasks that stop the servers of the boards a reload replaced, so the swap itself does not wait for them.
-  stopping: List[Task[Void]] = []
+  swapper: Optional[Address[Swap]] = none
+end
+
+# The board that the swapper started last, the one it stops next.
+struct Swapping
+  board: Optional[McpTools.Board] = none
+  holder: Address[Held]
+end
+
+enum Swap
+  Adopt(McpTools.Board)
+  To(List[Mcp.Server])
+  End(Channel[Bool])
 end
 
 enum Held
   Tools(Channel[List[Spec.Tool]])
   Replace(List[Mcp.Server], Channel[Result[String]])
+  Attach(Address[Swap])
+  Ready(List[Mcp.Server], McpTools.Board)
   Finish(Channel[Bool])
+end
+
+def start_holder(servers: List[Mcp.Server]) -> Actor.Ref[Running, Held]
+  holder = Actor.start(
+    Actor.Behaviour(init: -> { Running(board: some(started(servers)), servers: servers) }, handle: &handled),
+  )
+
+  swapper = Actor.start(Actor.Behaviour(init: -> { Swapping(holder: holder.address) }, handle: &swapped))
+
+  _ = Actor.cast(holder.address, Held.Attach(swapper.address))
+  holder
 end
 
 def finished(holder: Actor.Ref[Running, Held], address: Address[Held]) -> Void
@@ -131,28 +155,53 @@ def handled(state: Running, msg: Held) -> Actor.Step[Running]
       no_tools: List[Spec.Tool] = []
       Actor.reply(reply, state.board.map { |board| McpTools.tools(board) }.unwrap_or(no_tools))
       Actor.continue(state)
-    Held.Finish(reply) ->
-      for task in state.stopping
-        Task.await(task)
+    Held.Attach(swapper) ->
+      for board in option_list(state.board)
+        _ = Actor.cast(swapper, Swap.Adopt(board))
       end
 
+      Actor.continue(state.with(swapper: some(swapper)))
+    Held.Ready(servers, board) if servers == state.servers -> Actor.continue(state.with(board: some(board)))
+    Held.Ready(_, _) -> Actor.continue(state)
+    Held.Finish(reply) ->
+      for swapper in option_list(state.swapper)
+        ended: Result[Bool] = Actor.call(swapper, MCP_FINISH_MS) do |done| Swap.End(done) end
+        _ = ended
+      end
+
+      Actor.reply(reply, true)
+      Actor.continue(state.with(board: none))
+    Held.Replace(fresh, reply) if fresh == state.servers ->
+      Actor.reply(reply, ok(""))
+      Actor.continue(state)
+    Held.Replace(fresh, reply) ->
+      for swapper in option_list(state.swapper)
+        _ = Actor.cast(swapper, Swap.To(fresh))
+      end
+
+      Actor.reply(reply, ok("restarting #{fresh.size} MCP server(s)"))
+      Actor.continue(state.with(board: none, servers: fresh))
+  end
+end
+
+def swapped(state: Swapping, msg: Swap) -> Actor.Step[Swapping]
+  case msg
+    Swap.Adopt(board) -> Actor.continue(state.with(board: some(board)))
+    Swap.To(servers) ->
+      for board in option_list(state.board)
+        stopped(board)
+      end
+
+      fresh = started(servers)
+      _ = Actor.cast(state.holder, Held.Ready(servers, fresh))
+      Actor.continue(state.with(board: some(fresh)))
+    Swap.End(reply) ->
       for board in option_list(state.board)
         stopped(board)
       end
 
       Actor.reply(reply, true)
-      Actor.continue(state.with(board: none, stopping: []))
-    Held.Replace(fresh, reply) if fresh == state.servers ->
-      Actor.reply(reply, ok(""))
-      Actor.continue(state)
-    Held.Replace(fresh, reply) ->
-      stopping = state.stopping
-      for board in option_list(state.board)
-        stopping = stopping.push(Task.spawn(&stopped, board))
-      end
-
-      Actor.reply(reply, ok("restarting #{fresh.size} MCP server(s)"))
-      Actor.continue(Running(board: some(started(fresh)), servers: fresh, stopping: stopping))
+      Actor.done(state.with(board: none))
   end
 end
 

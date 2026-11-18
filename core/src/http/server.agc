@@ -124,6 +124,10 @@ def shutdown(server: Server, now: Bool, http_ms: Int = SHUTDOWN_MS) -> Void
   Sessions.stop(server.sessions)
   HTTP.shutdown(server.http, http_ms)
   Extensions.stop_services(server.services)
+  for stop in server.sessions.options.stops
+    stop.call()
+  end
+
   _ = Path.remove("#{server.state_dir}/#{SERVER_JSON}")
   _ = File.close(server.lock)
 end
@@ -133,6 +137,10 @@ def stop(server: Server) -> Void
   _ = Bond.wait(server.http)
   Sessions.stop(server.sessions)
   Extensions.stop_services(server.services)
+  for stop in server.sessions.options.stops
+    stop.call()
+  end
+
   _ = Path.remove("#{server.state_dir}/#{SERVER_JSON}")
   _ = File.close(server.lock)
 end
@@ -601,7 +609,7 @@ def status_of(kind: String) -> Int
   return 400 if [Protocol.KIND_INVALID, Protocol.KIND_UNKNOWN, Protocol.KIND_LOGIN_REJECTED].include?(kind)
   return 403 if kind == Protocol.KIND_SHELL_DENIED
   return 404 if [Protocol.KIND_SESSION_NOT_FOUND, Protocol.KIND_APPROVAL_NOT_FOUND].include?(kind)
-  return 409 if [Protocol.KIND_SESSION_BUSY, Protocol.KIND_APPROVAL_RESOLVED].include?(kind)
+  return 409 if [Protocol.KIND_SESSION_BUSY, Protocol.KIND_APPROVAL_RESOLVED, Protocol.KIND_RELOAD_BUSY].include?(kind)
   return 503 if kind == Protocol.KIND_SESSION_UNAVAILABLE
 
   500

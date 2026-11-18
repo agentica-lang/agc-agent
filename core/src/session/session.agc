@@ -27,8 +27,6 @@ import Logger from "std/logger"
 
 SESSIONS_DIR = "sessions"
 CALL_MS = 5000
-# How long a reload waits for another one that runs.
-RELOAD_WAIT_MS = 150_000
 ## A request for a session that is not loaded yet waits for its load.
 LOAD_MS = 60_000
 ## A session whose file names a model API this server does not have; its 503 says so.
@@ -43,6 +41,8 @@ struct Sessions
   dir: String
   ## One token: a reload holds it, so two reloads do not run at once.
   reloading: Channel[Bool]
+  ## How long a reload waits for the one that runs.
+  reload_wait_ms: Int
 end
 
 ## How many sessions the server has, how many of them work now (a turn or a shell command; only a loaded session can),
@@ -71,7 +71,13 @@ def start(given: Config.Options, store: Optional[Store.Port] = none) -> Sessions
   registry = Actor.start(Actor.Behaviour(init: init, handle: &handle, terminate: some(&terminate)))
   gate: Channel[Bool] = Channel.new(1)
   _ = gate.send(true, 0)
-  Sessions(registry: registry, options: options, dir: folder(options), reloading: gate)
+  Sessions(
+    registry: registry,
+    options: options,
+    dir: folder(options),
+    reloading: gate,
+    reload_wait_ms: options.reload_wait_ms,
+  )
 end
 
 ## Stops the registry and the sessions it runs.
@@ -185,8 +191,8 @@ end
 ## their system prompt and approval again for their next turn (a turn that runs keeps what it started with), the others
 ## when they load. A config file that does not read stays as it was, said in the answer. One reload runs at a time.
 def reload(sessions: Sessions) -> Result[Protocol.Reloaded]
-  token = sessions.reloading.recv(RELOAD_WAIT_MS)
-  return error("another reload is running") if not token.ok?
+  token = sessions.reloading.recv(sessions.reload_wait_ms)
+  return error("another reload is running", kind: Protocol.KIND_RELOAD_BUSY) if not token.ok?
 
   done = reloaded(sessions)
   _ = sessions.reloading.send(true, 0)
