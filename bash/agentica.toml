@@ -12,7 +12,9 @@ blank_line_after_end = true
 # - native/grammar: src of tree-sitter-bash v0.25.1 (MIT), unchanged; archive sha256
 #   2e785a761225b6c433410ef9c7b63cfb0a4e83a35a19e0f2aec140b42c06b52d. But parser.c (9.5 MB), over the 1 MiB of a file
 #   of a fetched package: it includes src/parser.c of the submodule ../vendor/tree-sitter-bash (the same release).
-# A system without a C compiler runs without the module: `Bash.parse` gives an error.
+# So only a git clone builds the module (`make install` fetches the submodule). A fetched `bash` never builds it from
+# source: it uses the prebuilt library of [native.bash.prebuilt]. A system with neither runs without the module:
+# `Bash.parse` gives an error.
 [native.bash]
 build = { sources = ["native/bash.c", "native/runtime/lib.c", "native/grammar/parser.c", "native/grammar/scanner.c"], defines = ["_POSIX_C_SOURCE=200112L", "_DEFAULT_SOURCE", "_BSD_SOURCE", "_DARWIN_C_SOURCE", "TREE_SITTER_HIDE_SYMBOLS"] }
 optional = true
