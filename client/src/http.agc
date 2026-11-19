@@ -180,6 +180,16 @@ def mcp_reconnect(server: Server, id: String, name: String) -> Result[Protocol.M
   ok(servers[0])
 end
 
+## The last `lines` lines of the log of the MCP server `name`, as the server reads them.
+def mcp_log(server: Server, id: String, name: String, lines: Int) -> Result[Protocol.McpLog]
+  query = "?lines=#{lines}"
+  if not id.empty?
+    query = "#{query}&session=#{id}"
+  end
+
+  Protocol.decode_mcp_log(try call(server, "GET", "#{Protocol.mcp_log_path(name)}#{query}", ""))
+end
+
 # The query that names the session whose folder has the project servers; none without a session.
 def of_session(id: String) -> String
   return "" if id.empty?

@@ -10,7 +10,8 @@ LOGS_PATH = "/v1/logs"
 RELOAD_PATH = "/v1/reload"
 PROVIDERS_PATH = "/v1/providers"
 ## `GET`: the MCP servers and their states (`?session=ID` adds those of the session's folder); `MCP_PATH/NAME/reconnect`
-## (`POST`, with the same `?session=ID`) starts one server again.
+## (`POST`, with the same `?session=ID`) starts one server again, and `MCP_PATH/NAME/log` (`GET`, `?lines=N` too) gives the
+## end of its log.
 MCP_PATH = "/v1/mcp"
 AUTH_PATH = "/v1/auth"
 
@@ -18,6 +19,8 @@ AUTH_PATH = "/v1/auth"
 LAST_EVENT_ID_HEADER = "Last-Event-ID"
 
 def mcp_reconnect_path(name: String) -> String = "#{MCP_PATH}/#{name}/reconnect"
+
+def mcp_log_path(name: String) -> String = "#{MCP_PATH}/#{name}/log"
 
 def session_path(session_id: String) -> String = "#{SESSIONS_PATH}/#{session_id}"
 
@@ -83,5 +86,6 @@ def shape() -> List[String]
     commands_path("ID"),
     auth_path("P"),
     mcp_reconnect_path("N"),
+    mcp_log_path("N"),
   ]
 end

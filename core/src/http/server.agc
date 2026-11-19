@@ -158,6 +158,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.get(Protocol.LOGS_PATH, ->(conn) { reply(conn, 200, logs(control, conn)) })
     |> Bond.get(Protocol.MCP_PATH, ->(conn) { reply(conn, 200, mcp(sessions, conn)) })
     |> Bond.post("#{Protocol.MCP_PATH}/:name/reconnect", ->(conn) { reply(conn, 200, mcp_reconnect(sessions, conn)) })
+    |> Bond.get("#{Protocol.MCP_PATH}/:name/log", ->(conn) { reply(conn, 200, mcp_log(sessions, conn)) })
     |> Bond.post(Protocol.RELOAD_PATH, ->(conn) { reply(conn, 200, reload(sessions)) })
     |> Bond.post(Protocol.SERVER_STOP_PATH, ->(conn) { reply(conn, 200, stop_route(control, conn)) })
     |> Bond.post(all, ->(conn) { reply(conn, 201, create(sessions, conn)) })
@@ -442,6 +443,21 @@ end
 
 def mcp(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   ok(Protocol.encode_mcp_status(try Sessions.mcp(sessions, try mcp_folder(sessions, conn))))
+end
+
+def mcp_log(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  count = DEFAULT_LOG_LINES
+  for text in try Bond.query_all(conn, "lines")
+    wanted = text.to_i
+    if not wanted.ok? or wanted.unwrap! < 0 or wanted.unwrap! > MAX_LOG_LINES
+      return error("lines is a number from 0 to #{MAX_LOG_LINES}", kind: Protocol.KIND_INVALID)
+    end
+
+    count = wanted.unwrap!
+  end
+
+  name = try Bond.param(conn, "name")
+  ok(Protocol.encode_mcp_log(try Sessions.mcp_log(sessions, try mcp_folder(sessions, conn), name, count)))
 end
 
 def mcp_reconnect(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]

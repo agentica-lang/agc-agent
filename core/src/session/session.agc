@@ -165,6 +165,15 @@ def mcp(sessions: Sessions, root: String) -> Result[Protocol.McpStatus]
   ok(Protocol.McpStatus(servers: []))
 end
 
+## The last `count` lines of the log of the MCP server `name` (the user's, else of the folder `root`).
+def mcp_log(sessions: Sessions, root: String, name: String, count: Int) -> Result[Protocol.McpLog]
+  for control in option_list(sessions.options.mcp)
+    return ok(Protocol.McpLog(lines: try control.log.call(root, name, count)))
+  end
+
+  error("no MCP server named #{name}", kind: Protocol.KIND_MCP_NOT_FOUND)
+end
+
 ## Starts the MCP server `name` again, among those of the user or of the folder `root`.
 def mcp_reconnect(sessions: Sessions, root: String, name: String) -> Result[Protocol.McpServer]
   for control in option_list(sessions.options.mcp)

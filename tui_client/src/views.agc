@@ -141,15 +141,14 @@ def hints(app: State.Model) -> List[String]
     end
 
     if Side.active?(side, app.screen_width)
-      keys = [
-        "Esc close panel",
-        focus,
-        "#{scroll_hint(app)} scroll panel",
-        "#{short(app, "logs")} close panel",
-        "^C quit",
-      ]
+      keys = (
+        mcp_hints(app) +
+        ["Esc close panel", focus, "#{scroll_hint(app)} scroll panel", "#{short(app, "logs")} close panel", "^C quit"]
+      )
 
-      return keys.select { |text| text != "" } + hint_list(app).select { |text| not rest_of_keys?(app, text) }
+      detail = app.mcp.map { |panel| panel.view != "" }.unwrap_or(false)
+      keys = keys.select { |text| text != "" and not (detail and text == "Esc close panel") }
+      return keys + hint_list(app).select { |text| not rest_of_keys?(app, text) }
     end
 
     own = ["Enter send", "Esc close panel", focus, "^C quit", "#{short(app, "logs")} close panel"]
@@ -157,6 +156,17 @@ def hints(app: State.Model) -> List[String]
   end
 
   closed_hints(app)
+end
+
+# What the keys of the MCP panel do, while it has them.
+def mcp_hints(app: State.Model) -> List[String]
+  for panel in State.option_list(app.mcp)
+    return ["Esc back", "r reconnect"] if panel.view != ""
+
+    return ["↑↓/jk move", "r reconnect", "t/Enter tools", "l log"]
+  end
+
+  []
 end
 
 # The hints that the side panel's own replace.

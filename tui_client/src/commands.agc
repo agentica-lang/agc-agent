@@ -8,6 +8,7 @@ import Side from "side"
 import Sides from "sides"
 import State from "state"
 import Logins from "logins"
+import McpPanel from "mcp_panel"
 import Turn from "turn"
 import Terminal from "terminal"
 import Session from "session"
@@ -137,7 +138,7 @@ end
 def mcp_reconnected(app: State.Model, text: String, status: Optional[Protocol.McpStatus]) -> State.Model
   noted = State.noted(app, text)
   case status
-    some(read) -> noted.with(banner: Client.mcp_banner(noted.banner, read))
+    some(read) -> McpPanel.refreshed(noted.with(banner: Client.mcp_banner(noted.banner, read)), read)
     none -> noted
   end
 end
@@ -264,7 +265,7 @@ end
 def shown_mcp(app: State.Model, name: String) -> Result[State.Model]
   status = try app.backend.mcp.call(app.id)
   banner = Client.mcp_banner(app.banner, status)
-  return ok(Sides.shown(app.with(banner: banner), Side.of("MCP servers", Client.mcp_listing(status)))) if name.empty?
+  return ok(McpPanel.opened(app.with(banner: banner), status)) if name.empty?
 
   ok(Sides.shown(app.with(banner: banner), Side.of("MCP #{Client.printable(name)}", Client.mcp_tools(status, name))))
 end

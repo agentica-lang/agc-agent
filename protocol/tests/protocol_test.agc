@@ -428,6 +428,9 @@ def test_the_mcp_status_round_trips() -> Result[Void]
 
   try Test.eq(Protocol.decode_mcp_status(Protocol.encode_mcp_status(status)), ok(status))
   try Test.eq(error_kind(Protocol.decode_mcp_status("{}")), "protocol.invalid")
+  log = Protocol.McpLog(lines: ["a", "b"])
+  try Test.eq(Protocol.decode_mcp_log(Protocol.encode_mcp_log(log)), ok(log))
+  try Test.eq(Protocol.mcp_log_path("fs"), "/v1/mcp/fs/log")
   try Test.eq(Protocol.MCP_PATH, "/v1/mcp")
   Test.eq(Protocol.mcp_reconnect_path("fs"), "/v1/mcp/fs/reconnect")
 end
