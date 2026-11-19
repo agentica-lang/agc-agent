@@ -57,7 +57,7 @@ These work for `finn` and `finn chat`:
 
 ### Versions
 
-The version of Finn is the UTC time of the commit it runs, `YYYYMMDDhhmmss`, and each one on `main` has the tag `finn-YYYYMMDDhhmmss`. `bin/finn` reads it from git (or, in an archive without `.git`, from `bin/commit-time`) and passes it to the server and the clients in `FINN_VERSION`; a program started without it says `unknown`. It is the time of the last commit, so edits that are not committed show the same version, and a rebased or amended checkout may show as older.
+The version of Finn is the UTC time of the commit it runs, `YYYYMMDDhhmmss`, and each one on `main` that changes more than `docs/`, Markdown files or `.github/` has the tag `finn-YYYYMMDDhhmmss`; a docs-only commit has none, and its version is the time of that commit. `bin/finn` reads it from git (or, in an archive without `.git`, from `bin/commit-time`) and passes it to the server and the clients in `FINN_VERSION`; a program started without it says `unknown`. It is the time of the last commit, so edits that are not committed show the same version, and a rebased or amended checkout may show as older.
 
 A server keeps running the code it started with, so after a `git pull` it can be older than the client. The client then says which side is older. A server of the same protocol still serves it, with one line such as `the server runs an older Finn (20261101093000) than this client (20261118123456)`, and `finn server restart` starts the new one; a server of another protocol is not used, and the client says the same. `finn server status` shows the comparison next to the server's version.
 
