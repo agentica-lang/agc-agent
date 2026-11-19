@@ -46,6 +46,15 @@ struct ServerStatus
   ## Whether the full screen turns the mouse on (`mouse` of the config file, true unless it says `false`); none from a
   ## server older than this field.
   mouse: Optional[Bool] = none
+  ## How the full screen copies a selection (`clipboard` and `clipboard_command` of the config file); none from a server
+  ## older than this field.
+  clipboard: Optional[ClipboardSetting] = none
+end
+
+## The clipboard of the user's config file: `auto`, `osc52`, `tmux` or `command`, and the program that `command` runs.
+struct ClipboardSetting
+  provider: String = "auto"
+  command: List[String] = []
 end
 
 ## `GET /v1/logs`: the last lines of the server log, the last of the warnings it logged since it started, and how many
@@ -495,6 +504,7 @@ def shape() -> List[String]
     Wire.record("SessionExport", SessionExport.members),
     Wire.record("Branched", Branched.members),
     Wire.record("ServerStatus", ServerStatus.members),
+    Wire.record("ClipboardSetting", ClipboardSetting.members),
     Wire.record("ServerLog", ServerLog.members),
     Wire.record("Reloaded", Reloaded.members),
     Wire.record("ShellAccepted", ShellAccepted.members),

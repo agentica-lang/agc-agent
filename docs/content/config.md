@@ -29,6 +29,7 @@ Finn reads environment variables when the server starts, and a few JSON files. A
 | `providers` | OpenAI-compatible APIs of your own ([Providers](providers.md#your-own-provider)) |
 | `confine_files` | `true` keeps the file tools in the session folder; by default they reach any path ([The session folder](tools.md#the-session-folder)) |
 | `mouse` | `false` starts `finn` with the mouse reporting off (the server reads it when it starts: restart it after a change), so the terminal selects text with a plain drag; `/mouse` turns it on ([Copying text](cli.md#copying-text)) |
+| `clipboard`, `clipboard_command` | how `finn` copies a selection: `auto` (the default) picks tmux, a tool of the local display or OSC 52; `osc52`, `tmux` or `command` forces one, and `command` runs the program that `clipboard_command` lists, such as `["xclip", "-selection", "clipboard"]` ([Copying text](cli.md#copying-text)) |
 | `files` | `{"command": ["rg", "--files"]}`: the program that lists the files for the `@` completion, in place of the built-in walk ([The files command](#the-files-command)) |
 
 Every key is optional, and so is the file. How the rules work is on [Approvals and security](security.md#rules), and where they fall short in [What rules cannot do](security.md#what-rules-cannot-do).

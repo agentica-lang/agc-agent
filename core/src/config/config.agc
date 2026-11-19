@@ -133,6 +133,9 @@ struct Options
   confine_files: Bool = false
   ## The full screen turns the mouse on: `"mouse": false` of the user's config file turns it off.
   mouse: Bool = true
+  ## How the full screen copies a selection: `"clipboard"` and `"clipboard_command"` of the user's config file.
+  clipboard: String = "auto"
+  clipboard_command: List[String] = []
   ## The provider is set (`FINN_PROVIDER`, `FINN_API` or `FINN_BASE_URL`) and `FINN_MODEL` is: they win over the provider and
   ## model last picked.
   provider_pinned: Bool = false
@@ -149,6 +152,12 @@ struct Options
   reload_wait_ms: Int = 150_000
 end
 
+## `provider` is `auto`, `osc52`, `tmux` or `command`; `command` is the program that `command` runs.
+struct Clipboard
+  provider: String = "auto"
+  command: List[String] = []
+end
+
 ## What the user's config file sets that `reload` reads again: the rules and the asking, the program that lists the
 ## files, the mouse, and the providers it adds.
 struct Settings
@@ -158,6 +167,7 @@ struct Settings
   asking: Bool
   files_command: List[String]
   mouse: Bool
+  clipboard: Clipboard
   customs: List[Providers.Custom]
 end
 
@@ -324,6 +334,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       files_command: first.files_command,
       confine_files: try confine_files(read, user_file),
       mouse: first.mouse,
+      clipboard: first.clipboard.provider,
+      clipboard_command: first.clipboard.command,
       live: some(live),
       provider_pinned: provider_pinned?(read),
       model_pinned: set(read, "FINN_MODEL").some?,
@@ -538,6 +550,8 @@ def data_dir(read: Fn[String, Result[String]]) -> Result[String] = folder(read, 
 
 private
 
+CLIPBOARDS = ["auto", "osc52", "tmux", "command"]
+
 # The user's config file, read once: each setting takes its own key, so a bad value stops only its own setting.
 struct UserFile
   path: String
@@ -579,16 +593,7 @@ def files_command(found: UserFile) -> Result[List[String]]
   ok([])
 end
 
-def program(files: JSON.Value) -> Result[List[String]]
-  command: List[String] = []
-  for item in try JSON.list(try JSON.get(files, "command"))
-    command = command.push(try JSON.string(item))
-  end
-
-  return error("no program") if command.empty? or command[0] == ""
-
-  ok(command)
-end
+def program(files: JSON.Value) -> Result[List[String]] = program_of(try JSON.get(files, "command"))
 
 # `FINN_CONFINE_FILES` (0 or 1), else `confine_files` of the user's config file, else off.
 def confine_files(read: Fn[String, Result[String]], found: UserFile) -> Result[Bool]
@@ -602,6 +607,47 @@ end
 
 # `mouse` of the user's config file: `false` leaves the mouse to the terminal; no key, or no file, is on.
 def mouse_setting(found: UserFile) -> Result[Bool] = flag(found, "mouse", true)
+
+# `clipboard` and `clipboard_command` of the user's config file: one of CLIPBOARDS (`auto` when there is none) and the
+# program that `command` runs. A `clipboard_command` with no `clipboard` means `command`.
+def clipboard_setting(found: UserFile) -> Result[Clipboard]
+  command: List[String] = []
+  for value in option_list(setting(found, "clipboard_command"))
+    case program_of(value)
+      ok(listed) -> command = listed
+      error(_) -> return error("#{found.path}: clipboard_command must name a program")
+    end
+  end
+
+  provider = "auto"
+  if not command.empty?
+    provider = "command"
+  end
+
+  for value in option_list(setting(found, "clipboard"))
+    case JSON.string(value)
+      ok(named) if CLIPBOARDS.include?(named) -> provider = named
+      _ -> return error("#{found.path}: clipboard must be auto, osc52, tmux or command")
+    end
+  end
+
+  if provider == "command" and command.empty?
+    return error("#{found.path}: clipboard \"command\" needs clipboard_command")
+  end
+
+  ok(Clipboard(provider: provider, command: command))
+end
+
+def program_of(value: JSON.Value) -> Result[List[String]]
+  command: List[String] = []
+  for item in try JSON.list(value)
+    command = command.push(try JSON.string(item))
+  end
+
+  return error("no program") if command.empty? or command[0] == ""
+
+  ok(command)
+end
 
 def flag(found: UserFile, key: String, fallback: Bool) -> Result[Bool]
   for value in option_list(setting(found, key))
@@ -656,6 +702,7 @@ def settings_of(read: Fn[String, Result[String]]) -> Result[Settings]
       asking: user.asking,
       files_command: try files_command(file),
       mouse: try mouse_setting(file),
+      clipboard: try clipboard_setting(file),
       customs: customs,
     ),
   )
@@ -671,6 +718,8 @@ def lived(options: Options) -> Options
           asking: found.asking,
           files_command: found.files_command,
           mouse: found.mouse,
+          clipboard: found.clipboard.provider,
+          clipboard_command: found.clipboard.command,
         )
       error(_) -> nil
     end

@@ -35,6 +35,13 @@ struct Server
   token: String
 end
 
+## What the config of the server asks of the full screen: the mouse on or off, and how a selection is copied. A server that
+## does not say (or does not answer) leaves the mouse on and the clipboard `auto`.
+struct Display
+  mouse: Bool
+  clipboard: Protocol.ClipboardSetting
+end
+
 ## The health check is short: a server that does not answer in time is not started again, it is reported.
 def health(server: Server) -> Result[Protocol.Health]
   body = try call_within(server, "GET", Protocol.HEALTH_PATH, "", PROBE_TIMEOUT_MS)
@@ -47,13 +54,16 @@ def server_status(server: Server) -> Result[Protocol.ServerStatus]
   Protocol.decode_server_status(body)
 end
 
-## Whether the config of the server leaves the mouse on; on when the server does not say.
-def mouse(server: Server) -> Bool
+def display(server: Server) -> Display
   case server_status(server)
-    ok(status) -> status.mouse.unwrap_or(true)
-    error(_) -> true
+    ok(status) ->
+      Display(mouse: status.mouse.unwrap_or(true), clipboard: status.clipboard.unwrap_or(Protocol.ClipboardSetting()))
+    error(_) -> unset()
   end
 end
+
+## The display of a server that says nothing.
+def unset() -> Display = Display(mouse: true, clipboard: Protocol.ClipboardSetting())
 
 ## The last `lines` lines of the server log, and the warnings it logged since it started.
 def server_log(server: Server, lines: Int) -> Result[Protocol.ServerLog]
