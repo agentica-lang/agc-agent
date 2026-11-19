@@ -72,6 +72,7 @@ export Routes.shell_path
 export Routes.files_path
 export Routes.MCP_PATH
 export Routes.mcp_reconnect_path
+export Routes.mcp_log_path
 export Routes.profiles_path
 export Routes.commands_path
 export Routes.auth_path
@@ -164,6 +165,9 @@ export Replies.decode_provider_list
 export Replies.McpTool
 export Replies.McpServer
 export Replies.McpStatus
+export Replies.McpLog
+export Replies.encode_mcp_log
+export Replies.decode_mcp_log
 export Replies.encode_mcp_status
 export Replies.decode_mcp_status
 export Replies.ProfileList

@@ -28,6 +28,8 @@ struct Side
   focused: Bool = true
   ## One line after the lines, for what went wrong (the log could not be read).
   note: String = ""
+  ## The keys of the panel's own list, in the title while the panel has the keys.
+  keys: String = ""
 end
 
 ## A panel of fixed `lines`, shown from the top.
@@ -74,6 +76,30 @@ end
 ## The panel with `lines` in place of its own, cut for its width again.
 def replaced(side: Side, lines: List[String]) -> Side
   fitted(side.with(lines: lines, note: "", wrapped_at: 0), side.wrapped_at)
+end
+
+## The panel with another title, keys and lines, cut again for its width; where it is scrolled stays.
+def retitled(side: Side, title: String, keys: String, lines: List[String]) -> Side
+  fitted(side.with(title: title, keys: keys, lines: lines, note: "", wrapped_at: 0), side.wrapped_at)
+end
+
+## The panel scrolled so that line `index` shows whole (or its first `room` rows when it is taller), as wrapped now.
+def revealed(side: Side, index: Int, room: Int) -> Side
+  return side if side.wrapped_at <= 0 or index < 0 or index >= side.lines.size or room <= 0
+
+  before = side.lines.take(index).flat_map { |line| Transcript.wrap(line, side.wrapped_at) }.size
+  height = Transcript.wrap(side.lines[index], side.wrapped_at).size
+  at = first(side, room)
+  top = at
+  if before < at
+    top = before
+  end
+
+  if before + height > at + room
+    top = [before + height - room, before].min.unwrap!
+  end
+
+  side.with(top: top, follow: false)
 end
 
 ## The panel with `note` after its lines.
@@ -133,7 +159,12 @@ def title(side: Side, room: Int, at: Int, wide: Bool, keys: Client.Bindings) -> 
     focus = " · #{label(keys, "side_focus")} focus"
   end
 
-  " #{side.title}#{state} · Esc closes#{focus} · #{label(keys, "page_up")}/#{label(keys, "page_down")} scroll"
+  own = ""
+  if side.keys != "" and (side.focused or not wide)
+    own = " · #{side.keys}"
+  end
+
+  " #{side.title}#{state}#{own} · Esc closes#{focus} · #{label(keys, "page_up")}/#{label(keys, "page_down")} scroll"
 end
 
 def label(keys: Client.Bindings, action: String) -> String = Client.label(Client.key_of(keys, action))

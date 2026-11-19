@@ -23,6 +23,7 @@ import Level from "level"
 import Answering from "answering"
 import Files from "files"
 import Logins from "logins"
+import McpPanel from "mcp_panel"
 import Turn from "turn"
 import Session from "session"
 import Sides from "sides"
@@ -265,6 +266,8 @@ def handled(app: State.Model, msg: State.Msg) -> State.Model
     State.Msg.Mcp(text, status) -> Commands.mcp_reconnected(app, text, status)
     State.Msg.LogTick -> Sides.tick(app)
     State.Msg.LogRead(serial, result) -> Sides.read(app, serial, result)
+    State.Msg.McpRead(serial, result) -> McpPanel.read(app, serial, result)
+    State.Msg.McpLogRead(serial, name, result) -> McpPanel.log_read(app, serial, name, result)
     State.Msg.Copied(text, method, result, checked) -> Selecting.finished(app, text, method, result, checked)
     State.Msg.Answered(approval_id, result) ->
       outcome = Approvals.answered(app.approvals, approval_id, result, app.now)

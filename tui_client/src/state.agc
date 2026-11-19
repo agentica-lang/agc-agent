@@ -165,6 +165,8 @@ struct Model
   ## The log it follows is being read, and which open panel the read is for (a read for a closed one is dropped).
   reading_side: Bool = false
   side_serial: Int = 0
+  ## The side panel is the list of MCP servers (`/mcp`): its keys act on the server under the cursor while it is active.
+  mcp: Optional[McpPanel] = none
   ## The text a drag selected, and where the button went down while it may still drag.
   selection: Optional[Select.Selection] = none
   pressed: Optional[Select.Press] = none
@@ -189,6 +191,17 @@ struct Model
   failure: Optional[String] = none
 end
 
+## The MCP panel: the servers as the last read gave them, the row of the cursor, and what the panel shows now: the list
+## (`view` empty), or the `tools` or the `log` of the server `name`.
+struct McpPanel
+  servers: List[Protocol.McpServer]
+  cursor: Int = 0
+  view: String = ""
+  name: String = ""
+  ## The log lines that were read, for the view `log`.
+  log: List[String] = []
+end
+
 enum Msg
   Key(TUI.Event)
   ## A signal, none when the wait ended without one.
@@ -199,6 +212,10 @@ enum Msg
   Answered(String, Result[Void])
   ## A note for the transcript (a compaction's end).
   Note(String)
+  ## The servers read again for the open MCP panel with that serial.
+  McpRead(Int, Result[Protocol.McpStatus])
+  ## The log lines of a server for the open MCP panel with that serial.
+  McpLogRead(Int, String, Result[Protocol.McpLog])
   ## The end of `/mcp reconnect`: the note, and the states of the servers read right after it, for the banner.
   Mcp(String, Optional[Protocol.McpStatus])
   ## The text a program was asked to copy, which program, how it ended, and what its check said (tmux's `set-clipboard`).
