@@ -132,6 +132,18 @@ def runs_choice?(app: State.Model, found: Input.Mention, event: TUI.Event) -> Bo
   end
 end
 
+## The line is a command's name and a space (`/profile `, which Enter on `/prof` made) and the server has not listed its
+## choices yet: Enter, Up and Down wait for the list, as sent now Enter would run the bare command and Up and Down would
+## leave the line for the history. A typed argument, a list that failed or that Esc closed, and `/thinking` (which has
+## no read) do not wait.
+def waiting?(app: State.Model, event: TUI.Event) -> Bool
+  case event
+    TUI.Event.Key(TUI.Key.Enter, mods) if not mods.alt -> awaiting_list?(app)
+    TUI.Event.Key(TUI.Key.Up, _), TUI.Event.Key(TUI.Key.Down, _) -> awaiting_list?(app)
+    _ -> false
+  end
+end
+
 ## Whether the argument typed is one of the choices, letter for letter: a model id keeps its case.
 def typed_whole?(found: Input.Mention, choices: List[Input.Choice]) -> Bool
   found.query != "" and choices.any? { |c| c.value == found.query }
@@ -150,6 +162,7 @@ def selected_row(app: State.Model, found: Input.Mention, choices: List[Input.Cho
   current = case found.command
     "/model" -> Client.printable(app.serving)
     "/thinking" -> app.effort.unwrap_or(Protocol.EFFORT_DEFAULT)
+    "/profile" -> State.profile_name(app)
     _ -> ""
   end
 
@@ -270,6 +283,18 @@ end
 # The rows under the editor that the list may take.
 def list_room(app: State.Model) -> Int
   Screen.panel_room(app.height, Prompt.view(app.prompt, State.cursor(app), app.width, app.height).rows.size)
+end
+
+def awaiting_list?(app: State.Model) -> Bool
+  for word in State.option_list(Input.argument_word(app.prompt, State.cursor(app)))
+    loaded = app.arguments.map { |a| a.command } == some(word.command)
+    return false if word.query != "" or word.command == "/thinking" or loaded or app.id == ""
+    return false if app.arguments_failed == some(word.command) or app.mention_closed == some(word.start)
+
+    return app.recall.none? and list_room(app) > 0
+  end
+
+  false
 end
 
 def moved_in?(app: State.Model, found: Input.Mention) -> Bool = app.mention_moved == some(found.command)

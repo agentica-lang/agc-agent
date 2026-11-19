@@ -338,6 +338,13 @@ end
 
 def level_name(level: Optional[String]) -> String = level.unwrap_or(Protocol.EFFORT_DEFAULT)
 
+## The session's profile by name: `build` when the status line names none.
+def profile_name(app: Model) -> String
+  return "build" if app.profile.empty?
+
+  app.profile
+end
+
 def serving_of(session: Protocol.Session) -> String = "#{session.provider}/#{session.model}"
 
 ## The editor of Ctrl+G: `$VISUAL`, else `$EDITOR`; "" when neither is set.

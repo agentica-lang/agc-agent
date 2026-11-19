@@ -2,8 +2,17 @@
 
 ## [Unreleased]
 
+### Added
+
+- In `finn`, Shift+Tab goes through the profiles (`build`, `plan`, then yours by name), from the next turn; a turn that runs refuses it with a note.
+
+### Fixed
+
+- In `finn`, `/prof` and Enter, then Enter or an arrow key before the profiles are listed, no longer runs the bare `/profile` and opens the side panel: they wait for the list, and Enter on `/profile ` runs the profile of its row.
+
 ### Changed
 
+- **Breaking:** the thinking level moves from Shift+Tab to F2 (`/thinking` stays), since Shift+Tab now cycles the profiles. F2 is free in tmux, readline and terminals, unlike Alt+T, which window managers take.
 - **Breaking:** with the side panel open, Esc closes it whatever has the focus (a selection is cleared first); the next Esc does what it did before.
 - `/help` ends with the keys, the panel's title names F6, and the footer says `^P logs` while the panel is closed.
 - A merge to main that changes only `docs/`, Markdown files or `.github/` makes no `finn-<ts>` tag any more.

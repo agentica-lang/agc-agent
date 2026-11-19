@@ -108,13 +108,13 @@ def test_messages_go_in_order_and_an_early_stop_waits_for_the_turn() -> Result[V
   Test.eq(sent.size, 1)
 end
 
-# Shift+Tab sets the next thinking level, one change on its way at a time: the reply sends the latest level wanted,
+# F2 sets the next thinking level, one change on its way at a time: the reply sends the latest level wanted,
 # one note says where it settled, and a failure with nothing newer goes back to the server's level.
-def test_shift_tab_sends_one_level_at_a_time() -> Result[Void]
+def test_f2_sends_one_level_at_a_time() -> Result[Void]
   model = model_of(30, 6)
   steps: List[Int] = []
   for _ in 0...3
-    step = App.update(model, back_tab())
+    step = App.update(model, f2())
     model = step.model
     steps = steps.push(step.cmds.size)
   end
@@ -132,7 +132,7 @@ def test_shift_tab_sends_one_level_at_a_time() -> Result[Void]
   try Test.eq([settled.model.confirmed, settled.model.level_sending], [some("high"), none])
   try Test.eq(settled.model.entries.map { |entry| entry.text }, ["thinking high from the next turn"])
   failed = App.update(
-    App.update(settled.model, back_tab()).model,
+    App.update(settled.model, f2()).model,
     App.Msg.Leveled(error("down", kind: "client.unreachable")),
   )
 
@@ -1844,7 +1844,7 @@ def rows(model: App.Model) -> List[String]
   (0...model.height).to_a.map do |y| cells.select { |cell| cell.y == y }.map { |cell| cell.char }.join("").strip end
 end
 
-def back_tab() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.BackTab, TUI.Mods()))
+def f2() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.F(2), TUI.Mods()))
 
 def tab() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))
 

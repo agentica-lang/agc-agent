@@ -1,13 +1,13 @@
-## The thinking level: Shift+Tab picks the next one, sent one change at a time.
+## The thinking level: F2 picks the next one, sent one change at a time.
 
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import State from "state"
 
-## The thinking levels Shift+Tab goes through, none for the model's default.
+## The thinking levels F2 goes through, none for the model's default.
 LEVELS: List[Optional[String]] = [none, some("low"), some("medium"), some("high")]
 
-## Shift+Tab: the next thinking level; the rules take its color at once.
+## F2: the next thinking level; the rules take its color at once.
 def leveled(app: State.Model) -> State.Model
   at = LEVELS.find_index { |level| level == app.effort }.unwrap_or(0)
   wanted = app.with(effort: LEVELS[(at + 1) % LEVELS.size])
