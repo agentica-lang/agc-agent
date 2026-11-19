@@ -320,11 +320,12 @@ def handled(app: State.Model, msg: State.Msg) -> State.Model
   end
 end
 
+# Whether the row can show a segment of the server: the default row has the quota of a ChatGPT session.
 def custom_status?(app: State.Model) -> Bool
   case app.statusline
     some(layout) ->
       (layout.left + layout.right).any? { |name| not ["state", "usage", "rate", "hints", "model"].include?(name) }
-    none -> false
+    none -> app.serving.start_with?("chatgpt/")
   end
 end
 

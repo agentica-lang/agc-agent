@@ -2,7 +2,9 @@
 
 ## [Unreleased]
 
-- Agentica extensions can add dynamic status line components; the example can show remaining ChatGPT quota.
+- The full-screen status row shows the remaining ChatGPT five-hour and seven-day quota (`5h 62% · 7d 80%`) in ChatGPT sessions, and drops it first on a narrow row.
+- `status_line` in the config file chooses and orders the segments of the full-screen status row; `/reload` applies it.
+- Agentica extensions can add named status line segments with `Core.add_status_segment`.
 
 ## [finn-20261119135800] - 2026-11-19
 
@@ -19,9 +21,6 @@
 ### Changed
 
 - Finn needs Agentica 0.35.0: the pinned release, the `agentica` versions of the packages and the Monty download are updated, the date of `finn export` comes from the builtin `Time`, and `core` can be used from outside the repository (`workspace = true`).
-### Added
-
-- Agentica extensions can arrange or hide the full-screen status line's built-in components with `Core.set_statusline`.
 
 ## [finn-20261119111956] - 2026-11-19
 

@@ -67,16 +67,6 @@ def turn(base: String) -> Result[Void]
   info = try server_info("#{base}/state/server.json")
   url = "http://127.0.0.1:#{info.port}"
   headers = [HTTP.Header(name: "Authorization", value: "Bearer #{info.token}")]
-  client = try HTTP.client(HTTP.ClientOptions(timeout_ms: WAIT_MS))
-  fetched = HTTP.request(client, "GET", "#{url}#{Protocol.SERVER_PATH}", "".bytes, headers)
-  HTTP.close_client(client)
-  response = try fetched
-  status = try Protocol.decode_server_status(try String.from_bytes(response.body))
-  try Test.eq(
-    status.statusline,
-    some(Protocol.StatusLine(left: ["state", "usage", "example.provider", "chatgpt.quota"], right: ["model"])),
-  )
-
   asked = Protocol.encode_new_session(Protocol.NewSession(cwd: base, model: none, api: none, provider: none))
   created = try call("#{url}#{Protocol.SESSIONS_PATH}", asked, headers)
   id = (try Protocol.decode_session_created(created)).id

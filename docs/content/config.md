@@ -31,6 +31,7 @@ Finn reads environment variables when the server starts, and a few JSON files. A
 | `mouse` | `false` starts `finn` with the mouse reporting off (the server reads it when it starts: restart it after a change), so the terminal selects text with a plain drag; `/mouse` turns it on ([Copying text](cli.md#copying-text)) |
 | `clipboard`, `clipboard_command` | how `finn` copies a selection: `auto` (the default) picks tmux, a tool of the local display or OSC 52; `osc52`, `tmux` or `command` forces one, and `command` runs the program that `clipboard_command` lists, such as `["xclip", "-selection", "clipboard"]` ([Copying text](cli.md#copying-text)) |
 | `keys` | change the keys of `finn`: an object from an action to a key, such as `{"thinking_level": "f3", "logs": "f9"}`; case is ignored, a name has no spaces inside, the old key of an action that moved stops working, and Esc is fixed ([Keys of the full screen](cli.md#keys-of-the-full-screen)) |
+| `status_line` | the segments of the status row of `finn`, an object with `left` and `right` lists of names ([The status line](#the-status-line)) |
 | `files` | `{"command": ["rg", "--files"]}`: the program that lists the files for the `@` completion, in place of the built-in walk ([The files command](#the-files-command)) |
 
 Every key is optional, and so is the file. How the rules work is on [Approvals and security](security.md#rules), and where they fall short in [What rules cannot do](security.md#what-rules-cannot-do).
@@ -40,6 +41,14 @@ Every key is optional, and so is the file. How the rules work is on [Approvals a
 `files.command` names a program and its arguments, such as `["rg", "--files"]`, `["fd", "-t", "f"]` or `["git", "-c", "core.fsmonitor=false", "ls-files"]`. Only your own config file can name it: a project's `.finn/config.json` cannot, since a cloned repository must not choose what runs when you type `@`. The command runs unasked in every session folder, so pick a program that runs nothing from that folder's config: `rg --files` and `fd` run nothing, while a plain `git ls-files` runs the program that the folder's `.git/config` names in `core.fsmonitor`, which a folder that comes with its `.git/` (a tarball, a zip, a shared folder) can set.
 
 The server runs it in the session folder as the `bash` tool runs a command: in its own process group, with a clean environment and no input. It reads one path per line, for 2 seconds at most, up to 20000 lines and 1 MiB. The command only proposes paths: a path stays only when it is a regular file inside the folder, reached through no link, with a printable name, and no `read_file` deny rule hides it or a folder above it. An `ask` rule hides nothing from the list; only a `deny` rule does. Which hidden files and build folders it lists is the command's choice, unlike the built-in walk, which skips them. If the command fails or does not end in time, the built-in walk lists the files, and `finn` shows a note that says why. Whatever the command started is killed when the list is read.
+
+### The status line
+
+`status_line` sets which segments the status row of `finn` shows, and in what order: `{"status_line": {"left": ["state", "usage", "rate", "chatgpt.quota", "hints"], "right": ["model"]}}`. A side that is missing is empty. The built-in segments are `state` (`ready`, `YOLO`, `approval waiting`), `usage` (the [counts](cli.md#footer-of-the-full-screen)), `rate`, `hints` and `model`; `chatgpt.quota` is the remaining five-hour and seven-day quota of a ChatGPT session, such as `5h 62% · 7d 80%`, and an [extension](extensions.md#status-line-segments) can add more names. A name that no segment has, or a segment with no text now, is skipped without a word.
+
+Without `status_line` the row is the one above, with `chatgpt.quota` after the rate. When the row is too narrow, a layout of your own loses whole segments from the end of the right side, then from the end of the left; the last one is cut with `…`. List a segment you want to keep longest first on the left.
+
+`/reload` applies a change.
 
 ## The project file
 
@@ -83,7 +92,7 @@ A one-shot run (`finn -p`) never changes the choice, so a script does not reset 
 
 `/reload` (`POST /v1/reload`) makes the running server read these again, with no restart and without stopping a turn:
 
-- the user's config file: the permission rules and `approvals`, `files.command`, `mouse` and the providers it adds;
+- the user's config file: the permission rules and `approvals`, `files.command`, `mouse`, `status_line` and the providers it adds;
 - the MCP servers (the user's file, `FINN_MCP_CONFIG`, and the `.finn/mcp.json` of each folder with sessions): when a list changed, its servers stop and the new list starts (a call that runs on a stopped one fails, and the new tools come as the servers list them); only MCP servers reload, not extensions registered in code;
 - the skills and the `AGENTS.md` of each running session, and its approval.
 

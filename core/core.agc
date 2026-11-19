@@ -14,8 +14,6 @@
 ## that message or adds nothing to that fold, and never stops a session or the server.
 
 import Catalog from "src/providers/catalog"
-import Quota from "src/providers/chatgpt_quota"
-import Protocol from "pkg/protocol/protocol"
 import Config from "src/config/config"
 import Extensions from "src/config/registry"
 import Server from "src/http/server"
@@ -31,7 +29,6 @@ VERSION = "0.0.1"
 export Extensions.Registry
 export Extensions.StatusContext
 export Extensions.StatusProvider
-export Quota.Window
 export Extensions.Call
 export Extensions.Tool
 export Extensions.Event
@@ -42,12 +39,7 @@ export Extensions.Service
 
 def registry() -> Extensions.Registry = Extensions.Registry()
 
-## Replaces the full screen's status layout with the ordered components on each side.
-def set_statusline(registry: Extensions.Registry, left: List[String], right: List[String]) -> Extensions.Registry
-  registry.with(statusline: some(Protocol.StatusLine(left: left, right: right)))
-end
-
-## Adds a named component to the full screen's configurable status line.
+## Adds a named segment that the full screen can place in its status row (`status_line` of the user's config).
 def add_status_segment(registry: Extensions.Registry, provider: Extensions.StatusProvider) -> Extensions.Registry
   registry.with(status_providers: registry.status_providers.push(provider))
 end
@@ -151,6 +143,7 @@ def start(registry: Extensions.Registry) -> Result[Server.Server]
     Extensions.Served(registry: registry)
     |> Builtins.commands(read)
     |> Builtins.skills()
+    |> Builtins.chatgpt_quota(options.login)
     |> Builtins.approvals(options.approvals, options.asking, options.live)
   )
 

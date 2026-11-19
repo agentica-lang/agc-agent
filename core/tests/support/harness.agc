@@ -346,7 +346,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     env: env_of(setup, base),
     approvals: some(user.rules),
     asking: user.asking,
-    registry: some(served_of(setup, user, env_of(setup, base), live)),
+    registry: some(served_of(setup, user, env_of(setup, base), live, login)),
     live: live,
     reloads: setup.reloads,
     mcp: setup.mcp,
@@ -445,9 +445,11 @@ def served_of(
   user: Permissions.User,
   env: Fn[String, Result[String]],
   live: Optional[Config.Live],
+  login: Optional[Logins.Setup],
 ) -> Extensions.Served
   served = Extensions.Served(registry: setup.registry.unwrap_or(Extensions.Registry()))
   served = Builtins.approvals(Builtins.skills(Builtins.commands(served, env)), some(user.rules), user.asking, live)
+  served = Builtins.chatgpt_quota(served, login)
   for late in option_list(setup.late_tools)
     served = Extensions.add_late_tools(served, late)
   end

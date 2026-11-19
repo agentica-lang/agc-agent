@@ -37,6 +37,18 @@ def test_the_server_status_layout_is_drawn() -> Result[Void]
   Test.assert(row.strip.end_with?("ready"), row)
 end
 
+def test_the_default_row_shows_the_quota_and_the_config_reorders_it() -> Result[Void]
+  quota = Protocol.StatusSegments(segments: [Protocol.StatusSegment(name: "chatgpt.quota", text: "5h 62% · 7d 80%")])
+  app = model_of(70, 8).with(serving: "chatgpt/m", status_segments: quota.segments)
+  try Test.assert(rows(app).last.include?("ready · 5h 62% · 7d 80%"), rows(app).last)
+  layout = Protocol.StatusLine(left: ["chatgpt.quota", "state"], right: ["model", "missing"])
+  moved = app.with(statusline: some(layout))
+  try Test.assert(rows(moved).last.start_with?("5h 62% · 7d 80% · ready"), rows(moved).last)
+  narrow = rows(model_of(30, 8).with(serving: "chatgpt/m", status_segments: quota.segments)).last
+  try Test.assert(narrow.start_with?("ready"), narrow)
+  Test.assert(not narrow.include?("5h"), narrow)
+end
+
 def test_extension_status_is_drawn_and_stale_replies_are_ignored() -> Result[Void]
   layout = Protocol.StatusLine(left: ["extra"], right: ["model"])
   app = model_of(60, 8).with(statusline: some(layout), serving: "local/m", opened: 2)

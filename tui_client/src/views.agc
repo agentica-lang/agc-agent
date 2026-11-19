@@ -264,6 +264,18 @@ def status(app: State.Model, width: Int) -> String
         ),
         width,
       )
-    none -> Footer.status(state, app.usage, hints(app), model, width, Rate.text(app.rate))
+    none ->
+      Footer.status(
+        state,
+        app.usage,
+        hints(app),
+        model,
+        width,
+        Rate.text(app.rate),
+        app.status_segments
+          .select { |segment| segment.name == "chatgpt.quota" }
+          .map { |segment| segment.text }
+          .join(""),
+      )
   end
 end

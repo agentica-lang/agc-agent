@@ -52,7 +52,7 @@ struct ServerStatus
   ## The `keys` of the config file as written, an action and its key each; the full screen checks them. None from a
   ## server older than this field.
   keys: Optional[List[KeySetting]] = none
-  ## The full screen's status components; none keeps the built-in layout.
+  ## The `status_line` of the config file: the segments of the full screen's status row; none keeps its default row.
   statusline: Optional[StatusLine] = none
 end
 

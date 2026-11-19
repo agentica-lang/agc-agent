@@ -9,6 +9,9 @@ import Extension from "../approval/extension"
 import Extensions from "../config/registry"
 import Actor from "std/actor"
 import Mcp from "pkg/mcp/mcp"
+import Chatgpt from "../providers/chatgpt"
+import Logins from "../providers/logins"
+import Quota from "../providers/chatgpt_quota"
 import Protocol from "pkg/protocol/protocol"
 import McpTools from "../ext/mcp"
 import Projects from "../ext/mcp_projects"
@@ -45,6 +48,25 @@ end
 
 def skills(served: Extensions.Served) -> Extensions.Served
   Extensions.add_builtin(served, Extensions.Builtin(system: &catalogued, open: &opened))
+end
+
+## The segment `chatgpt.quota`: what is left of the five-hour and seven-day windows of a ChatGPT session, from the
+## usage that every session shares; empty for another provider or when the usage is unknown.
+def chatgpt_quota(served: Extensions.Served, login: Optional[Logins.Setup]) -> Extensions.Served
+  for setup in option_list(login)
+    for found in option_list(setup.chatgpt)
+      segment = Extensions.StatusProvider(
+        name: Quota.SEGMENT,
+        value: ->(context: Extensions.StatusContext) { quota_text(found, context) },
+      )
+
+      return served.with(
+        registry: served.registry.with(status_providers: served.registry.status_providers.push(segment)),
+      )
+    end
+  end
+
+  served
 end
 
 ## Starts the MCP servers of the user's file in the background (the end of the process stops them); their tools come as
@@ -166,6 +188,12 @@ enum Held
   Attach(Address[Swap])
   Ready(List[Mcp.Server], McpTools.Board)
   Finish(Channel[Bool])
+end
+
+def quota_text(login: Chatgpt.Login, context: Extensions.StatusContext) -> Result[String]
+  return ok("") if context.provider != "chatgpt"
+
+  Quota.text(try Chatgpt.cached_usage(login))
 end
 
 def start_holder(servers: List[Mcp.Server]) -> Actor.Ref[Running, Held]

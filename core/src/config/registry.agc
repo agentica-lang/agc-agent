@@ -4,9 +4,9 @@
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Quota from "../providers/chatgpt_quota"
 import Sandbox from "../tools/sandbox"
 import Spec from "../tools/spec"
-import Quota from "../providers/chatgpt_quota"
 import Logger from "std/logger"
 
 ## How long all the `Message` handlers, or all the `Fold` handlers, of one event may take together: well under the
@@ -115,17 +115,15 @@ struct StatusContext
   root: String
   provider: String
   model: String
-  chatgpt_usage: Fn[Result[List[Quota.Window]]]
 end
 
-## A named status component, computed outside the session actor.
+## A named segment of the full screen's status row, computed outside the session actor.
 struct StatusProvider
   name: String
   value: Fn[StatusContext, Result[String]]
 end
 
 struct Registry
-  statusline: Optional[Protocol.StatusLine] = none
   status_providers: List[StatusProvider] = []
   tools: List[Tool] = []
   wrappers: List[Wrapper] = []
@@ -248,13 +246,13 @@ def clashes(registry: Registry, taken: List[String]) -> List[String]
   end
 
   if registry.status_providers.size > 16
-    out = out.push("an extension may register at most 16 status components")
+    out = out.push("an extension may register at most 16 status segments")
   end
 
-  names = ["state", "usage", "rate", "hints", "model"]
+  names = ["state", "usage", "rate", "hints", "model", Quota.SEGMENT]
   for provider in registry.status_providers
     if provider.name.empty? or names.include?(provider.name)
-      out = out.push("an extension status component cannot be named #{provider.name}: that name is taken or empty")
+      out = out.push("an extension status segment cannot be named #{provider.name}: that name is taken or empty")
     end
 
     names = names.push(provider.name)
@@ -263,20 +261,14 @@ def clashes(registry: Registry, taken: List[String]) -> List[String]
   out
 end
 
-## The registered components for a session, omitting failed or unsafe values.
+## The registered segments for a session, omitting failed or unsafe values.
 def status_segments(registry: Registry, ctx: StatusContext) -> Protocol.StatusSegments
   segments: List[Protocol.StatusSegment] = []
   deadline = Time.monotonic_ms + 50_000
-  names = case registry.statusline
-    some(layout) -> layout.left + layout.right
-    none -> []
-  end
-
   for provider in registry.status_providers
-    next if not names.include?(provider.name)
     break if Time.monotonic_ms >= deadline
 
-    result = bounded("a status component", deadline - Time.monotonic_ms, -> { provider.value.call(ctx) })
+    result = bounded("a status segment", deadline - Time.monotonic_ms, -> { provider.value.call(ctx) })
     case result
       ok(text) ->
         size = [text.length, 200].min.unwrap!

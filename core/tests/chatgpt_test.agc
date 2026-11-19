@@ -6,21 +6,15 @@ import Protocol from "pkg/protocol/protocol"
 import HTTP from "std/http"
 import Chatgpt from "../src/providers/chatgpt"
 import Config from "../src/config/config"
-import Extensions from "../src/config/registry"
 import Fake from "support/fake_llm"
 import H from "support/harness"
 
 TOKENS = Chatgpt.Tokens(access: "at-secret-1", refresh: "rt-secret-1", account: "acct-1", models: ["gpt-test-codex"])
 POLL_MS = 150
 
-def test_quota_extension_serves_chatgpt_sessions_and_shares_usage() -> Result[Void]
-  registry = Extensions.Registry(
-    statusline: some(Protocol.StatusLine(left: ["chatgpt.quota"], right: [])),
-    status_providers: [Extensions.StatusProvider(name: "chatgpt.quota", value: &quota_text)],
-  )
-
+def test_the_quota_segment_serves_chatgpt_sessions_and_shares_usage() -> Result[Void]
   replies = ["codex_usercode.json", "codex_grant.json", "codex_tokens.json", "codex_models.json", "codex_usage.json"]
-  setup = H.Setup(replies: replies, api: "openai_responses", chatgpt: true, registry: some(registry))
+  setup = H.Setup(replies: replies, api: "openai_responses", chatgpt: true)
   H.using(setup) do |h|
     local = try H.new_session(h)
     local_reply = try H.get(h, Protocol.status_segments_path(local))
@@ -31,7 +25,9 @@ def test_quota_extension_serves_chatgpt_sessions_and_shares_usage() -> Result[Vo
     try Test.eq(device.status, 200)
     try Test.eq((try waited(h)).state, "done")
     _ = try requests(h, 4)
-    expected = Protocol.StatusSegments(segments: [Protocol.StatusSegment(name: "chatgpt.quota", text: "72,40")])
+    expected = Protocol.StatusSegments(
+      segments: [Protocol.StatusSegment(name: "chatgpt.quota", text: "5h 72% · 7d 40%")],
+    )
 
     first = try H.new_session_in(h, h.work, provider: some("chatgpt"))
     second = try H.new_session_in(h, h.work, provider: some("chatgpt"))
@@ -51,18 +47,10 @@ def test_quota_extension_serves_chatgpt_sessions_and_shares_usage() -> Result[Vo
   end
 end
 
-def quota_text(context: Extensions.StatusContext) -> Result[String]
-  return ok("") if context.provider != "chatgpt"
-
-  values = try context.chatgpt_usage.call()
-  ok(values.map { |window| window.remaining.to_i!.to_s }.join(","))
-end
-
 def test_usage_in_flight_does_not_cross_accounts() -> Result[Void]
   setup = H.Setup(replies: ["codex_usage.json@hold", "codex_usage.json"], api: "openai_responses", chatgpt: true)
   H.using(setup) do |h|
     login = H.chatgpt_login(h.fake, h.base)
-    login = login.with(endpoints: login.endpoints.with(usage_url: "#{H.fake_root(h.fake)}/usage"))
     try Chatgpt.save(login, TOKENS)
     first = Task.spawn(-> { Chatgpt.cached_usage(login) })
     _ = try H.next_request(h)
@@ -100,7 +88,6 @@ def test_cached_usage_is_shared_and_invalidated_by_login_change() -> Result[Void
 
   H.using(setup) do |h|
     login = H.chatgpt_login(h.fake, h.base)
-    login = login.with(endpoints: login.endpoints.with(usage_url: "#{H.fake_root(h.fake)}/usage"))
     try Chatgpt.save(login, TOKENS)
     try Test.eq((try Chatgpt.cached_usage(login)).map { |window| window.remaining }, [72.0, 40.0])
     try Test.eq((try Chatgpt.cached_usage(login)).map { |window| window.remaining }, [72.0, 40.0])
@@ -123,7 +110,6 @@ def test_usage_uses_the_login_and_never_returns_credentials() -> Result[Void]
 
   H.using(setup) do |h|
     login = H.chatgpt_login(h.fake, h.base)
-    login = login.with(endpoints: login.endpoints.with(usage_url: "#{H.fake_root(h.fake)}/usage"))
     try Chatgpt.save(login, TOKENS)
     windows = try Chatgpt.usage(login)
     try Test.eq(windows.map { |window| window.remaining }, [72.0, 40.0])
@@ -151,7 +137,6 @@ def test_usage_refreshes_a_rejected_token_once() -> Result[Void]
 
   H.using(setup) do |h|
     login = H.chatgpt_login(h.fake, h.base)
-    login = login.with(endpoints: login.endpoints.with(usage_url: "#{H.fake_root(h.fake)}/usage"))
     try Chatgpt.save(login, TOKENS)
     try Test.eq((try Chatgpt.usage(login)).map { |window| window.remaining }, [72.0, 40.0])
     first = try H.next_request(h)

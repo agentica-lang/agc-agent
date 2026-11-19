@@ -3,13 +3,10 @@
 ## `Core.serve(Extension.register(Core.registry()))` (`main.agc`).
 
 import Core from "pkg/core/core"
-import Quota from "quota"
 
 def register(registry: Core.Registry) -> Core.Registry
   (
     registry
-    |> Quota.register()
-    |> Core.set_statusline(["state", "usage", "example.provider", "chatgpt.quota"], ["model"])
     |> Core.add_status_segment(Core.StatusProvider(name: "example.provider", value: &status_provider))
     |> Core.add_tool(word_count())
     |> Core.wrap_tools(&timed)
@@ -17,7 +14,7 @@ def register(registry: Core.Registry) -> Core.Registry
   )
 end
 
-## The session's provider as a status component.
+## The session's provider as a status segment.
 def status_provider(context: Core.StatusContext) -> Result[String] = ok("provider: #{context.provider}")
 
 ## A tool that counts the words of a text; it reads nothing, so it never asks.

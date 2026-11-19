@@ -11,7 +11,6 @@ import Protocol from "pkg/protocol/protocol"
 import Config from "../config/config"
 import Cli from "../config/cli"
 import Chatgpt from "../providers/chatgpt"
-import Quota from "../providers/chatgpt_quota"
 import Logins from "../providers/logins"
 import Providers from "../providers/providers"
 import Extensions from "../config/registry"
@@ -213,20 +212,11 @@ def status_segments(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[Stri
     root: session.cwd,
     provider: session.provider,
     model: session.model,
-    chatgpt_usage: -> { status_usage(sessions) },
   )
 
   case sessions.options.registry
     some(served) -> ok(Protocol.encode_status_segments(Extensions.status_segments(served.registry, context)))
     none -> ok(Protocol.encode_status_segments(Protocol.StatusSegments(segments: [])))
-  end
-end
-
-def status_usage(sessions: Sessions.Sessions) -> Result[List[Quota.Window]]
-  login = sessions.options.login.map { |setup| setup.chatgpt }.unwrap_or(none)
-  case login
-    some(found) -> Chatgpt.cached_usage(found)
-    none -> error("the ChatGPT login is unavailable")
   end
 end
 
@@ -298,7 +288,6 @@ end
 def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
   activity = try Sessions.activity(sessions)
   now = Config.applied(sessions.options)
-  layout = sessions.options.registry.map { |served| served.registry.statusline }.unwrap_or(none)
   ok(
     Protocol.encode_server_status(
       Protocol.ServerStatus(
@@ -314,7 +303,7 @@ def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
         mouse: some(now.mouse),
         clipboard: some(Protocol.ClipboardSetting(provider: now.clipboard, command: now.clipboard_command)),
         keys: some(now.keys.keys.sort.map { |action| Protocol.KeySetting(action: action, key: now.keys[action]) }),
-        statusline: layout,
+        statusline: now.status_line,
       ),
     ),
   )

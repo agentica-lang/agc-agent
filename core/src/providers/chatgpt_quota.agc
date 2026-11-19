@@ -1,5 +1,8 @@
 ## The subscription windows in ChatGPT's usage response, without credentials or network access.
 
+## The name of the status segment that shows the quota.
+SEGMENT = "chatgpt.quota"
+
 ## A window's duration and reset time in seconds, and its remaining percentage.
 struct Window
   seconds: Int
@@ -17,6 +20,21 @@ def parse(text: String) -> Result[List[Window]]
   five = found.select { |item| item.seconds == 18_000 }.take(1)
   week = found.select { |item| item.seconds == 604_800 }.take(1)
   ok(five + week)
+end
+
+## `5h 62% · 7d 80%`: the percentage left of each window.
+def text(windows: List[Window]) -> Result[String]
+  parts: List[String] = []
+  for found in windows
+    label = case found.seconds
+      18_000 -> "5h"
+      _ -> "7d"
+    end
+
+    parts = parts.push("#{label} #{try found.remaining.to_i}%")
+  end
+
+  ok(parts.join(" · "))
 end
 
 private
