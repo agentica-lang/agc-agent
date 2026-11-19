@@ -43,7 +43,7 @@ def context(
   env: Fn[String, Result[String]],
   confine: Bool,
   more: List[Spec.Tool] = [],
-  late: Optional[Fn[List[Spec.Tool]]] = none,
+  late: Optional[Fn[String, List[Spec.Tool]]] = none,
   diff: Optional[Fn[String, JSON.Value, String]] = none,
   wrap: Optional[Fn[String, Spec.Run, Spec.Run]] = none,
 ) -> Result[Spec.Context]

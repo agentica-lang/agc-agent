@@ -37,7 +37,9 @@ end
 # Tools that a server lists after the start reach a session that started before them.
 def test_tools_listed_late_reach_the_sessions() -> Result[Void]
   within_mcp do |started|
-    H.using(H.Setup(replies: ["mcp_echo.sse", "text.sse"], late_tools: some(-> { started.tools }))) do |h|
+    H.using(
+      H.Setup(replies: ["mcp_echo.sse", "text.sse"], late_tools: some(->(_root: String) { started.tools })),
+    ) do |h|
       id = try H.new_session(h)
       a = try H.subscribe(h, id)
       _ = try H.send(h, id, "Echo it.")
@@ -57,7 +59,7 @@ def test_a_turn_keeps_the_tools_it_started_with() -> Result[Void]
   within_mcp do |started|
     calls: Channel[Int] = Channel.new(1)
     _ = calls.send(0, 1000)
-    late = -> { growing(calls, started.tools) }
+    late = ->(_root: String) { growing(calls, started.tools) }
     H.using(H.Setup(replies: ["read_file.sse", "text.sse"], late_tools: some(late))) do |h|
       id = try H.new_session(h)
       a = try H.subscribe(h, id)
@@ -144,7 +146,7 @@ def test_slow_servers_list_their_tools_in_the_background() -> Result[Void]
     took = Time.monotonic_ms() - began
     McpTools.stop(started)
     try Test.eq(at_start.size, 0)
-    try Test.eq(started.tools.size, 18)
+    try Test.eq(started.tools.size, 20)
     Test.assert(took < 1500, "the listings took #{took} ms: one after the other")
   end
 end

@@ -12,7 +12,7 @@ def test_lists_the_tools_and_calls_them() -> Result[Void]
     greeting = Mcp.call(client, "greeting", JSON.object({}))
     unknown = Mcp.call(client, "nope", JSON.object({}))
     Mcp.stop(client)
-    try Test.eq(names, ["echo", "fail", "big", "greeting", "probe", "image", "grandchild", "crash", "hang"])
+    try Test.eq(names, ["echo", "fail", "big", "greeting", "probe", "image", "grandchild", "crash", "hang", "cwd"])
     try Test.eq(echo, ok(Mcp.Output(text: "hello", is_error: false)))
     try Test.eq(failed, ok(Mcp.Output(text: "it failed", is_error: true)))
     try Test.eq(image, ok(Mcp.Output(text: "a picture:\n[image image/png]", is_error: false)))
@@ -83,6 +83,16 @@ def test_a_stop_ends_the_programs_the_server_started() -> Result[Void]
     end
 
     Test.assert(not alive?(pid), "the grandchild #{pid} still runs")
+  end
+end
+
+def test_a_server_starts_in_its_cwd() -> Result[Void]
+  within_dir do |dir|
+    folder = try Path.real(dir)
+    client = Mcp.start((try fake(dir, {})).with(cwd: folder))
+    where = Mcp.call(client, "cwd", JSON.object({}))
+    Mcp.stop(client)
+    Test.eq(where, ok(Mcp.Output(text: folder, is_error: false)))
   end
 end
 

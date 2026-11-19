@@ -6,11 +6,11 @@ weight: 80
 
 # MCP
 
-An [MCP](https://modelcontextprotocol.io) server gives the model more tools: a database, a browser, an issue tracker. Finn connects to each server, on stdio or over streamable HTTP, and offers its tools to every session.
+An [MCP](https://modelcontextprotocol.io) server gives the model more tools: a database, a browser, an issue tracker. Finn connects to each server, on stdio or over streamable HTTP, and offers its tools to the sessions it belongs to.
 
 ## Set it up
 
-`FINN_MCP_CONFIG` names a JSON file in the shape most agents use:
+Servers come from two JSON files in the shape most agents use. `~/.config/finn/mcp.json` (`$XDG_CONFIG_HOME/finn/mcp.json`) is the user's file: it is read when it exists, and `FINN_MCP_CONFIG` names another file that replaces it. [`.finn/mcp.json`](#a-project-file) of a session folder adds the servers of a project.
 
 ```json
 {
@@ -27,11 +27,18 @@ An [MCP](https://modelcontextprotocol.io) server gives the model more tools: a d
 }
 ```
 
-```sh
-FINN_MCP_CONFIG=~/.config/finn/mcp.json finn serve
-```
-
 A server name is letters, digits, `_` and `-`, with no `__`. A server has either a `command` or a `url`: one with both is refused.
+
+## A project file
+
+`.finn/mcp.json` in the session folder has the same shape. It starts programs from a repository, so it counts only in a [trusted folder](config.md#trusted-folders) (`FINN_TRUSTED_DIRS`), like `.finn/commands/`: anyone who can write the repository could plant a command there. In another folder it is ignored, with one warning that names the file and `FINN_TRUSTED_DIRS`. A project file can use `${NAME}` in a header as the user's file does, so trust a folder only when you trust its files.
+
+- The servers belong to the sessions of that folder. The first session there starts them, the sessions there share them, and the end of the last one stops them. A server on stdio starts in the folder.
+- A project server of the name of a user server takes its place in that folder, with a warning. The user's server stays for the other folders.
+- A project file that does not read gives a warning, and no server of it starts.
+- Its logs are `mcp/project-NAME.log` in the state folder.
+
+`/reload` reads the user's file and the project file of each folder with sessions again. A changed file restarts its servers; a file that does not read keeps the servers that run.
 
 ## On stdio
 

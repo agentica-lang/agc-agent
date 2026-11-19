@@ -136,7 +136,7 @@ end
 struct Served
   registry: Registry
   builtins: List[Builtin] = []
-  late: List[Fn[List[Spec.Tool]]] = []
+  late: List[Fn[String, List[Spec.Tool]]] = []
   approver: Optional[Fn[Place, Result[Approver]]] = none
 end
 
@@ -330,14 +330,16 @@ end
 
 def add_builtin(served: Served, builtin: Builtin) -> Served = served.with(builtins: served.builtins.push(builtin))
 
-def add_late_tools(served: Served, tools: Fn[List[Spec.Tool]]) -> Served = served.with(late: served.late.push(tools))
+def add_late_tools(served: Served, tools: Fn[String, List[Spec.Tool]]) -> Served
+  served.with(late: served.late.push(tools))
+end
 
 ## The tools that come later, none without any.
-def late_tools(served: Served) -> Optional[Fn[List[Spec.Tool]]]
+def late_tools(served: Served) -> Optional[Fn[String, List[Spec.Tool]]]
   return none if served.late.empty?
 
   late = served.late
-  some(-> { late.flat_map { |tools| tools.call() } })
+  some(->(root: String) { late.flat_map { |tools| tools.call(root) } })
 end
 
 ## The system prompt of a new session in `place`: `system` with what the core's own extensions add.

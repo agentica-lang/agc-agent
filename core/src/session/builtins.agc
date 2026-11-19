@@ -10,9 +10,11 @@ import Extensions from "../config/registry"
 import Actor from "std/actor"
 import Mcp from "pkg/mcp/mcp"
 import McpTools from "../ext/mcp"
+import Projects from "../ext/mcp_projects"
 import Skills from "../ext/skills"
 import Spec from "../tools/spec"
 import Logger from "std/logger"
+import Sandbox from "../tools/sandbox"
 
 ## The server with its MCP servers, and how to read them again.
 struct Mounted
@@ -41,22 +43,55 @@ def skills(served: Extensions.Served) -> Extensions.Served
   Extensions.add_builtin(served, Extensions.Builtin(system: &catalogued, open: &opened))
 end
 
-## Starts the MCP servers of the config in the background (the end of the process stops them); their tools come as
-## they list them.
-def mcp(served: Extensions.Served, read: Fn[String, Result[String]], state_dir: String) -> Result[Mounted]
+## Starts the MCP servers of the user's file in the background (the end of the process stops them); their tools come as
+## they list them. The servers of the `.finn/mcp.json` of a session folder in `trusted` start with its first session
+## and stop with its last, and a name that the project file shares with the user's file takes the user's place there.
+def mcp(
+  served: Extensions.Served,
+  read: Fn[String, Result[String]],
+  state_dir: String,
+  trusted: List[String] = [],
+) -> Result[Mounted]
   servers = try McpTools.servers(read, state_dir)
   holder = start_holder(servers)
   address = holder.address
-  tools = -> {
+  projects = Projects.start(->(warning: String) { Logger.warning(warning) })
+  project_servers = ->(root: String) { project_servers_of(trusted, read, state_dir, root) }
+
+  tools = ->(root: String) {
     listed: Result[List[Spec.Tool]] = Actor.call(address, MCP_CALL_MS) do |reply| Held.Tools(reply) end
     none_yet: List[Spec.Tool] = []
-    listed.unwrap_or(none_yet)
+    scope = Projects.scope(projects, root)
+    listed.unwrap_or(none_yet).select { |tool| not shadowed?(tool, scope.names) } + scope.tools
   }
 
-  reload = -> { reloaded(address, read, state_dir) }
+  reload = -> { reloaded(address, read, state_dir, projects, project_servers) }
 
-  stop = -> { finished(holder, address) }
-  ok(Mounted(served: Extensions.add_late_tools(served, tools), reload: reload, stop: stop))
+  stop = -> {
+    Projects.stop(projects)
+    finished(holder, address)
+  }
+
+  lifecycle = Extensions.Event.Seen(
+    ["session_started", "session_ended"],
+    ->(seen: Extensions.Seen) { project_event(projects, project_servers, seen) },
+  )
+
+  named = -> {
+    listed: Result[List[String]] = Actor.call(address, MCP_CALL_MS) do |reply| Held.Names(reply) end
+    no_names: List[String] = []
+    listed.unwrap_or(no_names)
+  }
+
+  own = Extensions.add_builtin(
+    served.with(registry: served.registry.with(events: served.registry.events.push(lifecycle))),
+    Extensions.Builtin(
+      system: ->(_place: Extensions.Place, system: String) { system },
+      open: ->(place: Extensions.Place, _system: String) { project_opened(place, project_servers, named) },
+    ),
+  )
+
+  ok(Mounted(served: Extensions.add_late_tools(own, tools), reload: reload, stop: stop))
 end
 
 ## The approval of every session: the server's `rules` with those of the session folder's project file; `asking` makes
@@ -112,6 +147,7 @@ end
 
 enum Held
   Tools(Channel[List[Spec.Tool]])
+  Names(Channel[List[String]])
   Replace(List[Mcp.Server], Channel[Result[String]])
   Attach(Address[Swap])
   Ready(List[Mcp.Server], McpTools.Board)
@@ -135,10 +171,82 @@ def finished(holder: Actor.Ref[Running, Held], address: Address[Held]) -> Void
   _ = Actor.stop(holder, MCP_CALL_MS)
 end
 
-def reloaded(address: Address[Held], read: Fn[String, Result[String]], state_dir: String) -> Result[String]
+def reloaded(
+  address: Address[Held],
+  read: Fn[String, Result[String]],
+  state_dir: String,
+  projects: Projects.Projects,
+  project_servers: Fn[String, Result[List[Mcp.Server]]],
+) -> Result[String]
   fresh = try McpTools.servers(read, state_dir)
   again: Result[Result[String]] = Actor.call(address, MCP_CALL_MS) do |reply| Held.Replace(fresh, reply) end
-  ok(try try again)
+  said = try try again
+  projected = Projects.reload(projects, project_servers)
+  return error(([said] + [projected.message]).select { |part| not part.empty? }.join("; ")) if not projected.ok?
+
+  ok(([said] + [projected.unwrap!]).select { |part| not part.empty? }.join("; "))
+end
+
+# The servers of the project file of `root`: none unless the folder is trusted.
+def project_servers_of(
+  trusted: List[String],
+  read: Fn[String, Result[String]],
+  state_dir: String,
+  root: String,
+) -> Result[List[Mcp.Server]]
+  return ok([]) if not Sandbox.trusted?(trusted, root)
+
+  McpTools.project(root, read, state_dir)
+end
+
+# A user tool of a server that the project file names too: the project's takes its place in that folder.
+def shadowed?(tool: Spec.Tool, names: List[String]) -> Bool
+  names.any? { |name| tool.name.start_with?("mcp__#{name}__") }
+end
+
+# The first session of a folder starts its project servers, the last one's end stops them.
+def project_event(
+  projects: Projects.Projects,
+  project_servers: Fn[String, Result[List[Mcp.Server]]],
+  seen: Extensions.Seen,
+) -> Void
+  if seen.name == "session_started"
+    Projects.opened(projects, seen.root, seen.session, project_servers.call(seen.root).unwrap_or([]))
+  else
+    Projects.ended(projects, seen.session)
+  end
+end
+
+# What a session in `place` says of its folder's `.finn/mcp.json`: a file that does not count, or does not read, or
+# names a server of the user's file.
+def project_opened(
+  place: Extensions.Place,
+  project_servers: Fn[String, Result[List[Mcp.Server]]],
+  user_names: Fn[List[String]],
+) -> Extensions.Opened
+  Extensions.Opened(
+    message: ->(text: String, _marks: List[String]) { Extensions.Noted(text: text, names: []) },
+    fold: ->(_marks: List[String], _staying: List[LLM.Message]) { "" },
+    warnings: project_warnings(place, project_servers, user_names),
+  )
+end
+
+def project_warnings(
+  place: Extensions.Place,
+  project_servers: Fn[String, Result[List[Mcp.Server]]],
+  user_names: Fn[List[String]],
+) -> List[String]
+  file = McpTools.project_file(place.root)
+  return [] if file.empty?
+  return ["mcp: #{file} is ignored: the folder is not in FINN_TRUSTED_DIRS"] if not place.trusted
+
+  case project_servers.call(place.root)
+    ok(servers) ->
+      taken = user_names.call()
+      servers.select { |server| taken.include?(server.name) }
+        .map { |server| "mcp: #{file} replaces the user's server #{server.name} in this folder" }
+    error(e) -> ["mcp: #{e.message}"]
+  end
 end
 
 def stopped(board: McpTools.Board) -> Void
@@ -154,6 +262,9 @@ def handled(state: Running, msg: Held) -> Actor.Step[Running]
     Held.Tools(reply) ->
       no_tools: List[Spec.Tool] = []
       Actor.reply(reply, state.board.map { |board| McpTools.tools(board) }.unwrap_or(no_tools))
+      Actor.continue(state)
+    Held.Names(reply) ->
+      Actor.reply(reply, state.servers.map { |server| server.name })
       Actor.continue(state)
     Held.Attach(swapper) ->
       for board in option_list(state.board)

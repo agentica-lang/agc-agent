@@ -69,6 +69,11 @@ def file_inside(dir: String, path: String) -> Optional[Int]
   some(size)
 end
 
+## Whether `root` is one of the folders `dirs` or below one (a folder is the real path of what it names).
+def trusted?(dirs: List[String], root: String) -> Bool
+  dirs.any? { |dir| inside?(Path.real(dir).unwrap_or(dir), root) }
+end
+
 def parent(path: String) -> String
   parts = path.split("/")
   parent_parts = parts.take(parts.size - 1)
