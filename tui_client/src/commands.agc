@@ -40,6 +40,7 @@ def on_command(app: State.Model, command: Client.Command) -> State.Model
     Client.Command.Thinking(level) -> thinking_command(app, level)
     Client.Command.Confine(on) -> confine_command(app, on)
     Client.Command.Profile(name) -> State.tried(app, profile_command(app, name))
+    Client.Command.Mcp(name, reconnecting) -> mcp_command(app, name, reconnecting)
     Client.Command.Compact -> compact_command(app)
     Client.Command.Logs(count) -> logs_command(app, count)
     Client.Command.Reload -> State.tried(app, reload_command(app))
@@ -129,6 +130,15 @@ def with_keys(app: State.Model, settings: Optional[List[Protocol.KeySetting]]) -
   case settings
     some(listed) -> app.with(keys: Client.effective(listed))
     none -> app
+  end
+end
+
+## The note of a reconnect, and the banner with the servers that are still failed.
+def mcp_reconnected(app: State.Model, text: String, status: Optional[Protocol.McpStatus]) -> State.Model
+  noted = State.noted(app, text)
+  case status
+    some(read) -> noted.with(banner: Client.mcp_banner(noted.banner, read))
+    none -> noted
   end
 end
 
@@ -236,6 +246,53 @@ def profile_command(app: State.Model, name: Optional[String]) -> Result[State.Mo
   current = (try app.backend.session.call(app.id)).profile.map { |p| p.name }.unwrap_or("")
   lines = Client.profile_listing(try app.backend.list_profiles.call(app.id), current)
   ok(Sides.shown(app, Side.of("Profiles", lines)))
+end
+
+# `/mcp` lists the servers, `/mcp NAME` its tools, and `/mcp reconnect NAME` starts it again in a task (the
+# answer waits
+# for the server), with a note of how it went.
+def mcp_command(app: State.Model, name: Optional[String], reconnecting: Bool) -> State.Model
+  for wanted in State.option_list(name)
+    return reconnect_mcp(app, wanted) if reconnecting
+
+    return State.tried(app, shown_mcp(app, wanted))
+  end
+
+  State.tried(app, shown_mcp(app, ""))
+end
+
+def shown_mcp(app: State.Model, name: String) -> Result[State.Model]
+  status = try app.backend.mcp.call(app.id)
+  banner = Client.mcp_banner(app.banner, status)
+  return ok(Sides.shown(app.with(banner: banner), Side.of("MCP servers", Client.mcp_listing(status)))) if name.empty?
+
+  ok(Sides.shown(app.with(banner: banner), Side.of("MCP #{Client.printable(name)}", Client.mcp_tools(status, name))))
+end
+
+def status_after(read: Result[Protocol.McpStatus]) -> Optional[Protocol.McpStatus]
+  return none if not read.ok?
+
+  some(read.unwrap!)
+end
+
+def reconnect_mcp(app: State.Model, name: String) -> State.Model
+  backend = app.backend
+  id = app.id
+  State.effect(
+    State.noted(app, "mcp #{name}: starting again"),
+    TUI.Cmd.Run(
+      -> {
+        case backend.mcp_reconnect.call(id, name)
+          ok(server) ->
+            State.Msg.Mcp(
+              Client.mcp_listing(Protocol.McpStatus(servers: [server]))[0],
+              status_after(backend.mcp.call(id)),
+            )
+          error(e) -> State.Msg.Note("error: mcp #{Client.printable(name)}: #{Client.printable(e.message)}")
+        end
+      },
+    ),
+  )
 end
 
 # `/help`, after the session's slash commands were read again.

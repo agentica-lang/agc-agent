@@ -112,12 +112,28 @@ def argument_word(text: String, cursor: Int) -> Optional[Mention]
   return none if cursor != line.length
 
   name = line.split(" ")[0]
+  return mcp_argument(line) if name == "/mcp"
   return none if not ARGUMENT_COMMANDS.include?(name) or line.length <= name.length
 
   argument = line.slice(name.length + 1, line.length - name.length - 1)
   return none if argument.include?(" ")
 
   some(Mention(start: name.length + 1, query: argument, source: Source.Arguments, command: name))
+end
+
+# The server name after `/mcp reconnect `, the one argument of `/mcp` that the list completes.
+def mcp_argument(line: String) -> Optional[Mention]
+  head = "/mcp reconnect "
+  return none if not line.start_with?(head) or line.slice(head.length, line.length - head.length).include?(" ")
+
+  some(
+    Mention(
+      start: head.length,
+      query: line.slice(head.length, line.length - head.length),
+      source: Source.Arguments,
+      command: "/mcp reconnect",
+    ),
+  )
 end
 
 ## The choices that start with `query`, or whose row holds it, in any case: the one that is `query`, then those that

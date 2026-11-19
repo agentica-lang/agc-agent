@@ -11,6 +11,8 @@ PROBE_TIMEOUT_MS = 2_000
 COMPACT_TIMEOUT_MS = 600_000
 ## A reload waits up to 150 s for another one that runs, then reads the files.
 RELOAD_TIMEOUT_MS = 180_000
+## A reconnect waits for the server to start and list its tools.
+MCP_RECONNECT_TIMEOUT_MS = 120_000
 EXPORT_TIMEOUT_MS = 120_000
 ## The most a client takes of an export, the limit of `HTTP`.
 EXPORT_BODY_BYTES = 67_108_864
@@ -155,6 +157,34 @@ end
 
 def list_profiles(server: Server, id: String) -> Result[Protocol.ProfileList]
   Protocol.decode_profile_list(try call(server, "GET", Protocol.profiles_path(id), ""))
+end
+
+## The MCP servers of the user and those of the folder of session `id`.
+def mcp_status(server: Server, id: String) -> Result[Protocol.McpStatus]
+  Protocol.decode_mcp_status(try call(server, "GET", "#{Protocol.MCP_PATH}#{of_session(id)}", ""))
+end
+
+## The server `name` started again; the answer waits for its tools, so it takes a while.
+def mcp_reconnect(server: Server, id: String, name: String) -> Result[Protocol.McpServer]
+  body = try call_within(
+    server,
+    "POST",
+    "#{Protocol.mcp_reconnect_path(name)}#{of_session(id)}",
+    "",
+    MCP_RECONNECT_TIMEOUT_MS,
+  )
+
+  servers = (try Protocol.decode_mcp_status(body)).servers
+  return error("the server answered no MCP server") if servers.empty?
+
+  ok(servers[0])
+end
+
+# The query that names the session whose folder has the project servers; none without a session.
+def of_session(id: String) -> String
+  return "" if id.empty?
+
+  "?session=#{id}"
 end
 
 def list_logins(server: Server) -> Result[Protocol.LoginList]

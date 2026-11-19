@@ -403,6 +403,35 @@ def test_the_server_status_and_its_stop_round_trip() -> Result[Void]
   Test.eq(Protocol.SERVER_STOP_PATH, "/v1/server/stop")
 end
 
+# The MCP status: a failed server keeps its reason, a connected one its tools; the reconnect path names the server.
+def test_the_mcp_status_round_trips() -> Result[Void]
+  status = Protocol.McpStatus(
+    servers: [
+      Protocol.McpServer(
+        name: "fs",
+        scope: "user",
+        transport: "stdio",
+        target: "npx",
+        state: "connected",
+        tools: [Protocol.McpTool(name: "read", description: "Reads a file")],
+      ),
+      Protocol.McpServer(
+        name: "web",
+        scope: "project",
+        transport: "http",
+        target: "https://h.example",
+        state: "failed",
+        error: "no answer",
+      ),
+    ],
+  )
+
+  try Test.eq(Protocol.decode_mcp_status(Protocol.encode_mcp_status(status)), ok(status))
+  try Test.eq(error_kind(Protocol.decode_mcp_status("{}")), "protocol.invalid")
+  try Test.eq(Protocol.MCP_PATH, "/v1/mcp")
+  Test.eq(Protocol.mcp_reconnect_path("fs"), "/v1/mcp/fs/reconnect")
+end
+
 def test_a_shell_command_round_trips() -> Result[Void]
   run = Protocol.RunShell(command: "ls", context: false)
   try Test.eq(Protocol.decode_run_shell(Protocol.encode_run_shell(run)), ok(run))

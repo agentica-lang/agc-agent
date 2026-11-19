@@ -4,6 +4,7 @@
 
 ### Added
 
+- `/mcp` shows the MCP servers and their states (`connecting`, `connected`, `failed` with the reason) in the side panel of `finn` (`finn chat` prints them), `/mcp NAME` lists the tools of one, and `/mcp reconnect NAME` starts one again (Tab completes the name); a server that failed at the start is in the banner. The server has `GET /v1/mcp` and `POST /v1/mcp/NAME/reconnect`.
 - MCP servers come from `~/.config/finn/mcp.json` by default (`FINN_MCP_CONFIG` replaces it) and from `.finn/mcp.json` of a session folder under `FINN_TRUSTED_DIRS`: the servers of a project start with the first session in its folder and stop with the last one, a project server named like a user server is left out, and a project file cannot read `${NAME}` of the environment. `/reload` reads both files again.
 - `keys` in the user's config file changes the keys of `finn` (`cycle_profile`, `thinking_level`, `show_thinking`, `show_tools`, `logs`, `side_focus`, `edit_prompt`, `page_up`, `page_down`): `{"keys": {"thinking_level": "f3"}}` (case is ignored, no spaces inside a name; the old key of a moved action stops working; Esc is fixed). A bad entry is a warning and keeps the default; `/reload` applies it, and the hints and `/help` show the keys in effect.
 - In `finn`, Shift+Tab goes through the profiles (`build`, `plan`, then yours by name), from the next turn; a turn that runs refuses it with a note.

@@ -180,7 +180,15 @@ end
 ## The last warnings of the server as the banner at the top of the screen, with where the rest is.
 def server_notes(app: State.Model) -> State.Model
   case app.backend.server_log.call(0)
-    ok(log) -> app.with(banner: Client.warning_banner(log, app.mouse))
+    ok(log) -> mcp_notes(app.with(banner: Client.warning_banner(log, app.mouse)))
+    error(_) -> mcp_notes(app)
+  end
+end
+
+## The MCP servers that failed to start join the banner, with how to start each again.
+def mcp_notes(app: State.Model) -> State.Model
+  case app.backend.mcp.call(app.id)
+    ok(status) -> app.with(banner: Client.mcp_banner(app.banner, status))
     error(_) -> app
   end
 end
@@ -254,6 +262,7 @@ def handled(app: State.Model, msg: State.Msg) -> State.Model
     State.Msg.Edited(result) -> Editor.closed(app, result)
     State.Msg.Exported(result) -> Commands.exported(app, result)
     State.Msg.Note(text) -> State.noted(app, text)
+    State.Msg.Mcp(text, status) -> Commands.mcp_reconnected(app, text, status)
     State.Msg.LogTick -> Sides.tick(app)
     State.Msg.LogRead(serial, result) -> Sides.read(app, serial, result)
     State.Msg.Copied(text, method, result, checked) -> Selecting.finished(app, text, method, result, checked)

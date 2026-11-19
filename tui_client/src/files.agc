@@ -267,6 +267,19 @@ def listing(
       }
 
       ok(Input.Arguments(command: command, choices: choices))
+    "/mcp reconnect" ->
+      status = try backend.mcp.call(id)
+      failed = status.servers.select { |server| server.state == "failed" }
+      others = status.servers.select { |server| server.state != "failed" }
+      ordered = failed + others
+      choices = ordered.map { |server|
+        Input.Choice(
+          value: Client.printable(server.name),
+          label: Client.mcp_listing(Protocol.McpStatus(servers: [server]))[0],
+        )
+      }
+
+      ok(Input.Arguments(command: command, choices: choices))
     "/resume" ->
       sessions = Client.resumable(try backend.list_sessions.call(), id)
       shown = Picker.shown(Picker.Picker(sessions: sessions), now_s)

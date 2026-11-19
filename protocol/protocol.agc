@@ -42,6 +42,8 @@ export Kinds.KIND_SESSION_UNAVAILABLE
 export Kinds.KIND_APPROVAL_NOT_FOUND
 export Kinds.KIND_APPROVAL_RESOLVED
 export Kinds.KIND_RELOAD_BUSY
+export Kinds.KIND_MCP_NOT_FOUND
+export Kinds.KIND_MCP_STARTING
 export Kinds.KIND_SERVER_STOPPING
 export Kinds.KIND_SHELL_DENIED
 export Kinds.KIND_LOGIN_REJECTED
@@ -68,6 +70,8 @@ export Routes.branch_path
 export Routes.fork_path
 export Routes.shell_path
 export Routes.files_path
+export Routes.MCP_PATH
+export Routes.mcp_reconnect_path
 export Routes.profiles_path
 export Routes.commands_path
 export Routes.auth_path
@@ -157,6 +161,11 @@ export Replies.encode_session_list
 export Replies.decode_session_list
 export Replies.encode_provider_list
 export Replies.decode_provider_list
+export Replies.McpTool
+export Replies.McpServer
+export Replies.McpStatus
+export Replies.encode_mcp_status
+export Replies.decode_mcp_status
 export Replies.ProfileList
 export Replies.encode_profile_list
 export Replies.decode_profile_list

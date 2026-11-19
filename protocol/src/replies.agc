@@ -151,6 +151,32 @@ struct ProfileList
   profiles: List[Profile]
 end
 
+## A tool of an MCP server: its name at the server (the model sees `mcp__SERVER__NAME`) and what it says it does.
+struct McpTool
+  name: String
+  description: String = ""
+end
+
+## An MCP server in `GET /v1/mcp`. `scope` is `user` (the user's file) or `project` (the `.finn/mcp.json` of the
+## session's folder); `transport` is `stdio` or `http`, and `target` the command's name or the url without its path
+## and query. `state` is `connecting`, `connected` or `failed`; a failed server says why in `error`. `tools` are
+## those it listed.
+struct McpServer
+  name: String
+  scope: String
+  transport: String
+  target: String
+  state: String
+  error: String = ""
+  tools: List[McpTool] = []
+end
+
+## The answer of `GET /v1/mcp` and `POST /v1/mcp/NAME/reconnect`: the servers of the user, and those of the folder of
+## the session in `?session=ID`, by name.
+struct McpStatus
+  servers: List[McpServer]
+end
+
 ## A slash command of the session's folders, as `/NAME`: `source` is `user` or `project`, or empty for a file that does
 ## not load (`warnings` says why); `warnings` also names a skill or a command of the user it wins over.
 struct CommandInfo
@@ -394,6 +420,10 @@ def encode_profile_list(reply: ProfileList) -> String = JSON.encode(reply)
 
 def decode_profile_list(text: String) -> Result[ProfileList] = Wire.decode(text, ProfileList.codec)
 
+def encode_mcp_status(reply: McpStatus) -> String = JSON.encode(reply)
+
+def decode_mcp_status(text: String) -> Result[McpStatus] = Wire.decode(text, McpStatus.codec)
+
 def encode_shell_accepted(reply: ShellAccepted) -> String = JSON.encode(reply)
 
 def encode_login_status(reply: LoginStatus) -> String = JSON.encode(reply)
@@ -502,6 +532,9 @@ def shape() -> List[String]
     Wire.record("ProviderList", ProviderList.members),
     Wire.record("Profile", Profile.members),
     Wire.record("ProfileList", ProfileList.members),
+    Wire.record("McpTool", McpTool.members),
+    Wire.record("McpServer", McpServer.members),
+    Wire.record("McpStatus", McpStatus.members),
     Wire.record("CommandInfo", CommandInfo.members),
     Wire.record("CommandList", CommandList.members),
     Wire.record("Message", Message.members),

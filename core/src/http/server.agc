@@ -156,6 +156,8 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.get(Protocol.HEALTH_PATH, &health)
     |> Bond.get(Protocol.SERVER_PATH, ->(conn) { reply(conn, 200, status(sessions, control)) })
     |> Bond.get(Protocol.LOGS_PATH, ->(conn) { reply(conn, 200, logs(control, conn)) })
+    |> Bond.get(Protocol.MCP_PATH, ->(conn) { reply(conn, 200, mcp(sessions, conn)) })
+    |> Bond.post("#{Protocol.MCP_PATH}/:name/reconnect", ->(conn) { reply(conn, 200, mcp_reconnect(sessions, conn)) })
     |> Bond.post(Protocol.RELOAD_PATH, ->(conn) { reply(conn, 200, reload(sessions)) })
     |> Bond.post(Protocol.SERVER_STOP_PATH, ->(conn) { reply(conn, 200, stop_route(control, conn)) })
     |> Bond.post(all, ->(conn) { reply(conn, 201, create(sessions, conn)) })
@@ -438,6 +440,24 @@ def profiles(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   ok(Protocol.encode_profile_list(try Sessions.profiles(sessions, try Bond.param(conn, "id"))))
 end
 
+def mcp(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  ok(Protocol.encode_mcp_status(try Sessions.mcp(sessions, try mcp_folder(sessions, conn))))
+end
+
+def mcp_reconnect(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  one = try Sessions.mcp_reconnect(sessions, try mcp_folder(sessions, conn), try Bond.param(conn, "name"))
+  ok(Protocol.encode_mcp_status(Protocol.McpStatus(servers: [one])))
+end
+
+# The folder of the session in `?session=ID`, empty without one: only the servers of the user then.
+def mcp_folder(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  for id in try Bond.query_all(conn, "session")
+    return Sessions.folder_of(sessions, id)
+  end
+
+  ok("")
+end
+
 def files(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   ok(Protocol.encode_file_list(try Sessions.files(sessions, try Bond.param(conn, "id"))))
 end
@@ -565,7 +585,7 @@ def starts_work?(conn: Bond.Conn) -> Bool
   (
     conn.path == Protocol.SESSIONS_PATH or
     conn.path == Protocol.RELOAD_PATH or
-    ["/messages", "/shell", "/compact", "/branch", "/fork"].any? { |end_| conn.path.end_with?(end_) }
+    ["/messages", "/shell", "/compact", "/branch", "/fork", "/reconnect"].any? { |end_| conn.path.end_with?(end_) }
   )
 end
 
@@ -610,8 +630,19 @@ end
 def status_of(kind: String) -> Int
   return 400 if [Protocol.KIND_INVALID, Protocol.KIND_UNKNOWN, Protocol.KIND_LOGIN_REJECTED].include?(kind)
   return 403 if kind == Protocol.KIND_SHELL_DENIED
-  return 404 if [Protocol.KIND_SESSION_NOT_FOUND, Protocol.KIND_APPROVAL_NOT_FOUND].include?(kind)
-  return 409 if [Protocol.KIND_SESSION_BUSY, Protocol.KIND_APPROVAL_RESOLVED, Protocol.KIND_RELOAD_BUSY].include?(kind)
+  if [Protocol.KIND_SESSION_NOT_FOUND, Protocol.KIND_APPROVAL_NOT_FOUND, Protocol.KIND_MCP_NOT_FOUND].include?(kind)
+    return 404
+  end
+
+  if [
+    Protocol.KIND_SESSION_BUSY,
+    Protocol.KIND_APPROVAL_RESOLVED,
+    Protocol.KIND_RELOAD_BUSY,
+    Protocol.KIND_MCP_STARTING,
+  ].include?(kind)
+    return 409
+  end
+
   return 503 if kind == Protocol.KIND_SESSION_UNAVAILABLE
 
   500

@@ -58,6 +58,12 @@ A server name is letters, digits, `_` and `-`, with no `__`. A server has either
 - A header that the transport sets is refused: `Accept`, `Connection`, `Content-Length`, `Content-Type`, `Host`, `Last-Event-ID`, `Mcp-Protocol-Version`, `Mcp-Session-Id` and `Transfer-Encoding`.
 - Answers come as JSON or as SSE. Finn keeps the session id the server gives, resumes a cut stream with `Last-Event-ID`, starts a new session when the server ended one, and ends its session with a `DELETE`.
 
+## Its state
+
+`/mcp` lists the servers with their state: `connecting` while one starts, `connected` with its number of tools, or `failed` with the reason. `connected` means it listed its tools at its last start; a stdio server that crashed since starts again at its next call, and the list does not know it yet. It shows where each one comes from (`user` for your file, `project` for the `.finn/mcp.json` of the session folder) and how it runs: the program of a stdio server or the origin of an HTTP one, never its environment or headers. `/mcp NAME` lists the tools of one. A server that failed to start is in the banner at the top of `finn`.
+
+`/mcp reconnect NAME` stops the client of that server and starts it again: use it after you fixed what made it fail (a missing program, a key, a server that was down). The answer comes when the server has listed its tools. A server that crashed later starts again by itself at its next call.
+
 ## Its tools
 
 A tool of server `NAME` is `mcp__NAME__TOOL`. Finn connects to the servers in the background: a slow server (`npx` on its first run) does not hold up the start, and its tools come from the next turn once it lists them.

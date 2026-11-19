@@ -44,6 +44,8 @@ export Http.files
 export Http.list_sessions
 export Http.list_providers
 export Http.list_profiles
+export Http.mcp_status
+export Http.mcp_reconnect
 export Http.list_commands
 export Http.update_session
 export Http.list_logins
@@ -110,6 +112,10 @@ export Keys.action_of
 export Keys.label
 export Keys.short
 export Commands.profile_listing
+export Commands.mcp_listing
+export Commands.mcp_tools
+export Commands.mcp_failures
+export Commands.mcp_banner
 export Commands.listed
 export Commands.Usage
 export Commands.COMMANDS

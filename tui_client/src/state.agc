@@ -199,6 +199,8 @@ enum Msg
   Answered(String, Result[Void])
   ## A note for the transcript (a compaction's end).
   Note(String)
+  ## The end of `/mcp reconnect`: the note, and the states of the servers read right after it, for the banner.
+  Mcp(String, Optional[Protocol.McpStatus])
   ## The text a program was asked to copy, which program, how it ended, and what its check said (tmux's `set-clipboard`).
   Copied(String, Clipboard.Method, Result[String], String)
   ## The server was checked again before the stream of a generation is read again.

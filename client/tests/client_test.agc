@@ -595,3 +595,56 @@ def events_read(server: Http.Server) -> Result[String]
 
   ok(text)
 end
+
+# `/mcp` alone lists, with a name shows its tools, `reconnect NAME` starts it again; a bad name, or `reconnect` with no
+# name, is an error. The lines say how each server runs and why one failed, the banner has the failed ones with the
+# command to start them first, and a read replaces the rows of the one before without touching other warnings.
+def test_mcp_commands_parse_and_their_lines_show_the_states() -> Result[Void]
+  try Test.eq(Client.parse_command("/mcp"), some(ok(Client.Command.Mcp(none, false))))
+  try Test.eq(Client.parse_command("/mcp fs"), some(ok(Client.Command.Mcp(some("fs"), false))))
+  try Test.eq(Client.parse_command("/mcp reconnect fs"), some(ok(Client.Command.Mcp(some("fs"), true))))
+  try Test.eq(Client.parse_command("/mcp reconnect").unwrap!.ok?, false)
+  try Test.eq(Client.parse_command("/mcp reconnect ").unwrap!.ok?, false)
+  try Test.eq(Client.parse_command("/mcp a b").unwrap!.ok?, false)
+  try Test.eq(Client.parse_command("/mcp ../x").unwrap!.ok?, false)
+  status = Protocol.McpStatus(
+    servers: [
+      Protocol.McpServer(
+        name: "fs",
+        scope: "user",
+        transport: "stdio",
+        target: "npx",
+        state: "connected",
+        tools: [Protocol.McpTool(name: "read", description: "Reads a file\nmore")],
+      ),
+      Protocol.McpServer(
+        name: "web",
+        scope: "project",
+        transport: "http",
+        target: "https://h.example",
+        state: "failed",
+        error: "no answer",
+      ),
+    ],
+  )
+
+  try Test.eq(
+    Client.mcp_listing(status),
+    [
+      "fs (user, stdio npx): connected, 1 tools",
+      "web (project, http https://h.example): failed: no answer (/mcp reconnect web)",
+    ],
+  )
+
+  try Test.eq(Client.mcp_tools(status, "fs")[1], "  mcp__fs__read: Reads a file")
+  try Test.eq(Client.mcp_tools(status, "none")[0].start_with?("no MCP server named none"), true)
+  try Test.eq(Client.mcp_failures(status), ["/mcp reconnect web: mcp web failed: no answer"])
+  later = Protocol.McpStatus(servers: [status.servers[0]])
+  row = "/mcp reconnect web: mcp web failed: no answer"
+  own = "mcp web left out: no answer"
+  other = "mcp fs left out: it was slow"
+  once = Client.mcp_banner(["3 warnings", own, other], status)
+  try Test.eq(once, ["3 warnings", other, row])
+  try Test.eq(Client.mcp_banner(once, status), once)
+  Test.eq(Client.mcp_banner(once, later), ["3 warnings", other])
+end

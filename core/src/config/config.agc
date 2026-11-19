@@ -24,6 +24,7 @@
 
 import LLM from "pkg/llm/llm"
 import Monty from "pkg/monty/monty"
+import Protocol from "pkg/protocol/protocol"
 import Approval from "../approval/approval"
 import Auth from "../providers/auth"
 import Catalog from "../providers/catalog"
@@ -152,6 +153,15 @@ struct Options
   stops: List[Fn[Void]] = []
   ## How long a reload waits for another one that runs (tests shorten it).
   reload_wait_ms: Int = 150_000
+  ## The MCP servers for `GET /v1/mcp`; none without any.
+  mcp: Optional[McpControl] = none
+end
+
+## What the server asks of its MCP servers: the state of those of the user and of the project servers of a folder, and a
+## new start of one of them by name (the folder is the one of the session whose project servers are meant).
+struct McpControl
+  status: Fn[String, Result[List[Protocol.McpServer]]]
+  reconnect: Fn[String, String, Result[Protocol.McpServer]]
 end
 
 ## `provider` is `auto`, `osc52`, `tmux` or `command`; `command` is the program that `command` runs.
