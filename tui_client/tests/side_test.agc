@@ -273,6 +273,16 @@ def test_shortcuts_scrolls_on_a_small_screen() -> Result[Void]
   Test.assert(not screen(scrolled).any? { |row| row.include?("send the message") }, "the first rows are above")
 end
 
+# A panel that was never drawn is cut for the width it is given before a line is revealed.
+def test_a_line_is_revealed_in_a_panel_that_was_not_drawn_yet() -> Result[Void]
+  side = Side.of("Lines", (0...10).to_a.map { |i| "line #{i}" })
+  try Test.eq(side.wrapped_at, 0)
+  shown = Side.revealed(side, 8, 3, 40)
+  try Test.eq(shown.top, 6)
+  try Test.eq(shown.follow, false)
+  Test.eq(Side.revealed(shown, 1, 3, 40).top, 1)
+end
+
 # Esc closes the panel first, whatever the focus, and stops the turn the second time.
 def test_esc_closes_the_panel_before_it_stops_the_turn() -> Result[Void]
   opened = ran(model_of(120, 20), "/logs").with(turn: true)

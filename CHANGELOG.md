@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `POST /v1/mcp/NAME/reconnect` answers `409` (`mcp.starting`) when the servers end while the new client starts, and not a connected server.
+
 ### Added
 
 - In `finn`, `/shortcuts` opens the side panel with every key in effect, one row each, with the ones your `keys` map sets and the keys of the `/mcp` panel; `/help` no longer ends with the keys.
