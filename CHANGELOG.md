@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [finn-20261119111956] - 2026-11-19
+
 ### Added
 
 - In `finn`, `/mcp` is a panel with a cursor: Up and Down (or `j` and `k`) move it, `r` reconnects the server under it, `t` or Enter lists its tools, `l` shows the end of its log, Esc goes back. The keys work only while the panel has the focus (F6). The server has `GET /v1/mcp/NAME/log`.
