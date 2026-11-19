@@ -73,7 +73,7 @@ end
 ## The panel scrolled so that its line `index` shows.
 def revealed(app: State.Model, index: Int) -> State.Model
   case app.side
-    some(side) -> app.with(side: some(Side.revealed(side, index, room(app))))
+    some(side) -> app.with(side: some(Side.revealed(side, index, room(app), Side.columns(app.screen_width))))
     none -> app
   end
 end
