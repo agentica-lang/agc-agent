@@ -103,7 +103,7 @@ def machine(host: Clipboard.Host, result: Result[String], checked: String = "", 
     write: ->(sent: String) { _ = written.send(sent, 0) },
     run: ->(argv: List[String], input: Bytes) {
       _ = ran.send("#{argv.join(" ")} <- #{String.from_bytes(input).unwrap_or("")}", 0)
-      return ok(checked) if argv.size > 1 and argv[1] == "show-options"
+      return ok(checked) if argv.size > 1 and argv[1] == "display"
 
       result
     },
@@ -146,14 +146,26 @@ def test_a_tool_that_fails_falls_back_to_osc52_and_says_so() -> Result[Void]
   Test.eq(rig.written.recv(0), ok(Terminal.osc52(TEXT)))
 end
 
-# tmux that copied with `set-clipboard off` did not reach the clipboard of the terminal: the note says so, and says
-# nothing of the sort when it is `external`.
-def test_tmux_with_set_clipboard_off_says_the_buffer_only() -> Result[Void]
+# tmux sends the text on only to a terminal with the `clipboard` feature: the note says when its list has none, and
+# says `(tmux)` when it has it or when tmux could not be asked.
+def test_tmux_without_the_clipboard_feature_says_the_buffer_only() -> Result[Void]
   host = Clipboard.Host(tmux: true, ssh: true, tools: ["tmux"])
-  off = finished(machine(host, ok(""), checked: "off"))
-  try Test.eq(note(off), "copied 11 characters to the tmux buffer only (set-clipboard is off)")
-  on = finished(machine(host, ok(""), checked: "external"))
-  Test.eq(note(on), "copied 11 characters (tmux)")
+  without = finished(machine(host, ok(""), checked: "256,RGB,mouse"))
+  try Test.eq(
+    note(without),
+    "copied 11 characters to the tmux buffer; this terminal may not get it (no clipboard feature in tmux)",
+  )
+
+  bare = finished(machine(host, ok(""), checked: ""))
+  try Test.eq(
+    note(bare),
+    "copied 11 characters to the tmux buffer; this terminal may not get it (no clipboard feature in tmux)",
+  )
+
+  with = finished(machine(host, ok(""), checked: "256,clipboard,ccolour"))
+  try Test.eq(note(with), "copied 11 characters (tmux)")
+  unknown = finished(machine(host, ok(""), checked: Clipboard.UNKNOWN))
+  Test.eq(note(unknown), "copied 11 characters (tmux)")
 end
 
 # The cap of 74000 bytes is the one of OSC 52: a program takes more, and a failed program leaves a selection that does

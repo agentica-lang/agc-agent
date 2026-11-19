@@ -8,6 +8,11 @@ import Protocol from "pkg/protocol/protocol"
 RUN_MS = 3000
 ## The most a program is given: `Process.send_bytes` takes 1 MiB.
 MAX_INPUT_BYTES = 1_000_000
+## The format that tmux fills with the features of the terminal it sends to (a string is built so that `#{` is no
+## interpolation).
+FEATURES = "#" + "{client_termfeatures}"
+## What the check of a method gives when it did not run or did not work.
+UNKNOWN = "unknown"
 ## The most OSC 52 is sent: terminals and multiplexers cut a sequence at about 100 KB of base64.
 MAX_OSC52_BYTES = 74_000
 
@@ -33,13 +38,9 @@ struct Method
 end
 
 ## `tmux` sets its buffer, and with `-w` (tmux 3.2 or later) the clipboard of the outer terminal through its own OSC 52,
-## unless its `set-clipboard` is `off`, which `check` reads.
+## "if possible": only when the terminal has the `clipboard` feature (`Ms`), which `check` reads.
 def tmux() -> Method
-  Method(
-    name: "tmux",
-    argv: ["tmux", "load-buffer", "-w", "-"],
-    check: ["tmux", "show-options", "-gv", "set-clipboard"],
-  )
+  Method(name: "tmux", argv: ["tmux", "load-buffer", "-w", "-"], check: ["tmux", "display", "-p", FEATURES])
 end
 
 ## The program of each tool that the local display uses, in the order they are tried (as Neovim's).
@@ -86,11 +87,18 @@ def input(method: Method, text: String) -> Bytes
   Bytes.from_list([255, 254]).unwrap! + text.encode("utf-16le").unwrap!
 end
 
-## What the check of a method says after the program `result` ended well ("" when it has none or it failed).
+## What the check of a method says after the program `result` ended well: its first line, or UNKNOWN when there is no
+## check, the program failed or the check did.
 def checked(run: Fn[List[String], Bytes, Result[String]], method: Method, result: Result[String]) -> String
-  return "" if method.check.empty? or not result.ok?
+  return UNKNOWN if method.check.empty? or not result.ok?
 
-  run.call(method.check, "".bytes).unwrap_or("")
+  run.call(method.check, "".bytes).unwrap_or(UNKNOWN)
+end
+
+## Whether tmux says that the terminal it sends the text to has no clipboard feature: the text is in the tmux buffer
+## only, as far as tmux can tell.
+def buffer_only?(method: Method, checked: String) -> Bool
+  method.name == "tmux" and checked != UNKNOWN and not checked.split(",").include?("clipboard")
 end
 
 ## Runs the program with `input` and waits for it to end, 3 s at most (a program that runs longer is killed). Its output

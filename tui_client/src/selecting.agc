@@ -32,8 +32,8 @@ def copied(app: State.Model) -> State.Model
   end
 end
 
-## The note of a program that ended: it copied, or it did not and the terminal is asked instead. tmux that copied with
-## `set-clipboard off` has the text in its buffer only.
+## The note of a program that ended: it copied, or it did not and the terminal is asked instead. tmux that copied for a
+## terminal without the clipboard feature may have the text in its buffer only.
 def finished(
   app: State.Model,
   text: String,
@@ -42,8 +42,11 @@ def finished(
   checked: String,
 ) -> State.Model
   case result
-    ok(_) if checked == "off" ->
-      State.noted(app, "copied #{text.length} characters to the #{method.name} buffer only (set-clipboard is off)")
+    ok(_) if Clipboard.buffer_only?(method, checked) ->
+      State.noted(
+        app,
+        "copied #{text.length} characters to the tmux buffer; this terminal may not get it (no clipboard feature in tmux)",
+      )
     ok(_) -> State.noted(app, "copied #{text.length} characters (#{method.name})")
     error(e) -> sent(app, text, "#{method.name} failed (#{e.message}); ")
   end
