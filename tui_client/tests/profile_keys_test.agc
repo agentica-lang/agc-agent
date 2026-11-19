@@ -5,6 +5,7 @@ import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import App from "../src/app"
 import Args from "../src/args"
+import Session from "../src/session"
 
 # Shift+Tab: build, plan, the user's profiles by name, build again; a profile that does not load is skipped; a
 # turn that
@@ -70,6 +71,76 @@ def test_enter_on_the_profile_list_picks_a_profile_and_never_runs_the_bare_comma
 end
 
 # A server that lists `names` as its profiles (`broken` does not load) and keeps the one chosen.
+# Esc ends the wait: the line is then sent as typed, the command alone, which lists the profiles in the side panel.
+def test_esc_ends_the_wait_for_the_list() -> Result[Void]
+  chosen: Channel[String] = Channel.new(16)
+  model = model_of().with(
+    backend: profiles_backend(chosen, ["build", "plan"]),
+    id: "s1",
+    prompt: "/profile ",
+    cursor: 9,
+  )
+
+  waiting = App.update(model, enter()).model
+  try Test.eq(waiting.side.none?, true)
+  closed = App.update(waiting, escape()).model
+  try Test.eq(closed.prompt, "/profile ")
+  sent = App.update(closed, enter()).model
+  try Test.eq(sent.side.some?, true)
+  try Test.eq(sent.prompt, "")
+  Test.eq(drain(chosen), [])
+end
+
+# A read that was on its way when the session changed is dropped, and does not leave the list waiting for it: the next
+# key asks again, and the list that comes is the one Enter picks from.
+def test_a_list_read_of_the_session_before_does_not_hold_enter() -> Result[Void]
+  chosen: Channel[String] = Channel.new(16)
+  backend = profiles_backend(chosen, ["build", "plan"])
+  model = model_of().with(backend: backend, id: "s1", prompt: "/profile", cursor: 8)
+  asking = App.update(model, key_char(" "))
+  try Test.eq(asking.model.reading_arguments, true)
+  try Test.eq(asking.cmds.size, 1)
+  switched = try Session.resume(asking.model, "s2")
+  try Test.eq([switched.reading_arguments, switched.arguments.none?], [false, true])
+  late = App.update(switched, run(asking.cmds[0])[0]).model
+  try Test.eq(late.arguments.none?, true)
+  again = App.update(late, enter())
+  try Test.eq(again.model.prompt, "/profile ")
+  try Test.eq([again.model.side.none?, again.cmds.size == 1], [true, true])
+  listed = App.update(again.model, run(again.cmds[0])[0]).model
+  picked = App.update(listed, enter()).model
+  try Test.eq(picked.side.none?, true)
+  Test.eq(drain(chosen), ["build"])
+end
+
+# `/model ` waits for its list too, and runs the model of its row once the list is there.
+def test_enter_on_the_model_list_waits_for_it() -> Result[Void]
+  chosen: Channel[String] = Channel.new(16)
+  providers = Protocol.ProviderList(
+    provider: "p",
+    providers: [Protocol.ProviderInfo(name: "p", api: "chat", models: ["small", "large"])],
+  )
+
+  backend = Client.unreachable_backend().with(
+    list_providers: -> { ok(providers) },
+    update_session: ->(_id: String, change: Protocol.UpdateSession) {
+      _ = chosen.send(change.model.unwrap_or(""), 0)
+      ok()
+    },
+    session: ->(_id: String) { error("no session here") },
+  )
+
+  model = model_of().with(backend: backend, id: "s1", prompt: "/mod", cursor: 4)
+  completed = App.update(model, enter())
+  try Test.eq(completed.model.prompt, "/model ")
+  waiting = App.update(completed.model, enter())
+  try Test.eq(waiting.model.prompt, "/model ")
+  try Test.eq([waiting.model.picker.none?, waiting.cmds.empty?], [true, true])
+  listed = App.update(completed.model, run(completed.cmds[0])[0]).model
+  App.update(listed, enter())
+  Test.eq(drain(chosen), ["small"])
+end
+
 def profiles_backend(chosen: Channel[String], names: List[String]) -> Client.Backend
   listed = Protocol.ProfileList(profiles: names.map { |name| Protocol.Profile(name: name, source: source_of(name)) })
 
@@ -142,6 +213,10 @@ def back_tab() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.BackTab, TUI.Mods(
 def f2() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.F(2), TUI.Mods()))
 
 def enter() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
+
+def escape() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
+
+def key_char(c: String) -> App.Msg = App.Msg.Key(TUI.Event.Char(c, TUI.Mods()))
 
 def down() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Down, TUI.Mods()))
 
