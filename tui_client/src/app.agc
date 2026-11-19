@@ -168,7 +168,7 @@ end
 ## The mouse off when the config of the server says so, and the clipboard it asks for.
 def configured(app: State.Model) -> State.Model
   wanted = app.backend.display.call()
-  set = Commands.with_keys(app, wanted.keys).with(clipboard: wanted.clipboard)
+  set = Commands.with_keys(app, wanted.keys).with(clipboard: wanted.clipboard, statusline: wanted.statusline)
   for warning in set.keys.warnings
     set = State.noted(set, warning)
   end

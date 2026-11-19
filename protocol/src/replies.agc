@@ -52,6 +52,14 @@ struct ServerStatus
   ## The `keys` of the config file as written, an action and its key each; the full screen checks them. None from a
   ## server older than this field.
   keys: Optional[List[KeySetting]] = none
+  ## The full screen's status components; none keeps the built-in layout.
+  statusline: Optional[StatusLine] = none
+end
+
+## The ordered status components at each side of the full screen's bottom row.
+struct StatusLine
+  left: List[String]
+  right: List[String]
 end
 
 ## One entry of `keys` in the user's config file: the action and the name of the key the user gave it.
@@ -556,6 +564,7 @@ def shape() -> List[String]
     Wire.record("SessionExport", SessionExport.members),
     Wire.record("Branched", Branched.members),
     Wire.record("ServerStatus", ServerStatus.members),
+    Wire.record("StatusLine", StatusLine.members),
     Wire.record("ClipboardSetting", ClipboardSetting.members),
     Wire.record("KeySetting", KeySetting.members),
     Wire.record("ServerLog", ServerLog.members),

@@ -15,6 +15,7 @@ What an extension can add:
 - **prompts**: text after the system prompt of each new session;
 - **event handlers** for a user message or a compaction;
 - **services** that run as long as the server.
+- a **status line layout** for the full-screen client.
 
 The code of an extension runs in a task of its own, with a time limit. A crash or a hang fails that one tool call, refuses that message, or adds nothing to that compaction, and does not stop a session or a running server. A service that fails to start is the exception: it stops the server's start.
 
@@ -50,6 +51,14 @@ Or let a client start it when no server runs:
 ```sh
 FINN_SERVER_COMMAND="agentica /path/to/my_finn/main.agc" finn tui
 ```
+
+## Status line
+
+An extension can arrange the full-screen client's bottom status row with `Core.set_statusline(registry, left, right)`. For example, `Core.set_statusline(registry, ["model", "state"], ["usage"])` puts the model and state on the left and usage on the right.
+
+The component names are `state`, `usage`, `rate`, `hints` and `model`; their order is the order shown, and a component omitted from both lists is hidden. Unknown names are ignored. The client cuts the row to the terminal width, giving the left side room before the right. This changes neither the row above it (folder, branch and title) nor the line-mode client. Without a layout the full-screen client keeps its built-in status row. Layouts apply to the whole server and are read when the client opens; restart the client after changing the extension.
+
+This API arranges built-in components only; extensions cannot yet provide their own status text.
 
 ## A tool
 

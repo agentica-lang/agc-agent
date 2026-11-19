@@ -17,6 +17,9 @@
 ### Changed
 
 - Finn needs Agentica 0.35.0: the pinned release, the `agentica` versions of the packages and the Monty download are updated, the date of `finn export` comes from the builtin `Time`, and `core` can be used from outside the repository (`workspace = true`).
+### Added
+
+- Agentica extensions can arrange or hide the full-screen status line's built-in components with `Core.set_statusline`.
 
 ## [finn-20261119111956] - 2026-11-19
 

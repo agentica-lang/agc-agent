@@ -7,6 +7,7 @@ import Core from "pkg/core/core"
 def register(registry: Core.Registry) -> Core.Registry
   (
     registry
+    |> Core.set_statusline(["state", "usage"], ["model"])
     |> Core.add_tool(word_count())
     |> Core.wrap_tools(&timed)
     |> Core.add_service(Core.Service(name: "greeter", start: &greet, stop: &farewell))

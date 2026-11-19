@@ -150,6 +150,7 @@ struct Model
   theme: Theme.Theme
   ## The `usage` of the session's last model call, the git branch of its folder and the home folder, for the footer.
   usage: Optional[Protocol.Usage] = none
+  statusline: Optional[Protocol.StatusLine] = none
   ## The model's last output speed, and the text of the call that streams now.
   rate: Optional[Rate.Rate] = none
   streamed: Optional[Rate.Streamed] = none

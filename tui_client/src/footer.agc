@@ -9,6 +9,15 @@ import Width from "width"
 TITLE_CHARS = 40
 MAX_USD = 1_000_000.0
 
+## The values available to a custom status layout.
+struct Values
+  state: List[String]
+  usage: Optional[Protocol.Usage]
+  hints: List[String]
+  model: String
+  rate: String
+end
+
 ## Where the session is: `cwd` with `home` as `~`, the branch in parentheses and `title`, one line.
 def place(cwd: String, home: String, branch: String, title: String, width: Int) -> String
   parts = [short_path(cwd, home)]
@@ -68,6 +77,19 @@ def status(
   return padded(text, width) if model.empty?
 
   text + " " * (width - Width.text(text) - Width.text(model) - 1) + model + " "
+end
+
+## The components of a custom layout, cut to the available cells.
+def custom(layout: Protocol.StatusLine, values: Values, width: Int) -> String
+  left = components(layout.left, values).join(" · ")
+  right = components(layout.right, values).join(" · ")
+  return padded(" #{left}", width) if right.empty?
+
+  left = cut(left, [width - 3, 0].max.unwrap!)
+  right = cut(right, [width - Width.text(left) - 3, 0].max.unwrap!)
+  return padded(" #{left}", width) if right.empty?
+
+  " #{left}" + " " * (width - Width.text(left) - Width.text(right) - 2) + right + " "
 end
 
 ## The last call: `↑` its whole prompt (cached included), `↓` its output, `R` the prompt read from the cache and the
@@ -130,6 +152,26 @@ private
 
 # How many parts the status row drops at most: the rate, then those of `counts`.
 MOST_DROPPED = 4
+
+def components(names: List[String], values: Values) -> List[String]
+  parts: List[String] = []
+  for name in names
+    text = case name
+      "state" -> values.state.join(" · ")
+      "usage" -> option_list(values.usage).map { |usage| counts(usage) }.join("")
+      "rate" -> values.rate
+      "hints" -> values.hints.join(" · ")
+      "model" -> values.model
+      _ -> ""
+    end
+
+    if not text.empty?
+      parts = parts.push(text)
+    end
+  end
+
+  parts
+end
 
 def left(state: List[String], usage: Optional[Protocol.Usage], rate: String, detail: Int) -> String
   parts = state + option_list(usage).map { |u| counts(u, [detail - 1, 0].max.unwrap!) }

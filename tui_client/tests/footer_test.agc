@@ -3,6 +3,19 @@ import Footer from "../src/footer"
 import Rate from "../src/rate"
 import Width from "../src/width"
 
+# Custom layouts reorder and hide components without changing the built-in layout.
+def test_custom_status_layout() -> Result[Void]
+  values = Footer.Values(state: ["ready"], usage: none, hints: ["Enter send"], model: "model", rate: "")
+  layout = Protocol.StatusLine(left: ["model", "state"], right: ["hints"])
+  try Test.eq(Footer.custom(layout, values, 30), " model · ready     Enter send ")
+  try Test.eq(Footer.custom(layout.with(left: ["model"], right: []), values, 12), " model      ")
+  for width in 0..30
+    try Test.eq(Width.text(Footer.custom(layout, values, width)), width)
+  end
+
+  Test.eq(Footer.custom(layout.with(left: ["unknown"], right: []), values, 4), "    ")
+end
+
 # Counts round to the unit shown and never show four digits of one; a cost under a tenth of a cent says so, and a
 # huge one is capped; home with a trailing slash is still `~`.
 def test_counts_and_costs_round_to_what_is_shown() -> Result[Void]

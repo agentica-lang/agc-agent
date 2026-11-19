@@ -261,6 +261,7 @@ end
 def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
   activity = try Sessions.activity(sessions)
   now = Config.applied(sessions.options)
+  layout = sessions.options.registry.map { |served| served.registry.statusline }.unwrap_or(none)
   ok(
     Protocol.encode_server_status(
       Protocol.ServerStatus(
@@ -276,6 +277,7 @@ def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
         mouse: some(now.mouse),
         clipboard: some(Protocol.ClipboardSetting(provider: now.clipboard, command: now.clipboard_command)),
         keys: some(now.keys.keys.sort.map { |action| Protocol.KeySetting(action: action, key: now.keys[action]) }),
+        statusline: layout,
       ),
     ),
   )

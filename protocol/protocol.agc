@@ -138,6 +138,7 @@ export Replies.ExportEntry
 export Replies.SessionExport
 export Replies.Branched
 export Replies.ServerStatus
+export Replies.StatusLine
 export Replies.ClipboardSetting
 export Replies.KeySetting
 export Replies.ServerLog

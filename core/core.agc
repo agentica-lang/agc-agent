@@ -14,6 +14,7 @@
 ## that message or adds nothing to that fold, and never stops a session or the server.
 
 import Catalog from "src/providers/catalog"
+import Protocol from "pkg/protocol/protocol"
 import Config from "src/config/config"
 import Extensions from "src/config/registry"
 import Server from "src/http/server"
@@ -36,6 +37,11 @@ export Extensions.Check
 export Extensions.Service
 
 def registry() -> Extensions.Registry = Extensions.Registry()
+
+## Replaces the full screen's status layout with the ordered components on each side.
+def set_statusline(registry: Extensions.Registry, left: List[String], right: List[String]) -> Extensions.Registry
+  registry.with(statusline: some(Protocol.StatusLine(left: left, right: right)))
+end
 
 ## A tool the model may call, after the built-in ones. Its name must not be one of theirs, `apply_patch`, `run_script`,
 ## `activate_skill`, another extension tool's, or start with `mcp__`: `serve` refuses it.

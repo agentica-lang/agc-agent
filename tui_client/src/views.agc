@@ -250,5 +250,13 @@ def status(app: State.Model, width: Int) -> String
     model = [app.profile, model].select { |part| not part.empty? }.join(" · ")
   end
 
-  Footer.status(state, app.usage, hints(app), model, width, Rate.text(app.rate))
+  case app.statusline
+    some(layout) ->
+      Footer.custom(
+        layout,
+        Footer.Values(state: state, usage: app.usage, hints: hints(app), model: model, rate: Rate.text(app.rate)),
+        width,
+      )
+    none -> Footer.status(state, app.usage, hints(app), model, width, Rate.text(app.rate))
+  end
 end

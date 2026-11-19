@@ -26,6 +26,17 @@ def test_keys_edit_the_prompt_and_the_view_draws_it() -> Result[Void]
   Test.eq(rows(resized).size, 4)
 end
 
+def test_the_server_status_layout_is_drawn() -> Result[Void]
+  layout = Protocol.StatusLine(left: ["model"], right: ["state"])
+  display = Client.Display(mouse: true, clipboard: Protocol.ClipboardSetting(), statusline: some(layout))
+  app = model_of(60, 8)
+  backend = app.backend.with(display: -> { display })
+  configured = App.configured(app.with(backend: backend, serving: "local/m"))
+  row = rows(configured).last
+  try Test.assert(row.start_with?("(local) m"), row)
+  Test.assert(row.strip.end_with?("ready"), row)
+end
+
 # The footer shows the model's output speed: estimated while a reply streams, exact from the call's usage, and kept
 # into the next turn.
 def test_the_footer_shows_the_rate_of_the_output() -> Result[Void]

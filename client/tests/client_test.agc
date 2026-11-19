@@ -383,11 +383,15 @@ end
 def test_the_display_is_read_from_the_server_status() -> Result[Void]
   status = Protocol.ServerStatus(pid: 1, version: "0", started_s: 0, sessions: 0, running_turns: 0, stopping: false)
   setting = Protocol.ClipboardSetting(provider: "command", command: ["xclip"])
-  a = try asked(status.with(mouse: some(false), clipboard: some(setting)))
+  layout = Protocol.StatusLine(left: ["model"], right: ["state"])
+  a = try asked(status.with(mouse: some(false), clipboard: some(setting), statusline: some(layout)))
   b = try asked(status)
   try Test.eq([a.mouse, b.mouse], [false, true])
   try Test.eq(a.clipboard, setting)
-  Test.eq(b.clipboard, Protocol.ClipboardSetting())
+  try Test.eq(b.clipboard, Protocol.ClipboardSetting())
+  try Test.eq([a.statusline, b.statusline], [some(layout), none])
+  old = "{\"pid\":1,\"version\":\"0\",\"started_s\":0,\"sessions\":0,\"running_turns\":0,\"stopping\":false}"
+  Test.eq((try Protocol.decode_server_status(old)).statusline, none)
 end
 
 def asked(reply: Protocol.ServerStatus) -> Result[Http.Display]

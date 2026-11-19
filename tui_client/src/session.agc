@@ -156,6 +156,7 @@ def fresh(app: State.Model) -> State.Model
     custom_dir: app.custom_dir,
     host: app.host,
     clipboard: app.clipboard,
+    statusline: app.statusline,
     run: app.run,
   )
 end

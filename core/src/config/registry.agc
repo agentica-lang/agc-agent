@@ -3,6 +3,7 @@
 ## extension runs in a task of its own: a crash or a hang there fails that call, never the session or the server.
 
 import LLM from "pkg/llm/llm"
+import Protocol from "pkg/protocol/protocol"
 import Sandbox from "../tools/sandbox"
 import Spec from "../tools/spec"
 import Logger from "std/logger"
@@ -108,6 +109,7 @@ end
 type Wrapper = Fn[String, Call, Fn[Result[String]], Result[String]]
 
 struct Registry
+  statusline: Optional[Protocol.StatusLine] = none
   tools: List[Tool] = []
   wrappers: List[Wrapper] = []
   prompts: List[String] = []
