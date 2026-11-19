@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `POST /v1/mcp/NAME/reconnect` answers `409` (`mcp.starting`) when the servers end while the new client starts, and not a connected server.
+
 ### Added
 
 - In `finn`, `/mcp` is a panel with a cursor: Up and Down (or `j` and `k`) move it, `r` reconnects the server under it, `t` or Enter lists its tools, `l` shows the end of its log, Esc goes back. The keys work only while the panel has the focus (F6). The server has `GET /v1/mcp/NAME/log`. The panel scrolls with the cursor and gives its keys up while the prompt has text.

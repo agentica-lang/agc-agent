@@ -1,9 +1,11 @@
 # `GET /v1/mcp` and the reconnect: the states of the servers of the user's file and of the session's folder, and a
 # server started again.
 
+import Actor from "std/actor"
 import Protocol from "pkg/protocol/protocol"
 import Builtins from "../src/session/builtins"
 import Extensions from "../src/config/registry"
+import McpTools from "../src/ext/mcp"
 import H from "support/harness"
 import S from "support/mcp_fakes"
 
@@ -96,6 +98,37 @@ def test_a_reconnect_that_overlaps_the_end_of_the_board_leaves_no_process() -> R
 
     result
   end
+end
+
+# A reconnect whose board ended before its new client was handed over leaves no process and is refused with
+# `mcp.starting`, which the route answers with 409, not as a connected server.
+def test_a_reconnect_for_a_board_that_ended_is_refused_and_leaves_no_process() -> Result[Void]
+  S.within_dir do |dir|
+    pids = "#{dir}/pids"
+    slow = JSON.object({"FAKE_MCP_SLOW_MS": JSON.from("800"), "FAKE_MCP_PIDS": JSON.from(pids)})
+    try S.write_config(dir, {"slow": try S.fake_server(slow)})
+    board = McpTools.background(try McpTools.servers(reader(dir), dir), &quiet)
+    for task in board.tasks
+      Task.await(task)
+    end
+
+    asking = Task.spawn { McpTools.reconnect(board, "slow") }
+    try started(pids, 2)
+    _ = Actor.stop(board.actor, 5000)
+    answer = Task.await(asking)
+    kind = case answer
+      ok(_) -> "ok"
+      error(e) -> e.kind
+    end
+
+    try Test.eq(kind, Protocol.KIND_MCP_STARTING)
+    try gone(pids)
+    Test.eq(alive?(lines(pids)[1]), false)
+  end
+end
+
+def quiet(_text: String) -> Void
+  return
 end
 
 # One start of a server at a time: a second reconnect, or one on a server that is still on its first start, is refused

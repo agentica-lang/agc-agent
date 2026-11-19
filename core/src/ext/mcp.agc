@@ -179,7 +179,10 @@ def reconnect(board: Board, name: String) -> Result[Status]
   return error("the MCP servers are restarting, try again", kind: Protocol.KIND_MCP_STARTING) if not answer.ok?
 
   started = Task.await(try try answer)
-  ok(status_of(board.servers[index], started.listed))
+  case started.listed
+    error(e) if e.kind == Protocol.KIND_MCP_STARTING -> error(e.message, kind: e.kind)
+    _ -> ok(status_of(board.servers[index], started.listed))
+  end
 end
 
 ## The name of the program of a stdio server (what `env -i VAR=... PROGRAM` starts), or the url without its path and
