@@ -69,6 +69,7 @@ export Discovery.state_dir
 export Discovery.connect
 export Version.restart_question
 export Version.restart_default_yes?
+export Version.restart_choice
 export Version.answer_yes
 export Discovery.code_mode_wanted
 export Discovery.code_mode_asked

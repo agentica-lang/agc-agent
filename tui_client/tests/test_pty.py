@@ -573,7 +573,7 @@ class PtyTest(unittest.TestCase):
         out = self.asked_about_restart(0, "y\r")
         self.assertIn("nothing was signalled", out)
         out = self.asked_about_restart(2, "\r")
-        self.assertIn("It stops 2 running turns and keeps the sessions. [y/N]", out)
+        self.assertIn("It waits for 2 running turns to end and keeps the sessions. [y/N]", out)
         self.assertIn("finn server restart", out)
         out = self.asked_about_restart(2, "", ["--restart"])
         self.assertNotIn("Restart it", out)

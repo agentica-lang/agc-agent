@@ -57,10 +57,11 @@ def connect_asking(launch: Discovery.Launch, dir: String, asking: Asking) -> Res
     error(e) if e.kind == Discovery.KIND_VERSION ->
       case Discovery.find(dir)
         ok(Discovery.Found.Other(pid, version)) ->
-          wanted = try restart_wanted(asking, pid, version, Discovery.running_turns(dir), Version.finn_version())
+          turns = Discovery.running_turns(dir)
+          wanted = try restart_wanted(asking, pid, version, turns, Version.finn_version())
           return error(e) if not wanted
 
-          restart(launch, dir, false)
+          restarted_after_asking(launch, dir, pid, turns)
         _ -> error(e)
       end
 
@@ -81,12 +82,15 @@ def restart_wanted(asking: Asking, pid: Int, version: String, turns: Optional[In
 
   lines = Version.restart_question(client, version, pid, turns)
   default = Version.restart_default_yes?(turns)
+  text = lines.join("\n")
   for _ in 0...ASKS
-    answer = asking.ask.call(lines.join("\n"))
+    answer = asking.ask.call(text)
     return ok(false) if answer.none?
 
     said = Version.answer_yes(answer.unwrap!, default)
     return ok(said.unwrap!) if said.some?
+
+    text = "Answer y or n #{Version.restart_choice(turns)}:"
   end
 
   ok(false)
@@ -113,14 +117,41 @@ RESTART_ENV = "FINN_RESTART"
 ## Asked this many times; an answer that is neither yes nor no each time is no.
 ASKS = 3
 
-# Prints the question and reads the line typed.
+# Prints the question and reads the line typed; the end of the input ends the line of the question.
 def asked(text: String) -> Optional[String]
   print("#{text} ")
   IO.flush()
   case IO.gets
     ok(line) -> some(line)
-    error(_) -> none
+    error(_) ->
+      puts("")
+      none
   end
+end
+
+# The answer was given for server `pid`: restart it while it is still the one asked about. One that someone replaced
+# meanwhile is used as it is (when it serves this client), or asked about again by the next start.
+def restarted_after_asking(
+  launch: Discovery.Launch,
+  dir: String,
+  pid: Int,
+  turns: Optional[Int],
+) -> Result[Client.Server]
+  case Discovery.connect(launch, dir)
+    ok(server) -> return ok(server)
+    error(e) if e.kind != Discovery.KIND_VERSION -> return error(e)
+    error(e) ->
+      case Discovery.find(dir)
+        ok(Discovery.Found.Other(now_pid, _)) if now_pid == pid -> nil
+        _ -> return error(e)
+      end
+  end
+
+  if turns != some(0)
+    IO.warn("finn: waiting for the running turns to end")
+  end
+
+  restart(launch, dir, false)
 end
 
 # Stdin and stdout are a terminal: a child that shares them says so.

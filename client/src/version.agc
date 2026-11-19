@@ -85,8 +85,8 @@ def refusal(client: String, server: String, dir: String, pid: Int, restart: Stri
 end
 
 ## The question a client on a terminal asks about the server of another version, as lines to print: which side is older,
-## what a restart does (with the running turns named when the server says how many: they stop, and the default is no;
-## when it does not say, they may stop), and the answers. `turns` is the number the server gave, none when it did not.
+## what a restart does (with the running turns named when the server says how many: it waits for them, and the default
+## is no; when it does not say, there may be some), and the answers. `turns` is the number the server gave, none when it did not.
 def restart_question(client: String, server: String, pid: Int, turns: Optional[Int]) -> List[String]
   head = "finn: the server (pid #{pid}) runs another version of Finn than this client."
   case age(client, server)
@@ -96,21 +96,21 @@ def restart_question(client: String, server: String, pid: Int, turns: Optional[I
   end
 
   effect = "It keeps the sessions."
-  choice = "[Y/n]"
   case turns
-    some(count) if count == 1 ->
-      effect = "It stops 1 running turn and keeps the sessions."
-      choice = "[y/N]"
-    some(count) if count > 1 ->
-      effect = "It stops #{count} running turns and keeps the sessions."
-      choice = "[y/N]"
+    some(count) if count == 1 -> effect = "It waits for 1 running turn to end and keeps the sessions."
+    some(count) if count > 1 -> effect = "It waits for #{count} running turns to end and keeps the sessions."
     some(_) -> nil
-    none ->
-      effect = "It may stop running turns and keeps the sessions."
-      choice = "[y/N]"
+    none -> effect = "It waits for the running turns, if any, to end and keeps the sessions."
   end
 
-  [head, "Restart it and go on? #{effect} #{choice}"]
+  [head, "Restart it and go on? #{effect} #{restart_choice(turns)}"]
+end
+
+## The choice of the question: the default is yes only when the server has no running turn.
+def restart_choice(turns: Optional[Int]) -> String
+  return "[Y/n]" if restart_default_yes?(turns)
+
+  "[y/N]"
 end
 
 ## Whether an empty answer is yes: only when the server has no running turn.

@@ -124,7 +124,10 @@ end
 # server is not a process that proves to be the folder's, so it is never signalled, and that refusal is the proof.
 def test_restart_goes_to_replace_a_server_of_another_version() -> Result[Void]
   old = Fake.Reply(body: "{\"version\": \"20260101000000\"}")
-  routes = [Fake.Route(method: "GET", path: Protocol.HEALTH_PATH, replies: [old, old, old, old, old, old])]
+  routes = [
+    Fake.Route(method: "GET", path: Protocol.HEALTH_PATH, replies: [old, old, old, old, old, old, old, old, old, old]),
+  ]
+
   for how in [{"args": "--restart", "env": ""}, {"args": "", "env": "1"}]
     try Driver.within(routes) do |rig|
       command = try Driver.fake_command()
@@ -142,6 +145,15 @@ def test_restart_goes_to_replace_a_server_of_another_version() -> Result[Void]
         "the refusal of today is not the answer: #{done.errors}",
       )
     end
+  end
+
+  # `FINN_RESTART=0` is no restart: the refusal of today.
+  try Driver.within(routes) do |rig|
+    command = try Driver.fake_command()
+    cli = try Driver.start(rig.dir, ["--"] + command, extra: {"FINN_VERSION": CLIENT_VERSION, "FINN_RESTART": "0"})
+    done = try Driver.finish(cli)
+    try Test.eq(done.code, 1)
+    Test.assert(not done.errors.include?("nothing was signalled"), "no restart was tried: #{done.errors}")
   end
 
   ok()

@@ -24,13 +24,13 @@ def test_running_turns_are_named_and_the_default_is_no() -> Result[Void]
   turns = try ran([""], some(2))
   try Test.eq(turns.wanted, false)
   try Test.assert(
-    turns.questions[0].include?("It stops 2 running turns and keeps the sessions. [y/N]"),
+    turns.questions[0].include?("It waits for 2 running turns to end and keeps the sessions. [y/N]"),
     turns.questions[0],
   )
 
   agreed = try ran(["yes"], some(1))
   try Test.eq(agreed.wanted, true)
-  try Test.assert(agreed.questions[0].include?("It stops 1 running turn and"), agreed.questions[0])
+  try Test.assert(agreed.questions[0].include?("It waits for 1 running turn to end and"), agreed.questions[0])
   unknown = try ran([""], none)
   try Test.eq(unknown.wanted, false)
   Test.assert(unknown.questions[0].include?("[y/N]"), unknown.questions[0])
@@ -40,6 +40,7 @@ def test_an_answer_that_is_neither_is_asked_again_and_a_newer_server_is_named() 
   again = try ran(["maybe", "y"], some(0), "30000101000000")
   try Test.eq(again.wanted, true)
   try Test.eq(again.questions.size, 2)
+  try Test.eq(again.questions[1], "Answer y or n [Y/n]:")
   Test.assert(again.questions[0].include?("runs a newer Finn (30000101000000)"), again.questions[0])
 end
 
