@@ -8,7 +8,7 @@ weight: 40
 
 Finn has two clients for a session: `finn`, a full-screen one, and `finn chat`, a line-mode one. Both start the server when none runs and leave it running when they quit.
 
-An Agentica [extension](extensions.md#status-line) can arrange the built-in components of the full-screen client's status row.
+An Agentica [extension](extensions.md#status-line) can arrange built-in components and add dynamic text to the full-screen client's status row, including the example ChatGPT quota component.
 
 ## Commands
 

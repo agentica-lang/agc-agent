@@ -37,6 +37,49 @@ def test_the_server_status_layout_is_drawn() -> Result[Void]
   Test.assert(row.strip.end_with?("ready"), row)
 end
 
+def test_extension_status_is_drawn_and_stale_replies_are_ignored() -> Result[Void]
+  layout = Protocol.StatusLine(left: ["extra"], right: ["model"])
+  app = model_of(60, 8).with(statusline: some(layout), serving: "local/m", opened: 2)
+  value = Protocol.StatusSegments(segments: [Protocol.StatusSegment(name: "extra", text: "5h 72%")])
+  stale = App.update(app, App.Msg.StatusRead(1, "local/m", 0, ok(value))).model
+  try Test.eq(stale.status_segments.size, 0)
+  shown = App.update(app, App.Msg.StatusRead(2, "local/m", 0, ok(value))).model
+  try Test.assert(rows(shown).last.start_with?("5h 72%"), rows(shown).last)
+  changed = App.update(
+    app.with(serving: "other/m", reading_status: true),
+    App.Msg.StatusRead(2, "local/m", 0, ok(value)),
+  ).model
+
+  try Test.eq(changed.status_segments.size, 0)
+  try Test.assert(changed.reading_status, "an old reply must not finish the new request")
+  later = App.update(
+    app.with(status_generation: 2, reading_status: true),
+    App.Msg.StatusRead(2, "local/m", 1, ok(value)),
+  ).model
+
+  try Test.eq(later.status_segments.size, 0)
+  Test.assert(later.reading_status, "a reply from an earlier request must be ignored")
+end
+
+def test_status_poll_loads_once_at_a_time_and_recovers_after_failure() -> Result[Void]
+  layout = Protocol.StatusLine(left: ["extra"], right: [])
+  value = Protocol.StatusSegments(segments: [Protocol.StatusSegment(name: "extra", text: "5h 72%")])
+  model = model_of(60, 8)
+  backend = model.backend.with(status_segments: ->(_id) { ok(value) })
+  app = model.with(id: "s1", statusline: some(layout), backend: backend)
+  first = App.update(app, App.Msg.StatusTick)
+  try Test.eq(first.cmds.size, 1)
+  try Test.eq(App.update(first.model, App.Msg.StatusTick).cmds.size, 0)
+  shown = App.update(first.model, run(first.cmds[0])[0]).model
+  try Test.assert(rows(shown).last.start_with?("5h 72%"), rows(shown).last)
+  retry_backend = backend.with(status_segments: ->(_id) { error("connection lost") })
+  next_poll = App.update(shown.with(backend: retry_backend), App.Msg.StatusTick)
+  failed = App.update(next_poll.model, run(next_poll.cmds[0])[0]).model
+  try Test.eq(failed.status_segments, [])
+  recovered = App.update(failed.with(backend: backend), App.Msg.StatusTick)
+  Test.eq(App.update(recovered.model, run(recovered.cmds[0])[0]).model.status_segments, value.segments)
+end
+
 # The footer shows the model's output speed: estimated while a reply streams, exact from the call's usage, and kept
 # into the next turn.
 def test_the_footer_shows_the_rate_of_the_output() -> Result[Void]

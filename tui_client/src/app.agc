@@ -9,6 +9,7 @@
 ## (`keys`, `turn`, `session`, `commands`, `logins`, `files`, `answering`, `level`), as `views` has the frame.
 
 import Client from "pkg/client/client"
+import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
 import Args from "args"
@@ -169,6 +170,7 @@ end
 def configured(app: State.Model) -> State.Model
   wanted = app.backend.display.call()
   set = Commands.with_keys(app, wanted.keys).with(clipboard: wanted.clipboard, statusline: wanted.statusline)
+  set = status_tick(set)
   for warning in set.keys.warnings
     set = State.noted(set, warning)
   end
@@ -210,6 +212,10 @@ end
 
 def update(model: State.Model, msg: State.Msg) -> TUI.Step[State.Model, State.Msg]
   app = Sides.fit(handled(model.with(now: Time.monotonic_ms, clock_s: Time.now_ms / 1000), msg))
+  if app.serving != model.serving or app.opened != model.opened
+    app = status_tick(app.with(status_segments: [], reading_status: false))
+  end
+
   # The answer that streams changes on every delta: it is cut again when the stream rests.
   if not stream?(msg)
     app = app.with(entries: Transcript.wrapped(app.entries, app.width, State.folds(app)))
@@ -242,6 +248,10 @@ end
 
 def subscriptions(model: State.Model) -> List[TUI.Sub[State.Msg]]
   subs = [TUI.Sub.Events(->(event) { State.Msg.Key(event) })]
+  if custom_status?(model)
+    subs = subs.push(TUI.Sub.Tick(5000, State.Msg.StatusTick))
+  end
+
   if State.busy?(model)
     subs = subs.push(TUI.Sub.Tick(State.SPIN_MS, State.Msg.Spin))
   end
@@ -257,6 +267,12 @@ private
 
 def handled(app: State.Model, msg: State.Msg) -> State.Model
   case msg
+    State.Msg.StatusTick -> status_tick(app)
+    State.Msg.StatusRead(opened, serving, generation, result) if opened == app.opened and serving == app.serving and generation == app.status_generation ->
+      segments = result.unwrap_or(Protocol.StatusSegments(segments: [])).segments
+      app.with(reading_status: false, status_segments: segments)
+
+    State.Msg.StatusRead(_, _, _, _) -> app
     State.Msg.Key(TUI.Event.Resize(width, height)) -> Sides.resized(app, width, height)
     State.Msg.Key(event) -> Keys.on_key(app, event)
     State.Msg.Signal(signal) -> Session.signalled(app, signal)
@@ -302,6 +318,28 @@ def handled(app: State.Model, msg: State.Msg) -> State.Model
     State.Msg.Branch(opened, name) if opened == app.opened -> app.with(branch: name)
     State.Msg.Branch(_, _) -> app
   end
+end
+
+def custom_status?(app: State.Model) -> Bool
+  case app.statusline
+    some(layout) ->
+      (layout.left + layout.right).any? { |name| not ["state", "usage", "rate", "hints", "model"].include?(name) }
+    none -> false
+  end
+end
+
+def status_tick(app: State.Model) -> State.Model
+  return app if not custom_status?(app) or app.reading_status or app.id.empty?
+
+  backend = app.backend
+  id = app.id
+  opened = app.opened
+  serving = app.serving
+  generation = app.status_generation + 1
+  State.effect(
+    app.with(reading_status: true, status_generation: generation),
+    TUI.Cmd.Run(-> { State.Msg.StatusRead(opened, serving, generation, backend.status_segments.call(id)) }),
+  )
 end
 
 def stream?(msg: State.Msg) -> Bool

@@ -151,6 +151,9 @@ struct Model
   ## The `usage` of the session's last model call, the git branch of its folder and the home folder, for the footer.
   usage: Optional[Protocol.Usage] = none
   statusline: Optional[Protocol.StatusLine] = none
+  status_segments: List[Protocol.StatusSegment] = []
+  reading_status: Bool = false
+  status_generation: Int = 0
   ## The model's last output speed, and the text of the call that streams now.
   rate: Optional[Rate.Rate] = none
   streamed: Optional[Rate.Streamed] = none
@@ -204,6 +207,8 @@ struct McpPanel
 end
 
 enum Msg
+  StatusTick
+  StatusRead(Int, String, Int, Result[Protocol.StatusSegments])
   Key(TUI.Event)
   ## A signal, none when the wait ended without one.
   Signal(Optional[System.Signal])

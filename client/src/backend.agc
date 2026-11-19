@@ -49,6 +49,7 @@ struct Backend
   yolo_warning: Fn[String]
   ## What the server's config asks of the full screen: the mouse and the clipboard (one read of the status).
   display: Fn[Http.Display]
+  status_segments: Fn[String, Result[Protocol.StatusSegments]]
 end
 
 ## The calls on `server` over HTTP.
@@ -89,6 +90,7 @@ def http_backend(server: Http.Server) -> Backend
     },
     yolo_warning: -> { Http.yolo_warning(server) },
     display: -> { Http.display(server) },
+    status_segments: ->(id) { Http.status_segments(server, id) },
   )
 end
 
@@ -129,6 +131,7 @@ def unreachable_backend() -> Backend
     subscribe: ->(_id, _from, tell) { Task.spawn(-> { _ = tell.call(Events.Item.Ended("no server")) }) },
     yolo_warning: -> { Http.YOLO_ASKS_NOT },
     display: -> { Http.unset() },
+    status_segments: ->(_id) { failed() },
   )
 end
 

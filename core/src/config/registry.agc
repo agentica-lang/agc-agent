@@ -6,6 +6,7 @@ import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Sandbox from "../tools/sandbox"
 import Spec from "../tools/spec"
+import Quota from "../providers/chatgpt_quota"
 import Logger from "std/logger"
 
 ## How long all the `Message` handlers, or all the `Fold` handlers, of one event may take together: well under the
@@ -108,8 +109,24 @@ end
 ## `activate_skill` and `run_script` (whose calls inside are wrapped); keep it free of state of its own.
 type Wrapper = Fn[String, Call, Fn[Result[String]], Result[String]]
 
+## The session a status component describes.
+struct StatusContext
+  session: String
+  root: String
+  provider: String
+  model: String
+  chatgpt_usage: Fn[Result[List[Quota.Window]]]
+end
+
+## A named status component, computed outside the session actor.
+struct StatusProvider
+  name: String
+  value: Fn[StatusContext, Result[String]]
+end
+
 struct Registry
   statusline: Optional[Protocol.StatusLine] = none
+  status_providers: List[StatusProvider] = []
   tools: List[Tool] = []
   wrappers: List[Wrapper] = []
   prompts: List[String] = []
@@ -230,7 +247,50 @@ def clashes(registry: Registry, taken: List[String]) -> List[String]
     seen = seen.push(tool.name)
   end
 
+  if registry.status_providers.size > 16
+    out = out.push("an extension may register at most 16 status components")
+  end
+
+  names = ["state", "usage", "rate", "hints", "model"]
+  for provider in registry.status_providers
+    if provider.name.empty? or names.include?(provider.name)
+      out = out.push("an extension status component cannot be named #{provider.name}: that name is taken or empty")
+    end
+
+    names = names.push(provider.name)
+  end
+
   out
+end
+
+## The registered components for a session, omitting failed or unsafe values.
+def status_segments(registry: Registry, ctx: StatusContext) -> Protocol.StatusSegments
+  segments: List[Protocol.StatusSegment] = []
+  deadline = Time.monotonic_ms + 50_000
+  names = case registry.statusline
+    some(layout) -> layout.left + layout.right
+    none -> []
+  end
+
+  for provider in registry.status_providers
+    next if not names.include?(provider.name)
+    break if Time.monotonic_ms >= deadline
+
+    result = bounded("a status component", deadline - Time.monotonic_ms, -> { provider.value.call(ctx) })
+    case result
+      ok(text) ->
+        size = [text.length, 200].min.unwrap!
+        clean = text.slice(0, size).split("").select { |char| status_char?(char.code) }.join("")
+
+        if not clean.empty?
+          segments = segments.push(Protocol.StatusSegment(name: provider.name, text: clean))
+        end
+
+      error(_) -> nil
+    end
+  end
+
+  Protocol.StatusSegments(segments: segments)
 end
 
 ## The tools of `registry` as tools of the core; a crash or a hang of their code fails the call.
@@ -423,6 +483,8 @@ end
 private
 
 DROPPED = "dropped"
+
+def status_char?(code: Int) -> Bool = code >= 32 and (code < 127 or code > 159) and not Protocol.BIDI.include?(code)
 
 # The task of a service: it starts it, waits for the stop, and stops it.
 def owned(service: Service, news: Channel[Note], stopping: Channel[Bool], ms: Int) -> Void

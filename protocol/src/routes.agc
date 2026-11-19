@@ -52,6 +52,8 @@ def profiles_path(session_id: String) -> String = "#{session_path(session_id)}/p
 
 def commands_path(session_id: String) -> String = "#{session_path(session_id)}/commands"
 
+def status_segments_path(session_id: String) -> String = "#{session_path(session_id)}/status-segments"
+
 ## A login to a provider (`POST`), or its logout (`DELETE`); for a device login (`chatgpt`) the `POST` starts it, `GET`
 ## says where it is, and `DELETE` also ends a wait. `AUTH_PATH` lists the logins (`GET`), removes every
 ## stored key (`DELETE`), or makes an empty key file when there is none (`PUT`: a first-start login skipped).
@@ -84,6 +86,7 @@ def shape() -> List[String]
     files_path("ID"),
     profiles_path("ID"),
     commands_path("ID"),
+    status_segments_path("ID"),
     auth_path("P"),
     mcp_reconnect_path("N"),
     mcp_log_path("N"),

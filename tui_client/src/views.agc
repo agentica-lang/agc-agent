@@ -254,7 +254,14 @@ def status(app: State.Model, width: Int) -> String
     some(layout) ->
       Footer.custom(
         layout,
-        Footer.Values(state: state, usage: app.usage, hints: hints(app), model: model, rate: Rate.text(app.rate)),
+        Footer.Values(
+          state: state,
+          usage: app.usage,
+          hints: hints(app),
+          model: model,
+          rate: Rate.text(app.rate),
+          segments: app.status_segments,
+        ),
         width,
       )
     none -> Footer.status(state, app.usage, hints(app), model, width, Rate.text(app.rate))

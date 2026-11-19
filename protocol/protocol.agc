@@ -75,6 +75,7 @@ export Routes.mcp_reconnect_path
 export Routes.mcp_log_path
 export Routes.profiles_path
 export Routes.commands_path
+export Routes.status_segments_path
 export Routes.auth_path
 
 export Requests.Decision
@@ -139,6 +140,10 @@ export Replies.SessionExport
 export Replies.Branched
 export Replies.ServerStatus
 export Replies.StatusLine
+export Replies.StatusSegment
+export Replies.StatusSegments
+export Replies.encode_status_segments
+export Replies.decode_status_segments
 export Replies.ClipboardSetting
 export Replies.KeySetting
 export Replies.ServerLog

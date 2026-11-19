@@ -14,6 +14,7 @@
 ## that message or adds nothing to that fold, and never stops a session or the server.
 
 import Catalog from "src/providers/catalog"
+import Quota from "src/providers/chatgpt_quota"
 import Protocol from "pkg/protocol/protocol"
 import Config from "src/config/config"
 import Extensions from "src/config/registry"
@@ -28,6 +29,9 @@ import Logger from "std/logger"
 VERSION = "0.0.1"
 
 export Extensions.Registry
+export Extensions.StatusContext
+export Extensions.StatusProvider
+export Quota.Window
 export Extensions.Call
 export Extensions.Tool
 export Extensions.Event
@@ -41,6 +45,11 @@ def registry() -> Extensions.Registry = Extensions.Registry()
 ## Replaces the full screen's status layout with the ordered components on each side.
 def set_statusline(registry: Extensions.Registry, left: List[String], right: List[String]) -> Extensions.Registry
   registry.with(statusline: some(Protocol.StatusLine(left: left, right: right)))
+end
+
+## Adds a named component to the full screen's configurable status line.
+def add_status_segment(registry: Extensions.Registry, provider: Extensions.StatusProvider) -> Extensions.Registry
+  registry.with(status_providers: registry.status_providers.push(provider))
 end
 
 ## A tool the model may call, after the built-in ones. Its name must not be one of theirs, `apply_patch`, `run_script`,

@@ -59,6 +59,12 @@ def server_status(server: Server) -> Result[Protocol.ServerStatus]
   Protocol.decode_server_status(body)
 end
 
+## The extension status components for a session.
+def status_segments(server: Server, id: String) -> Result[Protocol.StatusSegments]
+  body = try call_within(server, "GET", Protocol.status_segments_path(id), "", 55_000)
+  Protocol.decode_status_segments(body)
+end
+
 def display(server: Server) -> Display
   case server_status(server)
     ok(status) ->

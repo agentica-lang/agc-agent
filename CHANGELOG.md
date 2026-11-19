@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Agentica extensions can add dynamic status line components; the example can show remaining ChatGPT quota.
+
 ## [finn-20261119135800] - 2026-11-19
 
 ### Fixed

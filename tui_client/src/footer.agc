@@ -16,6 +16,7 @@ struct Values
   hints: List[String]
   model: String
   rate: String
+  segments: List[Protocol.StatusSegment] = []
 end
 
 ## Where the session is: `cwd` with `home` as `~`, the branch in parentheses and `title`, one line.
@@ -162,7 +163,7 @@ def components(names: List[String], values: Values) -> List[String]
       "rate" -> values.rate
       "hints" -> values.hints.join(" · ")
       "model" -> values.model
-      _ -> ""
+      _ -> values.segments.select { |segment| segment.name == name }.map { |segment| segment.text }.join("")
     end
 
     if not text.empty?

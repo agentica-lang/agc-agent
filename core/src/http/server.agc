@@ -11,6 +11,7 @@ import Protocol from "pkg/protocol/protocol"
 import Config from "../config/config"
 import Cli from "../config/cli"
 import Chatgpt from "../providers/chatgpt"
+import Quota from "../providers/chatgpt_quota"
 import Logins from "../providers/logins"
 import Providers from "../providers/providers"
 import Extensions from "../config/registry"
@@ -150,6 +151,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
   all = Protocol.SESSIONS_PATH
   one = "#{all}/:id"
   provider = Protocol.auth_path(":provider")
+  status_slots: Channel[Bool] = Channel.new(4)
   (
     Bond.app()
     |> Bond.before(->(conn) { ok(guard(token, control, conn)) })
@@ -183,6 +185,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.get("#{one}/files", ->(conn) { reply(conn, 200, files(sessions, conn)) })
     |> Bond.get("#{one}/profiles", ->(conn) { reply(conn, 200, profiles(sessions, conn)) })
     |> Bond.get("#{one}/commands", ->(conn) { reply(conn, 200, commands(sessions, conn)) })
+    |> Bond.get("#{one}/status-segments", ->(conn) { status_reply(sessions, conn, status_slots) })
     |> Bond.post("#{one}/stop", ->(conn) { reply(conn, 200, stop_turn(sessions, conn)) })
     |> Bond.post("#{one}/approvals/:approval", ->(conn) { reply(conn, 200, approve(sessions, conn)) })
     |> Bond.get("#{one}/events", ->(conn) { events(sessions, conn) })
@@ -192,6 +195,40 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
 end
 
 private
+
+def status_reply(sessions: Sessions.Sessions, conn: Bond.Conn, slots: Channel[Bool]) -> Result[Bond.Conn]
+  if not slots.send(true, 0).ok?
+    return reply(conn, 200, ok(Protocol.encode_status_segments(Protocol.StatusSegments(segments: []))))
+  end
+
+  result = status_segments(sessions, conn)
+  _ = slots.recv(0)
+  reply(conn, 200, result)
+end
+
+def status_segments(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  session = try Sessions.snapshot(sessions, try Bond.param(conn, "id"))
+  context = Extensions.StatusContext(
+    session: session.id,
+    root: session.cwd,
+    provider: session.provider,
+    model: session.model,
+    chatgpt_usage: -> { status_usage(sessions) },
+  )
+
+  case sessions.options.registry
+    some(served) -> ok(Protocol.encode_status_segments(Extensions.status_segments(served.registry, context)))
+    none -> ok(Protocol.encode_status_segments(Protocol.StatusSegments(segments: [])))
+  end
+end
+
+def status_usage(sessions: Sessions.Sessions) -> Result[List[Quota.Window]]
+  login = sessions.options.login.map { |setup| setup.chatgpt }.unwrap_or(none)
+  case login
+    some(found) -> Chatgpt.cached_usage(found)
+    none -> error("the ChatGPT login is unavailable")
+  end
+end
 
 def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handle) -> Result[Server]
   token = OpenSSL.Random.hex(32)
