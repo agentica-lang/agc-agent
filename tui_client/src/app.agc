@@ -12,7 +12,9 @@ import Client from "pkg/client/client"
 import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
 import Args from "args"
+import Clipboard from "clipboard"
 import Screen from "screen"
+import Selecting from "selecting"
 import Terminal from "terminal"
 import Theme from "theme"
 import Transcript from "transcript"
@@ -68,7 +70,11 @@ def started(
     error(_) -> ""
   end
 
-  seeded = State.seed(backend, options, signals, TUI.Raw.width(screen), TUI.Raw.height(screen)).with(edits: edits)
+  seeded = State.seed(backend, options, signals, TUI.Raw.width(screen), TUI.Raw.height(screen)).with(
+    edits: edits,
+    host: Clipboard.detect(),
+  )
+
   start = try first.call(seeded)
   if not palette
     output = TUI.OutputMode.Normal
@@ -157,11 +163,13 @@ def server_report(backend: Client.Backend) -> Optional[String]
   end
 end
 
-## The mouse off when the config of the server says so.
+## The mouse off when the config of the server says so, and the clipboard it asks for.
 def configured(app: State.Model) -> State.Model
-  return app if app.backend.mouse.call()
+  wanted = app.backend.display.call()
+  set = app.with(clipboard: wanted.clipboard)
+  return set if wanted.mouse
 
-  Commands.turn_mouse(app, false)
+  Commands.turn_mouse(set, false)
 end
 
 ## The last warnings of the server as the banner at the top of the screen, with where the rest is.
@@ -230,6 +238,7 @@ def handled(app: State.Model, msg: State.Msg) -> State.Model
     State.Msg.Edited(result) -> Editor.closed(app, result)
     State.Msg.Exported(result) -> Commands.exported(app, result)
     State.Msg.Note(text) -> State.noted(app, text)
+    State.Msg.Copied(text, method, result, checked) -> Selecting.finished(app, text, method, result, checked)
     State.Msg.Answered(approval_id, result) ->
       outcome = Approvals.answered(app.approvals, approval_id, result, app.now)
       answered = Answering.unyolo(app.with(approvals: outcome.panel), approval_id, result)

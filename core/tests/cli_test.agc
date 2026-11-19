@@ -249,6 +249,35 @@ def test_the_mouse_is_on_unless_the_user_config_turns_it_off() -> Result[Void]
   Test.eq([off.mouse, other.mouse, bare.mouse], [false, true, true])
 end
 
+# `clipboard` and `clipboard_command` of the user's config pick how the full screen copies: none is `auto`, a command
+# alone is `command`, and a name that is not one, or `command` with no program, stops the server at its start.
+def test_the_clipboard_comes_from_the_user_config() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-clipboard-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  configs = [
+    "{}",
+    "{\"clipboard\": \"tmux\"}",
+    "{\"clipboard_command\": [\"wl-copy\", \"--trim-newline\"]}",
+    "{\"clipboard\": \"osc52\", \"clipboard_command\": [\"wl-copy\"]}",
+    "{\"clipboard\": \"vim\"}",
+    "{\"clipboard\": \"command\"}",
+    "{\"clipboard_command\": []}",
+  ]
+
+  read: List[Result[Config.Options]] = []
+  for at in 0...configs.size
+    try File.write_text("#{dir}/#{at}.json", configs[at])
+    read = read.push(Config.from_env(->(n) { located({"FINN_CONFIG": "#{dir}/#{at}.json"}, n) }))
+  end
+
+  _ = Path.remove(dir)
+  try Test.eq(read.map { |options| options.ok? }, [true, true, true, true, false, false, false])
+  Test.eq(
+    read.take(4).map { |options| "#{options.unwrap!.clipboard}:#{options.unwrap!.clipboard_command.join(" ")}" },
+    ["auto:", "tmux:", "command:wl-copy --trim-newline", "osc52:wl-copy"],
+  )
+end
+
 # A key a login stored offers its provider; a key file that others may read is not used, with a warning. The login
 # entries are `anthropic` and the presets.
 def test_a_stored_key_offers_its_provider_unless_the_file_is_open() -> Result[Void]

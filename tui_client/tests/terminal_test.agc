@@ -688,7 +688,7 @@ def dragged(rig: Rig) -> Result[Void]
   try TUI.Testing.wait_for(rig.fake, ->(_rows: List[String]) { reversed_at?(rig.fake, start[1], start[0]) })
   try press(rig, mouse(TUI.Mouse.Release, [last[1] + 8, last[0]]))
   try Test.eq(try rig.written.recv(2000), Terminal.osc52(TEXT))
-  try shows(rig, "copied #{TEXT.length}")
+  try shows(rig, "sent #{TEXT.length} characters")
   try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
   try TUI.Testing.wait_for(rig.fake, ->(_rows: List[String]) { not reversed_at?(rig.fake, start[1], start[0]) })
   ok()
@@ -785,7 +785,7 @@ def long_word(rig: Rig) -> Result[Void]
 end
 
 def test_the_copy_is_the_literal_sequence_and_keeps_wide_characters() -> Result[Void]
-  within(40, 8, &wide, first: some(said("héllo 日本")))
+  within(48, 8, &wide, first: some(said("héllo 日本")))
 end
 
 def wide(rig: Rig) -> Result[Void]

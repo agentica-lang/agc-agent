@@ -164,11 +164,19 @@ def test_a_reload_changes_the_files_program_the_mouse_and_the_approvals() -> Res
     first = try Protocol.decode_server_status((try H.get(h, Protocol.SERVER_PATH)).text)
     try Test.eq(before.files.size > 1, true)
     try Test.eq([first.mouse, first.approvals], [some(true), some(false)])
+    try Test.eq(first.clipboard, some(Protocol.ClipboardSetting()))
     command = JSON.from(["sh", "-c", "printf 'b.txt\\n'"])
     files = JSON.object({"command": command})
     try File.write_text(
       config,
-      JSON.encode(JSON.object({"files": files, "mouse": JSON.from(false), "approvals": JSON.from(true)})),
+      JSON.encode(
+        JSON.object({
+          "files": files,
+          "mouse": JSON.from(false),
+          "approvals": JSON.from(true),
+          "clipboard": JSON.from("osc52"),
+        }),
+      ),
     )
 
     done = try reload(h)
@@ -177,7 +185,8 @@ def test_a_reload_changes_the_files_program_the_mouse_and_the_approvals() -> Res
     after = try Protocol.decode_file_list((try H.get(h, Protocol.files_path(id))).text)
     second = try Protocol.decode_server_status((try H.get(h, Protocol.SERVER_PATH)).text)
     try Test.eq(after.files, ["b.txt"])
-    Test.eq([second.mouse, second.approvals], [some(false), some(true)])
+    try Test.eq([second.mouse, second.approvals], [some(false), some(true)])
+    Test.eq(second.clipboard, some(Protocol.ClipboardSetting(provider: "osc52")))
   end
 
   _ = Path.remove(dir)

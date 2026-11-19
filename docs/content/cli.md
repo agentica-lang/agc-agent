@@ -146,7 +146,23 @@ The mouse answers the keys of a panel, opens a tool call or the thinking, and mo
 
 ## Copying text
 
-In `finn`, drag over the transcript to select text; letting go copies it to the clipboard of the terminal (OSC 52: it works in local terminals, over SSH, and in tmux with `set-clipboard on`; GNU screen cuts long sequences and may keep nothing) and a note says how many characters. The copy is the transcript's text, without the gutter and the breaks the screen made to fit its width. A double click selects a word, and any key clears the selection. The selection follows the text when the transcript scrolls or grows. A selection over 74000 bytes is not copied (a note says so): terminals and multiplexers cut longer sequences.
+In `finn`, drag over the transcript to select text; letting go copies it and a note says what was done. The copy is the transcript's text, without the gutter and the breaks the screen made to fit its width. A double click selects a word, and any key clears the selection. The selection follows the text when the transcript scrolls or grows.
+
+`finn` picks where the copy goes the way Neovim does, over SSH or not:
+
+1. Over SSH (`$SSH_TTY`, `$SSH_CONNECTION` or `$SSH_CLIENT`) inside tmux (`$TMUX`): `tmux load-buffer -w -`. It sets the tmux buffer and, with `-w` (tmux 3.2 or later), sends it to the clipboard of the outer terminal through tmux's own OSC 52 when tmux knows that the terminal has a clipboard (below). The tools of a display would fill the clipboard of the remote machine, not yours, so they are not used.
+2. Not over SSH, with a display: `pbcopy` on macOS, `wl-copy` with `$WAYLAND_DISPLAY`, `xclip` or `xsel` with `$DISPLAY`, `clip.exe` in WSL (the text goes as UTF-16). These come before tmux, even inside it, because a terminal may ignore the OSC 52 that tmux sends (gnome-terminal and xfce-terminal do) and tmux cannot say so. Inside tmux with none of them: `tmux load-buffer -w -`.
+3. Otherwise, or over SSH with no tmux: OSC 52, which works in most local terminals and over SSH. tmux passes it on only with `set-clipboard on`, GNU screen cuts long sequences, and a terminal may ignore it.
+
+The note says what happened: `copied 12 characters (xclip)` when a program took the text, and `sent 12 characters to the terminal (OSC 52)` for the sequence, since nothing can confirm that the terminal used it. A program that fails (not installed after all, no display, a nonzero exit) is named in the note with the first line it wrote, and the text goes to the terminal as OSC 52. A program that runs more than 3 seconds is killed and counts as failed. The text is not read from the clipboard back, so `copied` means that the program ended well.
+
+With tmux, `-w` sends the text on only "if possible": the outer terminal must have the `clipboard` feature in tmux (`terminal-features`, or the `Ms` capability of its terminfo entry). `finn` asks `tmux display -p '#{client_termfeatures}'`, and when the list has no `clipboard` the note says `copied 12 characters to the tmux buffer; this terminal may not get it (no clipboard feature in tmux)`; add the feature with `set -as terminal-features ',xterm*:clipboard'` in `tmux.conf` (and `set -g set-clipboard on` or `external`, which is what tmux needs to pass an application's own OSC 52 on). tmux inside tmux keeps the text in a tmux buffer that the terminal never sees, and `finn` cannot tell: the note still says `(tmux)`. Paste with the tmux key (`prefix ]`) to check, or force `osc52` below.
+
+Native Windows is not covered: `finn` does not run there, and `clip.exe` is used only from WSL.
+
+To force a provider, set `clipboard` in [the config file](config.md#the-users-config-file) to `osc52`, `tmux`, `command` or `auto` (the default), and for `command` name the program in `clipboard_command`, which reads the text on its input: `"clipboard_command": ["xclip", "-selection", "clipboard"]`. A `clipboard_command` alone means `command`. `finn` reads the setting when it starts; the server reads it when it starts and on `/reload`.
+
+A selection over 74000 bytes is not sent as OSC 52 (a note says so): terminals and multiplexers cut longer sequences. A program takes up to 1000000 bytes.
 
 The terminal's own selection still works with Shift+drag (Option+drag in iTerm2), which does not reach `finn`. `/mouse` turns the mouse reporting of `finn` off, so the terminal selects with a plain drag (and a click no longer folds a tool call), and on again; `"mouse": false` in [the config file](config.md#the-users-config-file) starts `finn` with it off.
 

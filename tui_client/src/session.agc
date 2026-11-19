@@ -152,6 +152,9 @@ def fresh(app: State.Model) -> State.Model
     opened: app.opened,
     custom: app.custom,
     custom_dir: app.custom_dir,
+    host: app.host,
+    clipboard: app.clipboard,
+    run: app.run,
   )
 end
 
