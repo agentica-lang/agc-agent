@@ -114,7 +114,28 @@ def turn_mouse(app: State.Model, on: Bool) -> State.Model
   app.with(mouse: on, selection: none, pressed: none, click: none)
 end
 
+## Shift+Tab: the next profile, `build`, `plan`, then the others by name, and `build` again; it applies from the next
+## turn, as `/profile NAME` does, and a turn that runs refuses it.
+def next_profile(app: State.Model) -> State.Model
+  return State.noted(app, "a turn is running: change the profile after it") if State.busy?(app)
+  return app if app.id == "" or app.moving
+
+  State.tried(app, cycled(app))
+end
+
 private
+
+# The profile after the session's in the order Shift+Tab goes through; the list of the server, without the ones that
+# do not load.
+def cycled(app: State.Model) -> Result[State.Model]
+  listed = (try app.backend.list_profiles.call(app.id)).profiles.select { |p| p.source != "" }.map { |p| p.name }
+  first = ["build", "plan"].select { |name| listed.include?(name) }
+  names = first + listed.select { |name| not first.include?(name) }.sort
+  return error("no profile to change to") if names.empty?
+
+  at = names.index(State.profile_name(app)).map { |i| i + 1 }.unwrap_or(0)
+  profile_command(app, some(names[at % names.size]))
+end
 
 def stop_command(app: State.Model) -> State.Model
   return State.noted(app, "no turn is running") if not State.busy?(app)

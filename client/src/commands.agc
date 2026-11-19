@@ -6,7 +6,8 @@ import Protocol from "pkg/protocol/protocol"
 KEYS = [
   "Esc                        close the side panel when it is open (a shown selection is cleared first); else stop the running turn",
   "Ctrl+C                     quit; Ctrl+J or Alt+Enter: a new line or a follow-up",
-  "Shift+Tab                  the next thinking level; Ctrl+T shows the thinking, Ctrl+O the tool output",
+  "Shift+Tab                  the next profile (build, plan, yours); F2 the next thinking level",
+  "Ctrl+T / Ctrl+O            show the thinking / the tool output",
   "PgUp/PgDn                  scroll the transcript, or the side panel when it has the focus",
   "Ctrl+P                     open the side panel on the server log, or close it",
   "F6                         move the focus between the side panel and the transcript (wide screens)",

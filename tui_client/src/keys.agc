@@ -72,6 +72,12 @@ def keyed(app: State.Model, event: TUI.Event) -> State.Model
 
   return app if Approvals.captures?(app.approvals, event)
 
+  for closed in State.option_list(Files.cancelled(app, event))
+    return closed
+  end
+
+  return app if Files.waiting?(app, event)
+
   for found in State.option_list(Files.mention_list(app))
     return send(Files.on_mention_key(app, found, event)) if Files.runs_choice?(app, found, event)
     return Files.on_mention_key(app, found, event) if Files.mention_key?(app, found, event)
@@ -138,7 +144,8 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     TUI.Event.Mouse(TUI.Mouse.Left, x, y, _) -> pressed(app, x, y)
     TUI.Event.Mouse(TUI.Mouse.Release, _, _, _) -> released(app)
     TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals, app.now))
-    TUI.Event.Key(TUI.Key.BackTab, _) -> Level.leveled(app)
+    TUI.Event.Key(TUI.Key.BackTab, _) -> Commands.next_profile(app)
+    TUI.Event.Key(TUI.Key.F(2), _) -> Level.leveled(app)
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
       app.with(approvals: Approvals.toggled(app.approvals, app.now))
     TUI.Event.Key(TUI.Key.Escape, _) if app.side.some? -> Sides.closed(app)
