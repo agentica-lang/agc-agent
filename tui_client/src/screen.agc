@@ -9,6 +9,7 @@ import Layout from "panel"
 import Markdown from "markdown"
 import Prompt from "prompt"
 import Select from "select"
+import Side from "side"
 import Theme from "theme"
 import Transcript from "transcript"
 import Width from "width"
@@ -36,6 +37,8 @@ struct Parts
   place: String = ""
   ## The banner at the top of the screen, one row each; none shows no banner.
   banner: List[String] = []
+  ## The side panel that takes the transcript's place (on a narrow screen); none leaves the transcript.
+  cover: Optional[Side.Side] = none
 end
 
 ## Where each region is: `area` transcript rows (the `transcript` lines shown, from the top), the top rule, the
@@ -61,6 +64,8 @@ struct Frame
   status: String
   ## The banner rows above the transcript, as many as the screen has room for.
   banner: List[String] = []
+  ## The rows of the side panel in the transcript's place, which then shows no lines.
+  cover: List[Layout.Row] = []
 end
 
 ## What a click is on.
@@ -100,10 +105,18 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
   area = room - banner.size
   hidden = [lines.size - area, 0].max.unwrap!
   top = [hidden - [scroll, hidden].min.unwrap!, 0].max.unwrap!
+  shown = lines.drop(top).take(area)
+  cover: List[Layout.Row] = []
+  for side in option_list(parts.cover)
+    cover = Side.rows(side, width, area)
+    shown = []
+  end
+
   Frame(
     width: width,
     height: height,
-    transcript: lines.drop(top).take(area),
+    cover: cover,
+    transcript: shown,
     top: top,
     area: area,
     queued: queued.map { |text| Width.cut(" #{text}", width)[0] },
@@ -123,6 +136,10 @@ def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
     chosen_row(frame.transcript[y], theme.transcript, mark_of(frame, y))
   }
 
+  if not frame.cover.empty?
+    rows = frame.cover.map { |row| panel_row(row, theme.panel) }
+  end
+
   shown = frame.banner.map { |text| TUI.line([TUI.span(text, theme.banner.text)]) }
   blank = (rows.size...frame.area).to_a.map { |_| TUI.line([]) }
   rule = rule_style(frame.level, theme.rules)
@@ -137,6 +154,12 @@ def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
   footer = (frame.place + [frame.status]).map { |text| TUI.line([TUI.span(text, theme.footer.status)]) }
   queued = frame.queued.map { |text| TUI.line([TUI.span(text, theme.transcript.notice)]) }
   TUI.col(shown + rows + blank + queued + [top] + editor + [bottom] + panel + footer)
+end
+
+## `left` with the side panel beside it, a column of its own between them: the rows of the panel, the full height.
+def beside(left: TUI.Node, side: List[Layout.Row], theme: Theme.Theme) -> TUI.Node
+  edge = side.map { |_| panel_row(Layout.Row(text: "│"), theme.panel) }
+  TUI.row([left, TUI.col(edge), TUI.col(side.map { |row| panel_row(row, theme.panel) })])
 end
 
 ## The row of the transcript area that screen row `y` is: the banner above it is taken off.
@@ -309,4 +332,11 @@ def prompt_row(prompt: Prompt.View, y: Int, width: Int, colors: Theme.EditorColo
   under = parts[1].slice(0, 1)
   rest = parts[1].slice(1, parts[1].length - 1)
   TUI.line([TUI.span(parts[0], colors.text), TUI.span(under, colors.cursor), TUI.span(rest, colors.text)])
+end
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
 end

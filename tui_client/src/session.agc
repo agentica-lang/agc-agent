@@ -137,7 +137,7 @@ def fresh(app: State.Model) -> State.Model
     kept = Turn.put_back(app)
   end
 
-  State.seed(app.backend, app.options, app.signals, app.width, app.height).with(
+  State.seed(app.backend, app.options, app.signals, app.screen_width, app.height).with(
     prompt: kept.prompt,
     cursor: kept.cursor,
     thinking: app.thinking,

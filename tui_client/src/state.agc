@@ -11,6 +11,7 @@ import Picker from "picker"
 import Prompt from "prompt"
 import Rate from "rate"
 import Select from "select"
+import Side from "side"
 import Terminal from "terminal"
 import Theme from "theme"
 import Transcript from "transcript"
@@ -29,8 +30,11 @@ struct Model
   ## What `/new` makes a session with.
   options: Args.Options
   signals: Channel[System.Signal]
+  ## The columns of the app (transcript, prompt, footer): the screen's, less the side panel when it is beside them.
   width: Int
   height: Int
+  ## The columns of the screen.
+  screen_width: Int
   entries: List[Transcript.Entry] = []
   prompt: String = ""
   ## The cursor in the prompt, a character index (clamped to the text when used).
@@ -154,6 +158,11 @@ struct Model
   editing: Bool = false
   ## The private folder the edits of Ctrl+G go in; "" when there is none.
   edits: String = ""
+  ## The side panel: local output that is not part of the conversation, open or not.
+  side: Optional[Side.Side] = none
+  ## The log it follows is being read, and which open panel the read is for (a read for a closed one is dropped).
+  reading_side: Bool = false
+  side_serial: Int = 0
   ## The text a drag selected, and where the button went down while it may still drag.
   selection: Optional[Select.Selection] = none
   pressed: Optional[Select.Press] = none
@@ -200,6 +209,10 @@ enum Msg
   Spin
   ## The reply to a change of the thinking level.
   Leveled(Result[Void])
+  ## The open server log is read again.
+  LogTick
+  ## The lines of the server log, for the panel with that serial.
+  LogRead(Int, Result[Protocol.ServerLog])
   ## The reply to a branch, a fork or a copy: the session to go on in.
   Moved(Result[Protocol.Branched])
   ## The reply to a login, with no key in it.
@@ -237,6 +250,7 @@ def seed(
     signals: signals,
     width: width,
     height: height,
+    screen_width: width,
     thinking: options.thinking,
     approvals: Approvals.Panel(),
     yolo: Yolo.Yolo(on: options.yolo),

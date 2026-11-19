@@ -6,6 +6,7 @@ import Approvals from "approvals"
 import Input from "input"
 import Prompt from "prompt"
 import Select from "select"
+import Sides from "sides"
 import Selecting from "selecting"
 import Screen from "screen"
 import Transcript from "transcript"
@@ -20,7 +21,7 @@ import Commands from "commands"
 import Views from "views"
 
 def on_key(model: State.Model, event: TUI.Event) -> State.Model
-  Files.asked(keyed(aimed(unmarked(model, event), event), event))
+  Files.asked(keyed(aimed(Sides.focused_by(unmarked(model, event), event), event), event))
 end
 
 private
@@ -112,16 +113,24 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     TUI.Event.Key(TUI.Key.Right, _) -> app.with(cursor: Prompt.next_char(app.prompt, State.cursor(app)))
     TUI.Event.Key(TUI.Key.Home, _) -> app.with(cursor: 0)
     TUI.Event.Key(TUI.Key.End, _) -> app.with(cursor: app.prompt.length)
-    TUI.Event.Mouse(TUI.Mouse.Left, x, y, mods) if mods.motion -> dragged(app, x, y)
+    TUI.Event.Mouse(TUI.Mouse.WheelUp, x, _, _) if Sides.over?(app, x) -> Sides.moved(app, -SCROLL_STEP)
+    TUI.Event.Mouse(TUI.Mouse.WheelDown, x, _, _) if Sides.over?(app, x) -> Sides.moved(app, SCROLL_STEP)
+    TUI.Event.Mouse(_, x, _, _) if Sides.beside?(app, x) and app.pressed.none? -> app
+    TUI.Event.Mouse(TUI.Mouse.Left, x, y, mods) if mods.motion -> dragged(app, [x, app.width - 1].min.unwrap!, y)
     TUI.Event.Mouse(TUI.Mouse.Left, x, y, _) -> pressed(app, x, y)
     TUI.Event.Mouse(TUI.Mouse.Release, _, _, _) -> released(app)
     TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals, app.now))
     TUI.Event.Key(TUI.Key.BackTab, _) -> Level.leveled(app)
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
       app.with(approvals: Approvals.toggled(app.approvals, app.now))
+    TUI.Event.Key(TUI.Key.Escape, _) if Sides.active?(app) -> Sides.closed(app)
     TUI.Event.Key(TUI.Key.Escape, _) if closes_banner?(app) -> app.with(banner: [])
     TUI.Event.Key(TUI.Key.Escape, _) if not app.follow_ups.empty? -> Turn.stop(Turn.put_back(app))
     TUI.Event.Key(TUI.Key.Escape, _) -> Turn.stop(app)
+    TUI.Event.Key(TUI.Key.PageUp, _) if Sides.active?(app) -> Sides.paged(app, -1)
+    TUI.Event.Key(TUI.Key.PageDown, _) if Sides.active?(app) -> Sides.paged(app, 1)
+    TUI.Event.Key(TUI.Key.Ctrl("p"), _) -> Sides.toggled(app)
+    TUI.Event.Key(TUI.Key.F(6), _) -> Sides.toggled_focus(app)
     TUI.Event.Key(TUI.Key.PageUp, _) -> State.scrolled(app, State.page(app))
     TUI.Event.Key(TUI.Key.PageDown, _) -> State.scrolled(app, -State.page(app))
     TUI.Event.Mouse(TUI.Mouse.WheelUp, _, _, _) -> State.scrolled(app, SCROLL_STEP)

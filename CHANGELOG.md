@@ -4,6 +4,7 @@
 
 ### Added
 
+- `finn` has a side panel for local output (`/logs`, followed live, `/help`, `/reload`, `/profile`), beside the transcript from 100 columns and over it below, so the transcript holds only the conversation (#318).
 - In `finn`, a copy goes to the clipboard the way Neovim picks it: a tool of the local display (`wl-copy`, `xclip`, `xsel`, `pbcopy`, `clip.exe`) when not over SSH, `tmux load-buffer -w -` over SSH inside tmux (or inside tmux with no such tool), else OSC 52. `clipboard` and `clipboard_command` in the config file force one.
 - `/confine [on|off]` keeps the file tools in the session folder (or lets them reach any path) for one session; `confine_files` in the config file and `FINN_CONFINE_FILES=1` do it for every session.
 - `/reload` in `finn` and `finn chat` (`POST /v1/reload`) makes the server read the config file (rules, `approvals`, `files.command`, `mouse`, providers), the MCP servers, the skills and the `AGENTS.md` again without a restart: sessions that run use them from their next turn, a turn that runs is not stopped, and a config file that does not read is kept back with the reason. Only MCP servers reload, all of them when the list changed.

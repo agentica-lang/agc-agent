@@ -10,6 +10,7 @@ import Prompt from "prompt"
 import Rate from "rate"
 import Screen from "screen"
 import Select from "select"
+import Side from "side"
 import Transcript from "transcript"
 import State from "state"
 import Files from "files"
@@ -51,6 +52,7 @@ def laid_out(app: State.Model, counted: Bool) -> Screen.Frame
     place: Footer.place(app.cwd, app.home, app.branch, session_name(app), app.width),
     queued: app.follow_ups.map { |text| "follow-up: #{Client.printable(text)}" },
     banner: app.banner,
+    cover: covering(app),
   )
 
   shown = Transcript.tail(app.entries, app.width, State.folds(app), app.height + app.scroll)
@@ -60,6 +62,24 @@ def laid_out(app: State.Model, counted: Bool) -> Screen.Frame
   # The rows of the frame are counted from the first row of the transcript, not of what `shown` kept.
   top = frame.top + Transcript.size(app.entries, app.width, State.folds(app)) - shown.size
   frame.with(top: top, marks: Select.marks(app.selection, top, frame.transcript.size))
+end
+
+## The rows of the side panel beside the app, the full height of the screen; none when it is closed or covers the
+## transcript.
+def beside(app: State.Model) -> List[Layout.Row]
+  return [] if not Side.wide?(app.screen_width)
+
+  case app.side
+    some(side) -> Side.rows(side, Side.columns(app.screen_width), app.height)
+    none -> []
+  end
+end
+
+## How many rows the side panel has: its title and its lines.
+def side_rows(app: State.Model) -> Int
+  return app.height if Side.wide?(app.screen_width)
+
+  framed(app).area
 end
 
 ## The rows of the approval panel, without the transcript: a key needs only these.
@@ -85,6 +105,40 @@ HINTS = [
   "↑ history",
   "PgUp/PgDn",
 ]
+
+# The side panel that takes the transcript's place: only on a narrow screen.
+def covering(app: State.Model) -> Optional[Side.Side]
+  return none if Side.wide?(app.screen_width)
+
+  app.side
+end
+
+# The key hints: with the side panel open they say what its keys do, in the place of the ones that it takes (Esc
+# and PgUp/PgDn).
+def hints(app: State.Model) -> List[String]
+  for side in State.option_list(app.side)
+    focus = ""
+    if Side.wide?(app.screen_width)
+      focus = "F6 transcript"
+      if not side.focused
+        focus = "F6 panel"
+      end
+    end
+
+    if Side.active?(side, app.screen_width)
+      keys = ["Esc close panel", focus, "PgUp/PgDn scroll panel", "^P close panel", "^C quit"]
+      return keys.select { |text| text != "" } + HINTS.select { |text| not rest_of_keys?(text) }
+    end
+
+    own = ["Enter send", "Esc stop", focus, "^C quit", "^P close panel"].select { |text| text != "" }
+    return own + HINTS.drop(3)
+  end
+
+  HINTS
+end
+
+# The hints that the side panel's own replace.
+def rest_of_keys?(text: String) -> Bool = ["Enter send", "Esc stop", "^C quit", "PgUp/PgDn"].include?(text)
 
 # The first non-empty line of the session's first user message, as the screen can show it.
 def session_name(app: State.Model) -> String
@@ -153,5 +207,5 @@ def status(app: State.Model, width: Int) -> String
     model = [app.profile, model].select { |part| not part.empty? }.join(" · ")
   end
 
-  Footer.status(state, app.usage, HINTS, model, width, Rate.text(app.rate))
+  Footer.status(state, app.usage, hints(app), model, width, Rate.text(app.rate))
 end

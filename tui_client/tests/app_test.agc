@@ -256,7 +256,10 @@ def test_the_session_commands_are_suggested() -> Result[Void]
   listed = Protocol.CommandList(commands: [Protocol.CommandInfo(name: "plan", source: "user", description: "Plan it")])
   backend = Client.unreachable_backend().with(list_commands: ->(_id: String) { ok(listed) })
   helped = App.update(typed.with(backend: backend, prompt: "/help", cursor: 5), enter()).model
-  Test.assert(helped.entries.any? { |e| e.text.include?("Plan it") }, "the help reads the commands again")
+  Test.assert(
+    helped.side.unwrap!.lines.any? { |line| line.include?("Plan it") },
+    "the help in the panel reads the commands again",
+  )
 end
 
 def test_the_footer_names_the_profile() -> Result[Void]
@@ -486,7 +489,7 @@ def test_the_tree_picker_moves_the_session_and_fills_the_prompt() -> Result[Void
   held = App.update(picked.model.with(prompt: "hi"), enter())
   try Test.eq([held.cmds.size.to_s, held.model.prompt, held.model.outbox.size.to_s], ["0", "hi", "0"])
   helped = App.update(picked.model.with(prompt: "/help"), enter()).model
-  try Test.eq([helped.prompt, helped.entries.last.text], ["", Client.help().last])
+  try Test.eq([helped.prompt, helped.side.unwrap!.lines.last], ["", Client.help().last])
   renewed = App.update(picked.model.with(prompt: "/new"), enter()).model
   try Test.eq([renewed.prompt, renewed.entries.last.text], ["/new", "the session is moving: wait for it"])
   typed = App.update(model.with(picker: none, prompt: "/tree 3"), enter())
@@ -911,10 +914,8 @@ def test_slash_lists_the_commands_and_tab_completes_one() -> Result[Void]
   try Test.eq([partial.model.prompt, partial.model.outbox.size.to_s, partial.cmds.size.to_s], ["/clone", "0", "0"])
   helped = App.update(model_of(80, 20).with(id: "s1", prompt: "/help", cursor: 5), enter()).model
   try Test.eq(helped.prompt, "")
-  try Test.assert(
-    helped.entries.any? { |entry| entry.text == "/quit                      leave" },
-    "the help is drawn",
-  )
+  try Test.assert(helped.side.unwrap!.lines.include?("/quit                      leave"), "the help is in the panel")
+  try Test.eq(helped.entries, model_of(80, 20).entries)
 
   # Esc, then Enter, sends a prefix as text.
   escaped = App.update(model_of(80, 20).with(id: "s1", prompt: "/c", cursor: 2), escape()).model
