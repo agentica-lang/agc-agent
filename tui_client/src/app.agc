@@ -75,7 +75,7 @@ def started(
     start = start.with(theme: Theme.basic())
   end
 
-  last = try driven(Terminal.guarded(TUI.Raw.backend(screen)), start, output)
+  last = try driven(TUI.Raw.backend(screen), start, output)
   outcome = try outcome(last)
   hint = Client.resume_hint("finn", last.id, not Session.content?(last))
   ok(outcome.with(hint: joined(server_report(backend), hint)))
@@ -118,7 +118,7 @@ def driven(backend: TUI.Backend, start: State.Model, output: TUI.OutputMode) -> 
     output: output,
   )
 
-  TUI.Raw.program(backend, app)
+  TUI.Raw.program(Terminal.guarded(backend), app)
 end
 
 def why(last: State.Model, code: Int) -> String

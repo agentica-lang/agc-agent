@@ -21,7 +21,7 @@
 
 ### Fixed
 
-- `finn` no longer exits with `tui: set_cell failed: Out of bounds (-9)` when the terminal is resized while it draws (tmux or a phone terminal changing size at the start); cells off the screen are dropped, and a draw that a resize cuts short is redrawn by the `Resize` that comes with it.
+- `finn` no longer exits with `tui: set_cell failed: Out of bounds (-9)` when a terminal resize lands while it draws (for example tmux changing the pane size at start); cells off the screen are dropped, and a draw that a resize cuts short is redrawn by the `Resize` that comes with it.
 - A new session on a provider with no model of its own waits for the model catalog (up to 1.5 s) before taking the first model it lists, instead of starting on `default`; a model you picked that is not in the provider's `models` list is kept, with a warning.
 - A refusal or a connection failure of the `local` provider says `pick a provider with /model, or log in with /login` (and is a warning in `/logs`); a successful `finn login chatgpt` followed by `finn` no longer opens a session on `local` that fails with HTTP 401.
 - `finn login chatgpt` works again: OpenAI answers the device code with its `interval` as text, which the login did not read.
