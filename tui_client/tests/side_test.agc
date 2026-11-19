@@ -241,14 +241,36 @@ def test_a_drag_from_the_transcript_over_the_panel_copies() -> Result[Void]
   Test.eq(App.update(opened, mouse_at(TUI.Mouse.Left, 100, y)).model.pressed.none?, true)
 end
 
-# `/help` ends with the keys, and the footer with the panel closed names Ctrl+P.
-def test_help_lists_the_keys_and_the_closed_footer_names_the_panel() -> Result[Void]
+# `/shortcuts` lists the keys, and the footer with the panel closed names Ctrl+P.
+def test_shortcuts_lists_the_keys_and_the_closed_footer_names_the_panel() -> Result[Void]
   start = model_of(120, 20)
-  try Test.assert(ran(start, "/help").side.unwrap!.lines.any? { |line| line.include?("F6") }, "keys in /help")
+  try Test.assert(
+    ran(start, "/shortcuts").side.unwrap!.lines.any? { |line| line.include?("F6") },
+    "keys in /shortcuts",
+  )
+
   try Test.assert(screen(start).last.include?("^P logs"), screen(start).last)
   logs = ran(start, "/logs")
   try Test.assert(screen(logs).any? { |row| row.include?("F6 focus") }, "the title names F6")
   Test.assert(not screen(logs).last.include?("^P logs"), "the open footer says close")
+end
+
+# On a small screen the list of `/shortcuts` does not fit: it opens on its first rows and PgDn reaches the last ones.
+def test_shortcuts_scrolls_on_a_small_screen() -> Result[Void]
+  opened = ran(model_of(120, 10), "/shortcuts")
+  try Test.assert(
+    screen(opened).any? { |row| row.include?("Enter") and row.include?("send the message") },
+    "#{screen(opened)}",
+  )
+
+  try Test.assert(not screen(opened).any? { |row| row.include?("/mcp: Esc") }, "the last rows are below")
+  scrolled = opened
+  for _ in 0...12
+    scrolled = App.update(scrolled, key(TUI.Key.PageDown)).model
+  end
+
+  try Test.assert(screen(scrolled).any? { |row| row.include?("/mcp: Esc") }, "#{screen(scrolled)}")
+  Test.assert(not screen(scrolled).any? { |row| row.include?("send the message") }, "the first rows are above")
 end
 
 # A panel that was never drawn is cut for the width it is given before a line is revealed.
