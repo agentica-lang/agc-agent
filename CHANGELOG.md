@@ -4,6 +4,7 @@
 
 ### Added
 
+- In `finn`, a copy goes to the clipboard the way Neovim picks it: `tmux load-buffer -w -` inside tmux, `wl-copy`, `xclip`, `xsel`, `pbcopy` or `clip.exe` with a local display and not over SSH, else OSC 52. `clipboard` and `clipboard_command` in the config file force one.
 - `/confine [on|off]` keeps the file tools in the session folder (or lets them reach any path) for one session; `confine_files` in the config file and `FINN_CONFINE_FILES=1` do it for every session.
 - `/reload` in `finn` and `finn chat` (`POST /v1/reload`) makes the server read the config file (rules, `approvals`, `files.command`, `mouse`, providers), the MCP servers, the skills and the `AGENTS.md` again without a restart: sessions that run use them from their next turn, a turn that runs is not stopped, and a config file that does not read is kept back with the reason. Only MCP servers reload, all of them when the list changed.
 - In `finn`, a drag over the transcript selects text and letting go copies it (OSC 52) with a note; a double click selects a word and Esc clears the selection. `/mouse` turns the mouse reporting off and on, and `"mouse": false` in the config file starts with it off; Shift+drag (Option+drag in iTerm2) is the terminal's own selection.
@@ -21,6 +22,7 @@
 
 ### Fixed
 
+- `finn` no longer says `copied` for a selection that only went to the terminal as OSC 52, which tmux drops with `allow-passthrough off` and `set-clipboard external`: the note says `sent N characters to the terminal (OSC 52)`, and inside tmux the copy goes through `tmux load-buffer -w -` (#319).
 - `finn` no longer exits with `tui: set_cell failed: Out of bounds (-9)` when a terminal resize lands while it draws (for example tmux changing the pane size at start); cells off the screen are dropped, and a draw that a resize cuts short is redrawn by the `Resize` that comes with it.
 - A new session on a provider with no model of its own waits for the model catalog (up to 1.5 s) before taking the first model it lists, instead of starting on `default`; a model you picked that is not in the provider's `models` list is kept, with a warning.
 - A refusal or a connection failure of the `local` provider says `pick a provider with /model, or log in with /login` (and is a warning in `/logs`); a successful `finn login chatgpt` followed by `finn` no longer opens a session on `local` that fails with HTTP 401.

@@ -45,6 +45,8 @@ struct Backend
   yolo_warning: Fn[String]
   ## Whether the server's config leaves the mouse on for the full screen.
   mouse: Fn[Bool]
+  ## How the server's config has the full screen copy a selection.
+  clipboard: Fn[Protocol.ClipboardSetting]
 end
 
 ## The calls on `server` over HTTP.
@@ -82,6 +84,7 @@ def http_backend(server: Http.Server) -> Backend
     },
     yolo_warning: -> { Http.yolo_warning(server) },
     mouse: -> { Http.mouse(server) },
+    clipboard: -> { Http.clipboard(server) },
   )
 end
 
@@ -119,6 +122,7 @@ def unreachable_backend() -> Backend
     subscribe: ->(_id, _from, tell) { Task.spawn(-> { _ = tell.call(Events.Item.Ended("no server")) }) },
     yolo_warning: -> { Http.YOLO_ASKS_NOT },
     mouse: -> { true },
+    clipboard: -> { Protocol.ClipboardSetting() },
   )
 end
 

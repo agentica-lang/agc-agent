@@ -356,6 +356,26 @@ def test_a_code_mode_not_the_servers_is_noted() -> Result[Void]
   Test.eq(note, "code mode isn't available on this system: there is no Monty worker for it")
 end
 
+# The clipboard of the server's config is what the status says, and `auto` for a server that does not say.
+def test_the_clipboard_is_read_from_the_server_status() -> Result[Void]
+  status = Protocol.ServerStatus(pid: 1, version: "0", started_s: 0, sessions: 0, running_turns: 0, stopping: false)
+  setting = Protocol.ClipboardSetting(provider: "command", command: ["xclip"])
+  a = try asked(status.with(clipboard: some(setting)))
+  b = try asked(status)
+  try Test.eq(a, setting)
+  Test.eq(b, Protocol.ClipboardSetting())
+end
+
+def asked(reply: Protocol.ServerStatus) -> Result[Protocol.ClipboardSetting]
+  body = Protocol.encode_server_status(reply)
+  app = HTTP.app(->(_request) { ok(HTTP.Response(status: 200, headers: [], body: body.bytes)) })
+  listening = try HTTP.serve("127.0.0.1", 0, app)
+  got = Http.clipboard(Http.Server(url: "http://127.0.0.1:#{HTTP.local_port(listening)}", token: "t"))
+  HTTP.close_server(listening)
+  _ = HTTP.wait(listening)
+  ok(got)
+end
+
 # A max_tokens stop says the output limit it hit, when the server sent one; another stop has no note.
 def test_a_max_tokens_stop_names_the_output_limit() -> Result[Void]
   cut = Protocol.TurnFinished(turn_id: "t", stop_reason: Protocol.StopReason.MaxTokens, max_tokens: some(500))

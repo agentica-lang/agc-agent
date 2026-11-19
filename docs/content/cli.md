@@ -146,7 +146,17 @@ The mouse answers the keys of a panel, opens a tool call or the thinking, and mo
 
 ## Copying text
 
-In `finn`, drag over the transcript to select text; letting go copies it to the clipboard of the terminal (OSC 52: it works in local terminals, over SSH, and in tmux with `set-clipboard on`; GNU screen cuts long sequences and may keep nothing) and a note says how many characters. The copy is the transcript's text, without the gutter and the breaks the screen made to fit its width. A double click selects a word, and any key clears the selection. The selection follows the text when the transcript scrolls or grows. A selection over 74000 bytes is not copied (a note says so): terminals and multiplexers cut longer sequences.
+In `finn`, drag over the transcript to select text; letting go copies it and a note says what was done. The copy is the transcript's text, without the gutter and the breaks the screen made to fit its width. A double click selects a word, and any key clears the selection. The selection follows the text when the transcript scrolls or grows. A selection over 74000 bytes is not copied (a note says so): terminals and multiplexers cut longer sequences.
+
+`finn` picks where the copy goes the way Neovim does:
+
+1. Inside tmux (`$TMUX`): `tmux load-buffer -w -`. That sets the tmux buffer and sends it to the clipboard of the outer terminal through tmux's own OSC 52, which works with tmux's default `set-clipboard external`. Note: `set-clipboard off` stops the second part, and `finn` cannot see it.
+2. With a local display and not over SSH (no `$SSH_TTY`, `$SSH_CONNECTION` or `$SSH_CLIENT`): `pbcopy` on macOS, `wl-copy` with `$WAYLAND_DISPLAY`, `xclip` or `xsel` with `$DISPLAY`, `clip.exe` in WSL. Over SSH these tools would fill the clipboard of the remote machine, not yours.
+3. Otherwise: OSC 52, which works in most local terminals and over SSH. tmux passes it on only with `set-clipboard on`, GNU screen cuts long sequences, and a terminal may ignore it.
+
+The note says what happened: `copied 12 characters (tmux)` or `(xclip)` when a program took the text, and `sent 12 characters to the terminal (OSC 52)` for the sequence, since nothing can confirm that the terminal used it. A program that fails (not installed after all, no display, a nonzero exit) is named in the note, and the text goes to the terminal as OSC 52.
+
+To force one, set `clipboard` in [the config file](config.md#the-users-config-file) to `osc52`, `tmux`, `command` or `auto` (the default), and for `command` name the program in `clipboard_command`, which reads the text on its input: `"clipboard_command": ["xclip", "-selection", "clipboard"]`. A `clipboard_command` alone means `command`. The server reads it when it starts and on `/reload`; `finn` reads it when it starts.
 
 The terminal's own selection still works with Shift+drag (Option+drag in iTerm2), which does not reach `finn`. `/mouse` turns the mouse reporting of `finn` off, so the terminal selects with a plain drag (and a click no longer folds a tool call), and on again; `"mouse": false` in [the config file](config.md#the-users-config-file) starts `finn` with it off.
 

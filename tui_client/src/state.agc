@@ -4,6 +4,7 @@ import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
+import Clipboard from "clipboard"
 import Args from "args"
 import Input from "input"
 import Picker from "picker"
@@ -162,6 +163,11 @@ struct Model
   mouse: Bool = true
   ## Writes to the terminal outside the grid (the copy and the mouse reporting); a test gives its own.
   write: Fn[String, Void]
+  ## How a selection is copied: what the machine offers, what the config of the server asks, and the run of a program that
+  ## takes the text (a test gives its own).
+  host: Clipboard.Host
+  clipboard: Protocol.ClipboardSetting
+  run: Fn[List[String], Bytes, Result[Void]]
   ## The monotonic ms and the wall clock s of the message being handled.
   now: Int = 0
   clock_s: Int = 0
@@ -182,6 +188,8 @@ enum Msg
   Answered(String, Result[Void])
   ## A note for the transcript (a compaction's end).
   Note(String)
+  ## The text a program was asked to copy, which program, and how it ended.
+  Copied(String, Clipboard.Method, Result[Void])
   ## The server was checked again before the stream of a generation is read again.
   Rechecked(Int, Result[Void])
   ## The reply to a message sent: the `opened` count when it was sent, and the text.
@@ -235,6 +243,9 @@ def seed(
     theme: Theme.default(),
     home: System.env("HOME").unwrap_or(""),
     write: &Terminal.write,
+    host: Clipboard.Host(),
+    clipboard: Protocol.ClipboardSetting(),
+    run: &Clipboard.run,
     editor: editor_of(System.env("VISUAL").unwrap_or(""), System.env("EDITOR").unwrap_or("")),
     now: Time.monotonic_ms,
     clock_s: Time.now_ms / 1000,

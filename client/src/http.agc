@@ -55,6 +55,14 @@ def mouse(server: Server) -> Bool
   end
 end
 
+## How the config of the server has the full screen copy a selection; `auto` when the server does not say.
+def clipboard(server: Server) -> Protocol.ClipboardSetting
+  case server_status(server)
+    ok(status) -> status.clipboard.unwrap_or(Protocol.ClipboardSetting())
+    error(_) -> Protocol.ClipboardSetting()
+  end
+end
+
 ## The last `lines` lines of the server log, and the warnings it logged since it started.
 def server_log(server: Server, lines: Int) -> Result[Protocol.ServerLog]
   body = try call_within(server, "GET", "#{Protocol.LOGS_PATH}?lines=#{lines}", "", PROBE_TIMEOUT_MS)

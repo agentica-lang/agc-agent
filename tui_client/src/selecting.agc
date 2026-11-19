@@ -1,5 +1,7 @@
 ## What the model does with a selection: the copy when the button goes up, and the word of a double click.
 
+import TUI from "pkg/tui/tui"
+import Clipboard from "clipboard"
 import Select from "select"
 import State from "state"
 import Terminal from "terminal"
@@ -20,8 +22,29 @@ def copied(app: State.Model) -> State.Model
     return State.noted(app, "selection too large to copy (#{text.bytesize} bytes, at most #{MAX_COPY_BYTES})")
   end
 
+  case Clipboard.choose(app.clipboard, app.host)
+    some(method) ->
+      run = app.run
+      State.effect(
+        app,
+        TUI.Cmd.Run(-> { State.Msg.Copied(text, method, run.call(method.argv, Clipboard.input(method, text))) }),
+      )
+    none -> sent(app, text, "")
+  end
+end
+
+## The note of a program that ended: it copied, or it did not and the terminal is asked instead.
+def finished(app: State.Model, text: String, method: Clipboard.Method, result: Result[Void]) -> State.Model
+  case result
+    ok(_) -> State.noted(app, "copied #{text.length} characters (#{method.name})")
+    error(e) -> sent(app, text, "#{method.name} failed (#{e.message}); ")
+  end
+end
+
+## `text` goes to the terminal as OSC 52. Nothing says that the terminal took it, so the note does not say "copied".
+def sent(app: State.Model, text: String, why: String) -> State.Model
   app.write.call(Terminal.osc52(text))
-  State.noted(app, "copied #{text.length} characters")
+  State.noted(app, "#{why}sent #{text.length} characters to the terminal (OSC 52)")
 end
 
 ## Whether a click at `cell` is the second of a double click.

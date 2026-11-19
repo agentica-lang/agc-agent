@@ -280,6 +280,7 @@ def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
         code_mode: some(control.code_mode),
         no_worker: some(control.no_worker),
         mouse: some(now.mouse),
+        clipboard: some(Protocol.ClipboardSetting(provider: now.clipboard, command: now.clipboard_command)),
       ),
     ),
   )
