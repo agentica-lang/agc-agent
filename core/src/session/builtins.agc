@@ -15,6 +15,7 @@ import Projects from "../ext/mcp_projects"
 import Skills from "../ext/skills"
 import Spec from "../tools/spec"
 import Logger from "std/logger"
+import Log from "../log"
 import Sandbox from "../tools/sandbox"
 
 ## The server with its MCP servers, and how to read them again.
@@ -98,6 +99,7 @@ def mcp(
   control = Config.McpControl(
     status: ->(root: String) { statuses(address, projects, root) },
     reconnect: ->(root: String, name: String) { reconnected(address, projects, root, name) },
+    log: ->(root: String, name: String, count: Int) { server_log(address, projects, root, name, count) },
   )
 
   ok(Mounted(served: Extensions.add_late_tools(own, tools), reload: reload, stop: stop, control: control))
@@ -348,6 +350,14 @@ def statuses(address: Address[Held], projects: Projects.Projects, root: String) 
   ok(user + (try Projects.status(projects, root)).map { |found| wire_status(found, "project") })
 end
 
+# What each server of the user and of `root` is doing, as the boards know it.
+def statuses_of(address: Address[Held], projects: Projects.Projects, root: String) -> Result[List[McpTools.Status]]
+  mine: Result[Result[List[McpTools.Status]]] = Actor.call(address, MCP_CALL_MS) do |reply| Held.Status(reply) end
+  return error("the MCP servers are busy, try again", kind: Protocol.KIND_MCP_STARTING) if not mine.ok?
+
+  ok(try mine.unwrap! + try Projects.status(projects, root))
+end
+
 def transport_of(server: Mcp.Server) -> String
   return "stdio" if server.url.empty?
 
@@ -372,6 +382,23 @@ def first_line(text: String) -> String
   return line if line.length <= MCP_ERROR_CHARS
 
   "#{line.slice(0, MCP_ERROR_CHARS)}..."
+end
+
+# The end of the log of the server `name` (the user's, else the folder's): the file is the one its configuration
+# names, so
+# a client never gives a path.
+def server_log(
+  address: Address[Held],
+  projects: Projects.Projects,
+  root: String,
+  name: String,
+  count: Int,
+) -> Result[List[String]]
+  found = (try statuses_of(address, projects, root)).select { |status| status.server.name == name }
+  return error("no MCP server named #{name}", kind: Protocol.KIND_MCP_NOT_FOUND) if found.empty?
+  return ok([]) if found[0].server.log.empty?
+
+  ok((try Log.tail_of(found[0].server.log, count)).lines)
 end
 
 # Starts the server `name` of the user, else of the project servers of `root`, again.

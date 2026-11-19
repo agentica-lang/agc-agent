@@ -64,8 +64,10 @@ def warnings() -> Warnings
 end
 
 ## The last `count` lines of the log in `dir`; the file is read through in pieces, keeping its last `TAIL_BYTES`.
-def tail(dir: String, count: Int) -> Result[Tail]
-  path = "#{dir}/#{FILE}"
+def tail(dir: String, count: Int) -> Result[Tail] = tail_of("#{dir}/#{FILE}", count)
+
+## The last `count` lines of the file `path`, none when it is not there.
+def tail_of(path: String, count: Int) -> Result[Tail]
   return ok(Tail(lines: [])) if not File.stat(path).ok?
 
   file = try File.open(path)

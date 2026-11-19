@@ -19,6 +19,7 @@ import Files from "files"
 import Logins from "logins"
 import Turn from "turn"
 import Commands from "commands"
+import McpPanel from "mcp_panel"
 import Views from "views"
 
 def on_key(model: State.Model, event: TUI.Event) -> State.Model
@@ -71,6 +72,10 @@ def keyed(app: State.Model, event: TUI.Event) -> State.Model
   case Approvals.decision(app.approvals, event, app.now, not Views.panel(app).empty?)
     some(decision) -> return Answering.answer(app, decision)
     none -> nil
+  end
+
+  for panel_key in State.option_list(McpPanel.on_key(app, event))
+    return panel_key
   end
 
   return app if Approvals.captures?(app.approvals, event)

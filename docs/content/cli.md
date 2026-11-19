@@ -78,7 +78,7 @@ Type them in either client:
 | `/model [PROVIDER/]NAME` | change the model (and provider) from the next turn on; alone, pick or show it |
 | `/thinking [low\|medium\|high\|default]` | show or change the thinking level |
 | `/confine [on\|off]` | keep the file tools in the session folder, or let them reach any path; alone: show it |
-| `/mcp [NAME \| reconnect NAME]` | the [MCP servers](mcp.md) with their states (`connecting`, `connected`, `failed` and why) in the side panel of `finn` (`finn chat` prints them); `/mcp NAME` lists the tools of one; `/mcp reconnect NAME` starts one again, such as a server that failed at the start (Tab completes the name in `finn`, the failed ones first); a failed server is also in the banner at the start of `finn` |
+| `/mcp [NAME \| reconnect NAME]` | the [MCP servers](mcp.md) with their states (`connecting`, `connected`, `failed` and why) in the side panel of `finn` with a cursor (see below; `finn chat` prints them); `/mcp NAME` lists the tools of one; `/mcp reconnect NAME` starts one again, such as a server that failed at the start (Tab completes the name in `finn`, the failed ones first); a failed server is also in the banner at the start of `finn` |
 | `/profile [NAME]` | change the [profile](tools.md#profiles) between turns (Tab completes it in `finn`); alone, list them (in the side panel of `finn`) |
 | `/compact` | fold the history into a summary now |
 | `/login [PROVIDER]` | set up a provider (`finn`) |
@@ -119,6 +119,10 @@ The command runs as the `bash` tool would, with a timeout of 10 minutes. It neve
 ## Stop
 
 `/stop`, Esc (`finn`) or Ctrl+C (`finn chat`) stops the running turn or shell command. In `finn chat`, a second Ctrl+C leaves, and so does Ctrl+C when nothing runs.
+
+## The MCP panel
+
+`/mcp` in `finn` opens the [MCP servers](mcp.md) in the side panel with the focus and a cursor on the first one. While the panel has the keys (F6 moves them between the panel and the prompt; on a narrow screen the panel always has them until Esc), Up and Down or `j` and `k` move the cursor, `r` starts the server under it again, `t` or Enter lists its tools, `l` shows the end of its log (`mcp/NAME.log` of the state folder, read by the server; `t` and `l` also switch between the two views), and Esc or Backspace goes back to the list; Esc on the list closes the panel. The list scrolls to keep the cursor in view. The list is read again after each action, and the title of the panel and the footer name these keys while it has them. A letter typed while the prompt has the keys goes into the prompt, and the panel gives its keys up while the prompt has text, so on a narrow screen you can type a message with the panel open. These keys are fixed: the `keys` map does not rename them.
 
 ## Keys of the full screen
 
