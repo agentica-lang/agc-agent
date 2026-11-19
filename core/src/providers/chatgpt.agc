@@ -441,6 +441,10 @@ end
 
 def usage_url(endpoints: Endpoints) -> String
   root = endpoints.base_url
+  while root.end_with?("/")
+    root = root.slice(0, root.length - 1)
+  end
+
   if root.end_with?("/codex")
     root = root.slice(0, root.length - "/codex".length)
   end

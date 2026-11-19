@@ -199,24 +199,16 @@ STATUS_WAIT_MS = 55_000
 
 def status_reply(sessions: Sessions.Sessions, conn: Bond.Conn, slots: Channel[Bool]) -> Result[Bond.Conn]
   if not slots.send(true, 0).ok?
-    return reply(conn, 200, ok(Protocol.encode_status_segments(Protocol.StatusSegments(segments: []))))
+    return reply(conn, 200, error("too many status requests at once", kind: Protocol.KIND_SESSION_UNAVAILABLE))
   end
 
-  # The task gives the slot back when it ends; one that was cancelled or failed did not, so the request does.
-  work = Task.spawn(
-    -> {
-      result = status_segments(sessions, conn)
-      _ = slots.recv(0)
-      result
-    },
-  )
-
-  case Task.await(work, STATUS_WAIT_MS)
+  work = Task.spawn(-> { status_segments(sessions, conn) })
+  answered = Task.await(work, STATUS_WAIT_MS)
+  Task.cancel(work)
+  _ = slots.recv(0)
+  case answered
     Await.Done(result) -> reply(conn, 200, result)
-    _ ->
-      Task.cancel(work)
-      _ = slots.recv(0)
-      reply(conn, 200, ok(Protocol.encode_status_segments(Protocol.StatusSegments(segments: []))))
+    _ -> reply(conn, 200, error("the status segments took too long", kind: Protocol.KIND_SESSION_UNAVAILABLE))
   end
 end
 

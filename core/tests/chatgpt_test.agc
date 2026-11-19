@@ -56,6 +56,19 @@ def stuck_segment(_context: Extensions.StatusContext) -> Result[String]
   gate.recv(30_000)
 end
 
+# With every slot taken the route answers 503, which the clients treat as a failed read and keep their last segments.
+def test_a_busy_status_route_answers_503() -> Result[Void]
+  stuck = Extensions.StatusProvider(name: "ext.stuck", value: &stuck_segment)
+  setup = H.Setup(replies: [], registry: some(Extensions.Registry(status_providers: [stuck], status_ms: 1500)))
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    calls = (0...6).to_a.map { |_| Task.spawn(-> { H.get(h, Protocol.status_segments_path(id)) }) }
+    statuses = calls.map { |call| Task.await(call).unwrap!.status }
+    try Test.assert(statuses.select { |status| status == 503 }.size >= 1, "no busy answer: #{statuses}")
+    Test.eq(statuses.select { |status| status != 503 }, [200, 200, 200, 200])
+  end
+end
+
 def test_usage_in_flight_does_not_cross_accounts() -> Result[Void]
   setup = H.Setup(replies: ["codex_usage.json@hold", "codex_usage.json"], api: "openai_responses", chatgpt: true)
   H.using(setup) do |h|
