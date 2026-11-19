@@ -130,12 +130,10 @@ def remove_file(path: String) -> Result[Void]
 end
 
 def replace_file(path: String, text: String) -> Result[Void]
-  return File.replace(path, text.bytes) if File.stat(path).ok?
-
   temporary = "#{path}.tmp"
   _ = Path.remove(temporary)
   try create_file(temporary, text)
-  Path.rename(temporary, path)
+  Path.replace(temporary, path)
 end
 
 def text_in(files: ATS[String, List[String]], path: String) -> Result[String]

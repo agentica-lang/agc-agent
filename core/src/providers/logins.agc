@@ -530,17 +530,18 @@ end
 
 def save_choice(path: String, choice: Choice) -> Result[Void]
   text = "#{JSON.encode(choice)}\n"
-  return File.replace(path, text.bytes) if File.stat(path).ok?
 
-  # Never a half written file where the next start reads: made aside, then moved.
+  # Never a half written file where the next start reads: made aside, then put in its place in one step.
   temp = "#{path}.#{Random.int(0, 999999999)}.tmp"
   written = File.open(temp, "create_private") do |handle| File.write(handle, text) end
-  moved = Path.rename(temp, path)
-  if not written.ok? or not moved.ok?
-    _ = Path.remove(temp)
+  moved = written
+  if written.ok?
+    moved = Path.replace(temp, path)
   end
 
-  return written if not written.ok?
+  if not moved.ok?
+    _ = Path.remove(temp)
+  end
 
   moved
 end
