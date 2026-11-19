@@ -70,7 +70,13 @@ def test_commands_parse_with_their_arguments() -> Result[Void]
 
   help = Client.help()
   try Test.eq(help[0], "/new                       a new session in this folder")
-  Test.assert(Client.listed().all? { |usage| help.any? { |line| line.start_with?("#{usage.name} ") } }, "#{help}")
+  try Test.assert(Client.listed().all? { |usage| help.any? { |line| line.start_with?("#{usage.name} ") } }, "#{help}")
+  try Test.assert(not help.include?("Keys"), "no keys unless asked")
+
+  screen = Client.help([], Client.KEYS)
+  try Test.assert(screen.drop_while { |line| line != "Keys" }.any? { |line| line.include?("F6") }, "#{screen}")
+  chat = Client.help([], Client.CHAT_KEYS)
+  Test.assert(not chat.any? { |line| line.include?("F6") }, "#{chat}")
 end
 
 def test_a_bang_line_is_a_shell_command() -> Result[Void]

@@ -6,6 +6,7 @@ import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import App from "../src/app"
+import Approvals from "../src/approvals"
 import Args from "../src/args"
 import Session from "../src/session"
 import Side from "../src/side"
@@ -240,7 +241,17 @@ def test_a_drag_from_the_transcript_over_the_panel_copies() -> Result[Void]
   Test.eq(App.update(opened, mouse_at(TUI.Mouse.Left, 100, y)).model.pressed.none?, true)
 end
 
-# Esc closes the panel first and stops the turn the second time: the panel has the focus when it opens.
+# `/help` ends with the keys, and the footer with the panel closed names Ctrl+P.
+def test_help_lists_the_keys_and_the_closed_footer_names_the_panel() -> Result[Void]
+  start = model_of(120, 20)
+  try Test.assert(ran(start, "/help").side.unwrap!.lines.any? { |line| line.include?("F6") }, "keys in /help")
+  try Test.assert(screen(start).last.include?("^P logs"), screen(start).last)
+  logs = ran(start, "/logs")
+  try Test.assert(screen(logs).any? { |row| row.include?("F6 focus") }, "the title names F6")
+  Test.assert(not screen(logs).last.include?("^P logs"), "the open footer says close")
+end
+
+# Esc closes the panel first, whatever the focus, and stops the turn the second time.
 def test_esc_closes_the_panel_before_it_stops_the_turn() -> Result[Void]
   opened = ran(model_of(120, 20), "/logs").with(turn: true)
   first = App.update(opened, key(TUI.Key.Escape))
@@ -248,10 +259,45 @@ def test_esc_closes_the_panel_before_it_stops_the_turn() -> Result[Void]
   try Test.eq(first.cmds.size, 0)
   second = App.update(first.model, key(TUI.Key.Escape))
   try Test.eq(second.model.stopping, true)
-  # With the focus on the transcript, Esc stops the turn at once and leaves the panel.
+  # With the focus on the transcript, the first Esc closes the panel too and the second stops the turn.
   away = App.update(opened, key(TUI.Key.F(6))).model
-  stopped = App.update(away, key(TUI.Key.Escape)).model
-  Test.eq([stopped.stopping, stopped.side.some?], [true, true])
+  closed = App.update(away, key(TUI.Key.Escape)).model
+  try Test.eq([closed.stopping, closed.side.none?], [false, true])
+  Test.eq(App.update(closed, key(TUI.Key.Escape)).model.stopping, true)
+end
+
+# A drag leaves a selection; with the panel open, Esc clears it first and the next Esc closes the panel. Not while
+# a login
+# key is asked for (Esc cancels that), and a focused approval panel takes Esc as before.
+def test_esc_clears_a_selection_before_it_closes_the_panel() -> Result[Void]
+  opened = ran(model_of(120, 12), "/logs")
+  rows = screen(opened)
+  y = (0...rows.size).find { |at| rows[at].include?("hello there") }.unwrap!
+  x = rows[y].index_of("hello there").unwrap!
+  down = App.update(opened, mouse_at(TUI.Mouse.Left, x, y)).model
+  selected = App.update(down, mouse_at(TUI.Mouse.Left, 100, y, motion: true)).model
+  try Test.eq(selected.selection.some?, true)
+  first = App.update(selected, key(TUI.Key.Escape)).model
+  try Test.eq([first.selection.none?, first.side.some?], [true, true])
+  try Test.eq(App.update(first, key(TUI.Key.Escape)).model.side.none?, true)
+  asking = selected.with(key_for: some("anthropic"))
+  try Test.eq(App.update(asking, key(TUI.Key.Escape)).model.key_for.none?, true)
+
+  request = Protocol.ApprovalRequested(
+    approval_id: "a1",
+    call_id: "c1",
+    tool: "write_file",
+    preview: "x.txt",
+    detail: "",
+  )
+
+  waiting = selected.with(approvals: Approvals.requested(Approvals.Panel(guard_ms: 0), request, 0).with(focused: true))
+  Test.eq(App.update(waiting, key(TUI.Key.Escape)).model.side.some?, true)
+end
+
+# At 100 columns the panel is 40 wide and its title still names Esc.
+def test_the_title_of_a_narrow_panel_names_esc() -> Result[Void]
+  Test.assert(screen(ran(model_of(100, 20), "/logs")).any? { |row| row.include?("Esc closes") }, "Esc closes")
 end
 
 # A read that brings the same lines changes nothing, one that fails says so in the panel until a read works, and the
@@ -275,5 +321,5 @@ def test_the_follow_keeps_the_same_lines_and_shows_a_failed_read() -> Result[Voi
   try Test.eq(healed.model.side.unwrap!.note, "")
   try Test.assert(screen(opened).any? { |row| row.include?("Esc close panel") }, screen(opened).join("\n"))
   away = App.update(opened, key(TUI.Key.F(6))).model
-  Test.assert(screen(away).any? { |row| row.include?("Esc stop") }, screen(away).join("\n"))
+  Test.assert(screen(away).any? { |row| row.include?("F6 panel") }, screen(away).join("\n"))
 end

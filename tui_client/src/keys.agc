@@ -21,12 +21,30 @@ import Commands from "commands"
 import Views from "views"
 
 def on_key(model: State.Model, event: TUI.Event) -> State.Model
+  return unmarked(model, event) if clears_selection?(model, event)
+
   Files.asked(keyed(aimed(Sides.focused_by(unmarked(model, event), event), event), event))
 end
 
 private
 
 SCROLL_STEP = 3
+
+# Esc with a selection shown and the side panel open only clears the selection; the next Esc closes the panel.
+def clears_selection?(app: State.Model, event: TUI.Event) -> Bool
+  case event
+    TUI.Event.Key(TUI.Key.Escape, _) ->
+      (
+        app.selection.some? and
+        app.side.some? and
+        not app.approvals.focused and
+        app.picker.none? and
+        app.key_for.none? and
+        app.device.none?
+      )
+    _ -> false
+  end
+end
 
 # A key (not the mouse) ends the selection, which the copy left shown: Esc then stops a turn at once.
 def unmarked(app: State.Model, event: TUI.Event) -> State.Model
@@ -123,7 +141,7 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     TUI.Event.Key(TUI.Key.BackTab, _) -> Level.leveled(app)
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
       app.with(approvals: Approvals.toggled(app.approvals, app.now))
-    TUI.Event.Key(TUI.Key.Escape, _) if Sides.active?(app) -> Sides.closed(app)
+    TUI.Event.Key(TUI.Key.Escape, _) if app.side.some? -> Sides.closed(app)
     TUI.Event.Key(TUI.Key.Escape, _) if closes_banner?(app) -> app.with(banner: [])
     TUI.Event.Key(TUI.Key.Escape, _) if not app.follow_ups.empty? -> Turn.stop(Turn.put_back(app))
     TUI.Event.Key(TUI.Key.Escape, _) -> Turn.stop(app)

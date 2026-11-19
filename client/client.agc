@@ -89,6 +89,8 @@ export Events.start
 
 export Commands.Command
 export Commands.help
+export Commands.KEYS
+export Commands.CHAT_KEYS
 export Commands.custom
 export Commands.warning_notes
 export Commands.warning_banner

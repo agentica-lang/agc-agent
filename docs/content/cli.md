@@ -125,7 +125,7 @@ The command runs as the `bash` tool would, with a timeout of 10 minutes. It neve
 | Alt+Enter | send after the running turn ends (a follow-up) |
 | Ctrl+J | a new line |
 | Ctrl+G | edit the prompt in `$VISUAL`, else `$EDITOR` (it may hold arguments, as `code -w`); what the editor saves becomes the prompt, with a large paste as its text. The text goes through a file only you can read in the state folder, removed afterwards. In the editor, Ctrl+C is a key for it and never quits `finn` |
-| Esc | stop the running turn; with the [side panel](#the-side-panel) focused (or covering the transcript), close it instead |
+| Esc | with the [side panel](#the-side-panel) open, close it, whatever has the focus (a selection shown is cleared first); then stop the running turn |
 | Ctrl+C; Ctrl+D on an empty prompt while nothing runs and no approval waits | quit |
 | Shift+Tab | the next thinking level |
 | Ctrl+T | show or hide the thinking |
@@ -139,8 +139,8 @@ The command runs as the `bash` tool would, with a timeout of 10 minutes. It neve
 | Ctrl+U, Ctrl+K | delete to the start or the end of the line |
 | Delete, Ctrl+D | delete the character after the cursor |
 | PgUp, PgDn | scroll the transcript, or the side panel when it has the focus |
-| Ctrl+P | open the side panel on the server log, or close it |
-| F6 | with the side panel open on a wide screen, move the focus between it and the transcript |
+| Ctrl+P | open the side panel on the server log, or close it (the footer says `^P logs` while it is closed) |
+| F6 | with the side panel open on a wide screen, move the focus between it and the transcript (named in the panel's title row) |
 | Ctrl+Y, Ctrl+N | allow or deny the call that waits for an approval |
 | Tab | move to the approval panel: `y` allow, `n` deny, `a` allow the same call for the session; Tab or Esc goes back |
 
@@ -152,7 +152,7 @@ Local output that is not part of the conversation opens in a panel on the right,
 
 On a screen of 100 columns or more, the panel sits beside the transcript, prompt and footer, which take the columns it leaves (40% of the screen, 40 to 80 columns). On a narrower one it takes the place of the transcript, and the prompt and the footer stay.
 
-The panel has its own scroll and its own focus. It has the focus when it opens, and on a narrow screen always. PgUp and PgDn scroll the side that has the focus, the mouse wheel the side it is over, and a click in a side, or F6, gives it the focus. Esc closes the panel while it has the focus (a second Esc then stops a running turn); with the transcript focused, Esc does what it did. Ctrl+P closes the panel, or opens it on the server log. A drag that begins in the transcript goes on over the panel and copies as usual, but the text of the panel itself cannot be selected yet (use Shift+drag, the terminal's own selection, or `finn server logs`). Opening another output replaces the one shown, and `/new` or `/resume` closes it.
+The panel has its own scroll and its own focus. It has the focus when it opens, and on a narrow screen always. PgUp and PgDn scroll the side that has the focus, the mouse wheel the side it is over, and a click in a side, or F6, gives it the focus. Esc closes the panel whatever has the focus (with a selection shown, the first Esc clears it); the next Esc does what it did, such as stop a running turn. The panel's title row names F6 and Esc, the footer says `^P logs` while the panel is closed, and `/help` ends with the keys. Ctrl+P closes the panel, or opens it on the server log. A drag that begins in the transcript goes on over the panel and copies as usual, but the text of the panel itself cannot be selected yet (use Shift+drag, the terminal's own selection, or `finn server logs`). Opening another output replaces the one shown, and `/new` or `/resume` closes it.
 
 The server log is read again every second while the panel follows its end. Scroll up and the panel stops where it is (its title says `paused`); PgDn to the end follows again. `/logs N` sets how many of the last lines it holds.
 

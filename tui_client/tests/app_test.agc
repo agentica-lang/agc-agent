@@ -489,7 +489,7 @@ def test_the_tree_picker_moves_the_session_and_fills_the_prompt() -> Result[Void
   held = App.update(picked.model.with(prompt: "hi"), enter())
   try Test.eq([held.cmds.size.to_s, held.model.prompt, held.model.outbox.size.to_s], ["0", "hi", "0"])
   helped = App.update(picked.model.with(prompt: "/help"), enter()).model
-  try Test.eq([helped.prompt, helped.side.unwrap!.lines.last], ["", Client.help().last])
+  try Test.eq([helped.prompt, helped.side.unwrap!.lines.last], ["", Client.help([], Client.KEYS).last])
   renewed = App.update(picked.model.with(prompt: "/new"), enter()).model
   try Test.eq([renewed.prompt, renewed.entries.last.text], ["/new", "the session is moving: wait for it"])
   typed = App.update(model.with(picker: none, prompt: "/tree 3"), enter())
@@ -1331,7 +1331,7 @@ def test_the_footer_shows_the_place_the_usage_and_the_model() -> Result[Void]
     rows(model).drop(6),
     [
       "~/app · Fix the parser.",
-      "ready · Enter send · Esc stop · ^C quit · ^J newline · Alt+Enter follow-up    (local) qwen3 · high",
+      "ready · Enter send · Esc stop · ^C quit · ^P logs · ^J newline                (local) qwen3 · high",
     ],
   )
 

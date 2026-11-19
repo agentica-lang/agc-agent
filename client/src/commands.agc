@@ -2,6 +2,24 @@
 
 import Protocol from "pkg/protocol/protocol"
 
+## The keys of `finn` (the full screen) as `/help` lists them; the details are in the user guide.
+KEYS = [
+  "Esc                        close the side panel when it is open (a shown selection is cleared first); else stop the running turn",
+  "Ctrl+C                     quit; Ctrl+J or Alt+Enter: a new line or a follow-up",
+  "Shift+Tab                  the next thinking level; Ctrl+T shows the thinking, Ctrl+O the tool output",
+  "PgUp/PgDn                  scroll the transcript, or the side panel when it has the focus",
+  "Ctrl+P                     open the side panel on the server log, or close it",
+  "F6                         move the focus between the side panel and the transcript (wide screens)",
+  "Ctrl+Y / Ctrl+N            allow or deny the call that waits for an approval",
+  "Ctrl+G                     edit the prompt in $VISUAL or $EDITOR",
+  "Up / Down                  earlier messages you sent (Up on an empty prompt)",
+  "mouse                      drag selects and copies, a double click selects a word; Shift+drag is the terminal's own",
+  "all keys: finn docs cli",
+]
+
+## The keys of `finn chat`.
+CHAT_KEYS = ["Ctrl+C                     stop the running turn; a second one, or one with nothing running, leaves"]
+
 KIND_COMMAND = "client.command"
 DEFAULT_PROFILE = "build"
 ## The lines `/logs` shows without a number.
@@ -142,22 +160,23 @@ def parse_shell(line: String) -> Optional[Protocol.RunShell]
   some(Protocol.RunShell(command: rest.strip, context: context))
 end
 
-## The lines of `/help`, with the session's slash commands (`custom`) after the clients' own.
-def help(custom: List[Usage] = []) -> List[String]
+## The lines of `/help`, with the session's slash commands (`custom`) after the clients' own, then the `keys`.
+def help(custom: List[Usage] = [], keys: List[String] = []) -> List[String]
   rows = (listed() + custom).flat_map do |usage|
     head = "#{usage.name} #{usage.args}".strip
     line = "#{head}#{" " * [ABOUT_COLUMN - head.length, 2].max.unwrap!}#{usage.about}"
     [line] + [usage.more].select { |m| m != "" }.map { |m| "#{" " * ABOUT_COLUMN}#{m}" }
   end
 
-  (
-    rows +
-    [
-      "!CMD                       run CMD in the session folder; the model gets its output with the next message",
-      "!!CMD                      run CMD without giving its output to the model",
-      "any other /name goes to the agent as a message",
-    ]
-  )
+  tail = [
+    "!CMD                       run CMD in the session folder; the model gets its output with the next message",
+    "!!CMD                      run CMD without giving its output to the model",
+    "any other /name goes to the agent as a message",
+  ]
+
+  return rows + tail if keys.empty?
+
+  rows + tail + ["", "Keys"] + keys.map { |key| "  #{key}" }
 end
 
 ## The session's slash commands as the help and the suggestions show them; one that does not load says so.
