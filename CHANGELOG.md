@@ -20,6 +20,11 @@
 - A new session uses the provider and model last picked (`/model`, `--provider`, `--model` or a login), kept in `choice.json`.
 - Every server log line starts with its UTC time and level; `GET /v1/logs` and `/logs [N]` show its end, and leaving `finn` prints the warnings.
 - `finn login` ends with one line on how to use the provider; Esc ends it with `finn: login cancelled` and status 0.
+- A merge to main that changes only `docs/`, Markdown files or `.github/` makes no `finn-<ts>` tag any more.
+- In `finn`, the warnings of the server show in a yellow banner at the top of the screen when it opens (a click or Esc with an empty prompt closes it), not as notes in the transcript. The server counts a warning with the same text once and shows it with `(×N)`, so a skill that is shadowed in three sessions is one warning.
+- In `finn`, Enter on a row of the list under `/model `, `/resume `, `/tree ` or `/fork ` runs the command with that row (the first or the one you moved to) in one step, with no second picker; Tab still only completes.
+- With approvals on, a file tool that reaches outside the session folder asks like `bash` does, unlike before when it was refused: `external_directory(FOLDER/*)` rules now cover file tools too (an allow rule lets a folder run, a deny rule refuses it). The accept-edits mode runs only writes inside the folder. Finn's own `auth.json`, `server.json`, `config.json` and `chatgpt.json` (in the config, state and data folders, and the file of `FINN_CONFIG`) are denied to the file tools by default, whatever the session folder; an `allow read_file(...)` rule of your config lifts it.
+- **Breaking:** the file tools (`read_file`, `write_file`, `edit_file`, `apply_patch`, `glob`, `grep`) reach any path by default, not only the session folder, so the model can read `~/.bashrc` when asked; deny and ask rules still apply everywhere. Set `"confine_files": true` (config) or `FINN_CONFINE_FILES=1` to keep them in the folder.
 
 ### Fixed
 
