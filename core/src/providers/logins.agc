@@ -530,13 +530,13 @@ end
 
 def save_choice(path: String, choice: Choice) -> Result[Void]
   text = "#{JSON.encode(choice)}\n"
-
-  # Never a half written file where the next start reads: made aside, then put in its place in one step.
-  temp = "#{path}.#{Random.int(0, 999999999)}.tmp"
+  # Onto what a symbolic link at `path` points to, so the link stays; made aside there, never a half written file.
+  target = Path.real(path).unwrap_or(path)
+  temp = "#{target}.#{Random.int(0, 999999999)}.tmp"
   written = File.open(temp, "create_private") do |handle| File.write(handle, text) end
   moved = written
   if written.ok?
-    moved = Path.replace(temp, path)
+    moved = Path.replace(temp, target)
   end
 
   if not moved.ok?

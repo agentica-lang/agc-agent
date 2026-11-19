@@ -107,6 +107,27 @@ end
 # branch.
 def test_a_branch_replays_its_own_records() -> Result[Void] = on_both(&branches)
 
+# A replace of a path that is a symbolic link writes the file it points to and keeps the link; no temporary file stays.
+def test_a_replace_follows_a_symbolic_link_and_keeps_it() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/agc-store-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  real = "#{dir}/real.json"
+  link = "#{dir}/link.json"
+  try File.write_text(real, "old\n")
+  try Process.wait(try Process.spawn("ln", ["-s", real, link]), 5000)
+  port = Storage.disk(1024, 1_048_576)
+  try port.replace.call(link, "new\n")
+  kind = (try File.lstat(link)).kind
+  names = (try Dir.list(dir)).sort
+  text = try File.read_text(real)
+  _ = Path.remove(link)
+  _ = Path.remove(real)
+  _ = Path.remove(dir)
+  try Test.eq(kind, "link")
+  try Test.eq(text, "new\n")
+  Test.eq(names, ["link.json", "real.json"])
+end
+
 # The memory adapter answers as the disk one: the same error kinds, a line limit that counts the newline, CRLF read as
 # a line end, a folder with a trailing `/`, no file in a folder that is not there, and an append that makes a file.
 def test_the_memory_store_answers_as_the_disk_one() -> Result[Void]

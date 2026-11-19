@@ -143,6 +143,21 @@ def test_a_choice_that_cannot_be_stored_leaves_no_temp_file() -> Result[Void]
   end
 end
 
+# A choice file that is a symbolic link keeps the link: the choice is written to the file it points to.
+def test_a_choice_file_that_is_a_symbolic_link_stays_one() -> Result[Void]
+  setup = H.Setup(replies: ["models_small.json"], logins: ["paid"], providers: ["other"])
+  H.using(setup) do |h|
+    real = "#{h.base}/real-choice.json"
+    try File.write_text(real, "{}\n")
+    try Process.wait(try Process.spawn("ln", ["-s", real, H.choice_file(h.base)]), 5000)
+    try Test.eq((try login(h, "paid", "sk-right")).status, 200)
+    try Test.eq((try File.lstat(H.choice_file(h.base))).kind, "link")
+    try Test.assert((try File.read_text(real)).include?("paid"), "the choice is in the file the link points to")
+    names = try Dir.list("#{h.base}/state")
+    Test.eq(names.select { |name| name.end_with?(".tmp") }, [])
+  end
+end
+
 def choice_env(
   dir: String,
   provider: String,
