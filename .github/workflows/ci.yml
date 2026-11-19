@@ -143,10 +143,11 @@ jobs:
           echo "$RUNNER_TEMP/dart-sass" >> "$GITHUB_PATH"
       - run: make docs
 
-  # Each merge to main whose checks passed gets the tag of its version, finn-YYYYMMDDhhmmss: the UTC time of the commit,
-  # which bin/finn reports as the version. Only on a push to main, never on a pull request. A tag that exists on this
-  # commit is left as it is; one on another commit (two merges in the same second) fails the job. The one job that may
-  # write to the repository.
+  # A merge to main whose checks passed gets the tag of its version, finn-YYYYMMDDhhmmss (the UTC time of the commit,
+  # which bin/finn reports as the version), when something that ships changed since the last finn-* tag reachable from
+  # its parent: any file but docs/**, **/*.md and .github/**. A docs-only or CI-only merge makes no tag. Only on a push
+  # to main, never on a pull request. A tag that exists on this commit is left as it is; one on another commit (two
+  # merges in the same second) fails the job. The one job that may write to the repository.
   tag-version:
     name: tag the version
     needs: result
@@ -157,8 +158,17 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
       - name: Tag the commit with its version
         run: |
+          if last=$(git describe --tags --match 'finn-*' --abbrev=0 "$GITHUB_SHA^" 2>/dev/null); then
+            shipped=$(git diff --name-only "$last" "$GITHUB_SHA" -- . ':!docs' ':!*.md' ':!.github')
+            if [ -z "$shipped" ]; then
+              echo "no tag: only docs, Markdown and .github changed since $last"
+              exit 0
+            fi
+          fi
           tag="finn-$(TZ=UTC0 git log -1 --format=%cd --date=format-local:%Y%m%d%H%M%S "$GITHUB_SHA")"
           if existing=$(git ls-remote --exit-code --tags origin "refs/tags/$tag"); then
             if [ "$(echo "$existing" | cut -f1)" = "$GITHUB_SHA" ]; then
