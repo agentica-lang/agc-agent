@@ -28,6 +28,7 @@ def on_command(app: State.Model, command: Client.Command) -> State.Model
     Client.Command.Quit -> app.with(exit: some(0))
     Client.Command.Stop -> stop_command(app)
     Client.Command.Help -> help_command(Session.with_custom(app.with(custom_dir: none), app.id, app.cwd))
+    Client.Command.Shortcuts -> shortcuts_command(app)
     Client.Command.Cost -> State.noted(app, "/cost comes with the model catalog")
     Client.Command.New -> switch_command(app, none)
     Client.Command.Resume(none) -> State.tried(app, picking(app))
@@ -296,8 +297,11 @@ def reconnect_mcp(app: State.Model, name: String) -> State.Model
 end
 
 # `/help`, after the session's slash commands were read again.
-def help_command(app: State.Model) -> State.Model
-  Sides.shown(app, Side.of("Help", Client.help(app.custom, Client.key_lines(app.keys))))
+def help_command(app: State.Model) -> State.Model = Sides.shown(app, Side.of("Help", Client.help(app.custom)))
+
+# `/shortcuts`: the keys in effect, as the footer names them.
+def shortcuts_command(app: State.Model) -> State.Model
+  Sides.shown(app, Side.of("Shortcuts", Client.key_lines(app.keys)))
 end
 
 def thinking_command(app: State.Model, level: Optional[String]) -> State.Model

@@ -380,7 +380,7 @@ end
 # A command that does not touch the session, which goes on while it moves.
 def local?(command: Client.Command) -> Bool
   case command
-    Client.Command.Quit, Client.Command.Help, Client.Command.Cost -> true
+    Client.Command.Quit, Client.Command.Help, Client.Command.Shortcuts, Client.Command.Cost -> true
     Client.Command.Login(_), Client.Command.Logout(_) -> true
     _ -> false
   end

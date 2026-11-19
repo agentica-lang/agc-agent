@@ -408,6 +408,7 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Quit -> ok(Step(chat: chat, exit: some(0)))
     Client.Command.Stop -> stop_command(chat)
     Client.Command.Help -> said(chat, Client.help(custom_of(chat), Client.CHAT_KEYS).join("\n"))
+    Client.Command.Shortcuts -> said(chat, "[the keys of the full screen are listed by /shortcuts in finn]")
     Client.Command.Cost -> said(chat, "[/cost comes with the model catalog]")
     Client.Command.Login(_) ->
       said(chat, "[a key, a base URL or a sign-in is asked for on the full screen: finn login, or /login in finn]")

@@ -69,6 +69,7 @@ COMMANDS = [
   ),
   Usage(name: "/stop", about: "stop the running turn"),
   Usage(name: "/cost", about: "what the session cost", listed: false),
+  Usage(name: "/shortcuts", about: "the keys of the full screen, as you set them"),
   Usage(name: "/help", about: "this list"),
   Usage(name: "/quit", about: "leave"),
 ]
@@ -121,6 +122,8 @@ enum Command
   ## Every stored key without an argument.
   Logout(Optional[String])
   Help
+  ## The keys of the full screen.
+  Shortcuts
   Quit
 end
 
@@ -154,7 +157,8 @@ def parse_shell(line: String) -> Optional[Protocol.RunShell]
   some(Protocol.RunShell(command: rest.strip, context: context))
 end
 
-## The lines of `/help`, with the session's slash commands (`custom`) after the clients' own, then the `keys`.
+## The lines of `/help`, with the session's slash commands (`custom`) after the clients' own, then the `keys` (the line
+## mode names its own).
 def help(custom: List[Usage] = [], keys: List[String] = []) -> List[String]
   rows = (listed() + custom).flat_map do |usage|
     head = "#{usage.name} #{usage.args}".strip
@@ -173,31 +177,36 @@ def help(custom: List[Usage] = [], keys: List[String] = []) -> List[String]
   rows + tail + ["", "Keys"] + keys.map { |key| "  #{key}" }
 end
 
-## The lines of the keys of `finn` (the full screen) for `/help`, with the keys of `bindings`; the details are in the
-## user guide.
+## The rows of `/shortcuts`: one per key of `finn` (the full screen), with the keys of `bindings`, then the keys of the
+## `/mcp` panel, which are fixed. The details are in the user guide.
 def key_lines(bindings: Keys.Bindings) -> List[String]
   key = ->(action: String) { Keys.label(Keys.key_of(bindings, action)) }
   [
+    row("Enter", "send the message; the Enter of a picker or a list takes its choice"),
     row(
       "Esc",
       "close the side panel when it is open (a shown selection is cleared first); else stop the running turn",
     ),
-    row("Ctrl+C", "quit; Ctrl+J or Alt+Enter: a new line or a follow-up"),
-    row(
-      key.call("cycle_profile"),
-      "the next profile (build, plan, yours); #{key.call("thinking_level")} the next thinking level",
-    ),
-    row("#{key.call("show_thinking")} / #{key.call("show_tools")}", "show the thinking / the tool output"),
-    row(
-      "#{key.call("page_up")}/#{key.call("page_down")}",
-      "scroll the transcript, or the side panel when it has the focus",
-    ),
+    row("Ctrl+C", "quit; a second one leaves a turn that does not stop"),
+    row("Ctrl+J / Alt+Enter", "a new line / a follow-up that waits for the turn"),
+    row("Tab", "complete a / command or an @ file"),
+    row(key.call("cycle_profile"), "the next profile (build, plan, yours), from the next turn"),
+    row(key.call("thinking_level"), "the next thinking level, from the next turn"),
+    row(key.call("show_thinking"), "show or fold the thinking of the model"),
+    row(key.call("show_tools"), "show or fold the tool output"),
+    row(key.call("page_up"), "scroll up the transcript, or the side panel when it has the focus"),
+    row(key.call("page_down"), "scroll down the transcript, or the side panel when it has the focus"),
     row(key.call("logs"), "open the side panel on the server log, or close it"),
     row(key.call("side_focus"), "move the focus between the side panel and the transcript (wide screens)"),
     row("Ctrl+Y / Ctrl+N", "allow or deny the call that waits for an approval"),
     row(key.call("edit_prompt"), "edit the prompt in $VISUAL or $EDITOR"),
     row("Up / Down", "earlier messages you sent (Up on an empty prompt)"),
     row("mouse", "drag selects and copies, a double click selects a word; Shift+drag is the terminal's own"),
+    row("/mcp: Up / Down, j / k", "move the cursor over the servers"),
+    row("/mcp: r", "start the server under the cursor again"),
+    row("/mcp: t / Enter", "list the tools of that server"),
+    row("/mcp: l", "show the end of its log"),
+    row("/mcp: Esc / Backspace", "back to the list; Esc on the list closes the panel"),
     "all keys: finn docs cli",
   ]
 end
@@ -550,6 +559,7 @@ def command(name: String, argument: String) -> Result[Command]
     "/login" -> ok(Command.Login(try provider(argument)))
     "/logout" -> ok(Command.Logout(try provider(argument)))
     "/help" -> bare(Command.Help, name, argument)
+    "/shortcuts" -> bare(Command.Shortcuts, name, argument)
     # Only `/quit` is left of COMMANDS.
     _ -> bare(Command.Quit, name, argument)
   end

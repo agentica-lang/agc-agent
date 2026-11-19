@@ -241,10 +241,14 @@ def test_a_drag_from_the_transcript_over_the_panel_copies() -> Result[Void]
   Test.eq(App.update(opened, mouse_at(TUI.Mouse.Left, 100, y)).model.pressed.none?, true)
 end
 
-# `/help` ends with the keys, and the footer with the panel closed names Ctrl+P.
-def test_help_lists_the_keys_and_the_closed_footer_names_the_panel() -> Result[Void]
+# `/shortcuts` lists the keys, and the footer with the panel closed names Ctrl+P.
+def test_shortcuts_lists_the_keys_and_the_closed_footer_names_the_panel() -> Result[Void]
   start = model_of(120, 20)
-  try Test.assert(ran(start, "/help").side.unwrap!.lines.any? { |line| line.include?("F6") }, "keys in /help")
+  try Test.assert(
+    ran(start, "/shortcuts").side.unwrap!.lines.any? { |line| line.include?("F6") },
+    "keys in /shortcuts",
+  )
+
   try Test.assert(screen(start).last.include?("^P logs"), screen(start).last)
   logs = ran(start, "/logs")
   try Test.assert(screen(logs).any? { |row| row.include?("F6 focus") }, "the title names F6")

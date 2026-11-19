@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- In `finn`, `/shortcuts` opens the side panel with every key in effect, one row each, with the ones your `keys` map sets and the keys of the `/mcp` panel; `/help` no longer ends with the keys.
+
 ## [finn-20261119111956] - 2026-11-19
 
 ### Added
