@@ -55,6 +55,25 @@ def tools(projects: Projects, root: String, load: Fn[String, List[Mcp.Server]]) 
   adopted.unwrap_or([])
 end
 
+## The state of the project servers of the folder `root`, none for a folder with no project servers.
+def status(projects: Projects, root: String) -> List[McpTools.Status]
+  answer: Result[List[McpTools.Status]] = Actor.call(projects.actor.address, CALL_MS) do |reply|
+    Msg.Status(root, reply)
+  end
+
+  nothing: List[McpTools.Status] = []
+  answer.unwrap_or(nothing)
+end
+
+## The board of the project servers of `root` once it started, for a reconnect.
+def board(projects: Projects, root: String) -> Optional[McpTools.Board]
+  answer: Result[Optional[McpTools.Board]] = Actor.call(projects.actor.address, CALL_MS) do |reply|
+    Msg.Board(root, reply)
+  end
+
+  try_some(answer)
+end
+
 ## Reads the project file of each folder with sessions again (`read` gives its servers): the servers of a folder whose
 ## file changed stop and the new ones start. A folder whose file does not read keeps its servers. What it did, for the
 ## report (how many servers stopped and started); empty when nothing changed.
@@ -112,6 +131,8 @@ enum Msg
   Tools(String, Channel[Optional[List[Spec.Tool]]])
   Adopt(String, List[Mcp.Server], Channel[List[Spec.Tool]])
   Roots(Channel[List[String]])
+  Status(String, Channel[List[McpTools.Status]])
+  Board(String, Channel[Optional[McpTools.Board]])
   Replace(Map[String, List[Mcp.Server]], Channel[List[Int]])
   Ready(String, List[Mcp.Server], McpTools.Board)
 end
@@ -146,6 +167,12 @@ def held(state: Held, msg: Msg) -> Actor.Step[Held]
 
       Actor.reply(reply, tools_of(projects[root]))
       Actor.continue(state.with(projects: projects))
+    Msg.Status(root, reply) ->
+      Actor.reply(reply, status_of(state.projects.get(root)))
+      Actor.continue(state)
+    Msg.Board(root, reply) ->
+      Actor.reply(reply, state.projects.get(root).map { |project| project.board }.unwrap_or(none))
+      Actor.continue(state)
     Msg.Roots(reply) ->
       Actor.reply(reply, state.projects.keys.sort)
       Actor.continue(state)
@@ -227,6 +254,18 @@ def reaped(state: Held) -> Map[String, Project]
   end
 
   projects
+end
+
+def status_of(found: Optional[Project]) -> List[McpTools.Status]
+  case found
+    some(project) ->
+      case project.board
+        some(board) -> McpTools.status(board)
+        none -> project.servers.map { |server| McpTools.Status(server: server, state: "connecting") }
+      end
+
+    none -> []
+  end
 end
 
 def tools_of(project: Project) -> List[Spec.Tool] = project.board.map { |board| McpTools.tools(board) }.unwrap_or([])
