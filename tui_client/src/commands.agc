@@ -4,6 +4,8 @@ import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Picker from "picker"
+import Side from "side"
+import Sides from "sides"
 import State from "state"
 import Logins from "logins"
 import Turn from "turn"
@@ -39,7 +41,7 @@ def on_command(app: State.Model, command: Client.Command) -> State.Model
     Client.Command.Confine(on) -> confine_command(app, on)
     Client.Command.Profile(name) -> State.tried(app, profile_command(app, name))
     Client.Command.Compact -> compact_command(app)
-    Client.Command.Logs(count) -> State.tried(app, logs_command(app, count))
+    Client.Command.Logs(count) -> logs_command(app, count)
     Client.Command.Reload -> State.tried(app, reload_command(app))
     Client.Command.Mouse -> mouse_command(app)
     Client.Command.Login(name) -> Logins.login_command(app, name)
@@ -203,13 +205,11 @@ def profile_command(app: State.Model, name: Optional[String]) -> Result[State.Mo
 
   current = (try app.backend.session.call(app.id)).profile.map { |p| p.name }.unwrap_or("")
   lines = Client.profile_listing(try app.backend.list_profiles.call(app.id), current)
-  ok(app.with(entries: app.entries + lines.map { |line| State.note_entry(line) }))
+  ok(Sides.shown(app, Side.of("Profiles", lines)))
 end
 
 # `/help`, after the session's slash commands were read again.
-def help_command(app: State.Model) -> State.Model
-  app.with(entries: app.entries + Client.help(app.custom).map { |line| State.note_entry(line) })
-end
+def help_command(app: State.Model) -> State.Model = Sides.shown(app, Side.of("Help", Client.help(app.custom)))
 
 def thinking_command(app: State.Model, level: Optional[String]) -> State.Model
   case level
@@ -275,23 +275,11 @@ end
 
 ## What the server read again, as notes: one line, then each warning.
 def reload_command(app: State.Model) -> Result[State.Model]
-  shown = app
-  for line in Client.reload_report(try app.backend.reload.call())
-    shown = State.noted(shown, line)
-  end
-
-  ok(shown)
+  ok(Sides.shown(app, Side.of("Reload", Client.reload_report(try app.backend.reload.call()))))
 end
 
-## The last lines of the server log, as notes.
-def logs_command(app: State.Model, count: Int) -> Result[State.Model]
-  shown = app
-  for line in (try app.backend.server_log.call(count)).lines
-    shown = State.noted(shown, line)
-  end
-
-  ok(shown)
-end
+## The last lines of the server log in the side panel, which follows it.
+def logs_command(app: State.Model, count: Int) -> State.Model = Sides.logs(app, count)
 
 # The summary takes as long as a turn: a command asks for it and gives the outcome as a note.
 def compact_command(app: State.Model) -> State.Model

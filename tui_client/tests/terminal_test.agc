@@ -644,7 +644,8 @@ def reloaded(rig: Rig) -> Result[Void]
   end
 
   try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
-  try shows(rig, "skills: 1 added (lint), 1 removed (old); config unchanged (0 rules, approvals off)")
+  try shows(rig, "skills: 1 added (lint), 1 removed (old);")
+  try shows(rig, "unchanged (0 rules, approvals off)")
   try shows(rig, "warning: w")
   ok()
 end

@@ -4,6 +4,7 @@
 
 ### Added
 
+- `finn` has a side panel on the right for local output, so the transcript holds only the conversation: `/logs` opens it on the server log, which it follows live, and `/help`, the report of `/reload` and the list of `/profile` open in it. It sits beside the transcript from 100 columns and takes its place below; PgUp/PgDn and the wheel scroll it, Esc closes it, Ctrl+P opens or closes it and Ctrl+B moves the focus (#318).
 - `/confine [on|off]` keeps the file tools in the session folder (or lets them reach any path) for one session; `confine_files` in the config file and `FINN_CONFINE_FILES=1` do it for every session.
 - `/reload` in `finn` and `finn chat` (`POST /v1/reload`) makes the server read the config file (rules, `approvals`, `files.command`, `mouse`, providers), the MCP servers, the skills and the `AGENTS.md` again without a restart: sessions that run use them from their next turn, a turn that runs is not stopped, and a config file that does not read is kept back with the reason. Only MCP servers reload, all of them when the list changed.
 - In `finn`, a drag over the transcript selects text and letting go copies it (OSC 52) with a note; a double click selects a word and Esc clears the selection. `/mouse` turns the mouse reporting off and on, and `"mouse": false` in the config file starts with it off; Shift+drag (Option+drag in iTerm2) is the terminal's own selection.

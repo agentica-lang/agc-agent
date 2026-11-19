@@ -76,15 +76,15 @@ Type them in either client:
 | `/model [PROVIDER/]NAME` | change the model (and provider) from the next turn on; alone, pick or show it |
 | `/thinking [low\|medium\|high\|default]` | show or change the thinking level |
 | `/confine [on\|off]` | keep the file tools in the session folder, or let them reach any path; alone: show it |
-| `/profile [NAME]` | change the [profile](tools.md#profiles) between turns (Tab completes it in `finn`); alone, list them |
+| `/profile [NAME]` | change the [profile](tools.md#profiles) between turns (Tab completes it in `finn`); alone, list them in the side panel |
 | `/compact` | fold the history into a summary now |
 | `/login [PROVIDER]` | set up a provider (`finn`) |
 | `/logout [PROVIDER]` | remove a stored key; alone, every one |
 | `/mouse` | turn the mouse of `finn` off or on; off, the terminal selects text ([Copying text](#copying-text)) |
-| `/logs [N]` | the last N lines (default 50) of the server log, read through the server; the warnings of the server show in a yellow banner when `finn` opens, which a click or Esc (empty prompt) closes |
-| `/reload` | the server reads its config file, MCP servers, skills and `AGENTS.md` again, without a restart ([what it covers](config.md#reload)); the answer is one line and a line for each warning |
+| `/logs [N]` | the last N lines (default 50) of the server log, read through the server, in the [side panel](#the-side-panel) where it follows the log; the warnings of the server show in a yellow banner when `finn` opens, which a click or Esc (empty prompt) closes |
+| `/reload` | the server reads its config file, MCP servers, skills and `AGENTS.md` again, without a restart ([what it covers](config.md#reload)); the answer is one line and a line for each warning, in the side panel |
 | `/stop` | stop the running turn |
-| `/help` | the list |
+| `/help` | the list, in the side panel |
 | `/quit` | leave; a session with something in it prints how to come back to it (`finn --session ID`, `finn chat --session ID`) |
 
 Any other `/name` goes to the agent as a message, so `/name` of a [skill](skills.md) loads that skill, and a [slash command](#slash-commands) puts its prompt there. What `/tree`, `/fork` and `/compact` do is on [Sessions](sessions.md).
@@ -125,7 +125,7 @@ The command runs as the `bash` tool would, with a timeout of 10 minutes. It neve
 | Alt+Enter | send after the running turn ends (a follow-up) |
 | Ctrl+J | a new line |
 | Ctrl+G | edit the prompt in `$VISUAL`, else `$EDITOR` (it may hold arguments, as `code -w`); what the editor saves becomes the prompt, with a large paste as its text. The text goes through a file only you can read in the state folder, removed afterwards. In the editor, Ctrl+C is a key for it and never quits `finn` |
-| Esc | stop the running turn |
+| Esc | stop the running turn; with the [side panel](#the-side-panel) focused (or covering the transcript), close it instead |
 | Ctrl+C; Ctrl+D on an empty prompt while nothing runs and no approval waits | quit |
 | Shift+Tab | the next thinking level |
 | Ctrl+T | show or hide the thinking |
@@ -138,11 +138,23 @@ The command runs as the `bash` tool would, with a timeout of 10 minutes. It neve
 | Ctrl+W, Alt+Backspace | delete the word before the cursor; at the start of a line, the line end before it |
 | Ctrl+U, Ctrl+K | delete to the start or the end of the line |
 | Delete, Ctrl+D | delete the character after the cursor |
-| PgUp, PgDn | scroll |
+| PgUp, PgDn | scroll the transcript, or the side panel when it has the focus |
+| Ctrl+P | open the side panel on the server log, or close it |
+| Ctrl+B | with the side panel open on a wide screen, move the focus between it and the transcript |
 | Ctrl+Y, Ctrl+N | allow or deny the call that waits for an approval |
 | Tab | move to the approval panel: `y` allow, `n` deny, `a` allow the same call for the session; Tab or Esc goes back |
 
 The mouse answers the keys of a panel, opens a tool call or the thinking, and moves the cursor in the prompt.
+
+## The side panel
+
+Local output that is not part of the conversation opens in a panel on the right, so that the transcript holds only what the model sees: `/logs` (the server log, which the panel follows as the server writes), `/help`, the report of `/reload` and the list of `/profile`. Short confirmations (`mouse on`, `copied 12 characters`, `model X from the next turn`) stay in the transcript as notes, and so do the warnings of a profile and the end of a compaction.
+
+On a screen of 100 columns or more, the panel sits beside the transcript, prompt and footer, which take the columns it leaves (40% of the screen, 40 to 80 columns). On a narrower one it takes the place of the transcript, and the prompt and the footer stay.
+
+The panel has its own scroll and its own focus. It has the focus when it opens, and on a narrow screen always. PgUp and PgDn scroll the side that has the focus, the mouse wheel the side it is over, and a click in a side, or Ctrl+B, gives it the focus. Esc closes the panel while it has the focus (a second Esc then stops a running turn); with the transcript focused, Esc does what it did. Ctrl+P closes the panel, or opens it on the server log. Opening another output replaces the one shown, and `/new` or `/resume` closes it.
+
+The server log is read again every second while the panel follows its end. Scroll up and the panel stops where it is (its title says `paused`); PgDn to the end follows again. `/logs N` sets how many of the last lines it holds.
 
 ## Copying text
 

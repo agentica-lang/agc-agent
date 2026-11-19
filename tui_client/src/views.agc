@@ -10,6 +10,7 @@ import Prompt from "prompt"
 import Rate from "rate"
 import Screen from "screen"
 import Select from "select"
+import Side from "side"
 import Transcript from "transcript"
 import State from "state"
 import Files from "files"
@@ -51,6 +52,7 @@ def laid_out(app: State.Model, counted: Bool) -> Screen.Frame
     place: Footer.place(app.cwd, app.home, app.branch, session_name(app), app.width),
     queued: app.follow_ups.map { |text| "follow-up: #{Client.printable(text)}" },
     banner: app.banner,
+    cover: covering(app),
   )
 
   shown = Transcript.tail(app.entries, app.width, State.folds(app), app.height + app.scroll)
@@ -60,6 +62,24 @@ def laid_out(app: State.Model, counted: Bool) -> Screen.Frame
   # The rows of the frame are counted from the first row of the transcript, not of what `shown` kept.
   top = frame.top + Transcript.size(app.entries, app.width, State.folds(app)) - shown.size
   frame.with(top: top, marks: Select.marks(app.selection, top, frame.transcript.size))
+end
+
+## The rows of the side panel beside the app, the full height of the screen; none when it is closed or covers the
+## transcript.
+def beside(app: State.Model) -> List[Layout.Row]
+  return [] if not Side.wide?(app.screen_width)
+
+  case app.side
+    some(side) -> Side.rows(side, Side.columns(app.screen_width), app.height)
+    none -> []
+  end
+end
+
+## How many rows the side panel has: its title and its lines.
+def side_rows(app: State.Model) -> Int
+  return app.height if Side.wide?(app.screen_width)
+
+  framed(app).area
 end
 
 ## The rows of the approval panel, without the transcript: a key needs only these.
@@ -85,6 +105,13 @@ HINTS = [
   "↑ history",
   "PgUp/PgDn",
 ]
+
+# The side panel that takes the transcript's place: only on a narrow screen.
+def covering(app: State.Model) -> Optional[Side.Side]
+  return none if Side.wide?(app.screen_width)
+
+  app.side
+end
 
 # The first non-empty line of the session's first user message, as the screen can show it.
 def session_name(app: State.Model) -> String

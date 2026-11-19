@@ -23,6 +23,7 @@ import Files from "files"
 import Logins from "logins"
 import Turn from "turn"
 import Session from "session"
+import Sides from "sides"
 import Commands from "commands"
 import Editor from "editor"
 import Views from "views"
@@ -187,7 +188,7 @@ def opened(model: State.Model) -> Result[State.Model]
 end
 
 def update(model: State.Model, msg: State.Msg) -> TUI.Step[State.Model, State.Msg]
-  app = handled(model.with(now: Time.monotonic_ms, clock_s: Time.now_ms / 1000), msg)
+  app = Sides.fit(handled(model.with(now: Time.monotonic_ms, clock_s: Time.now_ms / 1000), msg))
   # The answer that streams changes on every delta: it is cut again when the stream rests.
   if not stream?(msg)
     app = app.with(entries: Transcript.wrapped(app.entries, app.width, State.folds(app)))
@@ -210,26 +211,39 @@ def update(model: State.Model, msg: State.Msg) -> TUI.Step[State.Model, State.Ms
   TUI.Step(model: app.with(effects: []), cmds: cmds)
 end
 
-def view(model: State.Model) -> TUI.Node = Screen.view(Views.framed(model), model.theme)
+def view(model: State.Model) -> TUI.Node
+  left = Screen.view(Views.framed(model), model.theme)
+  side = Views.beside(model)
+  return left if side.empty?
+
+  Screen.beside(left, side, model.theme)
+end
 
 def subscriptions(model: State.Model) -> List[TUI.Sub[State.Msg]]
-  keys = TUI.Sub.Events(->(event) { State.Msg.Key(event) })
-  return [keys] if not State.busy?(model)
+  subs = [TUI.Sub.Events(->(event) { State.Msg.Key(event) })]
+  if State.busy?(model)
+    subs = subs.push(TUI.Sub.Tick(State.SPIN_MS, State.Msg.Spin))
+  end
 
-  [keys, TUI.Sub.Tick(State.SPIN_MS, State.Msg.Spin)]
+  if Sides.live?(model)
+    subs = subs.push(TUI.Sub.Tick(Sides.LOG_MS, State.Msg.LogTick))
+  end
+
+  subs
 end
 
 private
 
 def handled(app: State.Model, msg: State.Msg) -> State.Model
   case msg
-    State.Msg.Key(TUI.Event.Resize(width, height)) ->
-      app.with(width: width, height: height, selection: none, pressed: none, click: none)
+    State.Msg.Key(TUI.Event.Resize(width, height)) -> Sides.resized(app, width, height)
     State.Msg.Key(event) -> Keys.on_key(app, event)
     State.Msg.Signal(signal) -> Session.signalled(app, signal)
     State.Msg.Edited(result) -> Editor.closed(app, result)
     State.Msg.Exported(result) -> Commands.exported(app, result)
     State.Msg.Note(text) -> State.noted(app, text)
+    State.Msg.LogTick -> Sides.tick(app)
+    State.Msg.LogRead(serial, result) -> Sides.read(app, serial, result)
     State.Msg.Answered(approval_id, result) ->
       outcome = Approvals.answered(app.approvals, approval_id, result, app.now)
       answered = Answering.unyolo(app.with(approvals: outcome.panel), approval_id, result)
