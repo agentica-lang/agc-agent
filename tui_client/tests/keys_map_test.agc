@@ -1,0 +1,124 @@
+# The `keys` of the config: a key in effect does what its action does, the old one does nothing, the hints and `/help`
+# show the keys in effect, and `/reload` applies a change.
+
+import Client from "pkg/client/client"
+import Protocol from "pkg/protocol/protocol"
+import TUI from "pkg/tui/tui"
+import App from "../src/app"
+import Args from "../src/args"
+
+# The thinking level on F9 and the logs on Ctrl+L: those keys do their action, F2 and Ctrl+P do nothing; Alt+T works
+# as a key of the config, and a swap of two actions works.
+def test_a_key_of_the_config_does_its_action() -> Result[Void]
+  moved = model_of().with(keys: Client.effective([setting("thinking_level", "f9"), setting("logs", "ctrl+l")]))
+  try Test.eq(App.update(moved, f(9)).cmds.size, 1)
+  try Test.eq(App.update(moved, f(2)).cmds.size, 0)
+  try Test.eq(App.update(moved, f(2)).model.effort, none)
+  try Test.eq(App.update(moved, f(9)).model.effort, some("low"))
+  try Test.eq(App.update(moved, ctrl("l")).model.side.some?, true)
+  try Test.eq(App.update(moved, ctrl("p")).model.side.none?, true)
+  alt = model_of().with(keys: Client.effective([setting("thinking_level", "alt+t")]))
+  try Test.eq(App.update(alt, alt_char("t")).model.effort, some("low"))
+  try Test.eq(App.update(alt, alt_char("t")).model.prompt, "")
+  swapped = model_of().with(
+    keys: Client.effective([setting("thinking_level", "shift+tab"), setting("cycle_profile", "f2")]),
+  )
+
+  try Test.eq(App.update(swapped, back_tab()).model.effort, some("low"))
+  Test.eq(App.update(swapped, f(2)).model.effort, none)
+end
+
+# The hints, the keys of `/help` and the key of a hint of the side panel are the ones in effect.
+def test_the_hints_and_the_help_show_the_keys_in_effect() -> Result[Void]
+  model = model_of(160).with(
+    id: "s1",
+    keys: Client.effective([
+      setting("thinking_level", "f9"),
+      setting("logs", "ctrl+l"),
+      setting("cycle_profile", "alt+m"),
+    ]),
+  )
+
+  footer = rows(model).last
+  try Test.assert(footer.include?("F9 thinking level") and footer.include?("Alt+M profile"), footer)
+  try Test.assert(footer.include?("^L logs") and not footer.include?("⇧Tab") and not footer.include?("^P"), footer)
+  helped = App.update(model.with(prompt: "/help", cursor: 5), enter()).model
+  lines = helped.side.unwrap!.lines.join("\n")
+  try Test.assert(lines.include?("Alt+M") and lines.include?("F9 the next thinking level"), lines)
+  try Test.assert(lines.include?("Ctrl+L") and not lines.include?("Ctrl+P"), lines)
+  plain = model_of(160).with(id: "s1")
+  try Test.assert(
+    rows(plain).last.include?("⇧Tab profile") and rows(plain).last.include?("F2 thinking level"),
+    rows(plain).last,
+  )
+
+  Test.assert(rows(plain).last.include?("^P logs"), rows(plain).last)
+end
+
+# `/reload` reads the keys of the server's config again: the new ones apply, the report lists the entries that were not
+# taken, and a key of the old config does nothing any more.
+def test_a_reload_applies_the_keys() -> Result[Void]
+  entries: Channel[List[Protocol.KeySetting]] = Channel.new(1)
+  _ = entries.send([setting("logs", "f9")], 0)
+  display = -> {
+    no_keys: List[Protocol.KeySetting] = []
+    now = entries.recv(0).unwrap_or(no_keys)
+    _ = entries.send(now, 0)
+    Client.Display(mouse: true, clipboard: Protocol.ClipboardSetting(), keys: now)
+  }
+
+  backend = backend().with(display: display, reload: -> { ok(Protocol.Reloaded(config: "reloaded")) })
+
+  model = model_of().with(backend: backend, keys: Client.effective([setting("logs", "f9")]))
+  try Test.eq(App.update(model, f(9)).model.side.some?, true)
+  _ = entries.recv(0)
+  _ = entries.send([setting("thinking_level", "f8"), setting("nothing", "f1")], 0)
+  reloaded = App.update(model.with(prompt: "/reload", cursor: 7), enter()).model
+  try Test.eq(reloaded.keys.warnings.size, 1)
+  try Test.assert(
+    reloaded.side.unwrap!.lines.any? { |line| line.include?("warning: keys: nothing") },
+    "#{reloaded.side}",
+  )
+
+  closed = App.update(reloaded.with(side: none), f(9)).model
+  try Test.eq(closed.side.none?, true)
+  Test.eq(App.update(closed, f(8)).model.effort, some("low"))
+end
+
+# A server whose log has a line.
+def backend() -> Client.Backend
+  Client.unreachable_backend().with(
+    server_log: ->(_lines: Int) { ok(Protocol.ServerLog(lines: ["log line"], warnings: [], warning_count: 0)) },
+  )
+end
+
+def setting(action: String, key: String) -> Protocol.KeySetting = Protocol.KeySetting(action: action, key: key)
+
+def model_of(width: Int = 100) -> App.Model
+  options = Args.Options(
+    state_dir: none,
+    server_command: none,
+    session: none,
+    cwd: none,
+    model: none,
+    api: none,
+    thinking: false,
+  )
+
+  App.seed(backend(), options, Channel.new(1), width, 20)
+end
+
+def rows(model: App.Model) -> List[String]
+  cells = TUI.layout(App.view(model), model.width, model.height)
+  (0...model.height).to_a.map do |y| cells.select { |cell| cell.y == y }.map { |cell| cell.char }.join("").strip end
+end
+
+def f(n: Int) -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.F(n), TUI.Mods()))
+
+def ctrl(c: String) -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Ctrl(c), TUI.Mods()))
+
+def alt_char(c: String) -> App.Msg = App.Msg.Key(TUI.Event.Char(c, TUI.Mods(alt: true)))
+
+def back_tab() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.BackTab, TUI.Mods()))
+
+def enter() -> App.Msg = App.Msg.Key(TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))

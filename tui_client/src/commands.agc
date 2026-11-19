@@ -123,6 +123,12 @@ def next_profile(app: State.Model) -> State.Model
   State.tried(app, cycled(app))
 end
 
+## The model with the keys that the config of the server asks for (its `keys` map as `settings`, checked), the defaults where it says
+## none; the warnings about its entries are in `keys.warnings`.
+def with_keys(app: State.Model, settings: List[Protocol.KeySetting]) -> State.Model
+  app.with(keys: Client.effective(settings))
+end
+
 private
 
 # The profile after the session's in the order Shift+Tab goes through; the list of the server, without the ones that
@@ -298,7 +304,9 @@ end
 
 ## What the server read again, as notes: one line, then each warning.
 def reload_command(app: State.Model) -> Result[State.Model]
-  ok(Sides.shown(app, Side.of("Reload", Client.reload_report(try app.backend.reload.call()))))
+  report = Client.reload_report(try app.backend.reload.call())
+  keyed = with_keys(app, app.backend.display.call().keys)
+  ok(Sides.shown(keyed, Side.of("Reload", report + keyed.keys.warnings.map { |warning| "warning: #{warning}" })))
 end
 
 ## The last lines of the server log in the side panel, which follows it.

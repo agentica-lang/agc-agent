@@ -4,6 +4,7 @@
 
 ### Added
 
+- `keys` in the user's config file changes the keys of `finn` (`cycle_profile`, `thinking_level`, `show_thinking`, `show_tools`, `logs`, `side_focus`, `edit_prompt`, `page_up`, `page_down`): `{"keys": {"thinking_level": "alt+t"}}`. A bad entry is a warning and keeps the default; `/reload` applies it, and the hints and `/help` show the keys in effect.
 - In `finn`, Shift+Tab goes through the profiles (`build`, `plan`, then yours by name), from the next turn; a turn that runs refuses it with a note.
 
 ### Fixed

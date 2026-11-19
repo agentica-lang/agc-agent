@@ -90,7 +90,8 @@ end
 
 private
 
-# The key hints of the status line, most needed first: those that do not fit are left out. The keys are those in effect.
+# The key hints of the status line, most needed first: those that do not fit are left out. The keys are those
+# in effect.
 def hint_list(app: State.Model) -> List[String]
   [
     "Enter send",
@@ -139,7 +140,14 @@ def hints(app: State.Model) -> List[String]
     end
 
     if Side.active?(side, app.screen_width)
-      keys = ["Esc close panel", focus, "#{scroll_hint(app)} scroll panel", "#{short(app, "logs")} close panel", "^C quit"]
+      keys = [
+        "Esc close panel",
+        focus,
+        "#{scroll_hint(app)} scroll panel",
+        "#{short(app, "logs")} close panel",
+        "^C quit",
+      ]
+
       return keys.select { |text| text != "" } + hint_list(app).select { |text| not rest_of_keys?(app, text) }
     end
 

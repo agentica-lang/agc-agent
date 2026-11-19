@@ -489,7 +489,11 @@ def test_the_tree_picker_moves_the_session_and_fills_the_prompt() -> Result[Void
   held = App.update(picked.model.with(prompt: "hi"), enter())
   try Test.eq([held.cmds.size.to_s, held.model.prompt, held.model.outbox.size.to_s], ["0", "hi", "0"])
   helped = App.update(picked.model.with(prompt: "/help"), enter()).model
-  try Test.eq([helped.prompt, helped.side.unwrap!.lines.last], ["", Client.help([], Client.key_lines(Client.defaults())).last])
+  try Test.eq(
+    [helped.prompt, helped.side.unwrap!.lines.last],
+    ["", Client.help([], Client.key_lines(Client.defaults())).last],
+  )
+
   renewed = App.update(picked.model.with(prompt: "/new"), enter()).model
   try Test.eq([renewed.prompt, renewed.entries.last.text], ["/new", "the session is moving: wait for it"])
   typed = App.update(model.with(picker: none, prompt: "/tree 3"), enter())
