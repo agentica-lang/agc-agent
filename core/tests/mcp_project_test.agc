@@ -186,17 +186,41 @@ def test_sessions_that_start_and_end_together_share_the_servers() -> Result[Void
   end
 end
 
-# A folder that no session event named (they can be lost) gets its servers at the first read of its tools.
+# A folder that no session event named (they can be lost) gets its servers at the first read of its tools, when its
+# file has any; with no session of its own, the end of the next session stops them.
 def test_a_folder_without_a_session_event_gets_its_servers_when_its_tools_are_read() -> Result[Void]
   S.within_dir do |dir|
     repo = try make_repo(dir, "repo", {"proj": try fake("project", dir)})
+    plain = try make_repo(dir, "plain", {})
     try S.write_config(dir, {})
-    mounted = try Builtins.mcp(Extensions.Served(registry: Extensions.Registry()), reader(dir), dir, [repo])
+    mounted = try Builtins.mcp(Extensions.Served(registry: Extensions.Registry()), reader(dir), dir, [repo, plain])
     tools = Extensions.late_tools(mounted.served).unwrap!
     try Test.eq(tools.call(repo).size, 0)
-    result = wait_for(tools, repo, "mcp__proj__echo", true)
+    try Test.eq(tools.call(plain).size, 0)
+    try wait_for(tools, repo, "mcp__proj__echo", true)
+    held = tools.call(repo)
+    result = H.using(wired(mounted)) do |h|
+      id = try H.new_session_in(h, plain)
+      try drop(h, id)
+      gone(held, "mcp__proj__echo")
+    end
+
     mounted.stop.call()
     result
+  end
+end
+
+# Readers of one project file at once make the log folder together: none of them fails because another was first.
+def test_readers_of_a_project_file_at_once_all_get_its_servers() -> Result[Void]
+  S.within_dir do |dir|
+    repo = try make_repo(dir, "repo", {"proj": try fake("project", dir)})
+    try S.write_config(dir, {})
+    read = reader(dir)
+    state = "#{dir}/state"
+    try Dir.mkdir_private(state)
+    readers = (0...8).to_a.map { |_| Task.spawn { McpTools.project(repo, read, state, []) } }
+    found = readers.map { |reader| Task.await(reader) }
+    Test.eq(found.map { |f| f.ok? and f.unwrap!.servers.size == 1 }, [true, true, true, true, true, true, true, true])
   end
 end
 

@@ -284,12 +284,17 @@ def named(
   server(name, json, "#{logs.folder}/#{logs.prefix}#{name}.log", read, label, cwd, strict)
 end
 
-# The logs can hold what the tools read: the folder is only the user's, as the state folder is.
+# The logs can hold what the tools read: the folder is only the user's, as the state folder is. Two readers of
+# a project
+# file may make it at once: the one that lost finds it there.
 def private_dir(path: String) -> Result[Void]
   return ok() if File.stat(path).ok?
 
-  try Dir.mkdir(Sandbox.parent(path))
-  Dir.mkdir_private(path)
+  _ = Dir.mkdir(Sandbox.parent(path))
+  made = Dir.mkdir_private(path)
+  return ok() if File.stat(path).ok?
+
+  made
 end
 
 def added(started: Started, server: Mcp.Server, client: Mcp.Client, listed: Result[List[Mcp.Tool]]) -> Started

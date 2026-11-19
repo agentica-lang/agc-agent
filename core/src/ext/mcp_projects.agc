@@ -32,15 +32,27 @@ def ended(projects: Projects, session: String) -> Void
   _ = Actor.cast(projects.actor.address, Msg.Ended(session))
 end
 
-## The tools that the project servers of the folder `root` listed so far. A folder that no session event named yet (one
-## was lost: the events do not wait for the observer) is taken in now, with the servers `load` gives, so its sessions are
-## not left without their tools; a lost `session_ended` only delays the stop of its servers to the end of the server.
+## The tools that the project servers of the folder `root` listed so far. A folder that no session event named yet (the
+## events do not wait for the observer) is read now with `load`, outside the actor, and taken in when its file has
+## servers, so its sessions are not left without their tools. Such a folder has no session: the next `session_ended` or
+## reload stops its servers, unless a `session_started` named it by then.
 def tools(projects: Projects, root: String, load: Fn[String, List[Mcp.Server]]) -> List[Spec.Tool]
-  answer: Result[List[Spec.Tool]] = Actor.call(projects.actor.address, CALL_MS) do |reply|
-    Msg.Tools(root, load, reply)
+  known: Result[Optional[List[Spec.Tool]]] = Actor.call(projects.actor.address, CALL_MS) do |reply|
+    Msg.Tools(root, reply)
   end
 
-  answer.unwrap_or([])
+  for found in option_list(try_some(known))
+    return found
+  end
+
+  servers = load.call(root)
+  return [] if servers.empty?
+
+  adopted: Result[List[Spec.Tool]] = Actor.call(projects.actor.address, CALL_MS) do |reply|
+    Msg.Adopt(root, servers, reply)
+  end
+
+  adopted.unwrap_or([])
 end
 
 ## Reads the project file of each folder with sessions again (`read` gives its servers): the servers of a folder whose
@@ -97,7 +109,8 @@ end
 enum Msg
   Opened(String, String, List[Mcp.Server])
   Ended(String)
-  Tools(String, Fn[String, List[Mcp.Server]], Channel[List[Spec.Tool]])
+  Tools(String, Channel[Optional[List[Spec.Tool]]])
+  Adopt(String, List[Mcp.Server], Channel[List[Spec.Tool]])
   Roots(Channel[List[String]])
   Replace(Map[String, List[Mcp.Server]], Channel[List[Int]])
   Ready(String, List[Mcp.Server], McpTools.Board)
@@ -119,20 +132,25 @@ end
 def held(state: Held, msg: Msg) -> Actor.Step[Held]
   case msg
     Msg.Opened(root, session, servers) -> Actor.continue(state.with(projects: add(state, root, session, servers)))
-    Msg.Ended(session) -> Actor.continue(state.with(projects: remove(state, session)))
-    Msg.Tools(root, load, reply) ->
+    Msg.Ended(session) ->
+      kept = remove(state, session)
+      Actor.continue(state.with(projects: reaped(state.with(projects: kept))))
+    Msg.Tools(root, reply) ->
+      Actor.reply(reply, state.projects.get(root).map { |project| tools_of(project) })
+      Actor.continue(state)
+    Msg.Adopt(root, servers, reply) ->
       projects = state.projects
       if not projects.has_key?(root)
-        projects = adopted(state, root, load)
+        projects = adopted(state, root, servers)
       end
 
-      Actor.reply(reply, tools_of(projects.get(root)))
+      Actor.reply(reply, tools_of(projects[root]))
       Actor.continue(state.with(projects: projects))
     Msg.Roots(reply) ->
       Actor.reply(reply, state.projects.keys.sort)
       Actor.continue(state)
     Msg.Replace(fresh, reply) ->
-      projects = state.projects
+      projects = reaped(state)
       stopped = 0
       started = 0
       for root in fresh.keys.sort
@@ -193,21 +211,25 @@ def remove(state: Held, session: String) -> Map[String, Project]
 end
 
 # A folder with no session noted: its servers start, and no session id will end them.
-def adopted(state: Held, root: String, load: Fn[String, List[Mcp.Server]]) -> Map[String, Project]
-  servers = load.call(root)
-  if not servers.empty?
-    _ = Actor.cast(state.keeper, Job.Set(root, servers))
-  end
-
+def adopted(state: Held, root: String, servers: List[Mcp.Server]) -> Map[String, Project]
+  _ = Actor.cast(state.keeper, Job.Set(root, servers))
   state.projects.put(root, Project(sessions: [], servers: servers))
 end
 
-def tools_of(found: Optional[Project]) -> List[Spec.Tool]
-  case found
-    some(project) -> project.board.map { |board| McpTools.tools(board) }.unwrap_or([])
-    none -> []
+# The folders adopted without a session are dropped, and their servers stop.
+def reaped(state: Held) -> Map[String, Project]
+  projects = state.projects
+  for root in projects.keys
+    next if not projects[root].sessions.empty?
+
+    projects = projects.delete(root)
+    _ = Actor.cast(state.keeper, Job.Set(root, []))
   end
+
+  projects
 end
+
+def tools_of(project: Project) -> List[Spec.Tool] = project.board.map { |board| McpTools.tools(board) }.unwrap_or([])
 
 def kept(state: Kept, msg: Job) -> Actor.Step[Kept]
   case msg
@@ -239,6 +261,13 @@ end
 
 def stopped(board: McpTools.Board) -> Void
   McpTools.stop(McpTools.wait(board))
+end
+
+def try_some[T](value: Result[Optional[T]]) -> Optional[T]
+  case value
+    ok(found) -> found
+    error(_) -> none
+  end
 end
 
 def option_list[T](value: Optional[T]) -> List[T]
