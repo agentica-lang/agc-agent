@@ -102,6 +102,8 @@ finn login chatgpt      # or /login chatgpt in finn
 
 Finn shows a URL and a code. Open the URL, sign in, and enter the code within 15 minutes; Esc stops waiting. Finn then lists the models of your plan and keeps the tokens in `chatgpt.json` in the state folder (`~/.local/state/finn`), mode 0600, apart from `auth.json`. The first of the list is the default model. An expired token is refreshed when a call gets a 401, once for all sessions at a time. `finn logout chatgpt` removes the file.
 
+Run `finn login chatgpt` again to refresh the saved model list if your plan adds a model, such as GPT-6.2 Sol.
+
 ## Your own provider
 
 The `providers` list of your config file (`~/.config/finn/config.json`) adds an OpenAI-compatible API, or replaces a preset of the same name:

@@ -1,4 +1,5 @@
 {"models": [
+  {"slug": "gpt-6.2-sol", "context_window": 500000, "visibility": "list"},
   {"slug": "gpt-5.1-codex", "display_name": "gpt-5.1-codex", "context_window": 272000, "max_context_window": 272000},
   {"slug": "gpt-5.1-codex-mini", "context_window": 272000, "visibility": "list"}
 ]}

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- The ChatGPT provider asks for the model catalog of Codex 0.170.0, which lists GPT-6.2 Sol and the other new models of your plan.
+
 ## [finn-20261119135800] - 2026-11-19
 
 ### Fixed
