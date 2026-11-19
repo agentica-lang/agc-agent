@@ -391,6 +391,7 @@ def test_the_server_status_and_its_stop_round_trip() -> Result[Void]
     stopping: true,
     approvals: some(false),
     clipboard: some(Protocol.ClipboardSetting(provider: "command", command: ["xclip", "-i"])),
+    keys: some([Protocol.KeySetting(action: "logs", key: "f9")]),
   )
 
   try Test.eq(Protocol.decode_server_status(Protocol.encode_server_status(status)), ok(status))

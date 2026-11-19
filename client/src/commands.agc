@@ -1,21 +1,7 @@
 ## The commands a user types in either client, as `/name argument`. Pure.
 
 import Protocol from "pkg/protocol/protocol"
-
-## The keys of `finn` (the full screen) as `/help` lists them; the details are in the user guide.
-KEYS = [
-  "Esc                        close the side panel when it is open (a shown selection is cleared first); else stop the running turn",
-  "Ctrl+C                     quit; Ctrl+J or Alt+Enter: a new line or a follow-up",
-  "Shift+Tab                  the next thinking level; Ctrl+T shows the thinking, Ctrl+O the tool output",
-  "PgUp/PgDn                  scroll the transcript, or the side panel when it has the focus",
-  "Ctrl+P                     open the side panel on the server log, or close it",
-  "F6                         move the focus between the side panel and the transcript (wide screens)",
-  "Ctrl+Y / Ctrl+N            allow or deny the call that waits for an approval",
-  "Ctrl+G                     edit the prompt in $VISUAL or $EDITOR",
-  "Up / Down                  earlier messages you sent (Up on an empty prompt)",
-  "mouse                      drag selects and copies, a double click selects a word; Shift+drag is the terminal's own",
-  "all keys: finn docs cli",
-]
+import Keys from "keys"
 
 ## The keys of `finn chat`.
 CHAT_KEYS = ["Ctrl+C                     stop the running turn; a second one, or one with nothing running, leaves"]
@@ -177,6 +163,35 @@ def help(custom: List[Usage] = [], keys: List[String] = []) -> List[String]
   return rows + tail if keys.empty?
 
   rows + tail + ["", "Keys"] + keys.map { |key| "  #{key}" }
+end
+
+## The lines of the keys of `finn` (the full screen) for `/help`, with the keys of `bindings`; the details are in the
+## user guide.
+def key_lines(bindings: Keys.Bindings) -> List[String]
+  key = ->(action: String) { Keys.label(Keys.key_of(bindings, action)) }
+  [
+    row(
+      "Esc",
+      "close the side panel when it is open (a shown selection is cleared first); else stop the running turn",
+    ),
+    row("Ctrl+C", "quit; Ctrl+J or Alt+Enter: a new line or a follow-up"),
+    row(
+      key.call("cycle_profile"),
+      "the next profile (build, plan, yours); #{key.call("thinking_level")} the next thinking level",
+    ),
+    row("#{key.call("show_thinking")} / #{key.call("show_tools")}", "show the thinking / the tool output"),
+    row(
+      "#{key.call("page_up")}/#{key.call("page_down")}",
+      "scroll the transcript, or the side panel when it has the focus",
+    ),
+    row(key.call("logs"), "open the side panel on the server log, or close it"),
+    row(key.call("side_focus"), "move the focus between the side panel and the transcript (wide screens)"),
+    row("Ctrl+Y / Ctrl+N", "allow or deny the call that waits for an approval"),
+    row(key.call("edit_prompt"), "edit the prompt in $VISUAL or $EDITOR"),
+    row("Up / Down", "earlier messages you sent (Up on an empty prompt)"),
+    row("mouse", "drag selects and copies, a double click selects a word; Shift+drag is the terminal's own"),
+    "all keys: finn docs cli",
+  ]
 end
 
 ## The session's slash commands as the help and the suggestions show them; one that does not load says so.
@@ -537,3 +552,6 @@ def thinking(argument: String) -> Result[Command]
 
   ok(Command.Thinking(some(argument)))
 end
+
+# A label and what it does, the text in a column of its own.
+def row(label: String, text: String) -> String = "#{label}#{" " * [27 - label.length, 2].max.unwrap!}#{text}"

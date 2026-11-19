@@ -5,9 +5,16 @@
 ### Added
 
 - MCP servers come from `~/.config/finn/mcp.json` by default (`FINN_MCP_CONFIG` replaces it) and from `.finn/mcp.json` of a session folder under `FINN_TRUSTED_DIRS`: the servers of a project start with the first session in its folder and stop with the last one, a project server named like a user server is left out, and a project file cannot read `${NAME}` of the environment. `/reload` reads both files again.
+- `keys` in the user's config file changes the keys of `finn` (`cycle_profile`, `thinking_level`, `show_thinking`, `show_tools`, `logs`, `side_focus`, `edit_prompt`, `page_up`, `page_down`): `{"keys": {"thinking_level": "f3"}}` (case is ignored, no spaces inside a name; the old key of a moved action stops working; Esc is fixed). A bad entry is a warning and keeps the default; `/reload` applies it, and the hints and `/help` show the keys in effect.
+- In `finn`, Shift+Tab goes through the profiles (`build`, `plan`, then yours by name), from the next turn; a turn that runs refuses it with a note.
+
+### Fixed
+
+- In `finn`, `/prof` and Enter, then Enter or an arrow key before the profiles are listed, no longer runs the bare `/profile` and opens the side panel: keys typed before the list shows are dropped (Esc ends the wait), so press Enter again once it shows, and Enter on `/profile ` runs the profile of its row.
 
 ### Changed
 
+- **Breaking:** the thinking level moves from Shift+Tab to F2 (`/thinking` stays), since Shift+Tab now cycles the profiles. F2 is free in tmux, readline and terminals, unlike Alt+T, which window managers take.
 - **Breaking:** with the side panel open, Esc closes it whatever has the focus (a selection is cleared first); the next Esc does what it did before.
 - `/help` ends with the keys, the panel's title names F6, and the footer says `^P logs` while the panel is closed.
 - A merge to main that changes only `docs/`, Markdown files or `.github/` makes no `finn-<ts>` tag any more.

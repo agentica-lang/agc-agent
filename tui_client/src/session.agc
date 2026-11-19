@@ -72,6 +72,8 @@ def create(app: State.Model) -> Result[State.Model]
     usage: none,
     branch: "",
     profile: profile_name(session),
+    arguments: none,
+    reading_arguments: false,
   )
 
   ok(
@@ -226,6 +228,8 @@ def attach(app: State.Model, session: Protocol.Session, skip_replay: Bool) -> St
     history: entries.select { |entry| entry.kind == Transcript.Kind.User }.map { |entry| entry.text },
     files: none,
     reading_files: false,
+    arguments: none,
+    reading_arguments: false,
     turn: session.turn_id.some?,
     shell: session.shell_id.some?,
     effort: State.wanted_level(app, session.effort),

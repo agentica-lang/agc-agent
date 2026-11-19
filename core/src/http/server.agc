@@ -281,6 +281,7 @@ def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
         no_worker: some(control.no_worker),
         mouse: some(now.mouse),
         clipboard: some(Protocol.ClipboardSetting(provider: now.clipboard, command: now.clipboard_command)),
+        keys: some(now.keys.keys.sort.map { |action| Protocol.KeySetting(action: action, key: now.keys[action]) }),
       ),
     ),
   )

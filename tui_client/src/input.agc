@@ -13,8 +13,8 @@ PASTE_CHARS = 1000
 MAX_MATCHES = 8
 ## The commands whose argument the list completes.
 ARGUMENT_COMMANDS = ["/model", "/resume", "/tree", "/fork", "/thinking", "/profile"]
-## The commands that Enter runs with the row of their list.
-RUNNING_COMMANDS = ["/model", "/resume", "/tree", "/fork"]
+## The commands that Enter runs with the row of their list, the first or the current one.
+RUNNING_COMMANDS = ["/model", "/resume", "/tree", "/fork", "/profile"]
 
 ## What a list under the editor completes.
 enum Source
