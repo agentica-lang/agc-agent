@@ -102,6 +102,8 @@ struct Model
   serving: String = ""
   ## The session's profile for the status line; empty for the built-in `build`.
   profile: String = ""
+  ## The keys in effect (an empty map is the defaults).
+  keys: Client.Bindings
   ## The slash commands of the session's folder `custom_dir`, for the suggestions after `/` and `/help`; read again
   ## when a session of another folder opens.
   custom: List[Client.Usage] = []
@@ -259,6 +261,7 @@ def seed(
     write: &Terminal.write,
     host: Clipboard.Host(),
     clipboard: Protocol.ClipboardSetting(),
+    keys: Client.defaults(),
     run: &Clipboard.run,
     editor: editor_of(System.env("VISUAL").unwrap_or(""), System.env("EDITOR").unwrap_or("")),
     now: Time.monotonic_ms,

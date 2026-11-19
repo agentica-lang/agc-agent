@@ -231,7 +231,7 @@ end
 
 # `/help`, after the session's slash commands were read again.
 def help_command(app: State.Model) -> State.Model
-  Sides.shown(app, Side.of("Help", Client.help(app.custom, Client.KEYS)))
+  Sides.shown(app, Side.of("Help", Client.help(app.custom, Client.key_lines(app.keys))))
 end
 
 def thinking_command(app: State.Model, level: Optional[String]) -> State.Model

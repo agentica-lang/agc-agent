@@ -90,25 +90,34 @@ end
 
 private
 
-# The key hints of the status line, most needed first: those that do not fit are left out.
-HINTS = [
-  "Enter send",
-  "Esc stop",
-  "^C quit",
-  "^J newline",
-  "Alt+Enter follow-up",
-  "⇧Tab profile",
-  "F2 thinking level",
-  "^T show thinking",
-  "^O show tool output",
-  "@ files",
-  "/ commands (Esc Enter: as typed)",
-  "↑ history",
-  "PgUp/PgDn",
-]
+# The key hints of the status line, most needed first: those that do not fit are left out. The keys are those in effect.
+def hint_list(app: State.Model) -> List[String]
+  [
+    "Enter send",
+    "Esc stop",
+    "^C quit",
+    "^J newline",
+    "Alt+Enter follow-up",
+    "#{short(app, "cycle_profile")} profile",
+    "#{short(app, "thinking_level")} thinking level",
+    "#{short(app, "show_thinking")} show thinking",
+    "#{short(app, "show_tools")} show tool output",
+    "@ files",
+    "/ commands (Esc Enter: as typed)",
+    "↑ history",
+    scroll_hint(app),
+  ]
+end
 
-# With the side panel closed, `^P logs` comes after the keys that every screen needs.
-CLOSED_HINTS = HINTS.take(3) + ["^P logs"] + HINTS.drop(3)
+# With the side panel closed, the logs key comes after the keys that every screen needs.
+def closed_hints(app: State.Model) -> List[String]
+  hints = hint_list(app)
+  hints.take(3) + ["#{short(app, "logs")} logs"] + hints.drop(3)
+end
+
+def short(app: State.Model, action: String) -> String = Client.short(Client.key_of(app.keys, action))
+
+def scroll_hint(app: State.Model) -> String = "#{short(app, "page_up")}/#{short(app, "page_down")}"
 
 # The side panel that takes the transcript's place: only on a narrow screen.
 def covering(app: State.Model) -> Optional[Side.Side]
@@ -123,26 +132,28 @@ def hints(app: State.Model) -> List[String]
   for side in State.option_list(app.side)
     focus = ""
     if Side.wide?(app.screen_width)
-      focus = "F6 transcript"
+      focus = "#{short(app, "side_focus")} transcript"
       if not side.focused
-        focus = "F6 panel"
+        focus = "#{short(app, "side_focus")} panel"
       end
     end
 
     if Side.active?(side, app.screen_width)
-      keys = ["Esc close panel", focus, "PgUp/PgDn scroll panel", "^P close panel", "^C quit"]
-      return keys.select { |text| text != "" } + HINTS.select { |text| not rest_of_keys?(text) }
+      keys = ["Esc close panel", focus, "#{scroll_hint(app)} scroll panel", "#{short(app, "logs")} close panel", "^C quit"]
+      return keys.select { |text| text != "" } + hint_list(app).select { |text| not rest_of_keys?(app, text) }
     end
 
-    own = ["Enter send", "Esc close panel", focus, "^C quit", "^P close panel"].select { |text| text != "" }
-    return own + HINTS.drop(3)
+    own = ["Enter send", "Esc close panel", focus, "^C quit", "#{short(app, "logs")} close panel"]
+    return own.select { |text| text != "" } + hint_list(app).drop(3)
   end
 
-  CLOSED_HINTS
+  closed_hints(app)
 end
 
 # The hints that the side panel's own replace.
-def rest_of_keys?(text: String) -> Bool = ["Enter send", "Esc stop", "^C quit", "PgUp/PgDn"].include?(text)
+def rest_of_keys?(app: State.Model, text: String) -> Bool
+  ["Enter send", "Esc stop", "^C quit", scroll_hint(app)].include?(text)
+end
 
 # The first non-empty line of the session's first user message, as the screen can show it.
 def session_name(app: State.Model) -> String

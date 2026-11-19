@@ -73,7 +73,7 @@ def test_commands_parse_with_their_arguments() -> Result[Void]
   try Test.assert(Client.listed().all? { |usage| help.any? { |line| line.start_with?("#{usage.name} ") } }, "#{help}")
   try Test.assert(not help.include?("Keys"), "no keys unless asked")
 
-  screen = Client.help([], Client.KEYS)
+  screen = Client.help([], Client.key_lines(Client.defaults()))
   try Test.assert(screen.drop_while { |line| line != "Keys" }.any? { |line| line.include?("F6") }, "#{screen}")
   chat = Client.help([], Client.CHAT_KEYS)
   Test.assert(not chat.any? { |line| line.include?("F6") }, "#{chat}")

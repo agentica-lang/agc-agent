@@ -49,6 +49,15 @@ struct ServerStatus
   ## How the full screen copies a selection (`clipboard` and `clipboard_command` of the config file); none from a server
   ## older than this field.
   clipboard: Optional[ClipboardSetting] = none
+  ## The `keys` of the config file as written, an action and its key each; the full screen checks them. None from a
+  ## server older than this field.
+  keys: Optional[List[KeySetting]] = none
+end
+
+## One entry of `keys` in the user's config file: the action and the name of the key the user gave it.
+struct KeySetting
+  action: String
+  key: String
 end
 
 ## The clipboard of the user's config file: `auto`, `osc52`, `tmux` or `command`, and the program that `command` runs.
@@ -505,6 +514,7 @@ def shape() -> List[String]
     Wire.record("Branched", Branched.members),
     Wire.record("ServerStatus", ServerStatus.members),
     Wire.record("ClipboardSetting", ClipboardSetting.members),
+    Wire.record("KeySetting", KeySetting.members),
     Wire.record("ServerLog", ServerLog.members),
     Wire.record("Reloaded", Reloaded.members),
     Wire.record("ShellAccepted", ShellAccepted.members),

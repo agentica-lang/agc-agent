@@ -35,11 +35,13 @@ struct Server
   token: String
 end
 
-## What the config of the server asks of the full screen: the mouse on or off, and how a selection is copied. A server that
-## does not say (or does not answer) leaves the mouse on and the clipboard `auto`.
+## What the config of the server asks of the full screen: the mouse on or off, how a selection is copied, and the keys
+## it moves. A server that does not say (or does not answer) leaves the mouse on, the clipboard `auto` and the keys as
+## they are.
 struct Display
   mouse: Bool
   clipboard: Protocol.ClipboardSetting
+  keys: List[Protocol.KeySetting] = []
 end
 
 ## The health check is short: a server that does not answer in time is not started again, it is reported.
@@ -57,7 +59,11 @@ end
 def display(server: Server) -> Display
   case server_status(server)
     ok(status) ->
-      Display(mouse: status.mouse.unwrap_or(true), clipboard: status.clipboard.unwrap_or(Protocol.ClipboardSetting()))
+      Display(
+        mouse: status.mouse.unwrap_or(true),
+        clipboard: status.clipboard.unwrap_or(Protocol.ClipboardSetting()),
+        keys: status.keys.unwrap_or([]),
+      )
     error(_) -> unset()
   end
 end

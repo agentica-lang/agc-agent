@@ -134,6 +134,7 @@ export Replies.SessionExport
 export Replies.Branched
 export Replies.ServerStatus
 export Replies.ClipboardSetting
+export Replies.KeySetting
 export Replies.ServerLog
 export Replies.Reloaded
 export Replies.ShellAccepted
