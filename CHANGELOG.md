@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [finn-20261119111956] - 2026-11-19
+
 ### Added
 
 - `/mcp` shows the MCP servers and their states (`connecting`, `connected`, `failed` with the reason) in the side panel of `finn` (`finn chat` prints them), `/mcp NAME` lists the tools of one, and `/mcp reconnect NAME` starts one again (Tab completes the name); a server that failed at the start is in the banner. The server has `GET /v1/mcp` and `POST /v1/mcp/NAME/reconnect`.
