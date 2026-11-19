@@ -75,6 +75,10 @@ def keyed(app: State.Model, event: TUI.Event) -> State.Model
 
   return app if Approvals.captures?(app.approvals, event)
 
+  for closed in State.option_list(Files.cancelled(app, event))
+    return closed
+  end
+
   return app if Files.waiting?(app, event)
 
   for found in State.option_list(Files.mention_list(app))

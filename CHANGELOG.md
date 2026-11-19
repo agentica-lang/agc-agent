@@ -8,7 +8,7 @@
 
 ### Fixed
 
-- In `finn`, `/prof` and Enter, then Enter or an arrow key before the profiles are listed, no longer runs the bare `/profile` and opens the side panel: they wait for the list, and Enter on `/profile ` runs the profile of its row.
+- In `finn`, `/prof` and Enter, then Enter or an arrow key before the profiles are listed, no longer runs the bare `/profile` and opens the side panel: keys typed before the list shows are dropped (Esc ends the wait), so press Enter again once it shows, and Enter on `/profile ` runs the profile of its row.
 
 ### Changed
 

@@ -132,6 +132,16 @@ def runs_choice?(app: State.Model, found: Input.Mention, event: TUI.Event) -> Bo
   end
 end
 
+## Esc on that wait closes the list, as it does a list that shows: Enter then sends the line as typed.
+def cancelled(app: State.Model, event: TUI.Event) -> Optional[State.Model]
+  case event
+    TUI.Event.Key(TUI.Key.Escape, _) if awaiting_list?(app) ->
+      word = Input.argument_word(app.prompt, State.cursor(app))
+      some(app.with(mention_closed: word.map { |w| some(w.start) }.unwrap_or(none)))
+    _ -> none
+  end
+end
+
 ## The line is a command's name and a space (`/profile `, which Enter on `/prof` made) and the server has not listed its
 ## choices yet: Enter, Up and Down wait for the list, as sent now Enter would run the bare command and Up and Down would
 ## leave the line for the history. A typed argument, a list that failed or that Esc closed, and `/thinking` (which has
