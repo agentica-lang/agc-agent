@@ -162,6 +162,8 @@ end
 struct McpControl
   status: Fn[String, Result[List[Protocol.McpServer]]]
   reconnect: Fn[String, String, Result[Protocol.McpServer]]
+  ## The last lines of the log of a server: the folder, the name and how many.
+  log: Fn[String, String, Int, Result[List[String]]]
 end
 
 ## `provider` is `auto`, `osc52`, `tmux` or `command`; `command` is the program that `command` runs.

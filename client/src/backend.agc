@@ -27,6 +27,7 @@ struct Backend
   ## The MCP servers of the user and of the session's folder, and a new start of one by name.
   mcp: Fn[String, Result[Protocol.McpStatus]]
   mcp_reconnect: Fn[String, String, Result[Protocol.McpServer]]
+  mcp_log: Fn[String, String, Int, Result[Protocol.McpLog]]
   list_commands: Fn[String, Result[Protocol.CommandList]]
   list_logins: Fn[Result[Protocol.LoginList]]
   login: Fn[String, String, Result[Protocol.LoginStatus]]
@@ -71,6 +72,7 @@ def http_backend(server: Http.Server) -> Backend
     list_profiles: ->(id) { Http.list_profiles(server, id) },
     mcp: ->(id) { Http.mcp_status(server, id) },
     mcp_reconnect: ->(id, name) { Http.mcp_reconnect(server, id, name) },
+    mcp_log: ->(id, name, lines) { Http.mcp_log(server, id, name, lines) },
     list_commands: ->(id) { Http.list_commands(server, id) },
     list_logins: -> { Http.list_logins(server) },
     login: ->(provider, key) { Http.login(server, provider, key) },
@@ -112,6 +114,7 @@ def unreachable_backend() -> Backend
     list_profiles: ->(_id) { failed() },
     mcp: ->(_id) { failed() },
     mcp_reconnect: ->(_id, _name) { failed() },
+    mcp_log: ->(_id, _name, _lines) { failed() },
     list_commands: ->(_id) { failed() },
     list_logins: -> { failed() },
     login: ->(_provider, _key) { failed() },

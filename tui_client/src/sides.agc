@@ -15,7 +15,7 @@ LOG_MS = 1000
 ## `side` is open with the focus: local output goes here, not to the transcript.
 def shown(app: State.Model, side: Side.Side) -> State.Model
   resized(
-    app.with(side: some(side), reading_side: false, side_serial: app.side_serial + 1),
+    app.with(side: some(side), reading_side: false, side_serial: app.side_serial + 1, mcp: none),
     app.screen_width,
     app.height,
   )
@@ -23,7 +23,7 @@ end
 
 ## The panel is closed and the app has the whole width again.
 def closed(app: State.Model) -> State.Model
-  resized(app.with(side: none, reading_side: false), app.screen_width, app.height)
+  resized(app.with(side: none, reading_side: false, mcp: none), app.screen_width, app.height)
 end
 
 ## The screen is `width` by `height`: the app takes the columns the panel leaves, and the panel is cut again for its own.
@@ -66,6 +66,14 @@ def paged(app: State.Model, pages: Int) -> State.Model = moved(app, pages * [roo
 def moved(app: State.Model, rows: Int) -> State.Model
   case app.side
     some(side) -> app.with(side: some(Side.scrolled(side, rows, room(app))))
+    none -> app
+  end
+end
+
+## The panel scrolled so that its line `index` shows.
+def revealed(app: State.Model, index: Int) -> State.Model
+  case app.side
+    some(side) -> app.with(side: some(Side.revealed(side, index, room(app))))
     none -> app
   end
 end

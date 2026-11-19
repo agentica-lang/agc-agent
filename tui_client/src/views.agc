@@ -71,7 +71,7 @@ def beside(app: State.Model) -> List[Layout.Row]
   return [] if not Side.wide?(app.screen_width)
 
   case app.side
-    some(side) -> Side.rows(side, Side.columns(app.screen_width), app.height, true, app.keys)
+    some(side) -> Side.rows(own_keys(app, side), Side.columns(app.screen_width), app.height, true, app.keys)
     none -> []
   end
 end
@@ -125,7 +125,14 @@ def scroll_hint(app: State.Model) -> String = "#{short(app, "page_up")}/#{short(
 def covering(app: State.Model) -> Optional[Side.Side]
   return none if Side.wide?(app.screen_width)
 
-  app.side
+  app.side.map { |side| own_keys(app, side) }
+end
+
+# The panel with its own keys named only while they are its: not under a prompt with text.
+def own_keys(app: State.Model, side: Side.Side) -> Side.Side
+  return side if app.prompt == ""
+
+  side.with(keys: "")
 end
 
 # The key hints: with the side panel open they say what its keys do, in the place of the ones that it takes (Esc
@@ -141,15 +148,14 @@ def hints(app: State.Model) -> List[String]
     end
 
     if Side.active?(side, app.screen_width)
-      keys = [
-        "Esc close panel",
-        focus,
-        "#{scroll_hint(app)} scroll panel",
-        "#{short(app, "logs")} close panel",
-        "^C quit",
-      ]
+      keys = (
+        mcp_hints(app) +
+        ["Esc close panel", focus, "#{scroll_hint(app)} scroll panel", "#{short(app, "logs")} close panel", "^C quit"]
+      )
 
-      return keys.select { |text| text != "" } + hint_list(app).select { |text| not rest_of_keys?(app, text) }
+      detail = app.mcp.map { |panel| panel.view != "" }.unwrap_or(false)
+      keys = keys.select { |text| text != "" and not (detail and text == "Esc close panel") }
+      return keys + hint_list(app).select { |text| not rest_of_keys?(app, text) }
     end
 
     own = ["Enter send", "Esc close panel", focus, "^C quit", "#{short(app, "logs")} close panel"]
@@ -157,6 +163,19 @@ def hints(app: State.Model) -> List[String]
   end
 
   closed_hints(app)
+end
+
+# What the keys of the MCP panel do, while it has them.
+def mcp_hints(app: State.Model) -> List[String]
+  return [] if app.prompt != ""
+
+  for panel in State.option_list(app.mcp)
+    return ["Esc back", "r reconnect", "t tools", "l log"] if panel.view != ""
+
+    return ["↑↓/jk move", "r reconnect", "t/Enter tools", "l log"]
+  end
+
+  []
 end
 
 # The hints that the side panel's own replace.

@@ -177,6 +177,11 @@ struct McpStatus
   servers: List[McpServer]
 end
 
+## The answer of `GET /v1/mcp/NAME/log`: the last lines of the log that the server writes (its stderr).
+struct McpLog
+  lines: List[String]
+end
+
 ## A slash command of the session's folders, as `/NAME`: `source` is `user` or `project`, or empty for a file that does
 ## not load (`warnings` says why); `warnings` also names a skill or a command of the user it wins over.
 struct CommandInfo
@@ -424,6 +429,10 @@ def encode_mcp_status(reply: McpStatus) -> String = JSON.encode(reply)
 
 def decode_mcp_status(text: String) -> Result[McpStatus] = Wire.decode(text, McpStatus.codec)
 
+def encode_mcp_log(reply: McpLog) -> String = JSON.encode(reply)
+
+def decode_mcp_log(text: String) -> Result[McpLog] = Wire.decode(text, McpLog.codec)
+
 def encode_shell_accepted(reply: ShellAccepted) -> String = JSON.encode(reply)
 
 def encode_login_status(reply: LoginStatus) -> String = JSON.encode(reply)
@@ -535,6 +544,7 @@ def shape() -> List[String]
     Wire.record("McpTool", McpTool.members),
     Wire.record("McpServer", McpServer.members),
     Wire.record("McpStatus", McpStatus.members),
+    Wire.record("McpLog", McpLog.members),
     Wire.record("CommandInfo", CommandInfo.members),
     Wire.record("CommandList", CommandList.members),
     Wire.record("Message", Message.members),

@@ -21,8 +21,12 @@ def test_mcp_lists_the_servers_and_banners_the_failed_ones() -> Result[Void]
   )
 
   try Test.eq(listed.banner, ["/mcp reconnect web: mcp web failed: no answer"])
-  try Test.eq(ran(listed, "/mcp").banner, listed.banner)
-  tools = ran(listed, "/mcp fs")
+  try Test.eq(
+    ran(App.update(listed, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model, "/mcp").banner,
+    listed.banner,
+  )
+
+  tools = ran(App.update(listed, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model, "/mcp fs")
   try Test.eq(tools.side.unwrap!.title, "MCP fs")
   try Test.assert(tools.side.unwrap!.lines.any? { |l| l.include?("mcp__fs__read: Reads a file") }, "#{tools.side}")
   _ = state.recv(0)
