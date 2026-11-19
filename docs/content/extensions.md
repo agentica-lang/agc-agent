@@ -32,7 +32,7 @@ end
 
 ## Run it
 
-The example is a member of the repository's workspace (`examples/extension/agentica.toml`), so it runs from a clone, where `core` is read in place. `core` cannot be fetched from outside the repository yet: that needs workspace dependencies in Agentica (agentica#1850). Its `bash` package is ready: it has no file over 1 MiB and downloads a prebuilt library for five targets (agc-agent#290). The planned form is one dependency on the repository, by the tag of a Finn version:
+The example is a member of the repository's workspace (`examples/extension/agentica.toml`), so it runs from a clone, where `core` is read in place. Outside the repository (Agentica 0.35 and later) one dependency on the repository, by the tag of a Finn version, gives `core` (`workspace = true`). Its `bash` package has no file over 1 MiB and downloads a prebuilt library for five targets:
 
 ```toml
 finn = { git = "https://github.com/agentica-lang/agc-agent", tag = "finn-<ts>", workspace = true }

@@ -5,6 +5,9 @@
 ### Added
 
 - `finn` and `finn chat` on a terminal ask `Restart it and go on? [Y/n]` when the server runs another version of Finn, instead of stopping (`[y/N]` and the running turns named while turns run); `--restart` or `FINN_RESTART=1` answers yes without asking.
+### Changed
+
+- Finn needs Agentica 0.35.0: the pinned release, the `agentica` versions of the packages and the Monty download are updated, the date of `finn export` comes from the builtin `Time`, and `core` can be used from outside the repository (`workspace = true`).
 
 ## [finn-20261119111956] - 2026-11-19
 
