@@ -161,7 +161,7 @@ end
 
 ## The MCP servers of the user and those of the folder of session `id`.
 def mcp_status(server: Server, id: String) -> Result[Protocol.McpStatus]
-  Protocol.decode_mcp_status(try call(server, "GET", "#{Protocol.MCP_PATH}?session=#{id}", ""))
+  Protocol.decode_mcp_status(try call(server, "GET", "#{Protocol.MCP_PATH}#{of_session(id)}", ""))
 end
 
 ## The server `name` started again; the answer waits for its tools, so it takes a while.
@@ -169,7 +169,7 @@ def mcp_reconnect(server: Server, id: String, name: String) -> Result[Protocol.M
   body = try call_within(
     server,
     "POST",
-    "#{Protocol.mcp_reconnect_path(name)}?session=#{id}",
+    "#{Protocol.mcp_reconnect_path(name)}#{of_session(id)}",
     "",
     MCP_RECONNECT_TIMEOUT_MS,
   )
@@ -178,6 +178,13 @@ def mcp_reconnect(server: Server, id: String, name: String) -> Result[Protocol.M
   return error("the server answered no MCP server") if servers.empty?
 
   ok(servers[0])
+end
+
+# The query that names the session whose folder has the project servers; none without a session.
+def of_session(id: String) -> String
+  return "" if id.empty?
+
+  "?session=#{id}"
 end
 
 def list_logins(server: Server) -> Result[Protocol.LoginList]

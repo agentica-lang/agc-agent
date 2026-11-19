@@ -112,6 +112,10 @@ export Keys.action_of
 export Keys.label
 export Keys.short
 export Commands.profile_listing
+export Commands.mcp_listing
+export Commands.mcp_tools
+export Commands.mcp_failures
+export Commands.mcp_banner
 export Commands.listed
 export Commands.Usage
 export Commands.COMMANDS

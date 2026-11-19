@@ -422,6 +422,7 @@ def on_command(chat: Chat, command: Client.Command) -> Result[Step]
     Client.Command.Thinking(level) -> setting_command(chat, "thinking", level, Protocol.UpdateSession(effort: level))
     Client.Command.Confine(on) -> confine_command(chat, on)
     Client.Command.Profile(name) -> tried(chat, profile_command(chat, name))
+    Client.Command.Mcp(name, reconnecting) -> tried(chat, mcp_command(chat, name, reconnecting))
     Client.Command.Compact -> said(compact_command(chat), "[compacting the history]")
     Client.Command.Logs(count) -> logs_command(chat, count)
     Client.Command.Reload -> reload_command(chat)
@@ -457,6 +458,20 @@ def profile_command(chat: Chat, name: Optional[String]) -> Result[Chat]
 
   current = (try Client.session(chat.server, chat.id)).profile.map { |p| p.name }.unwrap_or("")
   ok(note(chat, Client.profile_listing(try Client.list_profiles(chat.server, chat.id), current).join("\n")))
+end
+
+# `/mcp` lists the MCP servers, `/mcp NAME` the tools of one, and `/mcp reconnect NAME` starts it again.
+def mcp_command(chat: Chat, name: Optional[String], reconnecting: Bool) -> Result[Chat]
+  for wanted in option_list(name)
+    if reconnecting
+      server = try Client.mcp_reconnect(chat.server, chat.id, wanted)
+      return ok(note(chat, Client.mcp_listing(Protocol.McpStatus(servers: [server])).join("\n")))
+    end
+
+    return ok(note(chat, Client.mcp_tools(try Client.mcp_status(chat.server, chat.id), wanted).join("\n")))
+  end
+
+  ok(note(chat, Client.mcp_listing(try Client.mcp_status(chat.server, chat.id)).join("\n")))
 end
 
 # The session's slash commands for `/help`; none when the server does not list them.

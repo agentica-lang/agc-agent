@@ -468,6 +468,11 @@ def mcp_failures(status: Protocol.McpStatus) -> List[String]
     .map { |server| printable("mcp #{server.name} failed: #{server.error} (/mcp reconnect #{server.name})") }
 end
 
+## The banner with the rows of failed MCP servers: those of an earlier read are replaced by the ones of `status`.
+def mcp_banner(banner: List[String], status: Protocol.McpStatus) -> List[String]
+  banner.select { |row| not row.start_with?("mcp ") } + mcp_failures(status)
+end
+
 ## The model's todo list, one line an item: `[x]` completed, `[>]` in progress, `[ ]` pending, then its printable text.
 def todo_lines(todos: List[Protocol.Todo]) -> List[String]
   todos.map do |todo|
