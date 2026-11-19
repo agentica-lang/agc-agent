@@ -11,6 +11,7 @@ import Selecting from "selecting"
 import Screen from "screen"
 import Transcript from "transcript"
 import State from "state"
+import Keymap from "keymap"
 import Level from "level"
 import Answering from "answering"
 import Editor from "editor"
@@ -61,6 +62,8 @@ def keyed(app: State.Model, event: TUI.Event) -> State.Model
 
   return Logins.on_device_key(app, event) if app.device.some? and not State.ctrl_c?(event)
 
+  event = Keymap.translated(app.keys, event)
+
   for picker in State.option_list(app.picker)
     return Commands.on_picker_key(app, picker, event) if not State.ctrl_c?(event)
   end
@@ -71,6 +74,12 @@ def keyed(app: State.Model, event: TUI.Event) -> State.Model
   end
 
   return app if Approvals.captures?(app.approvals, event)
+
+  for closed in State.option_list(Files.cancelled(app, event))
+    return closed
+  end
+
+  return app if Files.waiting?(app, event)
 
   for found in State.option_list(Files.mention_list(app))
     return send(Files.on_mention_key(app, found, event)) if Files.runs_choice?(app, found, event)
@@ -138,7 +147,8 @@ def on_prompt_key(app: State.Model, event: TUI.Event) -> State.Model
     TUI.Event.Mouse(TUI.Mouse.Left, x, y, _) -> pressed(app, x, y)
     TUI.Event.Mouse(TUI.Mouse.Release, _, _, _) -> released(app)
     TUI.Event.Key(TUI.Key.Tab, _) -> app.with(approvals: Approvals.toggled(app.approvals, app.now))
-    TUI.Event.Key(TUI.Key.BackTab, _) -> Level.leveled(app)
+    TUI.Event.Key(TUI.Key.BackTab, _) -> Commands.next_profile(app)
+    TUI.Event.Key(TUI.Key.F(2), _) -> Level.leveled(app)
     TUI.Event.Key(TUI.Key.Escape, _) if app.approvals.focused ->
       app.with(approvals: Approvals.toggled(app.approvals, app.now))
     TUI.Event.Key(TUI.Key.Escape, _) if app.side.some? -> Sides.closed(app)

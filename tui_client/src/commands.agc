@@ -114,7 +114,37 @@ def turn_mouse(app: State.Model, on: Bool) -> State.Model
   app.with(mouse: on, selection: none, pressed: none, click: none)
 end
 
+## Shift+Tab: the next profile, `build`, `plan`, then the others by name, and `build` again; it applies from the next
+## turn, as `/profile NAME` does, and a turn that runs refuses it.
+def next_profile(app: State.Model) -> State.Model
+  return State.noted(app, "a turn is running: change the profile after it") if State.busy?(app)
+  return app if app.id == "" or app.moving
+
+  State.tried(app, cycled(app))
+end
+
+## The model with the keys that the config of the server asks for (its `keys` map as `settings`, checked), with the
+## warnings about its entries in `keys.warnings`; the keys it has when the server says none (it did not answer).
+def with_keys(app: State.Model, settings: Optional[List[Protocol.KeySetting]]) -> State.Model
+  case settings
+    some(listed) -> app.with(keys: Client.effective(listed))
+    none -> app
+  end
+end
+
 private
+
+# The profile after the session's in the order Shift+Tab goes through; the list of the server, without the ones that
+# do not load.
+def cycled(app: State.Model) -> Result[State.Model]
+  listed = (try app.backend.list_profiles.call(app.id)).profiles.select { |p| p.source != "" }.map { |p| p.name }
+  first = ["build", "plan"].select { |name| listed.include?(name) }
+  names = first + listed.select { |name| not first.include?(name) }.sort
+  return error("no profile to change to") if names.empty?
+
+  at = names.index(State.profile_name(app)).map { |i| i + 1 }.unwrap_or(0)
+  profile_command(app, some(names[at % names.size]))
+end
 
 def stop_command(app: State.Model) -> State.Model
   return State.noted(app, "no turn is running") if not State.busy?(app)
@@ -210,7 +240,7 @@ end
 
 # `/help`, after the session's slash commands were read again.
 def help_command(app: State.Model) -> State.Model
-  Sides.shown(app, Side.of("Help", Client.help(app.custom, Client.KEYS)))
+  Sides.shown(app, Side.of("Help", Client.help(app.custom, Client.key_lines(app.keys))))
 end
 
 def thinking_command(app: State.Model, level: Optional[String]) -> State.Model
@@ -277,7 +307,9 @@ end
 
 ## What the server read again, as notes: one line, then each warning.
 def reload_command(app: State.Model) -> Result[State.Model]
-  ok(Sides.shown(app, Side.of("Reload", Client.reload_report(try app.backend.reload.call()))))
+  report = Client.reload_report(try app.backend.reload.call())
+  keyed = with_keys(app, app.backend.display.call().keys)
+  ok(Sides.shown(keyed, Side.of("Reload", report + keyed.keys.warnings.map { |warning| "warning: #{warning}" })))
 end
 
 ## The last lines of the server log in the side panel, which follows it.

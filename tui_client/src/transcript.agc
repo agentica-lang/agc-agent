@@ -6,7 +6,6 @@ import Calls from "calls"
 import Markdown from "markdown"
 import Width from "width"
 
-FOLDED_THINKING = "▸ thinking (click or ^T shows it)"
 ## Every row starts one column in.
 INDENT = " "
 
@@ -25,6 +24,9 @@ end
 struct Folds
   thinking: Bool = false
   tools: Bool = false
+  ## The names of the keys that show them, for the hints of the folded rows.
+  thinking_key: String = "^T"
+  tools_key: String = "^O"
 end
 
 struct Entry
@@ -295,10 +297,13 @@ end
 # Only a thinking block draws differently with `folds.thinking`, and only a tool call with `folds.tools`.
 def fresh?(entry: Entry, width: Int, folds: Folds) -> Bool
   case entry.wrapped
-    some(cut) -> cut.width == width and folded(entry, cut.folds) == folded(entry, folds)
+    some(cut) ->
+      cut.width == width and folded(entry, cut.folds) == folded(entry, folds) and same_keys?(cut.folds, folds)
     none -> false
   end
 end
+
+def same_keys?(a: Folds, b: Folds) -> Bool = a.thinking_key == b.thinking_key and a.tools_key == b.tools_key
 
 def folded(entry: Entry, folds: Folds) -> Bool
   case entry.kind
@@ -319,11 +324,23 @@ def open?(entry: Entry, default: Bool) -> Bool = entry.open.unwrap_or(default)
 
 def entry_lines(entry: Entry, width: Int, folds: Folds) -> List[Line]
   if entry.kind == Kind.Thinking and not open?(entry, folds.thinking)
-    return [Line(kind: entry.kind, spans: [Markdown.Span(text: INDENT + FOLDED_THINKING, look: Markdown.Look.Plain)])]
+    return [
+      Line(
+        kind: entry.kind,
+        spans: [
+          Markdown.Span(
+            text: "#{INDENT}▸ thinking (click or #{folds.thinking_key} shows it)",
+            look: Markdown.Look.Plain,
+          ),
+        ],
+      ),
+    ]
   end
 
   for call in option_list(entry.call)
-    return Calls.rows(call, width, open?(entry, folds.tools)).map { |spans| Line(kind: entry.kind, spans: spans) }
+    return Calls.rows(call, width, open?(entry, folds.tools), folds.tools_key).map { |spans|
+      Line(kind: entry.kind, spans: spans)
+    }
   end
 
   if entry.kind == Kind.Assistant

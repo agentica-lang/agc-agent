@@ -136,6 +136,8 @@ struct Options
   ## How the full screen copies a selection: `"clipboard"` and `"clipboard_command"` of the user's config file.
   clipboard: String = "auto"
   clipboard_command: List[String] = []
+  ## The `keys` of the user's config file as written, an action and its key each: the full screen checks them.
+  keys: Map[String, String] = {}
   ## The provider is set (`FINN_PROVIDER`, `FINN_API` or `FINN_BASE_URL`) and `FINN_MODEL` is: they win over the provider and
   ## model last picked.
   provider_pinned: Bool = false
@@ -168,6 +170,7 @@ struct Settings
   files_command: List[String]
   mouse: Bool
   clipboard: Clipboard
+  keys: Map[String, String]
   customs: List[Providers.Custom]
 end
 
@@ -336,6 +339,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       mouse: first.mouse,
       clipboard: first.clipboard.provider,
       clipboard_command: first.clipboard.command,
+      keys: first.keys,
       live: some(live),
       provider_pinned: provider_pinned?(read),
       model_pinned: set(read, "FINN_MODEL").some?,
@@ -638,6 +642,27 @@ def clipboard_setting(found: UserFile) -> Result[Clipboard]
   ok(Clipboard(provider: provider, command: command))
 end
 
+# `keys` of the user's config file: an object from the name of an action to the name of a key. The full screen checks
+# the names, and keeps its default for each that it does not know.
+def keys_setting(found: UserFile) -> Result[Map[String, String]]
+  keys: Map[String, String] = {}
+  for value in option_list(setting(found, "keys"))
+    case JSON.node(value)
+      JSON.Node.Object(given) ->
+        for action in given.keys.sort
+          case JSON.string(given[action])
+            ok(key) -> keys = keys.put(action, key)
+            error(_) -> return error("#{found.path}: keys: #{action.inspect} must name a key")
+          end
+        end
+
+      _ -> return error("#{found.path}: keys must be an object from an action to a key")
+    end
+  end
+
+  ok(keys)
+end
+
 def program_of(value: JSON.Value) -> Result[List[String]]
   command: List[String] = []
   for item in try JSON.list(value)
@@ -703,6 +728,7 @@ def settings_of(read: Fn[String, Result[String]]) -> Result[Settings]
       files_command: try files_command(file),
       mouse: try mouse_setting(file),
       clipboard: try clipboard_setting(file),
+      keys: try keys_setting(file),
       customs: customs,
     ),
   )
@@ -720,6 +746,7 @@ def lived(options: Options) -> Options
           mouse: found.mouse,
           clipboard: found.clipboard.provider,
           clipboard_command: found.clipboard.command,
+          keys: found.keys,
         )
       error(_) -> nil
     end

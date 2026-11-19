@@ -27,7 +27,7 @@ The model sees at most 30000 characters of a tool's output; the rest is cut, wit
 
 ## Profiles
 
-A profile decides which tools the model of a session sees. Pick one for a new session with `--profile NAME`, or change it with `/profile NAME` between turns (`/profile` alone lists them; while a turn runs the change is refused). The session keeps its profile across a restart, a `/tree` move and a fork. There are two built in:
+A profile decides which tools the model of a session sees. Pick one for a new session with `--profile NAME`, or change it with `/profile NAME` between turns (`/profile` alone lists them, and Shift+Tab in `finn` goes to the next one; while a turn runs the change is refused). The session keeps its profile across a restart, a `/tree` move and a fork. There are two built in:
 
 - `build`, the default: every tool;
 - `plan`: `read_file`, `glob`, `grep`, `todo_write` and `activate_skill`, with a note in the system prompt to change nothing. No `bash`, no writes, no MCP tools.

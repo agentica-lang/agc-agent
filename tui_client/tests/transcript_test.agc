@@ -121,14 +121,14 @@ end
 def test_thinking_is_folded_unless_shown_or_clicked_open() -> Result[Void]
   entries = Transcript.add([], Transcript.Kind.Thinking, "hmm")
   entries = Transcript.add(entries, Transcript.Kind.Assistant, "yes")
-  try Test.eq(texts(entries, false), [Transcript.FOLDED_THINKING, "", "yes"])
+  try Test.eq(texts(entries, false), ["▸ thinking (click or ^T shows it)", "", "yes"])
   try Test.eq(texts(entries, true), ["hmm", "", "yes"])
   try Test.eq(Transcript.lines(entries, 20, Transcript.Folds()).map { |line| line.entry }, [0, -1, 1])
   opened = Transcript.toggle(entries, 0, Transcript.Folds())
   try Test.eq(texts(opened, false), ["hmm", "", "yes"])
-  try Test.eq(texts(Transcript.toggle(opened, 0, Transcript.Folds()), false)[0], Transcript.FOLDED_THINKING)
+  try Test.eq(texts(Transcript.toggle(opened, 0, Transcript.Folds()), false)[0], "▸ thinking (click or ^T shows it)")
   try Test.eq(Transcript.toggle(entries, 1, Transcript.Folds()), entries)
-  Test.eq(texts(Transcript.unfold_thinking(opened), false)[0], Transcript.FOLDED_THINKING)
+  Test.eq(texts(Transcript.unfold_thinking(opened), false)[0], "▸ thinking (click or ^T shows it)")
 end
 
 # A tool call is a shell line; once it ran its output is folded to a few rows (a click opens it) and says how long

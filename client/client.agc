@@ -8,6 +8,7 @@ import Discovery from "src/discovery"
 import Export from "src/export"
 import Events from "src/feed"
 import Http from "src/http"
+import Keys from "src/keys"
 import Sessions from "src/sessions"
 import Tree from "src/tree"
 import Version from "src/version"
@@ -89,7 +90,7 @@ export Events.start
 
 export Commands.Command
 export Commands.help
-export Commands.KEYS
+export Commands.key_lines
 export Commands.CHAT_KEYS
 export Commands.custom
 export Commands.warning_notes
@@ -98,6 +99,16 @@ export Commands.reload_report
 export Commands.warning_report
 export Commands.DEFAULT_LOG_LINES
 export Commands.profile_lines
+
+export Keys.Bindings
+export Keys.ACTIONS
+export Keys.defaults
+export Keys.effective
+export Keys.key_of
+export Keys.default_of
+export Keys.action_of
+export Keys.label
+export Keys.short
 export Commands.profile_listing
 export Commands.listed
 export Commands.Usage
