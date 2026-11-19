@@ -1,8 +1,5 @@
 ## The subscription windows in ChatGPT's usage response, without credentials or network access.
 
-## The name of the status segment that shows the quota.
-SEGMENT = "chatgpt.quota"
-
 ## A window's duration and reset time in seconds, and its remaining percentage.
 struct Window
   seconds: Int

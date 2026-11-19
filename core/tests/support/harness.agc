@@ -242,7 +242,6 @@ def chatgpt_login(
   endpoints = Chatgpt.Endpoints(
     issuer: "#{root}/auth",
     base_url: "#{root}/codex",
-    usage_url: "#{root}/usage",
     min_poll_ms: poll_ms,
     poll_margin_ms: 0,
     device_ms: device_ms,

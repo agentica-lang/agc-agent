@@ -303,8 +303,8 @@ def test_the_keys_come_from_the_user_config() -> Result[Void]
   Test.eq(read[1].unwrap!.keys, {"nothing": "f9", "thinking_level": "alt+t"})
 end
 
-# `status_line` of the user's config names the segments of each side of the status row; a side that is not a list of
-# names stops the server at its start.
+# `status_line` of the user's config names the segments of each side; a value of another shape never stops the server:
+# the default row stays, with a warning.
 def test_the_status_line_comes_from_the_user_config() -> Result[Void]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-status-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)
@@ -313,6 +313,7 @@ def test_the_status_line_comes_from_the_user_config() -> Result[Void]
     "{\"status_line\": {\"left\": [\"state\", \"chatgpt.quota\"], \"right\": [\"model\"]}}",
     "{\"status_line\": {\"left\": \"state\"}}",
     "{\"status_line\": {\"right\": [5]}}",
+    "{\"status_line\": [\"state\"]}",
   ]
 
   read: List[Result[Config.Options]] = []
@@ -322,9 +323,18 @@ def test_the_status_line_comes_from_the_user_config() -> Result[Void]
   end
 
   _ = Path.remove(dir)
-  try Test.eq(read.map { |options| options.ok? }, [true, true, false, false])
-  try Test.eq(read[0].unwrap!.status_line, none)
-  Test.eq(read[1].unwrap!.status_line, some(Protocol.StatusLine(left: ["state", "chatgpt.quota"], right: ["model"])))
+  try Test.eq(read.map { |options| options.ok? }, [true, true, true, true, true])
+  try Test.eq(
+    read.map { |options| options.unwrap!.status_line },
+    [none, some(Protocol.StatusLine(left: ["state", "chatgpt.quota"], right: ["model"])), none, none, none],
+  )
+
+  try Test.eq(
+    read.map { |options| options.unwrap!.warnings.select { |w| w.include?("status_line") }.size },
+    [0, 0, 1, 1, 1],
+  )
+
+  ok()
 end
 
 # A key a login stored offers its provider; a key file that others may read is not used, with a warning. The login

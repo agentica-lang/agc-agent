@@ -27,6 +27,8 @@ export Replies.ASKS_KEY
 export Replies.ASKS_URL
 export Replies.ASKS_DEVICE
 export Replies.DEVICE_NONE
+export Replies.BUILTIN_SEGMENTS
+export Replies.QUOTA_SEGMENT
 export Replies.DEVICE_WAITING
 export Replies.DEVICE_DONE
 export Replies.DEVICE_FAILED

@@ -48,6 +48,8 @@ The server runs it in the session folder as the `bash` tool runs a command: in i
 
 Without `status_line` the row is the one above, with `chatgpt.quota` after the rate. When the row is too narrow, a layout of your own loses whole segments from the end of the right side, then from the end of the left; the last one is cut with `…`. List a segment you want to keep longest first on the left.
 
+A `status_line` that is not an object, or whose `left` or `right` is not a list of names, never stops the server: the default row stays, with a warning in the log and in the report of `/reload`.
+
 `/reload` applies a change.
 
 ## The project file

@@ -87,9 +87,30 @@ def test_status_poll_loads_once_at_a_time_and_recovers_after_failure() -> Result
   retry_backend = backend.with(status_segments: ->(_id) { error("connection lost") })
   next_poll = App.update(shown.with(backend: retry_backend), App.Msg.StatusTick)
   failed = App.update(next_poll.model, run(next_poll.cmds[0])[0]).model
-  try Test.eq(failed.status_segments, [])
+  try Test.eq(failed.status_segments, value.segments)
   recovered = App.update(failed.with(backend: backend), App.Msg.StatusTick)
-  Test.eq(App.update(recovered.model, run(recovered.cmds[0])[0]).model.status_segments, value.segments)
+  try Test.eq(App.update(recovered.model, run(recovered.cmds[0])[0]).model.status_segments, value.segments)
+  gone_backend = backend.with(status_segments: ->(_id) { error("no route", kind: "not_found", code: 404) })
+  gone_poll = App.update(shown.with(backend: gone_backend), App.Msg.StatusTick)
+  gone = App.update(gone_poll.model, run(gone_poll.cmds[0])[0]).model
+  try Test.eq(App.update(gone, App.Msg.StatusTick).cmds.size, 0)
+  Test.eq(App.subscriptions(gone).size, 1)
+end
+
+# The default row asks for the quota only in a ChatGPT session; a layout with the quota only does the same.
+def test_the_quota_is_polled_only_in_a_chatgpt_session() -> Result[Void]
+  local = model_of(60, 8).with(id: "s1", serving: "local/m")
+  chatgpt = local.with(serving: "chatgpt/m")
+  try Test.eq([App.subscriptions(local).size, App.subscriptions(chatgpt).size], [1, 2])
+  only = some(Protocol.StatusLine(left: ["state", "chatgpt.quota"], right: ["model"]))
+  try Test.eq(
+    [App.subscriptions(local.with(statusline: only)).size, App.subscriptions(chatgpt.with(statusline: only)).size],
+    [1, 2],
+  )
+
+  extra = some(Protocol.StatusLine(left: ["extra"], right: []))
+  try Test.eq(App.subscriptions(local.with(statusline: extra)).size, 2)
+  Test.eq(App.update(local, App.Msg.StatusTick).cmds.size, 0)
 end
 
 # The footer shows the model's output speed: estimated while a reply streams, exact from the call's usage, and kept

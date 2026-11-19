@@ -56,7 +56,8 @@ def chatgpt_quota(served: Extensions.Served, login: Optional[Logins.Setup]) -> E
   for setup in option_list(login)
     for found in option_list(setup.chatgpt)
       segment = Extensions.StatusProvider(
-        name: Quota.SEGMENT,
+        name: Protocol.QUOTA_SEGMENT,
+        ms: Chatgpt.CALL_MS + 5000,
         value: ->(context: Extensions.StatusContext) { quota_text(found, context) },
       )
 

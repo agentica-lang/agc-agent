@@ -18,13 +18,15 @@ FILE = "chatgpt.json"
 CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 ISSUER = "https://auth.openai.com"
 BASE_URL = "https://chatgpt.com/backend-api/codex"
-USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 ## The variables that move the login (`ISSUER`) and the API (`BASE_URL`) elsewhere: a proxy, or a test.
 ISSUER_ENV = "FINN_CHATGPT_AUTH_URL"
 BASE_URL_ENV = "FINN_CHATGPT_URL"
 CALL_MS = 15_000
 USAGE_MAX_BYTES = 1_048_576
+## How long a usage answer is kept, and how long a failed one: the second failure in a row waits longer.
 USAGE_CACHE_MS = 60_000
+USAGE_RETRY_MS = 300_000
+USAGE_RETRY_MAX_MS = 600_000
 USAGE_LOCK = "usage"
 ## How often a device login polls when the login does not say, in seconds.
 DEFAULT_INTERVAL_S = 5
@@ -40,7 +42,6 @@ LOCK = "refresh"
 struct Endpoints
   issuer: String = ISSUER
   base_url: String = BASE_URL
-  usage_url: String = USAGE_URL
   min_poll_ms: Int = 1000
   poll_margin_ms: Int = 3000
   device_ms: Int = DEVICE_MS
@@ -73,11 +74,8 @@ struct CachedUsage
   account: String
   at_ms: Int
   result: Result[List[Quota.Window]]
-end
-
-struct UsageAnswer
-  access: String
-  result: Result[List[Quota.Window]]
+  ## How many reads failed in a row, this one included.
+  failures: Int = 0
 end
 
 ## A device login that started: the code the user types at `url`. `id` asks for its end and stays on the server.
@@ -164,10 +162,15 @@ def save(login: Login, tokens: Tokens) -> Result[Void]
   moved
 end
 
+## Removes the login file after the refresh in progress, or without waiting for it when that does not end.
 def remove(login: Login) -> Result[Void]
-  holder = try locked(login)
+  held = locked(login)
   result = remove_locked(login)
-  unlock(login, holder)
+  case held
+    ok(holder) -> unlock(login, holder)
+    error(_) -> nil
+  end
+
   result
 end
 
@@ -265,31 +268,20 @@ def renewed(login: Login, used: String) -> Result[Tokens]
   result
 end
 
-## The subscription windows, using the current login and refreshing it once after a 401.
+## The subscription windows with the current login. A 401 does not renew the login: the chat calls do that, and a
+## lasting 401 here would rotate the refresh token again and again.
 def usage(login: Login) -> Result[List[Quota.Window]]
   tokens = try (try load(login)).to_result("the ChatGPT login is gone: log in again")
-  (try usage_for(login, tokens)).result
+  usage_read(login.endpoints, tokens)
 end
 
-def usage_for(login: Login, tokens: Tokens) -> Result[UsageAnswer]
-  first = try usage_request(login.endpoints, tokens)
-  if first.status == 401
-    fresh = try renewed(login, tokens.access)
-    return error("the ChatGPT login changed during the usage request") if fresh.account != tokens.account
-
-    return ok(UsageAnswer(access: fresh.access, result: usage_result(login.endpoints, fresh)))
-  end
-
-  ok(UsageAnswer(access: tokens.access, result: usage_answer(first)))
-end
-
-## The subscription windows shared by clients, cached for a minute and refreshed at most once at a time.
+## The subscription windows shared by clients: cached for a minute (longer after a failure) and read by one at a time;
+## while one reads, the clients get the last good answer.
 def cached_usage(login: Login) -> Result[List[Quota.Window]]
   tokens = try (try load(login)).to_result("the ChatGPT login is gone: log in again")
-  case login.usage_cache.get(USAGE_LOCK)
-    ok(entry) if entry.access == tokens.access and entry.account == tokens.account and Time.monotonic_ms - entry.at_ms < USAGE_CACHE_MS ->
-      return entry.result
-    _ -> nil
+  previous = usage_entry(login, tokens)
+  for entry in option_list(previous)
+    return entry.result if usage_current?(entry)
   end
 
   now = Time.monotonic_ms
@@ -298,6 +290,10 @@ def cached_usage(login: Login) -> Result[List[Quota.Window]]
   if not login.lock.put_new(USAGE_LOCK, "#{holder} #{until_ms}")
     held = login.lock.get(USAGE_LOCK).unwrap_or("")
     if held.empty? or until_of(held) >= now or not login.lock.put_new("takeover #{held}", holder)
+      for entry in option_list(previous)
+        return entry.result if entry.result.ok?
+      end
+
       return error("the ChatGPT usage request is already running")
     end
 
@@ -316,33 +312,33 @@ def refresh_usage(login: Login, tokens: Tokens, holder: String) -> Result[List[Q
   initial = try load(login)
   return error("the ChatGPT login changed during the usage request") if initial != some(tokens)
 
-  case login.usage_cache.get(USAGE_LOCK)
-    ok(entry) if entry.access == tokens.access and entry.account == tokens.account and Time.monotonic_ms - entry.at_ms < USAGE_CACHE_MS ->
-      return entry.result
-    _ -> nil
+  failures = 0
+  for entry in option_list(usage_entry(login, tokens))
+    return entry.result if usage_current?(entry)
+
+    failures = entry.failures
   end
 
-  answer = usage_for(login, tokens)
-  result = case answer
-    ok(found) -> found.result
-    error(e) -> error(e.message)
+  result = usage_read(login.endpoints, tokens)
+  case result
+    ok(_) -> failures = 0
+    error(e) ->
+      failures += 1
+      Logger.debug("the ChatGPT usage read failed: #{e.message}")
   end
 
-  expected_access = case answer
-    ok(found) -> found.access
-    error(_) -> tokens.access
-  end
-
-  same_account = case load(login)
-    ok(some(current)) -> current.account == tokens.account and current.access == expected_access
-    _ -> false
-  end
-
+  same_account = load(login) == ok(some(tokens))
   owned = login.lock.get(USAGE_LOCK).unwrap_or("").start_with?("#{holder} ")
   if same_account and owned
     login.usage_cache.put(
       USAGE_LOCK,
-      CachedUsage(access: expected_access, account: tokens.account, at_ms: Time.monotonic_ms, result: result),
+      CachedUsage(
+        access: tokens.access,
+        account: tokens.account,
+        at_ms: Time.monotonic_ms,
+        result: result,
+        failures: failures,
+      ),
     )
   end
 
@@ -443,6 +439,41 @@ struct Claims
   chatgpt_account_id: Optional[String]
 end
 
+def usage_url(endpoints: Endpoints) -> String
+  root = endpoints.base_url
+  if root.end_with?("/codex")
+    root = root.slice(0, root.length - "/codex".length)
+  end
+
+  "#{root}/wham/usage"
+end
+
+def usage_entry(login: Login, tokens: Tokens) -> Optional[CachedUsage]
+  case login.usage_cache.get(USAGE_LOCK)
+    ok(entry) if entry.access == tokens.access and entry.account == tokens.account -> some(entry)
+    _ -> none
+  end
+end
+
+def usage_current?(entry: CachedUsage) -> Bool
+  ttl = USAGE_CACHE_MS
+  if not entry.result.ok?
+    ttl = USAGE_RETRY_MS
+    if entry.failures > 1
+      ttl = USAGE_RETRY_MAX_MS
+    end
+  end
+
+  Time.monotonic_ms - entry.at_ms < ttl
+end
+
+def usage_read(endpoints: Endpoints, tokens: Tokens) -> Result[List[Quota.Window]]
+  case usage_request(endpoints, tokens)
+    ok(response) -> usage_answer(response)
+    error(e) -> error(e.message)
+  end
+end
+
 def usage_request(endpoints: Endpoints, tokens: Tokens) -> Result[HTTP.Response]
   client = try HTTP.client(HTTP.ClientOptions(timeout_ms: endpoints.call_ms, max_body_bytes: USAGE_MAX_BYTES))
   headers = [
@@ -450,16 +481,12 @@ def usage_request(endpoints: Endpoints, tokens: Tokens) -> Result[HTTP.Response]
     HTTP.Header(name: "ChatGPT-Account-Id", value: tokens.account),
   ]
 
-  answer = HTTP.request(client, "GET", endpoints.usage_url, "".bytes, headers)
+  answer = HTTP.request(client, "GET", usage_url(endpoints), "".bytes, headers)
   HTTP.close_client(client)
   case answer
     ok(response) -> ok(response)
     error(_) -> error("the ChatGPT usage request failed")
   end
-end
-
-def usage_result(endpoints: Endpoints, tokens: Tokens) -> Result[List[Quota.Window]]
-  usage_answer(try usage_request(endpoints, tokens))
 end
 
 def usage_answer(response: HTTP.Response) -> Result[List[Quota.Window]]

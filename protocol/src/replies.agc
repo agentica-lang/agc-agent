@@ -13,6 +13,9 @@ ASKS_DEVICE = "device"
 DEVICE_NONE = "none"
 DEVICE_WAITING = "waiting"
 DEVICE_DONE = "done"
+## The segments of the status row that the client draws itself, and the one that core serves with the ChatGPT quota.
+BUILTIN_SEGMENTS = ["state", "usage", "rate", "hints", "model"]
+QUOTA_SEGMENT = "chatgpt.quota"
 DEVICE_FAILED = "failed"
 
 ## Who wrote a message of the history. The history is display text: an entry of another kind (a tool call) will be a

@@ -6,6 +6,7 @@ import Protocol from "pkg/protocol/protocol"
 import HTTP from "std/http"
 import Chatgpt from "../src/providers/chatgpt"
 import Config from "../src/config/config"
+import Extensions from "../src/config/registry"
 import Fake from "support/fake_llm"
 import H from "support/harness"
 
@@ -14,7 +15,9 @@ POLL_MS = 150
 
 def test_the_quota_segment_serves_chatgpt_sessions_and_shares_usage() -> Result[Void]
   replies = ["codex_usercode.json", "codex_grant.json", "codex_tokens.json", "codex_models.json", "codex_usage.json"]
-  setup = H.Setup(replies: replies, api: "openai_responses", chatgpt: true)
+  stuck = Extensions.StatusProvider(name: "ext.stuck", value: &stuck_segment)
+  registry = Extensions.Registry(status_providers: [stuck], status_ms: 200)
+  setup = H.Setup(replies: replies, api: "openai_responses", chatgpt: true, registry: some(registry))
   H.using(setup) do |h|
     local = try H.new_session(h)
     local_reply = try H.get(h, Protocol.status_segments_path(local))
@@ -37,7 +40,7 @@ def test_the_quota_segment_serves_chatgpt_sessions_and_shares_usage() -> Result[
       try Test.eq(try Protocol.decode_status_segments(answer.text), expected)
     end
 
-    try Test.eq((try H.next_request(h)).path, "/usage")
+    try Test.eq((try H.next_request(h)).path, "/wham/usage")
     logout = try H.call(h, "DELETE", Protocol.auth_path("chatgpt"), "", H.auth(h))
     try Test.eq(logout.status, 200)
     after = try H.get(h, Protocol.status_segments_path(first))
@@ -45,6 +48,12 @@ def test_the_quota_segment_serves_chatgpt_sessions_and_shares_usage() -> Result[
     try Test.eq((try Protocol.decode_status_segments(after.text)).segments, [])
     Test.assert(h.fake.seen.empty?, "both sessions share one quota request and logout makes no request")
   end
+end
+
+# A segment that never answers is left out after its own limit, and does not take the quota's time.
+def stuck_segment(_context: Extensions.StatusContext) -> Result[String]
+  gate: Channel[String] = Channel.new(1)
+  gate.recv(30_000)
 end
 
 def test_usage_in_flight_does_not_cross_accounts() -> Result[Void]
@@ -116,7 +125,7 @@ def test_usage_uses_the_login_and_never_returns_credentials() -> Result[Void]
     seen = try H.next_request(h)
     try Test.eq(
       [seen.method, seen.path, bearer(seen), header(seen, "chatgpt-account-id")],
-      ["GET", "/usage", "at-secret-1", "acct-1"],
+      ["GET", "/wham/usage", "at-secret-1", "acct-1"],
     )
 
     case Chatgpt.usage(login)
@@ -128,21 +137,30 @@ def test_usage_uses_the_login_and_never_returns_credentials() -> Result[Void]
   end
 end
 
-def test_usage_refreshes_a_rejected_token_once() -> Result[Void]
-  setup = H.Setup(
-    replies: ["401:codex_unauthorized.json", "codex_refreshed.json", "codex_usage.json"],
-    api: "openai_responses",
-    chatgpt: true,
-  )
-
+# A 401 of the usage endpoint is a failed read, kept for a while: it never renews the login, or the refresh token
+# would rotate at each read.
+def test_a_401_on_usage_never_renews_the_login() -> Result[Void]
+  setup = H.Setup(replies: ["401:codex_unauthorized.json"], api: "openai_responses", chatgpt: true)
   H.using(setup) do |h|
     login = H.chatgpt_login(h.fake, h.base)
     try Chatgpt.save(login, TOKENS)
-    try Test.eq((try Chatgpt.usage(login)).map { |window| window.remaining }, [72.0, 40.0])
-    first = try H.next_request(h)
-    _ = try H.next_request(h)
-    last = try H.next_request(h)
-    Test.eq([bearer(first), bearer(last)], ["at-secret-1", "at-secret-2"])
+    try Test.assert(not Chatgpt.cached_usage(login).ok?, "the usage was refused")
+    try Test.assert(not Chatgpt.cached_usage(login).ok?, "a failure is kept")
+    try Test.eq((try H.next_request(h)).path, "/wham/usage")
+    try Test.assert(h.fake.seen.empty?, "one request and no refresh")
+    Test.eq(try Chatgpt.load(login), some(TOKENS))
+  end
+end
+
+# A logout does not fail when the refresh lock stays held: it removes the file after the wait.
+def test_logout_removes_the_login_when_the_refresh_lock_is_held() -> Result[Void]
+  setup = H.Setup(replies: [], api: "openai_responses", chatgpt: true)
+  H.using(setup) do |h|
+    login = H.chatgpt_login(h.fake, h.base, call_ms: 100, lock_margin_ms: 50)
+    try Chatgpt.save(login, TOKENS)
+    login.lock.put(Chatgpt.LOCK, "other #{Time.monotonic_ms + 600_000}")
+    try Chatgpt.remove(login)
+    Test.eq(try Chatgpt.load(login), none)
   end
 end
 

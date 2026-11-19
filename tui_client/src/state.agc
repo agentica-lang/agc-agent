@@ -153,6 +153,7 @@ struct Model
   statusline: Optional[Protocol.StatusLine] = none
   status_segments: List[Protocol.StatusSegment] = []
   reading_status: Bool = false
+  status_gone: Bool = false
   status_generation: Int = 0
   ## The model's last output speed, and the text of the call that streams now.
   rate: Optional[Rate.Rate] = none
