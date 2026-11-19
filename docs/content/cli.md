@@ -61,6 +61,8 @@ The version of Finn is the UTC time of the commit it runs, `YYYYMMDDhhmmss`, and
 
 A server keeps running the code it started with, so after a `git pull` it can be older than the client. The client then says which side is older. A server of the same protocol still serves it, with one line such as `the server runs an older Finn (20261101093000) than this client (20261118123456)`, and `finn server restart` starts the new one; a server of another protocol is not used, and the client says the same. `finn server status` shows the comparison next to the server's version.
 
+A client that is not allowed to use a server of another version asks, when stdin and stdout are a terminal (`finn` and `finn chat` without `-p`): `Restart it and go on? It keeps the sessions. [Y/n]`. Yes does what `finn server restart` does and goes on; no prints why the server is not used and exits 1. When the server has running turns (it says how many), the question names them (`It waits for 2 running turns to end`) and the default is no (`[y/N]`). Without a terminal (a script, `finn -p`, a pipe) nothing is asked and the line is printed. `--restart` (or `FINN_RESTART=1`) answers yes without a question, for scripts, and also with `finn -p`; the restart waits for the running turns to end, as `finn server restart` does.
+
 ## Slash commands
 
 Type them in either client:

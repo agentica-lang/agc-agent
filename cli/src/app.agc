@@ -7,7 +7,7 @@ import Render from "render"
 def run(options: Args.Options) -> Result[Int]
   launch = Args.launch(options)
   dir = try Client.state_dir(launch)
-  server = try Client.connect(launch, dir)
+  server = try Client.connect_or_restart(launch, dir, options.prompt.none?)
   for note in [Client.code_mode_note(server, options.code_mode), Client.version_note(server, dir)]
     if not note.empty?
       IO.warn(note)

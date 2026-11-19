@@ -44,6 +44,8 @@ struct Launch
   server_command: Optional[List[String]] = none
   ## Off (`--no-codemode` or `FINN_CODE_MODE=0`): a server this client starts has no code mode.
   code_mode: Bool = true
+  ## A server of another version is restarted without asking (`--restart`).
+  restart: Bool = false
 end
 
 ## What runs in the folder: a server of this client's protocol, one of another version (its pid and version), or nothing
@@ -166,6 +168,19 @@ def version_note(server: Client.Server, dir: String) -> String
     ok(health) -> Version.note(Version.finn_version(), health.version, server_command(dir, "restart"))
     error(_) -> ""
   end
+end
+
+## How many turns the server of `dir`, which is of another version, runs now: none when it does not say (its status does
+## not read as ours).
+def running_turns(dir: String) -> Optional[Int]
+  info = read_info(file_in(dir, SERVER_FILE))
+  return none if not info.ok?
+
+  server = Client.Server(url: "http://127.0.0.1:#{info.unwrap!.port}", token: info.unwrap!.token)
+  status = Client.server_status(server)
+  return none if not status.ok?
+
+  some(status.unwrap!.running_turns)
 end
 
 ## Why a client does not use the server of `dir` (pid `pid`, version `version`), which speaks another protocol: which
