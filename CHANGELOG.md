@@ -4,10 +4,10 @@
 
 ### Added
 
-- In `finn`, a copy goes to the clipboard the way Neovim picks it: `tmux load-buffer -w -` inside tmux, `wl-copy`, `xclip`, `xsel`, `pbcopy` or `clip.exe` with a local display and not over SSH, else OSC 52. `clipboard` and `clipboard_command` in the config file force one.
+- In `finn`, a copy goes to the clipboard the way Neovim picks it: a tool of the local display (`wl-copy`, `xclip`, `xsel`, `pbcopy`, `clip.exe`) when not over SSH, `tmux load-buffer -w -` over SSH inside tmux (or inside tmux with no such tool), else OSC 52. `clipboard` and `clipboard_command` in the config file force one.
 - `/confine [on|off]` keeps the file tools in the session folder (or lets them reach any path) for one session; `confine_files` in the config file and `FINN_CONFINE_FILES=1` do it for every session.
 - `/reload` in `finn` and `finn chat` (`POST /v1/reload`) makes the server read the config file (rules, `approvals`, `files.command`, `mouse`, providers), the MCP servers, the skills and the `AGENTS.md` again without a restart: sessions that run use them from their next turn, a turn that runs is not stopped, and a config file that does not read is kept back with the reason. Only MCP servers reload, all of them when the list changed.
-- In `finn`, a drag over the transcript selects text and letting go copies it (OSC 52) with a note; a double click selects a word and Esc clears the selection. `/mouse` turns the mouse reporting off and on, and `"mouse": false` in the config file starts with it off; Shift+drag (Option+drag in iTerm2) is the terminal's own selection.
+- In `finn`, a drag over the transcript selects text and letting go copies it with a note; a double click selects a word and Esc clears the selection. `/mouse` turns the mouse reporting off and on, and `"mouse": false` in the config file starts with it off; Shift+drag (Option+drag in iTerm2) is the terminal's own selection.
 - Every line of the server log starts with its UTC time and level (`2026-11-18T17:30:02.345Z WARNING ...`); `GET /v1/logs` gives its end and the warnings since the server started.
 - `finn` and `finn chat` show the last 3 warnings of the server as notes when a session starts, `/logs [N]` shows the end of the server log, and leaving prints the warnings and `finn server logs` after the screen closes.
 - A new session uses the provider and model last picked (`/model`, `finn --provider` and `--model`, or a login), kept in `choice.json` of the state folder; the order is the request, `FINN_PROVIDER`/`FINN_API`/`FINN_BASE_URL` and `FINN_MODEL`, the last choice, then `local`; `finn -p` never changes it. A login with no choice yet makes its provider the choice, and a first-start session on `local` moves there too.
@@ -22,7 +22,7 @@
 
 ### Fixed
 
-- `finn` no longer says `copied` for a selection that only went to the terminal as OSC 52, which tmux drops with `allow-passthrough off` and `set-clipboard external`: the note says `sent N characters to the terminal (OSC 52)`, and inside tmux the copy goes through `tmux load-buffer -w -` (#319).
+- `finn` no longer says `copied` for a selection that only went to the terminal as OSC 52, which tmux drops with `allow-passthrough off` and `set-clipboard external`: the note says `sent N characters to the terminal (OSC 52)`, and a tool or `tmux load-buffer -w -` does the copy where it can (#319).
 - `finn` no longer exits with `tui: set_cell failed: Out of bounds (-9)` when a terminal resize lands while it draws (for example tmux changing the pane size at start); cells off the screen are dropped, and a draw that a resize cuts short is redrawn by the `Resize` that comes with it.
 - A new session on a provider with no model of its own waits for the model catalog (up to 1.5 s) before taking the first model it lists, instead of starting on `default`; a model you picked that is not in the provider's `models` list is kept, with a warning.
 - A refusal or a connection failure of the `local` provider says `pick a provider with /model, or log in with /login` (and is a warning in `/logs`); a successful `finn login chatgpt` followed by `finn` no longer opens a session on `local` that fails with HTTP 401.

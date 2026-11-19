@@ -356,21 +356,23 @@ def test_a_code_mode_not_the_servers_is_noted() -> Result[Void]
   Test.eq(note, "code mode isn't available on this system: there is no Monty worker for it")
 end
 
-# The clipboard of the server's config is what the status says, and `auto` for a server that does not say.
-def test_the_clipboard_is_read_from_the_server_status() -> Result[Void]
+# The display settings of the server's config are what the status says (the mouse and the clipboard in one read), and
+# the defaults for a server that does not say.
+def test_the_display_is_read_from_the_server_status() -> Result[Void]
   status = Protocol.ServerStatus(pid: 1, version: "0", started_s: 0, sessions: 0, running_turns: 0, stopping: false)
   setting = Protocol.ClipboardSetting(provider: "command", command: ["xclip"])
-  a = try asked(status.with(clipboard: some(setting)))
+  a = try asked(status.with(mouse: some(false), clipboard: some(setting)))
   b = try asked(status)
-  try Test.eq(a, setting)
-  Test.eq(b, Protocol.ClipboardSetting())
+  try Test.eq([a.mouse, b.mouse], [false, true])
+  try Test.eq(a.clipboard, setting)
+  Test.eq(b.clipboard, Protocol.ClipboardSetting())
 end
 
-def asked(reply: Protocol.ServerStatus) -> Result[Protocol.ClipboardSetting]
+def asked(reply: Protocol.ServerStatus) -> Result[Http.Display]
   body = Protocol.encode_server_status(reply)
   app = HTTP.app(->(_request) { ok(HTTP.Response(status: 200, headers: [], body: body.bytes)) })
   listening = try HTTP.serve("127.0.0.1", 0, app)
-  got = Http.clipboard(Http.Server(url: "http://127.0.0.1:#{HTTP.local_port(listening)}", token: "t"))
+  got = Http.display(Http.Server(url: "http://127.0.0.1:#{HTTP.local_port(listening)}", token: "t"))
   HTTP.close_server(listening)
   _ = HTTP.wait(listening)
   ok(got)

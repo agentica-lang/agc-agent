@@ -24,6 +24,7 @@ export Sessions.thinking
 export Sessions.confined
 export Sessions.compacted
 export Http.Server
+export Http.Display
 export Http.KIND_UNREACHABLE
 export Http.KIND_TIMEOUT
 export Http.health

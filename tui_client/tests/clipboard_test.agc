@@ -29,13 +29,17 @@ end
 
 def auto(host: Clipboard.Host) -> String = named(Clipboard.choose(Protocol.ClipboardSetting(), host))
 
-# `tmux load-buffer -w` inside tmux, even over SSH or with a display; a tool of the local display (Wayland before X,
-# `xclip` before `xsel`) only when not over SSH and when it is installed; else OSC 52.
+# Over SSH, `tmux load-buffer -w` when inside tmux, else OSC 52. Locally, a tool of the display (Wayland before
+# X, `xclip`
+# before `xsel`) when it is installed, even inside tmux: a terminal may ignore the OSC 52 that tmux sends, and tmux
+# cannot say so. Then tmux, else OSC 52.
 def test_the_provider_follows_the_environment() -> Result[Void]
   Test.eq(
     [
       auto(Clipboard.Host(tmux: true, ssh: true, x11: true, tools: ["tmux", "xclip"])),
       auto(Clipboard.Host(tmux: true, ssh: true, tools: [])),
+      auto(Clipboard.Host(tmux: true, x11: true, tools: ["tmux", "xclip"])),
+      auto(Clipboard.Host(tmux: true, tools: ["tmux", "xclip"])),
       auto(Clipboard.Host(ssh: true, x11: true, tools: ["xclip"])),
       auto(Clipboard.Host(x11: true, tools: ["xclip", "xsel"])),
       auto(Clipboard.Host(x11: true, tools: ["xsel"])),
@@ -45,7 +49,7 @@ def test_the_provider_follows_the_environment() -> Result[Void]
       auto(Clipboard.Host(wsl: true, tools: ["clip.exe"])),
       auto(Clipboard.Host(tools: ["xclip", "wl-copy"])),
     ],
-    ["tmux", "osc52", "osc52", "xclip", "xsel", "wl-copy", "osc52", "pbcopy", "clip.exe", "osc52"],
+    ["tmux", "osc52", "xclip", "tmux", "osc52", "xclip", "xsel", "wl-copy", "osc52", "pbcopy", "clip.exe", "osc52"],
   )
 end
 
@@ -59,6 +63,8 @@ def test_the_setting_forces_a_provider() -> Result[Void]
   end
 
   try Test.eq(forced, ["osc52", "tmux", "mycopy"])
+  # `command` with no program is the automatic choice.
+  try Test.eq(named(Clipboard.choose(Protocol.ClipboardSetting(provider: "command"), host)), "xclip")
   try Test.eq(named(Clipboard.choose(Protocol.ClipboardSetting(provider: "tmux"), Clipboard.Host())), "tmux")
   Test.eq(
     Clipboard.choose(Protocol.ClipboardSetting(provider: "command", command: ["x", "-y"]), host).unwrap!.argv,
@@ -76,7 +82,7 @@ end
 
 # The model with `text` selected, on a machine whose programs end as `result` says; what they were asked and what
 # the app wrote to the terminal come out on the channels.
-def machine(host: Clipboard.Host, result: Result[Void]) -> Machine
+def machine(host: Clipboard.Host, result: Result[String], checked: String = "", text: String = TEXT) -> Machine
   ran: Channel[String] = Channel.new(4)
   written: Channel[String] = Channel.new(4)
   options = Args.Options(
@@ -91,12 +97,14 @@ def machine(host: Clipboard.Host, result: Result[Void]) -> Machine
 
   everything = Select.Selection(anchor: Select.Cell(row: 0, col: 0), head: Select.Cell(row: 100_000, col: 0))
   model = App.seed(Client.unreachable_backend(), options, Channel.new(1), 40, 12).with(
-    entries: Transcript.from_history([Protocol.Message(role: Protocol.Role.User, text: TEXT)]),
+    entries: Transcript.from_history([Protocol.Message(role: Protocol.Role.User, text: text)]),
     selection: some(everything),
     host: host,
     write: ->(sent: String) { _ = written.send(sent, 0) },
     run: ->(argv: List[String], input: Bytes) {
       _ = ran.send("#{argv.join(" ")} <- #{String.from_bytes(input).unwrap_or("")}", 0)
+      return ok(checked) if argv.size > 1 and argv[1] == "show-options"
+
       result
     },
   )
@@ -104,18 +112,13 @@ def machine(host: Clipboard.Host, result: Result[Void]) -> Machine
   Machine(model: model, ran: ran, written: written)
 end
 
-# The messages the commands of a step give back, and the model it left.
+# The model after the copy: the commands it started run, and what they give back goes through `update`.
 def finished(rig: Machine) -> App.Model
   copied = Selecting.copied(rig.model)
-  done = copied
+  done = copied.with(effects: [])
   for cmd in copied.effects
     case cmd
-      TUI.Cmd.Run(work) ->
-        case work.call()
-          App.Msg.Copied(text, method, result) -> done = Selecting.finished(copied, text, method, result)
-          _ -> nil
-        end
-
+      TUI.Cmd.Run(work) -> done = App.update(done, work.call()).model
       _ -> nil
     end
   end
@@ -127,7 +130,7 @@ def note(model: App.Model) -> String = model.entries.last.text
 
 # A program that copies: the text goes to it, nothing goes to the terminal, and the note names the program.
 def test_a_tool_that_copies_is_named_in_the_note() -> Result[Void]
-  rig = machine(Clipboard.Host(x11: true, tools: ["xclip"]), ok())
+  rig = machine(Clipboard.Host(x11: true, tools: ["xclip"]), ok(""))
   done = finished(rig)
   try Test.eq(note(done), "copied 11 characters (xclip)")
   try Test.eq(rig.ran.recv(0), ok("xclip -selection clipboard <- #{TEXT}"))
@@ -143,9 +146,37 @@ def test_a_tool_that_fails_falls_back_to_osc52_and_says_so() -> Result[Void]
   Test.eq(rig.written.recv(0), ok(Terminal.osc52(TEXT)))
 end
 
+# tmux that copied with `set-clipboard off` did not reach the clipboard of the terminal: the note says so, and says
+# nothing of the sort when it is `external`.
+def test_tmux_with_set_clipboard_off_says_the_buffer_only() -> Result[Void]
+  host = Clipboard.Host(tmux: true, ssh: true, tools: ["tmux"])
+  off = finished(machine(host, ok(""), checked: "off"))
+  try Test.eq(note(off), "copied 11 characters to the tmux buffer only (set-clipboard is off)")
+  on = finished(machine(host, ok(""), checked: "external"))
+  Test.eq(note(on), "copied 11 characters (tmux)")
+end
+
+# The cap of 74000 bytes is the one of OSC 52: a program takes more, and a failed program leaves a selection that does
+# not fit the sequence not sent, with the reason said.
+def test_the_osc52_cap_applies_only_to_the_sequence() -> Result[Void]
+  word = (0...39).to_a.map { |_| "é" }.join("")
+  big = (0...1000).to_a.map { |_| word }.join(" ")
+  host = Clipboard.Host(x11: true, tools: ["xclip"])
+  rig = machine(host, ok(""), text: big)
+  try Test.eq(Selecting.copied(rig.model).effects.size, 1)
+  method = Clipboard.choose(Protocol.ClipboardSetting(), host).unwrap!
+  failed = Selecting.finished(rig.model, big, method, error("exit code 1: no display"), "")
+  try Test.assert(
+    failed.entries.last.text.start_with?("xclip failed (exit code 1: no display); selection too large"),
+    note(failed),
+  )
+
+  Test.error?(rig.written.recv(0))
+end
+
 # With no tool to use, the terminal gets the sequence and the note says it was sent, not that it was copied.
 def test_osc52_says_sent_not_copied() -> Result[Void]
-  rig = machine(Clipboard.Host(ssh: true, x11: true, tools: ["xclip"]), ok())
+  rig = machine(Clipboard.Host(ssh: true, x11: true, tools: ["xclip"]), ok(""))
   done = finished(rig)
   try Test.eq(note(done), "sent 11 characters to the terminal (OSC 52)")
   try Test.error?(rig.ran.recv(0))
@@ -159,10 +190,17 @@ def test_run_gives_the_text_to_a_real_program() -> Result[Void]
   dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/clipboard-#{Random.int(0, 999999999)}"
   try Dir.mkdir_private(dir)
   copy = "#{dir}/copy"
-  try Test.eq(Clipboard.run(["sh", "-c", "cat > \"$1\"", "sh", copy], "tmux é".bytes), ok())
+  try Test.eq(Clipboard.run(["sh", "-c", "cat > \"$1\"", "sh", copy], "tmux é".bytes), ok(""))
   try Test.eq(File.read_text(copy), ok("tmux é"))
   try Test.eq(Clipboard.run(["sh", "-c", "cat > /dev/null; exit 3"], "x".bytes), error("exit code 3"))
-  try Test.eq(Clipboard.run(["sh", "-c", "cat > /dev/null; sleep 5 & exit 0"], "x".bytes), ok())
+  try Test.eq(Clipboard.run(["sh", "-c", "cat > /dev/null; sleep 5 & exit 0"], "x".bytes), ok(""))
+  # The first line the program wrote comes back: from a good end, and in the error of a bad one.
+  try Test.eq(Clipboard.run(["sh", "-c", "cat > /dev/null; echo external"], "x".bytes), ok("external"))
+  try Test.eq(
+    Clipboard.run(["sh", "-c", "cat > /dev/null; echo 'no display' >&2; exit 1"], "x".bytes),
+    error("exit code 1: no display"),
+  )
+
   missing = Clipboard.run(["no-such-clipboard-tool"], "x".bytes)
   _ = Path.remove(dir)
   Test.eq(missing.ok?, false)

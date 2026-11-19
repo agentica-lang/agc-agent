@@ -165,8 +165,9 @@ end
 
 ## The mouse off when the config of the server says so, and the clipboard it asks for.
 def configured(app: State.Model) -> State.Model
-  set = app.with(clipboard: app.backend.clipboard.call())
-  return set if app.backend.mouse.call()
+  wanted = app.backend.display.call()
+  set = app.with(clipboard: wanted.clipboard)
+  return set if wanted.mouse
 
   Commands.turn_mouse(set, false)
 end
@@ -237,7 +238,7 @@ def handled(app: State.Model, msg: State.Msg) -> State.Model
     State.Msg.Edited(result) -> Editor.closed(app, result)
     State.Msg.Exported(result) -> Commands.exported(app, result)
     State.Msg.Note(text) -> State.noted(app, text)
-    State.Msg.Copied(text, method, result) -> Selecting.finished(app, text, method, result)
+    State.Msg.Copied(text, method, result, checked) -> Selecting.finished(app, text, method, result, checked)
     State.Msg.Answered(approval_id, result) ->
       outcome = Approvals.answered(app.approvals, approval_id, result, app.now)
       answered = Answering.unyolo(app.with(approvals: outcome.panel), approval_id, result)

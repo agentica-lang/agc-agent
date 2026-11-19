@@ -43,10 +43,8 @@ struct Backend
   subscribe: Fn[String, Int, Fn[Events.Item, Result[Void]], Task[Void]]
   ## The warning of `--yolo` on this server.
   yolo_warning: Fn[String]
-  ## Whether the server's config leaves the mouse on for the full screen.
-  mouse: Fn[Bool]
-  ## How the server's config has the full screen copy a selection.
-  clipboard: Fn[Protocol.ClipboardSetting]
+  ## What the server's config asks of the full screen: the mouse and the clipboard (one read of the status).
+  display: Fn[Http.Display]
 end
 
 ## The calls on `server` over HTTP.
@@ -83,8 +81,7 @@ def http_backend(server: Http.Server) -> Backend
       Events.start(Events.Feed(server: server, session_id: id, last_event_id: from, tell: tell))
     },
     yolo_warning: -> { Http.yolo_warning(server) },
-    mouse: -> { Http.mouse(server) },
-    clipboard: -> { Http.clipboard(server) },
+    display: -> { Http.display(server) },
   )
 end
 
@@ -121,8 +118,7 @@ def unreachable_backend() -> Backend
     recheck: -> { failed() },
     subscribe: ->(_id, _from, tell) { Task.spawn(-> { _ = tell.call(Events.Item.Ended("no server")) }) },
     yolo_warning: -> { Http.YOLO_ASKS_NOT },
-    mouse: -> { true },
-    clipboard: -> { Protocol.ClipboardSetting() },
+    display: -> { Http.unset() },
   )
 end
 

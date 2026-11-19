@@ -167,7 +167,7 @@ struct Model
   ## takes the text (a test gives its own).
   host: Clipboard.Host
   clipboard: Protocol.ClipboardSetting
-  run: Fn[List[String], Bytes, Result[Void]]
+  run: Fn[List[String], Bytes, Result[String]]
   ## The monotonic ms and the wall clock s of the message being handled.
   now: Int = 0
   clock_s: Int = 0
@@ -188,8 +188,8 @@ enum Msg
   Answered(String, Result[Void])
   ## A note for the transcript (a compaction's end).
   Note(String)
-  ## The text a program was asked to copy, which program, and how it ended.
-  Copied(String, Clipboard.Method, Result[Void])
+  ## The text a program was asked to copy, which program, how it ended, and what its check said (tmux's `set-clipboard`).
+  Copied(String, Clipboard.Method, Result[String], String)
   ## The server was checked again before the stream of a generation is read again.
   Rechecked(Int, Result[Void])
   ## The reply to a message sent: the `opened` count when it was sent, and the text.
