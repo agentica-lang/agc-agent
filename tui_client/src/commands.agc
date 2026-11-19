@@ -123,10 +123,13 @@ def next_profile(app: State.Model) -> State.Model
   State.tried(app, cycled(app))
 end
 
-## The model with the keys that the config of the server asks for (its `keys` map as `settings`, checked), the defaults where it says
-## none; the warnings about its entries are in `keys.warnings`.
-def with_keys(app: State.Model, settings: List[Protocol.KeySetting]) -> State.Model
-  app.with(keys: Client.effective(settings))
+## The model with the keys that the config of the server asks for (its `keys` map as `settings`, checked), with the
+## warnings about its entries in `keys.warnings`; the keys it has when the server says none (it did not answer).
+def with_keys(app: State.Model, settings: Optional[List[Protocol.KeySetting]]) -> State.Model
+  case settings
+    some(listed) -> app.with(keys: Client.effective(listed))
+    none -> app
+  end
 end
 
 private

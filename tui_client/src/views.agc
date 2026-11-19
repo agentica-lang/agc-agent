@@ -53,6 +53,7 @@ def laid_out(app: State.Model, counted: Bool) -> Screen.Frame
     queued: app.follow_ups.map { |text| "follow-up: #{Client.printable(text)}" },
     banner: app.banner,
     cover: covering(app),
+    keys: some(app.keys),
   )
 
   shown = Transcript.tail(app.entries, app.width, State.folds(app), app.height + app.scroll)
@@ -70,7 +71,7 @@ def beside(app: State.Model) -> List[Layout.Row]
   return [] if not Side.wide?(app.screen_width)
 
   case app.side
-    some(side) -> Side.rows(side, Side.columns(app.screen_width), app.height, true)
+    some(side) -> Side.rows(side, Side.columns(app.screen_width), app.height, true, app.keys)
     none -> []
   end
 end

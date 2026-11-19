@@ -4,6 +4,7 @@
 ## frame as a view tree, and `hit` tells what a click at a cell of the same frame is on, so a click meets what was
 ## drawn. Pure.
 
+import Client from "pkg/client/client"
 import TUI from "pkg/tui/tui"
 import Layout from "panel"
 import Markdown from "markdown"
@@ -39,6 +40,8 @@ struct Parts
   banner: List[String] = []
   ## The side panel that takes the transcript's place (on a narrow screen); none leaves the transcript.
   cover: Optional[Side.Side] = none
+  ## The keys in effect, for the hints of the panel.
+  keys: Optional[Client.Bindings] = none
 end
 
 ## Where each region is: `area` transcript rows (the `transcript` lines shown, from the top), the top rule, the
@@ -108,7 +111,7 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
   shown = lines.drop(top).take(area)
   cover: List[Layout.Row] = []
   for side in option_list(parts.cover)
-    cover = Side.rows(side, width, area)
+    cover = Side.rows(side, width, area, false, parts.keys.unwrap_or(Client.defaults()))
     shown = []
   end
 

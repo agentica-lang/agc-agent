@@ -41,7 +41,7 @@ end
 struct Display
   mouse: Bool
   clipboard: Protocol.ClipboardSetting
-  keys: List[Protocol.KeySetting] = []
+  keys: Optional[List[Protocol.KeySetting]] = none
 end
 
 ## The health check is short: a server that does not answer in time is not started again, it is reported.
@@ -62,7 +62,7 @@ def display(server: Server) -> Display
       Display(
         mouse: status.mouse.unwrap_or(true),
         clipboard: status.clipboard.unwrap_or(Protocol.ClipboardSetting()),
-        keys: status.keys.unwrap_or([]),
+        keys: status.keys,
       )
     error(_) -> unset()
   end

@@ -72,9 +72,11 @@ def effective(settings: List[Protocol.KeySetting]) -> Bindings
     break if back.empty?
 
     for action in back
-      warnings = warnings.push(
-        "keys: #{action}: #{label(keys[action])} is used by another action; it stays #{label(default_of(action))}",
-      )
+      if keys[action] != default_of(action)
+        warnings = warnings.push(
+          "keys: #{action}: #{label(keys[action])} is used by another action; it stays #{label(default_of(action))}",
+        )
+      end
 
       keys = keys.put(action, default_of(action))
       chosen = chosen.delete(action)
@@ -90,6 +92,7 @@ def parse(text: String) -> Result[String]
   name = text.strip.downcase
   return ok(name) if name == "shift+tab" or name == "pgup" or name == "pgdn"
   return error("esc is used by the screen and cannot be changed") if name == "esc"
+  return error("#{label(name)} is #{TERMINAL[name]} in a terminal") if TERMINAL.has_key?(name)
 
   return ok(name) if function_key?(name)
 
@@ -103,6 +106,10 @@ def parse(text: String) -> Result[String]
     return error("#{label(name)} is used by line editing") if FIXED.include?(name)
 
     return ok(name)
+  end
+
+  if name.start_with?("ctrl+") or name.start_with?("alt+")
+    return error("#{text.strip} cannot be reported by a terminal")
   end
 
   error("#{text.inspect} is not a key (ctrl+x, alt+x, shift+tab, f1 to f12, pgup or pgdn)")
@@ -154,12 +161,13 @@ def names() -> List[String] = ACTIONS.map { |action| action.name }
 
 private
 
-# The keys that fixed functions use: line editing, quit, the answers of an approval, the new line, Enter, Tab and
-# Backspace (which terminals send as Ctrl+M, Ctrl+I and Ctrl+H), and the word moves.
+# The keys that fixed functions use: line editing, quit, the answers of an approval, the new line and the word moves.
 FIXED = [
-  "ctrl+c", "ctrl+d", "ctrl+j", "ctrl+m", "ctrl+i", "ctrl+h", "ctrl+a", "ctrl+e", "ctrl+w", "ctrl+u", "ctrl+k",
-  "ctrl+y", "ctrl+n", "alt+b", "alt+f",
+  "ctrl+c", "ctrl+d", "ctrl+j", "ctrl+a", "ctrl+e", "ctrl+w", "ctrl+u", "ctrl+k", "ctrl+y", "ctrl+n", "alt+b", "alt+f",
 ]
+
+# What a terminal sends for these keys: they cannot be told apart from the keys they equal.
+TERMINAL = {"ctrl+i": "Tab", "ctrl+m": "Enter", "ctrl+h": "Backspace"}
 
 DIGITS = "0123456789".split("")
 LETTERS = "abcdefghijklmnopqrstuvwxyz".split("")

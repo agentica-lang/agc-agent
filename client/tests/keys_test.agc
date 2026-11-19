@@ -32,9 +32,19 @@ def test_a_bad_entry_is_a_warning_and_keeps_the_default() -> Result[Void]
     setting("edit_prompt", "esc"),
     setting("show_thinking", "alt+b"),
     setting("side_focus", "f2"),
+    setting("page_up", "ctrl+m"),
+    setting("page_down", "ctrl+h"),
+    setting("cycle_profile", "ctrl+["),
+    setting("thinking_level", "ctrl+shift+x"),
+    setting("edit_prompt", "ctrl+i"),
   ])
 
-  try Test.eq(bad.warnings.size, 6)
+  try Test.eq(bad.warnings.size, 11)
+  try Test.assert(bad.warnings.any? { |w| w.include?("Ctrl+I is Tab in a terminal") }, "#{bad.warnings}")
+  try Test.assert(bad.warnings.any? { |w| w.include?("Ctrl+M is Enter in a terminal") }, "#{bad.warnings}")
+  try Test.assert(bad.warnings.any? { |w| w.include?("Ctrl+H is Backspace in a terminal") }, "#{bad.warnings}")
+  try Test.assert(bad.warnings.any? { |w| w.include?("ctrl+[ cannot be reported by a terminal") }, "#{bad.warnings}")
+  try Test.assert(bad.warnings.any? { |w| w.include?("ctrl+shift+x cannot be reported") }, "#{bad.warnings}")
   try Test.assert(bad.warnings[0].include?("nothing") and bad.warnings[0].include?("cycle_profile"), "#{bad.warnings}")
   try Test.eq(Client.key_of(bad, "logs"), "ctrl+p")
   try Test.eq(Client.key_of(bad, "show_tools"), "ctrl+o")
@@ -42,6 +52,10 @@ def test_a_bad_entry_is_a_warning_and_keeps_the_default() -> Result[Void]
   try Test.eq(Client.key_of(bad, "show_thinking"), "ctrl+t")
   # `side_focus` took the key of `thinking_level`, which stays: the entry goes back.
   try Test.eq([Client.key_of(bad, "side_focus"), Client.key_of(bad, "thinking_level")], ["f6", "f2"])
+  # An action that asks for its own default, which another entry also asked for, goes back without a warning.
+  own = Client.effective([setting("thinking_level", "f2"), setting("side_focus", "f2")])
+  try Test.eq(own.warnings.size, 1)
+  try Test.eq(Client.key_of(own, "thinking_level"), "f2")
   try Test.assert(bad.warnings.any? { |w| w.include?("side_focus") and w.include?("F2") }, "#{bad.warnings}")
   twice = Client.effective([setting("logs", "f9"), setting("side_focus", "f9")])
   try Test.eq([Client.key_of(twice, "logs"), Client.key_of(twice, "side_focus")], ["ctrl+p", "f6"])
