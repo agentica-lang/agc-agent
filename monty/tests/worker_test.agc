@@ -19,7 +19,7 @@ def test_a_script_calls_host_functions_and_a_denial_raises() -> Result[Void]
   outcome = try Monty.run(Rig.fake("tools.json"), TOOLS, ["read_file", "bash"], &host)
   try Test.eq(outcome.output, "read hello\ndenied: the user denied this call\n")
   try Test.eq(outcome.error, none)
-  Test.eq(JSON.encode(outcome.value), "{\"items\":[1,2.5,null,true,[\"x\"]],\"size\":5}")
+  Test.eq(outcome.value, try JSON.parse("{\"items\":[1,2.5,null,true,[\"x\"]],\"size\":5}"))
 end
 
 def test_the_sandbox_has_no_files_and_unknown_names_fail() -> Result[Void]

@@ -1196,9 +1196,9 @@ end
 # A session that starts on a server with load warnings shows the last of them as notes, `/logs N` shows the end of the
 # log, and leaving prints the report with the way to the whole log.
 def test_the_chat_shows_the_server_warnings_and_logs() -> Result[Void]
-  warning = "2026-11-18T10:00:01.000Z WARNING bad skill"
+  warning = "2026-11-18T10:00:01.000000Z WARNING bad skill"
   log = Protocol.ServerLog(
-    lines: ["2026-11-18T10:00:00.000Z INFO older", warning],
+    lines: ["2026-11-18T10:00:00.000000Z INFO older", warning],
     warnings: [warning],
     warning_count: 4,
   )

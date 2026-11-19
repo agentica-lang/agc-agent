@@ -12,7 +12,7 @@ A coding agent for the terminal, like Claude Code or OpenCode, written in
 
 ## Try it
 
-Needs Agentica 0.34.0 or later (`agentica` on PATH, or `AGENTICA` set to it). Run `make install`, then use `bin/finn`
+Needs Agentica 0.35.0 or later (`agentica` on PATH, or `AGENTICA` set to it). Run `make install`, then use `bin/finn`
 from any folder (link it into your PATH if you like):
 
 ```sh

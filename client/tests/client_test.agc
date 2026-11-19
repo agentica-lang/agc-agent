@@ -264,6 +264,18 @@ def test_an_unreachable_backend_fails_and_ends() -> Result[Void]
   Test.eq(told.recv(1000), ok(Client.Item.Ended("no server")))
 end
 
+# The date of an export is whole seconds in UTC, as before; a time that no year 1 to 9999 holds is no date.
+def test_the_date_of_an_export_is_in_utc_whole_seconds() -> Result[Void]
+  try Test.assert(dated(0).include?("started 1970-01-01T00:00:00Z."), dated(0))
+  try Test.assert(dated(-1).include?("started 1969-12-31T23:59:59Z."), dated(-1))
+  Test.assert(
+    dated(9_223_372_036_854_775_807).include?("started at an unknown time."),
+    dated(9_223_372_036_854_775_807),
+  )
+end
+
+def dated(created_ms: Int) -> String = Client.markdown(sample().with(created_ms: created_ms))
+
 def error_kind_of[T](result: Result[T]) -> String
   case result
     ok(_) -> "ok"
