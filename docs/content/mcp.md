@@ -6,11 +6,11 @@ weight: 80
 
 # MCP
 
-An [MCP](https://modelcontextprotocol.io) server gives the model more tools: a database, a browser, an issue tracker. Finn connects to each server, on stdio or over streamable HTTP, and offers its tools to every session.
+An [MCP](https://modelcontextprotocol.io) server gives the model more tools: a database, a browser, an issue tracker. Finn connects to each server, on stdio or over streamable HTTP, and offers its tools to the sessions it belongs to.
 
 ## Set it up
 
-`FINN_MCP_CONFIG` names a JSON file in the shape most agents use:
+Servers come from two JSON files in the shape most agents use. `~/.config/finn/mcp.json` (`$XDG_CONFIG_HOME/finn/mcp.json`) is the user's file. It is read when it exists, and a file that is missing is no error; one that cannot be read or parsed is a warning, and the server starts without its servers. `FINN_MCP_CONFIG` names another file that replaces it: that file must be there and read, or `finn serve` does not start, and an empty `FINN_MCP_CONFIG=` means no MCP servers at all. [`.finn/mcp.json`](#a-project-file) of a session folder adds the servers of a project.
 
 ```json
 {
@@ -27,11 +27,18 @@ An [MCP](https://modelcontextprotocol.io) server gives the model more tools: a d
 }
 ```
 
-```sh
-FINN_MCP_CONFIG=~/.config/finn/mcp.json finn serve
-```
-
 A server name is letters, digits, `_` and `-`, with no `__`. A server has either a `command` or a `url`: one with both is refused.
+
+## A project file
+
+`.finn/mcp.json` in the session folder has the same shape. It starts programs from a repository, so it counts only in a [trusted folder](config.md#trusted-folders) (`FINN_TRUSTED_DIRS`), like `.finn/commands/`: anyone who can write the repository could plant a command there. In another folder it is ignored, with one warning that names the file and `FINN_TRUSTED_DIRS`. Even in a trusted folder it cannot read your environment: a header value with `${NAME}` leaves its server out, with a warning that names the variable (never its value). Put a key in your own file instead.
+
+- The servers belong to the sessions of that folder that the server has loaded. The first session there starts them, the sessions there share them, and the end of the last one stops them (a session that is not loaded, or deleted, starts nothing). A server on stdio starts in the folder. The session events come in order but do not wait for the server: if one is lost, the folder still gets its servers when its tools are read, and servers may then run until the server exits.
+- A project server named like a user server is left out with a warning: rename it, since the user's approval rules for `mcp__NAME__` would apply to it.
+- A project server that does not read is left out with a warning, and the others of the file start. A file that does not parse starts none.
+- Its logs are `mcp/project-HASH-NAME.log` in the state folder, with a short hash of the folder.
+
+`/reload` reads the user's file and the project file of each folder with sessions again, and says how many project servers stopped and started. A changed file restarts its servers; a file that does not read keeps the servers that run.
 
 ## On stdio
 

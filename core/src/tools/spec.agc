@@ -16,9 +16,10 @@ struct Context
   env: Fn[String, Result[String]]
   ## The paths (relative to `root`) that `glob` and `grep` leave out: those an approval rule hides.
   hidden: Optional[Fn[String, Bool]] = none
-  ## The tools after the base ones (MCP), and those that come later (MCP servers still listing at the start).
+  ## The tools after the base ones (MCP), and those that come later (MCP servers still listing at the start), given
+  ## the session folder: the project servers belong to it.
   tools: List[Tool] = []
-  late: Optional[Fn[List[Tool]]] = none
+  late: Optional[Fn[String, List[Tool]]] = none
   ## Folders outside `root` that `read_file` reads too: those of the session's skills.
   read_roots: List[String] = []
   ## A test seam: makes the diff a client shows for a call (the tool and its input) in place of the real one.
@@ -95,7 +96,7 @@ def snapshot(ctx: Context) -> Context = ctx.with(tools: more_tools(ctx), late: n
 
 def more_tools(ctx: Context) -> List[Tool]
   case ctx.late
-    some(late) -> ctx.tools + late.call()
+    some(late) -> ctx.tools + late.call(ctx.root)
     none -> ctx.tools
   end
 end

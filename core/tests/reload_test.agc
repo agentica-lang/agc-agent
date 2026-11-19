@@ -210,7 +210,7 @@ def test_a_reload_swaps_the_mcp_servers_and_keeps_them_when_the_file_is_bad() ->
     mounted = try Builtins.mcp(Extensions.Served(registry: Extensions.Registry()), read, dir)
     tools = Extensions.late_tools(mounted.served).unwrap!
     try listed(tools, "mcp__fake__echo", true)
-    old = tools.call()
+    old = tools.call(".")
     try S.write_config(dir, {"other": try S.fake_server(JSON.object({}))})
     setup = H.Setup(replies: [], late_tools: some(tools), reloads: [mounted.reload])
     result = H.using(setup) do |h|
@@ -234,9 +234,9 @@ def test_a_reload_swaps_the_mcp_servers_and_keeps_them_when_the_file_is_bad() ->
 end
 
 # Waits until the tool `name` is in the tools (or is not), up to 30 seconds.
-def listed(tools: Fn[List[Tools.Tool]], name: String, wanted: Bool) -> Result[Void]
+def listed(tools: Fn[String, List[Tools.Tool]], name: String, wanted: Bool) -> Result[Void]
   for _ in 0...300
-    present = tools.call().any? { |t| t.name == name }
+    present = tools.call(".").any? { |t| t.name == name }
     return ok() if present == wanted
 
     Task.sleep(100)

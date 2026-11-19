@@ -25,6 +25,8 @@ struct Server
   env: Map[String, String] = {}
   ## The file that gets the server's stderr; `""` leaves it on ours.
   log: String = ""
+  ## The folder the server starts in; `.` is ours.
+  cwd: String = "."
   url: String = ""
   ## Headers sent with each HTTP request; their values never show in an error.
   headers: Map[String, String] = {}
@@ -209,7 +211,12 @@ def started(state: State) -> Result[State]
   return connected(state) if not state.server.url.empty?
 
   server = state.server
-  spawned = Process.spawn(server.command, server.args, Process.Options(env: server.env, err: server.log, pgroup: true))
+  spawned = Process.spawn(
+    server.command,
+    server.args,
+    Process.Options(env: server.env, err: server.log, pgroup: true, chdir: server.cwd),
+  )
+
   process = try unavailable(server, spawned)
   ready = state.with(process: some(process))
   deadline = Time.monotonic_ms() + state.options.start_ms

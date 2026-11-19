@@ -1018,7 +1018,7 @@ def builtins_of(options: Config.Options, root: String, system: String) -> List[E
   options.registry.map { |r| Extensions.open(r, place_of(options, root), system) }.unwrap_or([])
 end
 
-def late_of(options: Config.Options) -> Optional[Fn[List[Tools.Tool]]]
+def late_of(options: Config.Options) -> Optional[Fn[String, List[Tools.Tool]]]
   for registry in option_list(options.registry)
     return Extensions.late_tools(registry)
   end
@@ -1032,9 +1032,7 @@ end
 
 # A session folder under a folder of `FINN_TRUSTED_DIRS`, whose own skills and all of whose rules count (elsewhere
 # only the project's deny rules).
-def trusted?(options: Config.Options, root: String) -> Bool
-  options.trusted.any? { |dir| Sandbox.inside?(Path.real(dir).unwrap_or(dir), root) }
-end
+def trusted?(options: Config.Options, root: String) -> Bool = Sandbox.trusted?(options.trusted, root)
 
 def option_list[T](value: Optional[T]) -> List[T]
   case value

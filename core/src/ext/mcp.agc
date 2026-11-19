@@ -1,4 +1,5 @@
-## The tools of the MCP servers that `FINN_MCP_CONFIG` names: a JSON file of the common shape
+## The tools of the MCP servers of the user's file (`FINN_MCP_CONFIG`, else `mcp.json` of the user's config folder) and
+## of the project file `.finn/mcp.json` of a trusted session folder: a JSON file of the common shape
 ## `{"mcpServers": {"NAME": {"command": "...", "args": [...], "env": {...}}}}`, where a server on streamable HTTP is
 ## `{"url": "https://...", "headers": {"Authorization": "Bearer ${TOKEN}"}}`: `${NAME}` in a header value is the
 ## variable of the agent's environment, so a key stays out of the file; it is never shown.
@@ -16,6 +17,7 @@ import Shell from "../tools/shell"
 import Spec from "../tools/spec"
 
 CONFIG_ENV = "FINN_MCP_CONFIG"
+PROJECT_FILE = ".finn/mcp.json"
 NAME = /\A[A-Za-z0-9_-]{1,64}\z/
 ENV_NAME = /\A[A-Za-z_][A-Za-z0-9_]*\z/
 HEADER_NAME = /\A[A-Za-z0-9!#$%&'*+.^_`|~-]{1,128}\z/
@@ -41,34 +43,84 @@ struct Board
   tasks: List[Task[Void]]
 end
 
-## The servers of the config file that `read` names; none without it.
+## The servers of a project file and what it left out.
+struct Found
+  servers: List[Mcp.Server]
+  warnings: List[String]
+end
+
+## The servers of the user's file: the one `FINN_MCP_CONFIG` names, else `mcp.json` of the user's config folder. An
+## empty `FINN_MCP_CONFIG` means no servers; a file it names that is not there is an error, and the default file that is
+## not there is not (one that does not read is).
 def servers(read: Fn[String, Result[String]], state_dir: String) -> Result[List[Mcp.Server]]
-  path = read.call(CONFIG_ENV).unwrap_or("")
+  logs = Logs(folder: "#{state_dir}/mcp", prefix: "")
+  case read.call(CONFIG_ENV)
+    ok(path) if path.empty? -> return ok([])
+    ok(path) -> return user_servers(try File.read_text(path), CONFIG_ENV, read, logs)
+    error(_) -> nil
+  end
+
+  path = user_file(read)
   return ok([]) if path.empty?
 
-  config = try JSON.parse(try File.read_text(path))
-  entries = JSON.get(config, "mcpServers").unwrap_or(JSON.object({}))
-  fields = case JSON.node(entries)
-    JSON.Node.Object(map) -> ok(map)
-    _ -> error("#{CONFIG_ENV}: mcpServers is not an object")
+  case File.read_text(path)
+    ok(text) -> user_servers(text, path, read, logs)
+    error(e) if e.kind == "io.not_found" -> ok([])
+    error(e) -> error("#{path}: #{e.message}")
+  end
+end
+
+## Whether `FINN_MCP_CONFIG` is set: its file must be there and read, or the server does not start.
+def configured?(read: Fn[String, Result[String]]) -> Bool = read.call(CONFIG_ENV).ok?
+
+## The project file of the folder `root`, empty when it has none.
+def project_file(root: String) -> String
+  path = "#{root}/#{PROJECT_FILE}"
+  return "" if not File.stat(path).ok?
+
+  path
+end
+
+## What the project file of the folder `root` gives: its servers, and a warning for each one it leaves out (a server that
+## does not read, one with a `${NAME}` in a header, one named like a server of the user, which is in `taken`). A file
+## that does not read is an error. The servers start in the folder, and their logs are `project-HASH-NAME.log`, the hash
+## of the folder.
+def project(root: String, read: Fn[String, Result[String]], state_dir: String, taken: List[String]) -> Result[Found]
+  path = project_file(root)
+  return ok(Found(servers: [], warnings: [])) if path.empty?
+
+  hash = OpenSSL.Digest.sha256_hexdigest(root.bytes).slice(0, 8)
+  found = try parsed(
+    try File.read_text(path),
+    path,
+    read,
+    Logs(folder: "#{state_dir}/mcp", prefix: "project-#{hash}-"),
+    root,
+    false,
+  )
+
+  kept = found.servers.select { |server| not taken.include?(server.name) }
+  clashes = found.servers.select { |server| taken.include?(server.name) }
+  notes = clashes.map { |server|
+    (
+      "#{path}: #{server.name} is left out, the user's file has a server of that name; rename it (the user's rules for mcp__#{server.name}__ would apply to it)"
+    )
+  }
+
+  ok(Found(servers: kept, warnings: found.warnings + notes))
+end
+
+## `$XDG_CONFIG_HOME/finn/mcp.json`, else `~/.config/finn/mcp.json`; empty without a home folder.
+def user_file(read: Fn[String, Result[String]]) -> String
+  base = read.call("XDG_CONFIG_HOME").unwrap_or("")
+  if base.empty?
+    home = read.call("HOME").unwrap_or("")
+    return "" if home.empty?
+
+    base = "#{home}/.config"
   end
 
-  map = try fields
-  if not map.empty?
-    try private_dir(state_dir)
-    try private_dir("#{state_dir}/mcp")
-  end
-
-  out: List[Mcp.Server] = []
-  for name in map.keys.sort
-    if not Regex.match?(name, NAME) or name.include?("__")
-      return error("#{CONFIG_ENV}: a server name is letters, digits, _ and - without \"__\": #{name.inspect}")
-    end
-
-    out = out.push(try server(name, map[name], "#{state_dir}/mcp/#{name}.log", read))
-  end
-
-  ok(out)
+  "#{base}/finn/mcp.json"
 end
 
 ## Starts each server and lists its tools in a task of its own; `warn` gets each warning as it comes. The tools are
@@ -108,6 +160,12 @@ def stop(started: Started) -> Void
 end
 
 private
+
+# Where the servers of a file write their stderr: `FOLDER/PREFIXNAME.log`.
+struct Logs
+  folder: String
+  prefix: String
+end
 
 struct Listed
   started: Started
@@ -169,12 +227,74 @@ def ignore(_text: String) -> Void
   return
 end
 
-# The logs can hold what the tools read: the folder is only the user's, as the state folder is.
+def user_servers(text: String, label: String, read: Fn[String, Result[String]], logs: Logs) -> Result[List[Mcp.Server]]
+  found = try parsed(text, label, read, logs, ".", true)
+  ok(found.servers)
+end
+
+# The servers of the file `text`; `label` starts each error. A strict file (the user's) fails at the first server that
+# does not read; the project's leaves it out with a warning.
+def parsed(
+  text: String,
+  label: String,
+  read: Fn[String, Result[String]],
+  logs: Logs,
+  cwd: String,
+  strict: Bool,
+) -> Result[Found]
+  config = try JSON.parse(text)
+  entries = JSON.get(config, "mcpServers").unwrap_or(JSON.object({}))
+  fields = case JSON.node(entries)
+    JSON.Node.Object(map) -> ok(map)
+    _ -> error("#{label}: mcpServers is not an object")
+  end
+
+  map = try fields
+  if not map.empty?
+    try private_dir(Sandbox.parent(logs.folder))
+    try private_dir(logs.folder)
+  end
+
+  out = Found(servers: [], warnings: [])
+  for name in map.keys.sort
+    made = named(name, map[name], logs, read, label, cwd, strict)
+    case made
+      ok(server) -> out = out.with(servers: out.servers.push(server))
+      error(e) if strict -> return error(e.message)
+      error(e) -> out = out.with(warnings: out.warnings.push(e.message))
+    end
+  end
+
+  ok(out)
+end
+
+def named(
+  name: String,
+  json: JSON.Value,
+  logs: Logs,
+  read: Fn[String, Result[String]],
+  label: String,
+  cwd: String,
+  strict: Bool,
+) -> Result[Mcp.Server]
+  if not Regex.match?(name, NAME) or name.include?("__")
+    return error("#{label}: a server name is letters, digits, _ and - without \"__\": #{name.inspect}")
+  end
+
+  server(name, json, "#{logs.folder}/#{logs.prefix}#{name}.log", read, label, cwd, strict)
+end
+
+# The logs can hold what the tools read: the folder is only the user's, as the state folder is. Two readers of
+# a project
+# file may make it at once: the one that lost finds it there.
 def private_dir(path: String) -> Result[Void]
   return ok() if File.stat(path).ok?
 
-  try Dir.mkdir(Sandbox.parent(path))
-  Dir.mkdir_private(path)
+  _ = Dir.mkdir(Sandbox.parent(path))
+  made = Dir.mkdir_private(path)
+  return ok() if File.stat(path).ok?
+
+  made
 end
 
 def added(started: Started, server: Mcp.Server, client: Mcp.Client, listed: Result[List[Mcp.Tool]]) -> Started
@@ -202,12 +322,20 @@ def added(started: Started, server: Mcp.Server, client: Mcp.Client, listed: Resu
 end
 
 # `env -i` with the variables bash keeps and the server's `env`: the keys of the agent's own environment stay out.
-def server(name: String, json: JSON.Value, log: String, read: Fn[String, Result[String]]) -> Result[Mcp.Server]
+def server(
+  name: String,
+  json: JSON.Value,
+  log: String,
+  read: Fn[String, Result[String]],
+  label: String,
+  cwd: String,
+  strict: Bool,
+) -> Result[Mcp.Server]
   command = JSON.string(JSON.get(json, "command").unwrap_or(JSON.from(""))).unwrap_or("")
   url = JSON.string(JSON.get(json, "url").unwrap_or(JSON.from(""))).unwrap_or("")
-  return error("#{CONFIG_ENV}: server #{name} has both a command and a url") if not command.empty? and not url.empty?
-  return remote(name, url, json, read) if not url.empty?
-  return error("#{CONFIG_ENV}: server #{name} has no command or url") if command.empty?
+  return error("#{label}: server #{name} has both a command and a url") if not command.empty? and not url.empty?
+  return remote(name, url, json, read, label, strict) if not url.empty?
+  return error("#{label}: server #{name} has no command or url") if command.empty?
 
   args: List[String] = []
   given: List[JSON.Value] = JSON.list(JSON.get(json, "args").unwrap_or(JSON.array([]))).unwrap_or([])
@@ -215,54 +343,76 @@ def server(name: String, json: JSON.Value, log: String, read: Fn[String, Result[
     args = args.push(try JSON.string(arg))
   end
 
-  return error("#{CONFIG_ENV}: the command of #{name} has a \"=\"") if command.include?("=")
+  return error("#{label}: the command of #{name} has a \"=\"") if command.include?("=")
 
   env: List[String] = []
   case JSON.node(JSON.get(json, "env").unwrap_or(JSON.object({})))
     JSON.Node.Object(vars) ->
       for key in vars.keys.sort
-        return error("#{CONFIG_ENV}: env of #{name} has a bad name: #{key.inspect}") if not Regex.match?(key, ENV_NAME)
+        return error("#{label}: env of #{name} has a bad name: #{key.inspect}") if not Regex.match?(key, ENV_NAME)
 
         env = env.push("#{key}=#{try JSON.string(vars[key])}")
       end
 
-    _ -> return error("#{CONFIG_ENV}: env of #{name} is not an object")
+    _ -> return error("#{label}: env of #{name} is not an object")
   end
 
   words = ["-i"] + Shell.environment(read) + env + [command] + args
-  ok(Mcp.Server(name: name, command: "/usr/bin/env", args: words, log: log))
+  ok(Mcp.Server(name: name, command: "/usr/bin/env", args: words, log: log, cwd: cwd))
 end
 
-def remote(name: String, url: String, json: JSON.Value, read: Fn[String, Result[String]]) -> Result[Mcp.Server]
+def remote(
+  name: String,
+  url: String,
+  json: JSON.Value,
+  read: Fn[String, Result[String]],
+  label: String,
+  strict: Bool,
+) -> Result[Mcp.Server]
   if not url.start_with?("http://") and not url.start_with?("https://")
-    return error("#{CONFIG_ENV}: the url of #{name} is not http:// or https://")
+    return error("#{label}: the url of #{name} is not http:// or https://")
   end
 
   authority = url.split("://")[1].split("/")[0].split("?")[0].split("#")[0]
-  return error("#{CONFIG_ENV}: the url of #{name} has a user (put a key in headers)") if authority.include?("@")
+  return error("#{label}: the url of #{name} has a user (put a key in headers)") if authority.include?("@")
 
   headers: Map[String, String] = {}
   case JSON.node(JSON.get(json, "headers").unwrap_or(JSON.object({})))
     JSON.Node.Object(given) ->
       for key in given.keys.sort
         if not Regex.match?(key, HEADER_NAME) or OWN_HEADERS.include?(key.downcase)
-          return error("#{CONFIG_ENV}: headers of #{name} has a bad or reserved name: #{key.inspect}")
+          return error("#{label}: headers of #{name} has a bad or reserved name: #{key.inspect}")
         end
 
-        value = try expand(try JSON.string(given[key]), "#{CONFIG_ENV}: header #{key} of #{name}", read)
+        raw = try JSON.string(given[key])
+        if not strict and raw.include?("${")
+          return error(
+            "#{label}: #{name} is left out: the header #{key} reads #{variable_of(raw)} of the environment, which a project file cannot (put the key in the user's file)",
+          )
+        end
+
+        value = try expand(raw, "#{label}: header #{key} of #{name}", read)
         headers = headers.put(key, value)
       end
 
-    _ -> return error("#{CONFIG_ENV}: headers of #{name} is not an object")
+    _ -> return error("#{label}: headers of #{name} is not an object")
   end
 
   if not headers.empty? and url.start_with?("http://") and not loopback?(authority)
-    return error(
-      "#{CONFIG_ENV}: #{name} sends headers in clear text: its url is http:// to another host than this one",
-    )
+    return error("#{label}: #{name} sends headers in clear text: its url is http:// to another host than this one")
   end
 
   ok(Mcp.Server(name: name, url: url, headers: headers))
+end
+
+# `${NAME}` of a header value, to name the variable; its value is never read.
+def variable_of(text: String) -> String
+  start = text.index_of("${").unwrap_or(0)
+  tail = text.slice(start, text.length - start)
+  close = tail.index_of("}")
+  return "a variable" if close.none?
+
+  tail.slice(0, close.unwrap! + 1)
 end
 
 def loopback?(authority: String) -> Bool

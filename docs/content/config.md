@@ -52,7 +52,8 @@ The server runs it in the session folder as the `bash` tool runs a command: in i
 - the `allow` and `ask` rules of its `.finn/config.json`;
 - its skills ([Skills](skills.md));
 - its slash commands, in `.finn/commands/` ([Slash commands](cli.md#slash-commands));
-- its profiles, in `.finn/profiles/`, which choose the tools, the model (on the session's provider) and the thinking level ([Profiles](tools.md#profiles)).
+- its profiles, in `.finn/profiles/`, which choose the tools, the model (on the session's provider) and the thinking level ([Profiles](tools.md#profiles));
+- its MCP servers, in `.finn/mcp.json`, which start programs ([MCP](mcp.md#a-project-file)).
 
 The deny rules of a project count everywhere.
 
@@ -83,7 +84,7 @@ A one-shot run (`finn -p`) never changes the choice, so a script does not reset 
 `/reload` (`POST /v1/reload`) makes the running server read these again, with no restart and without stopping a turn:
 
 - the user's config file: the permission rules and `approvals`, `files.command`, `mouse` and the providers it adds;
-- the MCP servers (`FINN_MCP_CONFIG`): when the list changed, every server stops and the new list starts (a call that runs on a stopped one fails, and the new tools come as the servers list them); only MCP servers reload, not extensions registered in code;
+- the MCP servers (the user's file, `FINN_MCP_CONFIG`, and the `.finn/mcp.json` of each folder with sessions): when a list changed, its servers stop and the new list starts (a call that runs on a stopped one fails, and the new tools come as the servers list them); only MCP servers reload, not extensions registered in code;
 - the skills and the `AGENTS.md` of each running session, and its approval.
 
 A session that runs uses them from its next turn; a turn that runs keeps what it started with. The answers that a session gave with "always" are forgotten, the accept-edits mode stays. A new session, or one that loads later, reads everything fresh. The answer says what changed (`skills: 2 added, 1 removed; config reloaded (3 rules, approvals on); restarting 1 MCP server(s)`), and the warnings of the load go to `/logs`. Two reloads never run at once, and a draining server refuses one.
@@ -104,7 +105,7 @@ A config file that does not read stays as it was, with the reason as a warning: 
 | `FINN_CONFIG` | the user's config file |
 | `FINN_TRUSTED_DIRS` | the [trusted folders](#trusted-folders) |
 | `FINN_HOME` | the install, the folder with `docs/`: `bin/finn` sets it, for the [skill `finn`](skills.md#the-finn-skill) and `finn docs` |
-| `FINN_MCP_CONFIG` | the JSON file of MCP servers ([MCP](mcp.md)) |
+| `FINN_MCP_CONFIG` | the JSON file of MCP servers, in place of `~/.config/finn/mcp.json` ([MCP](mcp.md)) |
 | `FINN_CODE_MODE` | `0` turns off code mode, the `run_script` tool, as `--no-codemode` does; on by default ([Tools](tools.md#code-mode)) |
 | `FINN_MONTY` | a Monty 1.6.0 binary you trust, for code mode |
 | `FINN_CONTEXT_WINDOW` | the model's context window in tokens, for compaction |

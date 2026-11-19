@@ -1,6 +1,6 @@
 ## A fake MCP server on stdio for the tests. Its tools: `echo` (the `text` argument), `fail` (a tool error), `big`
 ## (60000 characters), `greeting` (the variable `FAKE_MCP_GREETING`), `probe` (the variable named by `text`), `image`
-## (an image part), `grandchild` (starts a `sleep` that outlives this server, and gives its pid), `crash` (exits) and
+## (an image part), `cwd` (its folder), `grandchild` (starts a `sleep` that outlives this server, and gives its pid), `crash` (exits) and
 ## `hang` (never answers). `tools/list` comes in two pages, the first after two requests of the server (`ping` and
 ## another), a notification and a line that is no JSON.
 ##
@@ -9,7 +9,7 @@
 ## next cursor for ever, `endless` a new one each time, `odd` lists `echo` twice, `probe` and a tool with a bad name,
 ## and `shuffle` answers a call first with another id.
 
-TOOLS = ["echo", "fail", "big", "greeting", "probe", "image", "grandchild", "crash", "hang"]
+TOOLS = ["echo", "fail", "big", "greeting", "probe", "image", "grandchild", "crash", "hang", "cwd"]
 
 def main() -> Void
   case System.env("FAKE_MCP_STARTS")
@@ -118,6 +118,7 @@ def call(id: JSON.Value, params: JSON.Value) -> Void
       pid = Process.read_line(process, 5000).unwrap_or("")
       _ = Process.wait(process, 5000)
       answer(id, content([text_part(pid)], false))
+    "cwd" -> answer(id, content([text_part(Path.cwd().unwrap_or(""))], false))
     "image" ->
       image = JSON.object({"type": JSON.from("image"), "mimeType": JSON.from("image/png"), "data": JSON.from("AA==")})
       answer(id, content([text_part("a picture:"), image], false))

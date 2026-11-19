@@ -139,7 +139,7 @@ def start(registry: Extensions.Registry) -> Result[Server.Server]
     |> Builtins.approvals(options.approvals, options.asking, options.live)
   )
 
-  mounted = try Builtins.mcp(own, read, options.state_dir)
+  mounted = try Builtins.mcp(own, read, options.state_dir, options.trusted)
   all = mounted.served
   catalog = Catalog.start(
     Catalog.Options(url: options.models_url, cache: "#{options.state_dir}/#{Catalog.CACHE_FILE}"),

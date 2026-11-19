@@ -72,7 +72,7 @@ struct Setup
   api: String = "openai"
   ## The tools of MCP servers, and those that come after the start.
   tools: List[Tools.Tool] = []
-  late_tools: Optional[Fn[List[Tools.Tool]]] = none
+  late_tools: Optional[Fn[String, List[Tools.Tool]]] = none
   ## Makes the diff of each tool call in place of the real one.
   diff: Optional[Fn[String, JSON.Value, String]] = none
   ## Code mode on a fake Monty worker that replays this fixture of `tests/fixtures/monty`.
