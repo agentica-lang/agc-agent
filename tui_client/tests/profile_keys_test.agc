@@ -110,7 +110,10 @@ def test_a_list_read_of_the_session_before_does_not_hold_enter() -> Result[Void]
   listed = App.update(again.model, run(again.cmds[0])[0]).model
   picked = App.update(listed, enter()).model
   try Test.eq(picked.side.none?, true)
-  Test.eq(drain(chosen), ["build"])
+  try Test.eq(drain(chosen), ["build"])
+  # The session that was resumed read its stream; it ends with the test.
+  Task.await(switched.stream.unwrap!)
+  ok()
 end
 
 # `/model ` waits for its list too, and runs the model of its row once the list is there.
