@@ -442,10 +442,11 @@ def test_codex_sends_its_headers_without_max_output_tokens_and_lists_its_models(
   try Test.eq(HTTP.header_values(call.headers, "chatgpt-account-id"), ["acct-1"])
   try Test.eq(HTTP.header_values(call.headers, "originator"), ["llm-async-codex"])
   try Test.eq(JSON.get(try JSON.parse(call.body), "max_output_tokens").ok?, false)
-  try Test.eq(listing.target, "/v1/models?client_version=0.160.0")
+  try Test.eq(listing.target, "/v1/models?client_version=0.170.0")
   Test.eq(
     models,
     [
+      LLM.Model(id: "gpt-6.2-sol", context: some(500000)),
       LLM.Model(id: "gpt-5.1-codex", context: some(272000)),
       LLM.Model(id: "gpt-5.1-codex-mini", context: some(272000)),
     ],
