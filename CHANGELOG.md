@@ -4,7 +4,7 @@
 
 ### Added
 
-- MCP servers come from `~/.config/finn/mcp.json` by default (`FINN_MCP_CONFIG` replaces it) and from `.finn/mcp.json` of a session folder under `FINN_TRUSTED_DIRS`: the servers of a project start with the first session in its folder and stop with the last one, and a project server wins over a user server of the same name there. `/reload` reads both files again.
+- MCP servers come from `~/.config/finn/mcp.json` by default (`FINN_MCP_CONFIG` replaces it) and from `.finn/mcp.json` of a session folder under `FINN_TRUSTED_DIRS`: the servers of a project start with the first session in its folder and stop with the last one, a project server named like a user server is left out, and a project file cannot read `${NAME}` of the environment. `/reload` reads both files again.
 
 ### Changed
 

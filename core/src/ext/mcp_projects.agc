@@ -13,13 +13,6 @@ struct Projects
   keeper: Actor.Ref[Kept, Job]
 end
 
-## What a folder adds to its sessions: the tools its servers listed so far, and the names of its servers, which take the
-## place of the user's servers of the same name.
-struct Scope
-  tools: List[Spec.Tool]
-  names: List[String]
-end
-
 ## Starts with no project.
 def start(warn: Fn[String, Void]) -> Projects
   keeper = Actor.start(Actor.Behaviour(init: -> { Kept(warn: warn) }, handle: &kept))
@@ -39,16 +32,20 @@ def ended(projects: Projects, session: String) -> Void
   _ = Actor.cast(projects.actor.address, Msg.Ended(session))
 end
 
-## What the folder `root` adds to its sessions.
-def scope(projects: Projects, root: String) -> Scope
-  none_yet = Scope(tools: [], names: [])
-  answer: Result[Scope] = Actor.call(projects.actor.address, CALL_MS) do |reply| Msg.Scope(root, reply) end
-  answer.unwrap_or(none_yet)
+## The tools that the project servers of the folder `root` listed so far. A folder that no session event named yet (one
+## was lost: the events do not wait for the observer) is taken in now, with the servers `load` gives, so its sessions are
+## not left without their tools; a lost `session_ended` only delays the stop of its servers to the end of the server.
+def tools(projects: Projects, root: String, load: Fn[String, List[Mcp.Server]]) -> List[Spec.Tool]
+  answer: Result[List[Spec.Tool]] = Actor.call(projects.actor.address, CALL_MS) do |reply|
+    Msg.Tools(root, load, reply)
+  end
+
+  answer.unwrap_or([])
 end
 
 ## Reads the project file of each folder with sessions again (`read` gives its servers): the servers of a folder whose
 ## file changed stop and the new ones start. A folder whose file does not read keeps its servers. What it did, for the
-## report; empty when nothing changed.
+## report (how many servers stopped and started); empty when nothing changed.
 def reload(projects: Projects, read: Fn[String, Result[List[Mcp.Server]]]) -> Result[String]
   roots: Result[List[String]] = Actor.call(projects.actor.address, CALL_MS) do |reply| Msg.Roots(reply) end
   fresh: Map[String, List[Mcp.Server]] = {}
@@ -60,11 +57,11 @@ def reload(projects: Projects, read: Fn[String, Result[List[Mcp.Server]]]) -> Re
     end
   end
 
-  restarted: Result[Int] = Actor.call(projects.actor.address, CALL_MS) do |reply| Msg.Replace(fresh, reply) end
-  count = try restarted
+  changed: Result[List[Int]] = Actor.call(projects.actor.address, CALL_MS) do |reply| Msg.Replace(fresh, reply) end
+  counts = try changed
   said = ""
-  if count > 0
-    said = "restarting #{count} project MCP server(s)"
+  if counts[0] + counts[1] > 0
+    said = "project MCP servers: #{counts[0]} stopped, #{counts[1]} started"
   end
 
   return error(([said] + broken).select { |part| not part.empty? }.join("; ")) if not broken.empty?
@@ -74,9 +71,9 @@ end
 
 ## Stops every project, for the end of the server.
 def stop(projects: Projects) -> Void
+  _ = Actor.stop(projects.actor, CALL_MS)
   done: Result[Bool] = Actor.call(projects.keeper.address, FINISH_MS) do |reply| Job.Finish(reply) end
   _ = done
-  _ = Actor.stop(projects.actor, CALL_MS)
   _ = Actor.stop(projects.keeper, CALL_MS)
 end
 
@@ -100,9 +97,9 @@ end
 enum Msg
   Opened(String, String, List[Mcp.Server])
   Ended(String)
-  Scope(String, Channel[Scope])
+  Tools(String, Fn[String, List[Mcp.Server]], Channel[List[Spec.Tool]])
   Roots(Channel[List[String]])
-  Replace(Map[String, List[Mcp.Server]], Channel[Int])
+  Replace(Map[String, List[Mcp.Server]], Channel[List[Int]])
   Ready(String, List[Mcp.Server], McpTools.Board)
 end
 
@@ -123,26 +120,33 @@ def held(state: Held, msg: Msg) -> Actor.Step[Held]
   case msg
     Msg.Opened(root, session, servers) -> Actor.continue(state.with(projects: add(state, root, session, servers)))
     Msg.Ended(session) -> Actor.continue(state.with(projects: remove(state, session)))
-    Msg.Scope(root, reply) ->
-      Actor.reply(reply, scope_of(state.projects.get(root)))
-      Actor.continue(state)
+    Msg.Tools(root, load, reply) ->
+      projects = state.projects
+      if not projects.has_key?(root)
+        projects = adopted(state, root, load)
+      end
+
+      Actor.reply(reply, tools_of(projects.get(root)))
+      Actor.continue(state.with(projects: projects))
     Msg.Roots(reply) ->
       Actor.reply(reply, state.projects.keys.sort)
       Actor.continue(state)
     Msg.Replace(fresh, reply) ->
       projects = state.projects
-      restarted = 0
+      stopped = 0
+      started = 0
       for root in fresh.keys.sort
         for project in option_list(projects.get(root))
           if fresh[root] != project.servers
             projects = projects.put(root, project.with(servers: fresh[root], board: none))
             _ = Actor.cast(state.keeper, Job.Set(root, fresh[root]))
-            restarted = restarted + fresh[root].size
+            stopped = stopped + project.servers.size
+            started = started + fresh[root].size
           end
         end
       end
 
-      Actor.reply(reply, restarted)
+      Actor.reply(reply, [stopped, started])
       Actor.continue(state.with(projects: projects))
     Msg.Ready(root, servers, board) ->
       case state.projects.get(root)
@@ -188,12 +192,20 @@ def remove(state: Held, session: String) -> Map[String, Project]
   projects
 end
 
-def scope_of(found: Optional[Project]) -> Scope
+# A folder with no session noted: its servers start, and no session id will end them.
+def adopted(state: Held, root: String, load: Fn[String, List[Mcp.Server]]) -> Map[String, Project]
+  servers = load.call(root)
+  if not servers.empty?
+    _ = Actor.cast(state.keeper, Job.Set(root, servers))
+  end
+
+  state.projects.put(root, Project(sessions: [], servers: servers))
+end
+
+def tools_of(found: Optional[Project]) -> List[Spec.Tool]
   case found
-    some(project) ->
-      tools = project.board.map { |board| McpTools.tools(board) }.unwrap_or([])
-      Scope(tools: tools, names: project.servers.map { |server| server.name })
-    none -> Scope(tools: [], names: [])
+    some(project) -> project.board.map { |board| McpTools.tools(board) }.unwrap_or([])
+    none -> []
   end
 end
 

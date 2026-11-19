@@ -31,8 +31,8 @@ USAGE = <<~TEXT
   from PyPI (sha256 checked) on first use into $XDG_CACHE_HOME/finn, else ~/.cache/finn (a folder open to others is
   refused). MCP servers come from a JSON file ({"mcpServers": {NAME: {"command", "args", "env"} or
   {"url", "headers"}}}): FINN_MCP_CONFIG, else $XDG_CONFIG_HOME/finn/mcp.json (else ~/.config/finn/mcp.json), and
-  .finn/mcp.json of a session folder under FINN_TRUSTED_DIRS, whose servers run with the sessions of that folder (it wins
-  over the user's file for a name they share). Their tools are mcp__NAME__TOOL and ask before each call. A server on stdio gets the short
+  .finn/mcp.json of a session folder under FINN_TRUSTED_DIRS, whose servers run with the sessions of that folder (a name the
+  user's file has is left out; it cannot read ${NAME} of the environment). Their tools are mcp__NAME__TOOL and ask before each call. A server on stdio gets the short
   environment of bash plus its "env", which is passed on as given (put the keys it needs there); a slow server's tools
   come once it lists them, from the next turn. Skills (SKILL.md folders under .finn/skills, .agents/skills and
   .claude/skills) come from the home folder, and from the session folder only when it is under a folder of
