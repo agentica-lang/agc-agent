@@ -255,6 +255,24 @@ def test_shortcuts_lists_the_keys_and_the_closed_footer_names_the_panel() -> Res
   Test.assert(not screen(logs).last.include?("^P logs"), "the open footer says close")
 end
 
+# On a small screen the list of `/shortcuts` does not fit: it opens on its first rows and PgDn reaches the last ones.
+def test_shortcuts_scrolls_on_a_small_screen() -> Result[Void]
+  opened = ran(model_of(120, 10), "/shortcuts")
+  try Test.assert(
+    screen(opened).any? { |row| row.include?("Enter") and row.include?("send the message") },
+    "#{screen(opened)}",
+  )
+
+  try Test.assert(not screen(opened).any? { |row| row.include?("/mcp: Esc") }, "the last rows are below")
+  scrolled = opened
+  for _ in 0...12
+    scrolled = App.update(scrolled, key(TUI.Key.PageDown)).model
+  end
+
+  try Test.assert(screen(scrolled).any? { |row| row.include?("/mcp: Esc") }, "#{screen(scrolled)}")
+  Test.assert(not screen(scrolled).any? { |row| row.include?("send the message") }, "the first rows are above")
+end
+
 # Esc closes the panel first, whatever the focus, and stops the turn the second time.
 def test_esc_closes_the_panel_before_it_stops_the_turn() -> Result[Void]
   opened = ran(model_of(120, 20), "/logs").with(turn: true)
