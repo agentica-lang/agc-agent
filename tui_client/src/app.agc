@@ -13,6 +13,7 @@ import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
 import Args from "args"
 import Screen from "screen"
+import Terminal from "terminal"
 import Theme from "theme"
 import Transcript from "transcript"
 import State from "state"
@@ -117,7 +118,7 @@ def driven(backend: TUI.Backend, start: State.Model, output: TUI.OutputMode) -> 
     output: output,
   )
 
-  TUI.Raw.program(backend, app)
+  TUI.Raw.program(Terminal.guarded(backend), app)
 end
 
 def why(last: State.Model, code: Int) -> String

@@ -1,5 +1,7 @@
 ## What the full screen writes to the terminal outside the grid it draws: the copy to the clipboard and the mouse
-## reporting. Pure, but for `write`.
+## reporting; and `guarded`, the terminal that a drawing error cannot end. Pure, but for `write`.
+
+import TUI from "pkg/tui/tui"
 
 ESC = String.from_code(27)
 BEL = String.from_code(7)
@@ -22,4 +24,29 @@ end
 def write(text: String) -> Void
   print(text)
   IO.flush()
+end
+
+## `backend` whose draw never fails on a cell off the screen: the cells outside the size it has now are dropped. A
+## resize can still land between the size read and the writes (the reader task takes it while the loop draws); the
+## write that termbox2 then refuses is no failure either, because the `Resize` event that comes with it draws all again.
+## That is the one error swallowed: any other error of the draw, and a draw with no size to check, go through.
+def guarded(backend: TUI.Backend) -> TUI.Backend = backend.with(draw: ->(cells) { drawn(backend, cells) })
+
+private
+
+# The text of TB_ERR_OUT_OF_BOUNDS in `tb_strerror` of the termbox2 that the pinned tui commit carries; `tui_strerror`
+# gives it in the message of the error ("tui: set_cell failed: Out of bounds (-9)").
+OUT_OF_BOUNDS = "Out of bounds"
+
+def drawn(backend: TUI.Backend, cells: List[TUI.Cell]) -> Result[Void]
+  width = backend.width.call()
+  height = backend.height.call()
+  # A negative size is the termbox2 error of a terminal that is closed or suspended: the draw says so itself.
+  return backend.draw.call(cells) if width < 0 or height < 0
+
+  inside = cells.select { |cell| cell.x >= 0 and cell.y >= 0 and cell.x < width and cell.y < height }
+  case backend.draw.call(inside)
+    error(e) if not e.message.include?(OUT_OF_BOUNDS) -> error(e)
+    _ -> ok()
+  end
 end
