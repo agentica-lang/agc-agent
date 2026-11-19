@@ -1,7 +1,6 @@
 ## A session's branch as a Markdown file, for `/export` and `finn export`. The file holds what the session holds, tool
 ## arguments included, with nothing hidden: it is made 0600.
 
-import UTC from "std/utc"
 import Protocol from "pkg/protocol/protocol"
 import Commands from "commands"
 
@@ -16,7 +15,7 @@ def markdown(exported: Protocol.SessionExport) -> String
     title = "Session #{exported.id}"
   end
 
-  blocks = ["# #{one_line(title)}", "Session `#{exported.id}`, started #{UTC.iso8601(exported.created_ms)}."]
+  blocks = ["# #{one_line(title)}", "Session `#{exported.id}`, started #{started(exported.created_ms)}."]
   tools: List[String] = []
   for entry in exported.entries
     if entry.kind == "tool"
@@ -91,6 +90,16 @@ private
 HEX = "0123456789abcdef"
 # The most one write takes.
 WRITE_BYTES = 1_048_576
+
+# `YYYY-MM-DDTHH:MM:SSZ`, as std/utc wrote it; a time outside the years 1 to 9999 is no date.
+def started(created_ms: Int) -> String
+  return "at an unknown time" if created_ms < -62_135_596_800_000 or created_ms > 253_402_300_799_999
+
+  case Time.at_us(created_ms * 1000)
+    ok(time) -> time.strftime("%Y-%m-%dT%H:%M:%SZ")
+    error(_) -> "at an unknown time"
+  end
+end
 
 def written_to(file: File.Handle, bytes: Bytes) -> Result[Void]
   at = 0

@@ -118,7 +118,7 @@ private
 
 def fetch(wheel: Wheel, part: String, staging: String) -> Result[Void]
   client = try HTTP.client()
-  options = HTTP.DownloadOptions(timeout_ms: DOWNLOAD_MS, max_total_bytes: MAX_WHEEL_BYTES)
+  options = HTTP.DownloadOptions(timeout_ms: some(DOWNLOAD_MS), max_total_bytes: some(MAX_WHEEL_BYTES))
   got = try HTTP.download(client, wheel.url, part, options)
   return error("monty: the download of the worker answered #{got.status}") if got.status != 200
 
