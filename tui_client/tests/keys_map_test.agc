@@ -72,9 +72,13 @@ def test_the_hints_and_the_help_show_the_keys_in_effect() -> Result[Void]
   footer = rows(model).last
   try Test.assert(footer.include?("F9 thinking level") and footer.include?("Alt+M profile"), footer)
   try Test.assert(footer.include?("^L logs") and not footer.include?("⇧Tab") and not footer.include?("^P"), footer)
-  helped = App.update(model.with(prompt: "/help", cursor: 5), enter()).model
+  helped = App.update(model.with(prompt: "/shortcuts", cursor: 10), enter()).model
   lines = helped.side.unwrap!.lines.join("\n")
-  try Test.assert(lines.include?("Alt+M") and lines.include?("F9 the next thinking level"), lines)
+  try Test.assert(
+    lines.include?("Alt+M") and lines.include?("F9 ") and lines.include?("the next thinking level"),
+    lines,
+  )
+
   try Test.assert(lines.include?("Ctrl+L") and not lines.include?("Ctrl+P"), lines)
   folds = State.folds(
     model_of().with(keys: Client.effective([setting("show_thinking", "f9"), setting("show_tools", "f10")])),
@@ -90,6 +94,24 @@ def test_the_hints_and_the_help_show_the_keys_in_effect() -> Result[Void]
   )
 
   Test.assert(rows(plain).last.include?("^P logs"), rows(plain).last)
+end
+
+# `/shortcuts` is completed by Tab and opens the side panel with one row per key, named as the keys map sets it.
+def test_shortcuts_opens_the_panel_with_the_keys_in_effect() -> Result[Void]
+  model = model_of(160).with(id: "s1", keys: Client.effective([setting("logs", "ctrl+l")]))
+  typed = model.with(prompt: "/shortc", cursor: 7)
+  completed = App.update(typed, App.Msg.Key(TUI.Event.Key(TUI.Key.Tab, TUI.Mods()))).model
+  try Test.eq(completed.prompt, "/shortcuts")
+  opened = App.update(completed, enter()).model
+  side = opened.side.unwrap!
+  try Test.eq(side.title, "Shortcuts")
+  try Test.assert(
+    side.lines.any? { |line| line.start_with?("Ctrl+L ") and line.include?("server log") },
+    "#{side.lines}",
+  )
+
+  try Test.assert(not side.lines.any? { |line| line.start_with?("Ctrl+P") }, "the default key is gone: #{side.lines}")
+  Test.assert(side.lines.any? { |line| line.start_with?("/mcp: r ") }, "the panel keys: #{side.lines}")
 end
 
 # `/reload` reads the keys of the server's config again: the new ones apply, the report lists the entries that were not

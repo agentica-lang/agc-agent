@@ -861,7 +861,7 @@ class PtyTest(unittest.TestCase):
         self.assertIn(f" session {first}", text_of(rows))
         self.assertNotIn("resume a session", text_of(rows))
         term.type("/help\r")
-        term.wait_for("leave")
+        term.wait_for("a new session in this folder")
         term.type("/quit\r")
         self.assertEqual(term.finish(), 0)
 
