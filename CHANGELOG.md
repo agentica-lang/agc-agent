@@ -5,6 +5,7 @@
 ### Added
 
 - In `finn`, `/mcp` is a panel with a cursor: Up and Down (or `j` and `k`) move it, `r` reconnects the server under it, `t` or Enter lists its tools, `l` shows the end of its log, Esc goes back. The keys work only while the panel has the focus (F6). The server has `GET /v1/mcp/NAME/log`. The panel scrolls with the cursor and gives its keys up while the prompt has text.
+
 ### Changed
 
 - Finn needs Agentica 0.35.0: the pinned release, the `agentica` versions of the packages and the Monty download are updated, the date of `finn export` comes from the builtin `Time`, and `core` can be used from outside the repository (`workspace = true`).
