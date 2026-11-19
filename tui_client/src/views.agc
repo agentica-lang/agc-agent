@@ -70,7 +70,7 @@ def beside(app: State.Model) -> List[Layout.Row]
   return [] if not Side.wide?(app.screen_width)
 
   case app.side
-    some(side) -> Side.rows(side, Side.columns(app.screen_width), app.height)
+    some(side) -> Side.rows(side, Side.columns(app.screen_width), app.height, true)
     none -> []
   end
 end
@@ -106,6 +106,9 @@ HINTS = [
   "PgUp/PgDn",
 ]
 
+# With the side panel closed, `^P logs` comes after the keys that every screen needs.
+CLOSED_HINTS = HINTS.take(3) + ["^P logs"] + HINTS.drop(3)
+
 # The side panel that takes the transcript's place: only on a narrow screen.
 def covering(app: State.Model) -> Optional[Side.Side]
   return none if Side.wide?(app.screen_width)
@@ -130,11 +133,11 @@ def hints(app: State.Model) -> List[String]
       return keys.select { |text| text != "" } + HINTS.select { |text| not rest_of_keys?(text) }
     end
 
-    own = ["Enter send", "Esc stop", focus, "^C quit", "^P close panel"].select { |text| text != "" }
+    own = ["Enter send", "Esc close panel", focus, "^C quit", "^P close panel"].select { |text| text != "" }
     return own + HINTS.drop(3)
   end
 
-  HINTS
+  CLOSED_HINTS
 end
 
 # The hints that the side panel's own replace.

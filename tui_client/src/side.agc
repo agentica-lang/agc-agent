@@ -94,7 +94,7 @@ def scrolled(side: Side, rows: Int, room: Int) -> Side
 end
 
 ## The rows of the panel in `width` columns and `height` rows: the title, then the lines, padded to the width.
-def rows(side: Side, width: Int, height: Int) -> List[Layout.Row]
+def rows(side: Side, width: Int, height: Int, wide: Bool = false) -> List[Layout.Row]
   return [] if height <= 0 or width <= 0
 
   room = height - 1
@@ -107,13 +107,13 @@ def rows(side: Side, width: Int, height: Int) -> List[Layout.Row]
   shown = side.wrapped.drop(at).take(room)
   body = shown.map { |text| Layout.Row(text: padded(text, width)) }
   blank = (shown.size...room).to_a.map { |_| Layout.Row(text: " " * width) }
-  [Layout.Row(text: padded(title(side, room, at), width), look: look)] + body + blank
+  [Layout.Row(text: padded(title(side, room, at, wide), width), look: look)] + body + blank
 end
 
 private
 
 # The title with what the panel does: its state, and the keys.
-def title(side: Side, room: Int, at: Int) -> String
+def title(side: Side, room: Int, at: Int, wide: Bool) -> String
   state = ""
   if side.live.some? and side.follow
     state = " · following"
@@ -127,7 +127,12 @@ def title(side: Side, room: Int, at: Int) -> String
     state = " · #{at + 1}-#{[at + room, side.wrapped.size].min.unwrap!} of #{side.wrapped.size}"
   end
 
-  " #{side.title}#{state} · PgUp/PgDn scroll · Esc closes"
+  focus = ""
+  if wide
+    focus = " · F6 focus"
+  end
+
+  " #{side.title}#{state}#{focus} · PgUp/PgDn scroll · Esc closes"
 end
 
 def padded(text: String, width: Int) -> String
