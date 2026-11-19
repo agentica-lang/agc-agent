@@ -17,6 +17,8 @@ struct Options
   yolo: Bool = false
   ## The code mode asked for: off with `--no-codemode`, else as `FINN_CODE_MODE` says; none when neither says.
   code_mode: Optional[Bool] = none
+  ## A server of another version is restarted without asking (`--restart`).
+  restart: Bool = false
   ## What the session says first about its server: its code mode and its version (`Client.code_mode_note`,
   ## `Client.version_note`).
   server_notes: List[String] = []
@@ -55,6 +57,13 @@ def parse(args: List[String]) -> Result[Command]
         help: "a server this client starts has no code mode (run_script); one that runs with it must be stopped first",
       ),
       Opt(
+        name: "restart",
+        kind: Kind.Flag,
+        help: (
+          "restart a server of another version without asking (FINN_RESTART=1 does the same); it keeps the sessions"
+        ),
+      ),
+      Opt(
         name: "login",
         kind: Kind.Flag,
         help: (
@@ -81,6 +90,7 @@ def launch(options: Options) -> Client.Launch
     state_dir: options.state_dir,
     server_command: options.server_command,
     code_mode: options.code_mode != some(false),
+    restart: options.restart,
   )
 end
 
@@ -108,6 +118,7 @@ def command(parsed: Parsed) -> Result[Command]
     thinking: OP.flag(parsed, "thinking"),
     yolo: OP.flag(parsed, "yolo"),
     code_mode: Client.code_mode_asked(OP.flag(parsed, "no-codemode")),
+    restart: OP.flag(parsed, "restart"),
   )
 
   return ok(Command.Login(options)) if OP.flag(parsed, "login")

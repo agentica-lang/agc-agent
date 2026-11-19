@@ -120,6 +120,33 @@ def other_version(rig: Driver.Rig, reason: String, older: Bool) -> Result[Void]
   Test.assert(not File.stat("#{rig.dir}/starts.log").ok?, "no server was started")
 end
 
+# `--restart` (or `FINN_RESTART=1`) answers yes to a server of another version: the client goes to restart it. Here the
+# server is not a process that proves to be the folder's, so it is never signalled, and that refusal is the proof.
+def test_restart_goes_to_replace_a_server_of_another_version() -> Result[Void]
+  old = Fake.Reply(body: "{\"version\": \"20260101000000\"}")
+  routes = [Fake.Route(method: "GET", path: Protocol.HEALTH_PATH, replies: [old, old, old, old, old, old])]
+  for how in [{"args": "--restart", "env": ""}, {"args": "", "env": "1"}]
+    try Driver.within(routes) do |rig|
+      command = try Driver.fake_command()
+      args = ["--"] + command
+      if how["args"] != ""
+        args = ["--restart"] + args
+      end
+
+      cli = try Driver.start(rig.dir, args, extra: {"FINN_VERSION": CLIENT_VERSION, "FINN_RESTART": how["env"]})
+      done = try Driver.finish(cli)
+      try Test.eq(done.code, 1)
+      try Test.assert(done.errors.include?("nothing was signalled"), "a restart was tried (#{how}): #{done.errors}")
+      Test.assert(
+        not done.errors.include?("cannot serve it"),
+        "the refusal of today is not the answer: #{done.errors}",
+      )
+    end
+  end
+
+  ok()
+end
+
 def test_the_state_folder_is_made_private_and_an_open_one_is_refused() -> Result[Void]
   Driver.within_dir(&state_folders)
 end

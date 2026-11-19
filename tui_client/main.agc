@@ -28,7 +28,7 @@ end
 def run(options: Args.Options) -> Result[App.Ended]
   launch = Args.launch(options)
   dir = try Client.state_dir(launch)
-  server = try Client.connect(launch, dir)
+  server = try Client.connect_or_restart(launch, dir)
   notes = [Client.code_mode_note(server, options.code_mode), Client.version_note(server, dir)]
   noted = options.with(server_notes: notes.select { |note| not note.empty? })
   TUI.Raw.open(->(screen) { App.run(screen, Client.http_backend(server), noted) })

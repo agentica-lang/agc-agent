@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- `finn` and `finn chat` on a terminal ask `Restart it and go on? [Y/n]` when the server runs another version of Finn, instead of stopping (`[y/N]` and the running turns named while turns run); `--restart` or `FINN_RESTART=1` answers yes without asking.
+
 ## [finn-20261119111956] - 2026-11-19
 
 ### Added
