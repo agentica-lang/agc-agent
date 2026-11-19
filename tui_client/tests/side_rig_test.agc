@@ -79,6 +79,13 @@ def wide(fake: TUI.Testing.Fake, cell: Log) -> Result[Void]
   rows = try shows(fake, "WARNING bad skill")
   answer = rows.find { |row| row.include?("the answer") }.unwrap!
   try Test.assert(answer.index_of("the answer").unwrap! < answer.index_of("│").unwrap!, answer)
+  # F6 moves the focus to the transcript and back; the wheel over the panel leaves it on the screen.
+  try shows(fake, "F6 transcript")
+  try fake.events.send(TUI.Event.Key(TUI.Key.F(6), TUI.Mods()), 1000)
+  try shows(fake, "F6 panel")
+  try fake.events.send(TUI.Event.Key(TUI.Key.F(6), TUI.Mods()), 1000)
+  try fake.events.send(TUI.Event.Mouse(TUI.Mouse.WheelUp, 90, 3, TUI.Mods()), 1000)
+  try shows(fake, "F6 transcript")
   cell.put("log", LOG + [LATER])
   try shows(fake, "a line that came later")
   try escape(fake)

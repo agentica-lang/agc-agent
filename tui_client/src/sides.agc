@@ -44,7 +44,7 @@ end
 ## The panel is open and the keys are for it: it has the focus, or it covers the transcript.
 def active?(app: State.Model) -> Bool
   case app.side
-    some(side) -> side.focused or not Side.wide?(app.screen_width)
+    some(side) -> Side.active?(side, app.screen_width)
     none -> false
   end
 end
@@ -70,7 +70,7 @@ def moved(app: State.Model, rows: Int) -> State.Model
   end
 end
 
-## Ctrl+B: the keys go to the other side of a wide screen; a narrow one has only the panel.
+## F6: the keys go to the other side of a wide screen; a narrow one has only the panel.
 def toggled_focus(app: State.Model) -> State.Model
   case app.side
     some(side) if Side.wide?(app.screen_width) -> app.with(side: some(side.with(focused: not side.focused)))
@@ -123,22 +123,30 @@ def tick(app: State.Model) -> State.Model
   end
 end
 
-## The lines the server log has now. A panel that was scrolled away from its end keeps what it shows.
+## The lines the server log has now, or a line that says why they were not read. A panel that was scrolled away from its
+## end keeps what it shows, and one whose lines did not change is not cut again.
 def read(app: State.Model, serial: Int, result: Result[Protocol.ServerLog]) -> State.Model
   return app if serial != app.side_serial
 
   idle = app.with(reading_side: false)
-  case result
-    ok(log) ->
-      for side in State.option_list(idle.side)
-        if side.follow
-          return idle.with(side: some(Side.replaced(side, log.lines.map { |line| Client.printable(line) })))
-        end
-      end
+  for side in State.option_list(idle.side)
+    return idle if not side.follow
 
-      idle
-    error(_) -> idle
+    case result
+      ok(log) ->
+        lines = log.lines.map { |line| Client.printable(line) }
+        return idle if lines == side.lines and side.note == ""
+
+        return idle.with(side: some(Side.replaced(side, lines)))
+      error(e) ->
+        note = "log not read: #{Client.printable(e.message)}"
+        return idle if side.note == note
+
+        return idle.with(side: some(Side.noted(side, note)))
+    end
   end
+
+  idle
 end
 
 ## Whether the panel reads the server log again.

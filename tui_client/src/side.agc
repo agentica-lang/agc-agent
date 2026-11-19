@@ -25,6 +25,8 @@ struct Side
   live: Optional[Int] = none
   ## The keys scroll the panel and Esc closes it, not the transcript's.
   focused: Bool = true
+  ## One line after the lines, for what went wrong (the log could not be read).
+  note: String = ""
 end
 
 ## A panel of fixed `lines`, shown from the top.
@@ -34,6 +36,9 @@ def of(title: String, lines: List[String]) -> Side = Side(title: title, lines: l
 def log(lines: List[String], count: Int) -> Side
   Side(title: "Server log", lines: lines, follow: true, live: some(count))
 end
+
+## Whether the keys are for the panel: it has the focus, or it covers the transcript.
+def active?(side: Side, screen_width: Int) -> Bool = side.focused or not wide?(screen_width)
 
 ## Whether a screen of `width` columns has the panel beside the transcript.
 def wide?(width: Int) -> Bool = width >= WIDE
@@ -57,11 +62,21 @@ end
 def fitted(side: Side, width: Int) -> Side
   return side if side.wrapped_at == width
 
-  side.with(wrapped: side.lines.flat_map { |line| Transcript.wrap(line, width) }, wrapped_at: width)
+  noted = side.lines
+  if side.note != ""
+    noted = noted.push(side.note)
+  end
+
+  side.with(wrapped: noted.flat_map { |line| Transcript.wrap(line, width) }, wrapped_at: width)
 end
 
 ## The panel with `lines` in place of its own, cut for its width again.
-def replaced(side: Side, lines: List[String]) -> Side = fitted(side.with(lines: lines, wrapped_at: 0), side.wrapped_at)
+def replaced(side: Side, lines: List[String]) -> Side
+  fitted(side.with(lines: lines, note: "", wrapped_at: 0), side.wrapped_at)
+end
+
+## The panel with `note` after its lines.
+def noted(side: Side, note: String) -> Side = fitted(side.with(note: note, wrapped_at: 0), side.wrapped_at)
 
 ## The first row shown in `room` rows.
 def first(side: Side, room: Int) -> Int
