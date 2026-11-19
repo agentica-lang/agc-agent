@@ -514,6 +514,71 @@ class PtyTest(unittest.TestCase):
         terminal.wait_for(ANSWER)
         self.assertEqual(model.requests.get(timeout=TIMEOUT)["model"], "test-model")
 
+    def old_server(self, base: Path, running_turns: int) -> None:
+        """A server of another protocol in the state folder: it answers the health and the status, and is a process of
+        this user (this test), which a restart does not take for a server of Finn, so it is never signalled."""
+        reply = {"version": "20260101000000"}
+        status = {
+            "pid": os.getpid(),
+            "version": "20260101000000",
+            "started_s": 0,
+            "sessions": 1,
+            "running_turns": running_turns,
+            "stopping": False,
+        }
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                body = json.dumps(status if self.path == "/v1/server" else reply).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        self.addCleanup(server.server_close)
+        self.addCleanup(server.shutdown)
+        state = base / "state"
+        state.mkdir(mode=0o700)
+        info = state / "server.json"
+        info.write_text(json.dumps({"port": server.server_address[1], "token": "t", "pid": os.getpid()}))
+        info.chmod(0o600)
+
+    def asked_about_restart(self, running_turns: int, answer: str, extra: list[str] = []) -> str:
+        base = self.folder()
+        self.old_server(base, running_turns)
+        args = [*extra, "--state-dir", str(base / "state"), "--", "true"]
+        terminal = Terminal(base, self.model([]), args)
+        self.addCleanup(terminal.close)
+        if answer:
+            deadline = time.monotonic() + TIMEOUT
+            while b"Restart it and go on?" not in terminal.output and time.monotonic() < deadline:
+                terminal._read(0.1)
+            terminal.settle(0.2)
+            terminal.type(answer)
+        self.assertEqual(terminal.finish(), 1)
+        return terminal.output.decode(errors="replace")
+
+    def test_a_server_of_another_version_is_asked_about_on_a_terminal(self) -> None:
+        """On a terminal the client asks before it restarts a server of another version: yes goes to restart it (here
+        the server is not a process of Finn, so nothing is signalled), no keeps the refusal, running turns are named
+        and make no the default, and `--restart` does not ask."""
+        out = self.asked_about_restart(0, "n\r")
+        self.assertIn("Restart it and go on? It keeps the sessions. [Y/n]", out)
+        self.assertIn("finn server restart", out)
+        out = self.asked_about_restart(0, "y\r")
+        self.assertIn("nothing was signalled", out)
+        out = self.asked_about_restart(2, "\r")
+        self.assertIn("It waits for 2 running turns to end and keeps the sessions. [y/N]", out)
+        self.assertIn("finn server restart", out)
+        out = self.asked_about_restart(2, "", ["--restart"])
+        self.assertNotIn("Restart it", out)
+        self.assertIn("nothing was signalled", out)
+
     def test_a_pick_in_a_list_or_a_picker_is_the_one_applied(self) -> None:
         """Enter on the list of a command's argument runs the command with the row moved to, from the session's model or
         level, and no picker opens after it; `/model` alone opens one picker, whose pick closes it. Each pick is the
@@ -796,7 +861,7 @@ class PtyTest(unittest.TestCase):
         self.assertIn(f" session {first}", text_of(rows))
         self.assertNotIn("resume a session", text_of(rows))
         term.type("/help\r")
-        term.wait_for("leave")
+        term.wait_for("a new session in this folder")
         term.type("/quit\r")
         self.assertEqual(term.finish(), 0)
 

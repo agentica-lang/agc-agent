@@ -107,6 +107,7 @@ A config file that does not read stays as it was, with the reason as a warning: 
 | `FINN_HOME` | the install, the folder with `docs/`: `bin/finn` sets it, for the [skill `finn`](skills.md#the-finn-skill) and `finn docs` |
 | `FINN_MCP_CONFIG` | the JSON file of MCP servers, in place of `~/.config/finn/mcp.json` ([MCP](mcp.md)) |
 | `FINN_CODE_MODE` | `0` turns off code mode, the `run_script` tool, as `--no-codemode` does; on by default ([Tools](tools.md#code-mode)) |
+| `FINN_RESTART` | `1` restarts a server of another version without asking, as `--restart` does ([versions](cli.md#versions)) |
 | `FINN_MONTY` | a Monty 1.6.0 binary you trust, for code mode |
 | `FINN_CONTEXT_WINDOW` | the model's context window in tokens, for compaction |
 | `FINN_MAX_TOKENS` | the most tokens of one reply, thinking included; by default the model's own limit from the models.dev catalog, else none on the OpenAI APIs (the provider's maximum) and 64000 on Anthropic |

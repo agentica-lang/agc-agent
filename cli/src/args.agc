@@ -27,6 +27,8 @@ struct Options
   yolo: Bool = false
   ## The code mode asked for: off with `--no-codemode`, else as `FINN_CODE_MODE` says; none when neither says.
   code_mode: Optional[Bool] = none
+  ## A server of another version is restarted without asking (`--restart`).
+  restart: Bool = false
 end
 
 ## What `finn server` does.
@@ -108,6 +110,13 @@ def parse(args: List[String]) -> Result[Command]
         name: "no-codemode",
         kind: Kind.Flag,
         help: "a server this client starts has no code mode (run_script); one that runs with it must be stopped first",
+      ),
+      Opt(
+        name: "restart",
+        kind: Kind.Flag,
+        help: (
+          "restart a server of another version without asking (FINN_RESTART=1 does the same); it keeps the sessions"
+        ),
       ),
       Opt(name: "delete", help: "id of a session to delete (with its file), then exit"),
       Opt(
@@ -206,6 +215,7 @@ def launch(options: Options) -> Client.Launch
     state_dir: options.state_dir,
     server_command: options.server_command,
     code_mode: options.code_mode != some(false),
+    restart: options.restart,
   )
 end
 
@@ -248,6 +258,7 @@ def command(parsed: Parsed) -> Result[Command]
     prompt: OP.optional_string(parsed, "prompt"),
     yolo: OP.flag(parsed, "yolo"),
     code_mode: Client.code_mode_asked(OP.flag(parsed, "no-codemode")),
+    restart: OP.flag(parsed, "restart"),
   )
 
   for id in option_list(OP.optional_string(parsed, "delete"))

@@ -61,6 +61,8 @@ The version of Finn is the UTC time of the commit it runs, `YYYYMMDDhhmmss`, and
 
 A server keeps running the code it started with, so after a `git pull` it can be older than the client. The client then says which side is older. A server of the same protocol still serves it, with one line such as `the server runs an older Finn (20261101093000) than this client (20261118123456)`, and `finn server restart` starts the new one; a server of another protocol is not used, and the client says the same. `finn server status` shows the comparison next to the server's version.
 
+A client that is not allowed to use a server of another version asks, when stdin and stdout are a terminal (`finn` and `finn chat` without `-p`): `Restart it and go on? It keeps the sessions. [Y/n]`. Yes does what `finn server restart` does and goes on; no prints why the server is not used and exits 1. When the server has running turns (it says how many), the question names them (`It waits for 2 running turns to end`) and the default is no (`[y/N]`). Without a terminal (a script, `finn -p`, a pipe) nothing is asked and the line is printed. `--restart` (or `FINN_RESTART=1`) answers yes without a question, for scripts, and also with `finn -p`; the restart waits for the running turns to end, as `finn server restart` does.
+
 ## Slash commands
 
 Type them in either client:
@@ -85,6 +87,7 @@ Type them in either client:
 | `/logs [N]` | the last N lines (default 50) of the server log, read through the server, in the [side panel](#the-side-panel) of `finn`, where it follows the log (`finn chat` prints it); the warnings of the server show in a yellow banner when `finn` opens, which a click or Esc (empty prompt) closes |
 | `/reload` | the server reads its config file, MCP servers, skills and `AGENTS.md` again, without a restart ([what it covers](config.md#reload)); the answer is one line and a line for each warning (in the side panel of `finn`) |
 | `/stop` | stop the running turn |
+| `/shortcuts` | the keys of the full screen, one row each, with the ones your `keys` map sets and the keys of the `/mcp` panel (in the side panel of `finn`) |
 | `/help` | the list (in the side panel of `finn`) |
 | `/quit` | leave; a session with something in it prints how to come back to it (`finn --session ID`, `finn chat --session ID`) |
 
@@ -124,7 +127,7 @@ The command runs as the `bash` tool would, with a timeout of 10 minutes. It neve
 
 ## Keys of the full screen
 
-The keys below are the defaults. The `keys` map of [the config file](config.md#the-users-config-file) moves the keys of these actions: `cycle_profile` (Shift+Tab), `thinking_level` (F2), `show_thinking` (Ctrl+T), `show_tools` (Ctrl+O), `logs` (Ctrl+P), `side_focus` (F6), `edit_prompt` (Ctrl+G), `page_up` (PgUp) and `page_down` (PgDn), for example `{"keys": {"thinking_level": "f3", "logs": "f9"}}`. A key is `ctrl+x`, `alt+x` (a letter), `shift+tab`, `f1` to `f12`, `pgup` or `pgdn`; case is ignored and a name has no spaces inside. The old key of an action that moved stops working. Esc is fixed. A terminal sends Ctrl+I, Ctrl+M and Ctrl+H as Tab, Enter and Backspace, and cannot report `ctrl+[` or `ctrl+shift+x`, so those are refused. Line editing, Enter, Esc, Ctrl+C, Ctrl+D, Ctrl+J, Ctrl+Y, Ctrl+N, Ctrl+A, Ctrl+E, Ctrl+W, Ctrl+U, Ctrl+K, Alt+B and Alt+F are fixed, and a key they use is refused. An unknown action, a name that is no key, a refused key, or a key given to two actions is a warning (at the start of `finn` and in the report of `/reload`) and the default stays for that action; two actions may swap their keys. `/reload` applies a change; the hints and `/help` show the keys in effect.
+`/shortcuts` in `finn` lists the keys in effect. The keys below are the defaults. The `keys` map of [the config file](config.md#the-users-config-file) moves the keys of these actions: `cycle_profile` (Shift+Tab), `thinking_level` (F2), `show_thinking` (Ctrl+T), `show_tools` (Ctrl+O), `logs` (Ctrl+P), `side_focus` (F6), `edit_prompt` (Ctrl+G), `page_up` (PgUp) and `page_down` (PgDn), for example `{"keys": {"thinking_level": "f3", "logs": "f9"}}`. A key is `ctrl+x`, `alt+x` (a letter), `shift+tab`, `f1` to `f12`, `pgup` or `pgdn`; case is ignored and a name has no spaces inside. The old key of an action that moved stops working. Esc is fixed. A terminal sends Ctrl+I, Ctrl+M and Ctrl+H as Tab, Enter and Backspace, and cannot report `ctrl+[` or `ctrl+shift+x`, so those are refused. Line editing, Enter, Esc, Ctrl+C, Ctrl+D, Ctrl+J, Ctrl+Y, Ctrl+N, Ctrl+A, Ctrl+E, Ctrl+W, Ctrl+U, Ctrl+K, Alt+B and Alt+F are fixed, and a key they use is refused. An unknown action, a name that is no key, a refused key, or a key given to two actions is a warning (at the start of `finn` and in the report of `/reload`) and the default stays for that action; two actions may swap their keys. `/reload` applies a change; the hints and `/shortcuts` show the keys in effect.
 
 | Key | What it does |
 |---|---|
@@ -156,7 +159,7 @@ The mouse answers the keys of a panel, opens a tool call or the thinking, and mo
 
 ## The side panel
 
-Local output that is not part of the conversation opens in a panel on the right, so that the transcript holds only what the model sees: `/logs` (the server log, which the panel follows as the server writes), `/help`, the report of `/reload` and the list of `/profile`. Short confirmations (`mouse on`, `copied 12 characters (xclip)`, `sent 12 characters to the terminal (OSC 52)`, `model X from the next turn`) stay in the transcript as notes, and so do the warnings of a profile and the end of a compaction.
+Local output that is not part of the conversation opens in a panel on the right, so that the transcript holds only what the model sees: `/logs` (the server log, which the panel follows as the server writes), `/help`, `/shortcuts`, the report of `/reload` and the list of `/profile`. Short confirmations (`mouse on`, `copied 12 characters (xclip)`, `sent 12 characters to the terminal (OSC 52)`, `model X from the next turn`) stay in the transcript as notes, and so do the warnings of a profile and the end of a compaction.
 
 On a screen of 100 columns or more, the panel sits beside the transcript, prompt and footer, which take the columns it leaves (40% of the screen, 40 to 80 columns). On a narrower one it takes the place of the transcript, and the prompt and the footer stay.
 
