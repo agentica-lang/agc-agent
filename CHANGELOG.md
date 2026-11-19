@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [finn-20261119135800] - 2026-11-19
+
 ### Fixed
 
 - `POST /v1/mcp/NAME/reconnect` answers `409` (`mcp.starting`) when the servers end while the new client starts, and not a connected server.
