@@ -13,6 +13,7 @@ import TUI from "pkg/tui/tui"
 import Approvals from "approvals"
 import Args from "args"
 import Screen from "screen"
+import Terminal from "terminal"
 import Theme from "theme"
 import Transcript from "transcript"
 import State from "state"
@@ -74,7 +75,7 @@ def started(
     start = start.with(theme: Theme.basic())
   end
 
-  last = try driven(TUI.Raw.backend(screen), start, output)
+  last = try driven(Terminal.guarded(TUI.Raw.backend(screen)), start, output)
   outcome = try outcome(last)
   hint = Client.resume_hint("finn", last.id, not Session.content?(last))
   ok(outcome.with(hint: joined(server_report(backend), hint)))
