@@ -2,23 +2,30 @@
 
 ## [Unreleased]
 
-### Added
-
-- `finn` has a side panel for local output (`/logs`, followed live, `/help`, `/reload`, `/profile`), beside the transcript from 100 columns and over it below, so the transcript holds only the conversation (#318).
-- In `finn`, a copy goes to the clipboard the way Neovim picks it: a tool of the local display (`wl-copy`, `xclip`, `xsel`, `pbcopy`, `clip.exe`) when not over SSH, `tmux load-buffer -w -` over SSH inside tmux (or inside tmux with no such tool), else OSC 52. `clipboard` and `clipboard_command` in the config file force one.
-- `/confine [on|off]` keeps the file tools in the session folder (or lets them reach any path) for one session; `confine_files` in the config file and `FINN_CONFINE_FILES=1` do it for every session.
-- `/reload` in `finn` and `finn chat` (`POST /v1/reload`) makes the server read the config file (rules, `approvals`, `files.command`, `mouse`, providers), the MCP servers, the skills and the `AGENTS.md` again without a restart: sessions that run use them from their next turn, a turn that runs is not stopped, and a config file that does not read is kept back with the reason. Only MCP servers reload, all of them when the list changed.
-- In `finn`, a drag over the transcript selects text and letting go copies it with a note; a double click selects a word and Esc clears the selection. `/mouse` turns the mouse reporting off and on, and `"mouse": false` in the config file starts with it off; Shift+drag (Option+drag in iTerm2) is the terminal's own selection.
-- Every line of the server log starts with its UTC time and level (`2026-11-18T17:30:02.345Z WARNING ...`); `GET /v1/logs` gives its end and the warnings since the server started.
-- `finn` and `finn chat` show the last 3 warnings of the server as notes when a session starts, `/logs [N]` shows the end of the server log, and leaving prints the warnings and `finn server logs` after the screen closes.
-- A new session uses the provider and model last picked (`/model`, `finn --provider` and `--model`, or a login), kept in `choice.json` of the state folder; the order is the request, `FINN_PROVIDER`/`FINN_API`/`FINN_BASE_URL` and `FINN_MODEL`, the last choice, then `local`; `finn -p` never changes it. A login with no choice yet makes its provider the choice, and a first-start session on `local` moves there too.
-- `finn login` prints one line after the screen closes: the provider, and `run finn to start` or `use finn --provider X, or /model, to use it`; Esc ends it with `finn: login cancelled` and status 0.
-
 ### Changed
 
 - **Breaking:** with the side panel open, Esc closes it whatever has the focus (a selection is cleared first); the next Esc does what it did before.
 - The keys are easier to find: `/help` ends with the keys, the panel's title row names F6, and the footer says `^P logs` while the panel is closed.
 - A merge to main that changes only `docs/`, Markdown files or `.github/` makes no `finn-<ts>` tag any more.
+
+## [finn-20261119085524] - 2026-11-19
+
+### Changed
+
+- **Breaking:** the file tools (`read_file`, `write_file`, `edit_file`, `apply_patch`, `glob`, `grep`) reach any path by default, not only the session folder; deny and ask rules still apply everywhere. `/confine on`, `"confine_files": true` or `FINN_CONFINE_FILES=1` keeps them in the folder.
+- With approvals on, a file tool outside the session folder asks like `bash` does, not refused; `external_directory(FOLDER/*)` rules cover it, and accept-edits mode runs only writes inside the folder. Finn's own `auth.json`, `server.json`, `config.json` and `chatgpt.json` are denied to the file tools unless an `allow read_file(...)` rule lifts it.
+- `finn` shows the server's warnings in a yellow banner when it opens, a repeated warning counted once (`(×N)`), instead of notes in the transcript.
+- In the `/model`, `/resume`, `/tree` and `/fork` lists, Enter runs the command with that row in one step; Tab still only completes.
+
+### Added
+
+- `finn` has a side panel for local output (`/logs`, followed live, `/help`, `/reload`, `/profile`), so the transcript holds only the conversation.
+- `finn` selects text with the mouse (drag, double click for a word, Esc to clear) and copies it to the clipboard: a local tool, `tmux load-buffer` over SSH in tmux, else OSC 52; `clipboard` in the config file forces one way, `/mouse` turns the mouse off and on, and `"mouse": false` starts with it off.
+- `/reload` (`POST /v1/reload`) reads the config file, the MCP servers, the skills and `AGENTS.md` again without a restart.
+- `/confine [on|off]` keeps the file tools in the session folder for one session; `confine_files` in the config file does it for every session.
+- A new session uses the provider and model last picked (`/model`, `--provider`, `--model` or a login), kept in `choice.json`.
+- Every server log line starts with its UTC time and level; `GET /v1/logs` and `/logs [N]` show its end, and leaving `finn` prints the warnings.
+- `finn login` ends with one line on how to use the provider; Esc ends it with `finn: login cancelled` and status 0.
 - In `finn`, the warnings of the server show in a yellow banner at the top of the screen when it opens (a click or Esc with an empty prompt closes it), not as notes in the transcript. The server counts a warning with the same text once and shows it with `(×N)`, so a skill that is shadowed in three sessions is one warning.
 - In `finn`, Enter on a row of the list under `/model `, `/resume `, `/tree ` or `/fork ` runs the command with that row (the first or the one you moved to) in one step, with no second picker; Tab still only completes.
 - With approvals on, a file tool that reaches outside the session folder asks like `bash` does, unlike before when it was refused: `external_directory(FOLDER/*)` rules now cover file tools too (an allow rule lets a folder run, a deny rule refuses it). The accept-edits mode runs only writes inside the folder. Finn's own `auth.json`, `server.json`, `config.json` and `chatgpt.json` (in the config, state and data folders, and the file of `FINN_CONFIG`) are denied to the file tools by default, whatever the session folder; an `allow read_file(...)` rule of your config lifts it.
@@ -26,13 +33,12 @@
 
 ### Fixed
 
-- `finn` no longer says `copied` for a selection that only went to the terminal as OSC 52, which tmux drops with `allow-passthrough off` and `set-clipboard external`: the note says `sent N characters to the terminal (OSC 52)`, and a tool or `tmux load-buffer -w -` does the copy where it can (#319).
-- `finn` no longer exits with `tui: set_cell failed: Out of bounds (-9)` when a terminal resize lands while it draws (for example tmux changing the pane size at start); cells off the screen are dropped, and a draw that a resize cuts short is redrawn by the `Resize` that comes with it.
-- A new session on a provider with no model of its own waits for the model catalog (up to 1.5 s) before taking the first model it lists, instead of starting on `default`; a model you picked that is not in the provider's `models` list is kept, with a warning.
-- A refusal or a connection failure of the `local` provider says `pick a provider with /model, or log in with /login` (and is a warning in `/logs`); a successful `finn login chatgpt` followed by `finn` no longer opens a session on `local` that fails with HTTP 401.
-- `finn login chatgpt` works again: OpenAI answers the device code with its `interval` as text, which the login did not read.
-- A `finn` that ends with an error prints why after the screen closes, also a failed `finn login`; it ended with code 1 and said nothing.
-- A session file with no `created_ms` in its header (one of an early version) is listed, as the oldest, with no warning at each start.
+- `finn` no longer exits with `tui: set_cell failed: Out of bounds (-9)` when a terminal resize lands while it draws.
+- A copy that only went to the terminal (OSC 52) says `sent N characters to the terminal`, not `copied`, since tmux can drop it (#319).
+- `finn login chatgpt` works again, and after it `finn` no longer opens a session on `local` that fails with HTTP 401; a `local` provider that is down says to use `/model` or `/login`.
+- A new session waits up to 1.5 s for the model catalog before taking its first model, not `default`.
+- A `finn` that ends with an error prints why after the screen closes.
+- A session file with no `created_ms` is listed, as the oldest, with no warning at each start.
 
 ## [finn-20261118140503] - 2026-11-18
 
@@ -44,32 +50,23 @@
 
 ### Changed
 
-- The `bash` package, and so `core`, no longer holds a file over 1 MiB and downloads a prebuilt native library (release `bash-native-d63bc6fb66ee45a8`) for linux x86_64 and arm64, macos x86_64 and arm64, and windows x86_64, so a fetched package needs no C compiler; a tag `bash-native-<key>` builds and releases them.
-- tree-sitter-bash's parser comes from a git submodule: after updating a clone, run `make install` once to fetch it.
-- The packages of the repository have no tags of their own any more, only `finn-<ts>`; using `core` from outside the repository waits for agentica#1850.
-- The version of Finn is the UTC time of its commit (`20261118123456`), with a `finn-` tag per merge to main; a client says when its server is older or newer and names `finn server restart`, never a `kill`. `finn server stop` ends a server that does not take the request by its pid (`--now` forces it).
+- **Breaking:** the command is `finn` and variables are `FINN_*` (most `AGC_AGENT_*` names still work); an old `agc-agent` `config.json`, `AGC_AGENT_CONFIG` or `AGC_AGENT_MCP_CONFIG` stops `finn serve` and says where to move it, and an old `auth.json` warns.
 - **Breaking:** Finn needs Agentica 0.34.0. A model stream that is silent for 2 minutes now fails, rather than hanging; the event stream of a session has no read limit.
-- A resumed session shows the thinking, tool calls and stop notes of its turns, not only the messages; the session line comes first.
-- Leaving `finn` or `finn chat` prints how to come back to the session (`finn --session ID`), unless it is empty.
-- The footer shows no exact tok/s for a reply that came in one burst.
-- The full screen's footer shows the model's output speed (`42 tok/s`; `~42 tok/s` while a reply streams); `usage` events carry `output_ms`.
-- `/resume` leaves out the session itself and the sessions with no message yet; `GET /v1/sessions` marks those `empty`.
 - **Breaking:** `finn` opens the full screen, as `finn tui` does; `finn chat` is the line chat.
-- **Breaking:** tools run without asking by default; turn approvals on with `finn serve --approvals`.
-- **Breaking:** `finn --yolo` allows only the tool calls of the turns it starts.
-- **Breaking:** the command is `finn` and variables are `FINN_*`; most `AGC_AGENT_*` names still work.
-- **Breaking:** an old `agc-agent` `config.json`, `AGC_AGENT_CONFIG` or `AGC_AGENT_MCP_CONFIG` stops `finn serve` and says where to move it; an old `auth.json` warns.
-- **Breaking:** with approvals on, a `bash` command that only reads asks too; only an allow rule or an answer runs it.
+- **Breaking:** tools run without asking by default; turn approvals on with `finn serve --approvals`. `finn --yolo` allows only the tool calls of the turns it starts.
 - **Breaking:** rules are OpenCode's: one `permission` list (`"allow bash(git *)"`, `"ask read_file(*.env)"`), the last match wins; `allow` and `deny` keys stop the start.
-- `bash` rules check each command of the line (tree-sitter-bash); a line it cannot read clearly asks.
-- "Always" (`allow_prefix`) allows `NAME *` for a short list of plain programs (`ls *`), and the exact command for any other program, a redirection or a substitution.
+- **Breaking:** with approvals on, a `bash` command that only reads asks too, and so do reads of `.env` files; only an allow rule or an answer runs them.
 - **Breaking:** the state and data folders cannot be links; give the folder the link points to.
-- `external_directory` rules check the paths outside the session folder that `cd`, `rm`, `cp` and the like name.
-- **Breaking:** with approvals on, reads of `.env` files ask by default.
-- `read_file` rules also check, best effort, the files `cat`, `head`, `tail`, `grep`, `wc`, `diff` and `cp` name in `bash` (`cat .env` asks); "always" on these programs allows the same command only.
-- The first start builds the bash parser; clients wait up to a minute and say so.
-- `finn chat` and `finn tui` refuse a server of another version and say how to stop it.
 - **Breaking:** code mode (`run_script`) is on by default; `--no-codemode` or `FINN_CODE_MODE=0` turns it off, and a client says when the running server's differs.
+- `bash` rules check each command of the line (tree-sitter-bash); a line it cannot read clearly asks. `external_directory` rules check the paths outside the session folder that `cd`, `rm`, `cp` and the like name, and `read_file` rules check, best effort, the files `cat`, `head`, `tail`, `grep`, `wc`, `diff` and `cp` name.
+- "Always" (`allow_prefix`) allows `NAME *` for a short list of plain programs (`ls *`), and the exact command for any other program, a redirection or a substitution.
+- The version of Finn is the UTC time of its commit (`20261118123456`), with a `finn-` tag per merge to main; a client says when its server is older or newer and names `finn server restart`, and `finn chat` and `finn tui` refuse a server of another version. `finn server stop` ends a server that does not take the request by its pid (`--now` forces it).
+- The `bash` package, and so `core`, holds no file over 1 MiB and downloads a prebuilt native library (release `bash-native-d63bc6fb66ee45a8`) for linux, macos and windows, so a fetched package needs no C compiler; the bash parser comes from a git submodule, so run `make install` once after updating a clone.
+- The packages of the repository have no tags of their own, only `finn-<ts>`; using `core` from outside the repository waits for agentica#1850.
+- The first start builds the bash parser; clients wait up to a minute and say so.
+- A resumed session shows the thinking, tool calls and stop notes of its turns, and leaving `finn` or `finn chat` prints how to come back to it (`finn --session ID`).
+- The footer shows the model's output speed (`42 tok/s`); `usage` events carry `output_ms`.
+- `/resume` leaves out the session itself and the sessions with no message yet; `GET /v1/sessions` marks those `empty`.
 
 ### Added
 
