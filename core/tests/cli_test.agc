@@ -38,9 +38,9 @@ def test_the_model_api_is_chat_completions_responses_or_anthropic() -> Result[Vo
   apis = responses.providers["local"].apis
   names = apis.keys.map { |name| "#{name} #{apis[name].provider.name}" }
   try Test.eq(names.sort, ["openai openai_chat", "openai_responses openai_responses"])
-  try Test.eq(JSON.encode(JSON.object(apis["openai"].extra)), "{}")
+  try Test.eq(JSON.object(apis["openai"].extra), try JSON.parse("{}"))
   stateless = apis["openai_responses"].extra
-  Test.eq(JSON.encode(JSON.object(stateless)), "{\"include\":[\"reasoning.encrypted_content\"],\"store\":false}")
+  Test.eq(JSON.object(stateless), try JSON.parse("{\"include\":[\"reasoning.encrypted_content\"],\"store\":false}"))
 end
 
 # The Anthropic credential: `ANTHROPIC_API_KEY`, else `ANTHROPIC_AUTH_TOKEN`, else the token of `ant`: at start when
