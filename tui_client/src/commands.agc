@@ -138,7 +138,7 @@ end
 def mcp_reconnected(app: State.Model, text: String, status: Optional[Protocol.McpStatus]) -> State.Model
   noted = State.noted(app, text)
   case status
-    some(read) -> McpPanel.refreshed(noted.with(banner: Client.mcp_banner(noted.banner, read)), read)
+    some(read) -> McpPanel.reconnected(noted.with(banner: Client.mcp_banner(noted.banner, read)), read)
     none -> noted
   end
 end

@@ -10,8 +10,8 @@ import Sides from "sides"
 import State from "state"
 
 TITLE = "MCP servers"
-LIST_KEYS = "j/k move · r reconnect · t tools · l log"
-DETAIL_KEYS = "Esc back · r reconnect"
+LIST_KEYS = "j/k r t l"
+DETAIL_KEYS = "r t l Esc back"
 LOG_LINES = 200
 
 ## The panel open on the servers of `status`, with the keys.
@@ -20,8 +20,9 @@ def opened(app: State.Model, status: Protocol.McpStatus) -> State.Model
   drawn(shown.with(mcp: some(State.McpPanel(servers: status.servers))))
 end
 
-## Whether the keys are for the panel: it is the MCP panel, and it has the keys.
-def keyed?(app: State.Model) -> Bool = app.mcp.some? and Sides.active?(app)
+## Whether the keys are for the panel: it is the MCP panel, it has the keys, and the prompt has nothing typed (a prompt
+## with text keeps every key, as the mention list does).
+def keyed?(app: State.Model) -> Bool = app.mcp.some? and Sides.active?(app) and app.prompt == ""
 
 ## The model after a key that the panel takes, none for a key that is not its own.
 def on_key(app: State.Model, event: TUI.Event) -> Optional[State.Model]
@@ -34,9 +35,9 @@ def on_key(app: State.Model, event: TUI.Event) -> Optional[State.Model]
     TUI.Event.Char("k", mods) if plain?(mods) -> some(step(app, panel, -1))
     TUI.Event.Char("j", mods) if plain?(mods) -> some(step(app, panel, 1))
     TUI.Event.Char("r", mods) if plain?(mods) -> some(reconnect(app, panel))
-    TUI.Event.Char("t", mods) if plain?(mods) and panel.view == "" -> some(tools(app, panel))
+    TUI.Event.Char("t", mods) if plain?(mods) -> some(tools(app, panel))
     TUI.Event.Key(TUI.Key.Enter, mods) if not mods.alt and panel.view == "" -> some(tools(app, panel))
-    TUI.Event.Char("l", mods) if plain?(mods) and panel.view == "" -> some(log(app, panel))
+    TUI.Event.Char("l", mods) if plain?(mods) -> some(log(app, panel))
     TUI.Event.Key(TUI.Key.Escape, _) if panel.view != "" -> some(drawn(app.with(mcp: some(panel.with(view: "")))))
     TUI.Event.Key(TUI.Key.Backspace, _) if panel.view != "" -> some(drawn(app.with(mcp: some(panel.with(view: "")))))
     _ -> none
@@ -69,6 +70,16 @@ def refreshed(app: State.Model, status: Protocol.McpStatus) -> State.Model
   end
 
   app
+end
+
+## The panel after a reconnect that gave `status`: as `refreshed`, and the log it shows read again.
+def reconnected(app: State.Model, status: Protocol.McpStatus) -> State.Model
+  again = refreshed(app, status)
+  for panel in State.option_list(again.mcp)
+    return log(again, panel) if panel.view == "log"
+  end
+
+  again
 end
 
 ## The log lines of a server, for the panel with that serial that shows its log.
@@ -140,7 +151,7 @@ def tools(app: State.Model, panel: State.McpPanel) -> State.Model
   name = selected_name(panel)
   return app if name == ""
 
-  refresh(drawn(app.with(mcp: some(panel.with(view: "tools", name: name)))))
+  refresh(top(drawn(app.with(mcp: some(panel.with(view: "tools", name: name))))))
 end
 
 def log(app: State.Model, panel: State.McpPanel) -> State.Model
@@ -150,7 +161,7 @@ def log(app: State.Model, panel: State.McpPanel) -> State.Model
   backend = app.backend
   id = app.id
   serial = app.side_serial
-  shown = drawn(app.with(mcp: some(panel.with(view: "log", name: name, log: ["reading the log..."]))))
+  shown = top(drawn(app.with(mcp: some(panel.with(view: "log", name: name, log: ["reading the log..."])))))
   State.effect(
     shown,
     TUI.Cmd.Run(-> { State.Msg.McpLogRead(serial, name, backend.mcp_log.call(id, name, LOG_LINES)) }),
@@ -169,7 +180,10 @@ end
 def drawn(app: State.Model) -> State.Model
   for panel in State.option_list(app.mcp)
     for side in State.option_list(app.side)
-      return app.with(side: some(Side.retitled(side, title_of(panel), keys_of(panel), lines_of(panel))))
+      shown = app.with(side: some(Side.retitled(side, title_of(panel), keys_of(panel), lines_of(panel))))
+      return shown if panel.view != "" or panel.servers.empty?
+
+      return Sides.revealed(shown, panel.cursor)
     end
   end
 
@@ -208,6 +222,9 @@ def marked(row: String, selected: Bool) -> String
 
   "  #{row}"
 end
+
+# A view that was just opened shows from its first line.
+def top(app: State.Model) -> State.Model = Sides.moved(app, -1_000_000)
 
 # The panel shows the end of the log.
 def at_end(app: State.Model) -> State.Model = Sides.moved(app, 1_000_000)

@@ -248,16 +248,7 @@ end
 # The lines of the log are read through the server: the client may be on the other side of a tunnel. The warnings are
 # those of the process, kept in memory.
 def logs(control: Control, conn: Bond.Conn) -> Result[String]
-  count = DEFAULT_LOG_LINES
-  for text in try Bond.query_all(conn, "lines")
-    wanted = text.to_i
-    if not wanted.ok? or wanted.unwrap! < 0 or wanted.unwrap! > MAX_LOG_LINES
-      return error("lines is a number from 0 to #{MAX_LOG_LINES}", kind: Protocol.KIND_INVALID)
-    end
-
-    count = wanted.unwrap!
-  end
-
+  count = try line_count(conn)
   tail = try Log.tail(control.state_dir, count)
   warned = Log.warnings()
   ok(
@@ -446,6 +437,13 @@ def mcp(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
 end
 
 def mcp_log(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  count = try line_count(conn)
+  name = try Bond.param(conn, "name")
+  ok(Protocol.encode_mcp_log(try Sessions.mcp_log(sessions, try mcp_folder(sessions, conn), name, count)))
+end
+
+# The `lines` of the query: how many lines of a log to read, the default without one.
+def line_count(conn: Bond.Conn) -> Result[Int]
   count = DEFAULT_LOG_LINES
   for text in try Bond.query_all(conn, "lines")
     wanted = text.to_i
@@ -456,8 +454,7 @@ def mcp_log(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
     count = wanted.unwrap!
   end
 
-  name = try Bond.param(conn, "name")
-  ok(Protocol.encode_mcp_log(try Sessions.mcp_log(sessions, try mcp_folder(sessions, conn), name, count)))
+  ok(count)
 end
 
 def mcp_reconnect(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]

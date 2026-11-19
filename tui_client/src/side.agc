@@ -83,6 +83,25 @@ def retitled(side: Side, title: String, keys: String, lines: List[String]) -> Si
   fitted(side.with(title: title, keys: keys, lines: lines, note: "", wrapped_at: 0), side.wrapped_at)
 end
 
+## The panel scrolled so that line `index` shows whole (or its first `room` rows when it is taller), as wrapped now.
+def revealed(side: Side, index: Int, room: Int) -> Side
+  return side if side.wrapped_at <= 0 or index < 0 or index >= side.lines.size or room <= 0
+
+  before = side.lines.take(index).flat_map { |line| Transcript.wrap(line, side.wrapped_at) }.size
+  height = Transcript.wrap(side.lines[index], side.wrapped_at).size
+  at = first(side, room)
+  top = at
+  if before < at
+    top = before
+  end
+
+  if before + height > at + room
+    top = [before + height - room, before].min.unwrap!
+  end
+
+  side.with(top: top, follow: false)
+end
+
 ## The panel with `note` after its lines.
 def noted(side: Side, note: String) -> Side = fitted(side.with(note: note, wrapped_at: 0), side.wrapped_at)
 

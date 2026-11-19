@@ -189,7 +189,36 @@ def test_the_log_of_a_server_comes_through_the_server() -> Result[Void]
       try Test.eq((try Protocol.decode_mcp_log(last.text)).lines, ["two", "three"])
       try Test.eq((try H.get(h, "#{Protocol.mcp_log_path("good")}?lines=-1")).status, 400)
       try Test.eq((try H.get(h, Protocol.mcp_log_path("none"))).status, 404)
+      for name in ["..", "%2e%2e", "a%2Fb", "a%00b", "..%2F..%2Fmcp%2Fgood"]
+        try Test.eq((try H.get(h, "/v1/mcp/#{name}/log")).status, 404)
+      end
+
       Test.eq((try H.call(h, "GET", Protocol.mcp_log_path("good"), "", [])).status, 401)
+    end
+
+    mounted.stop.call()
+    result
+  end
+end
+
+# The log of a project server is read with its session; without one the server is not the user's, and is none.
+def test_the_log_of_a_project_server_comes_with_its_session() -> Result[Void]
+  S.within_dir do |dir|
+    repo = try make_repo(dir, "repo", {"proj": try S.fake_server(JSON.object({}))})
+    try S.write_config(dir, {})
+    mounted = try Builtins.mcp(Extensions.Served(registry: Extensions.Registry()), reader(dir), dir, [repo])
+    result = H.using(wired(mounted)) do |h|
+      id = try H.new_session_in(h, repo)
+      try settled(h, "?session=#{id}", 1)
+      files = (try Dir.list("#{dir}/mcp")).select { |name| name.end_with?("-proj.log") }
+      try Test.eq(files.size, 1)
+      try File.write_text("#{dir}/mcp/#{files[0]}", "p1\np2\n")
+      path = Protocol.mcp_log_path("proj")
+      shown = try H.get(h, "#{path}?session=#{id}")
+      try Test.eq(shown.status, 200)
+      try Test.eq((try Protocol.decode_mcp_log(shown.text)).lines, ["p1", "p2"])
+      try Test.eq((try H.get(h, path)).status, 404)
+      Test.eq((try H.get(h, "#{path}?session=nosuch")).status, 404)
     end
 
     mounted.stop.call()

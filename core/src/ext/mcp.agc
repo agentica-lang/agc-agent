@@ -365,8 +365,17 @@ def started_server(address: Address[Msg], order: Int, server: Mcp.Server, option
   end
 
   listing = Listing(order: order, server: server, client: client, listed: listed)
-  if not Actor.cast(address, Msg.Add(listing)).ok? and listed.ok?
-    Mcp.stop(client)
+  if not Actor.cast(address, Msg.Add(listing)).ok?
+    if listed.ok?
+      Mcp.stop(client)
+    end
+
+    return Listing(
+      order: order,
+      server: server,
+      client: client,
+      listed: error("the MCP servers are restarting", kind: Protocol.KIND_MCP_STARTING),
+    )
   end
 
   listing

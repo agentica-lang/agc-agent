@@ -70,6 +70,14 @@ def moved(app: State.Model, rows: Int) -> State.Model
   end
 end
 
+## The panel scrolled so that its line `index` shows.
+def revealed(app: State.Model, index: Int) -> State.Model
+  case app.side
+    some(side) -> app.with(side: some(Side.revealed(side, index, room(app))))
+    none -> app
+  end
+end
+
 ## F6: the keys go to the other side of a wide screen; a narrow one has only the panel.
 def toggled_focus(app: State.Model) -> State.Model
   case app.side
