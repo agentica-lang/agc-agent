@@ -119,6 +119,10 @@ def test_requests_round_trip() -> Result[Void]
 end
 
 def test_replies_round_trip() -> Result[Void]
+  status_text = "{\"segments\":[{\"name\":\"chatgpt.quota\",\"text\":\"5h 72%\"}]}"
+  segments = try Protocol.decode_status_segments(status_text)
+  try Test.eq(try Protocol.decode_status_segments(Protocol.encode_status_segments(segments)), segments)
+
   health = try decode_fixture("health", &Protocol.decode_health, &Protocol.encode_health)
   try Test.eq(Protocol.decode_health(Protocol.encode_health(health)), ok(health))
 

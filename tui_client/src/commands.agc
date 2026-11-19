@@ -7,6 +7,7 @@ import Picker from "picker"
 import Side from "side"
 import Sides from "sides"
 import State from "state"
+import Status from "status"
 import Logins from "logins"
 import McpPanel from "mcp_panel"
 import Turn from "turn"
@@ -370,7 +371,8 @@ end
 ## What the server read again, as notes: one line, then each warning.
 def reload_command(app: State.Model) -> Result[State.Model]
   report = Client.reload_report(try app.backend.reload.call())
-  keyed = with_keys(app, app.backend.display.call().keys)
+  wanted = app.backend.display.call()
+  keyed = Status.tick(with_keys(app, wanted.keys).with(statusline: wanted.statusline, status_gone: false))
   ok(Sides.shown(keyed, Side.of("Reload", report + keyed.keys.warnings.map { |warning| "warning: #{warning}" })))
 end
 

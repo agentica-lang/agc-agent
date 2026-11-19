@@ -139,6 +139,8 @@ struct Options
   clipboard_command: List[String] = []
   ## The `keys` of the user's config file as written, an action and its key each: the full screen checks them.
   keys: Map[String, String] = {}
+  ## The `status_line` of the user's config file: the segments of the full screen's status row, none for its default.
+  status_line: Optional[Protocol.StatusLine] = none
   ## The provider is set (`FINN_PROVIDER`, `FINN_API` or `FINN_BASE_URL`) and `FINN_MODEL` is: they win over the provider and
   ## model last picked.
   provider_pinned: Bool = false
@@ -183,6 +185,9 @@ struct Settings
   mouse: Bool
   clipboard: Clipboard
   keys: Map[String, String]
+  status_line: Optional[Protocol.StatusLine]
+  ## What in the file was not taken and does not stop the server: it keeps its default.
+  notes: List[String]
   customs: List[Providers.Custom]
 end
 
@@ -326,7 +331,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
         [stored.refused].select { |w| not w.empty? } +
         option_list(Chatgpt.refusal(chatgpt)) +
         stale +
-        moved
+        moved +
+        first.notes
       ),
       login: some(login),
       model: set(read, "FINN_MODEL").unwrap_or(model),
@@ -352,6 +358,7 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       clipboard: first.clipboard.provider,
       clipboard_command: first.clipboard.command,
       keys: first.keys,
+      status_line: first.status_line,
       live: some(live),
       provider_pinned: provider_pinned?(read),
       model_pinned: set(read, "FINN_MODEL").some?,
@@ -675,6 +682,48 @@ def keys_setting(found: UserFile) -> Result[Map[String, String]]
   ok(keys)
 end
 
+# `status_line` of the user's config file: `{"left": [...], "right": [...]}`, the names of the segments of each side.
+# The full screen skips a name it does not know. A value of another shape is an error that `settings_of` turns into a
+# warning, so the default row stays.
+def status_line_setting(found: UserFile) -> Result[Optional[Protocol.StatusLine]]
+  for value in option_list(setting(found, "status_line"))
+    case JSON.node(value)
+      JSON.Node.Object(_) -> nil
+      _ -> return error("#{found.path}: status_line must be an object with left and right lists of segment names")
+    end
+
+    left = try segment_names(found, value, "left")
+    right = try segment_names(found, value, "right")
+    return ok(some(Protocol.StatusLine(left: left, right: right)))
+  end
+
+  ok(none)
+end
+
+def segment_names(found: UserFile, value: JSON.Value, side: String) -> Result[List[String]]
+  return ok([]) if not JSON.get(value, side).ok?
+
+  names: List[String] = []
+  listed = JSON.list(try JSON.get(value, side))
+  return error("#{found.path}: status_line.#{side} must list segment names") if not listed.ok?
+
+  for item in try listed
+    case JSON.string(item)
+      ok(name) -> names = names.push(name)
+      error(_) -> return error("#{found.path}: status_line.#{side} must list segment names")
+    end
+  end
+
+  ok(names)
+end
+
+def status_note(read: Result[Optional[Protocol.StatusLine]]) -> List[String]
+  case read
+    ok(_) -> []
+    error(e) -> [e.message]
+  end
+end
+
 def program_of(value: JSON.Value) -> Result[List[String]]
   command: List[String] = []
   for item in try JSON.list(value)
@@ -731,6 +780,7 @@ def settings_of(read: Fn[String, Result[String]]) -> Result[Settings]
     Auth.path(read).map { |path| [Sandbox.parent(path)] }.unwrap_or([])
   )
 
+  status_line = status_line_setting(file)
   denies = Approval.finn_denies(folders, option_list(Permissions.config_path(read)))
   ok(
     Settings(
@@ -741,6 +791,8 @@ def settings_of(read: Fn[String, Result[String]]) -> Result[Settings]
       mouse: try mouse_setting(file),
       clipboard: try clipboard_setting(file),
       keys: try keys_setting(file),
+      status_line: status_line.unwrap_or(none),
+      notes: status_note(status_line),
       customs: customs,
     ),
   )
@@ -759,6 +811,7 @@ def lived(options: Options) -> Options
           clipboard: found.clipboard.provider,
           clipboard_command: found.clipboard.command,
           keys: found.keys,
+          status_line: found.status_line,
         )
       error(_) -> nil
     end

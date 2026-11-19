@@ -19,6 +19,7 @@ import Terminal from "terminal"
 import Theme from "theme"
 import Transcript from "transcript"
 import State from "state"
+import Status from "status"
 import Level from "level"
 import Answering from "answering"
 import Files from "files"
@@ -168,7 +169,8 @@ end
 ## The mouse off when the config of the server says so, and the clipboard it asks for.
 def configured(app: State.Model) -> State.Model
   wanted = app.backend.display.call()
-  set = Commands.with_keys(app, wanted.keys).with(clipboard: wanted.clipboard)
+  set = Commands.with_keys(app, wanted.keys).with(clipboard: wanted.clipboard, statusline: wanted.statusline)
+  set = Status.tick(set)
   for warning in set.keys.warnings
     set = State.noted(set, warning)
   end
@@ -210,6 +212,10 @@ end
 
 def update(model: State.Model, msg: State.Msg) -> TUI.Step[State.Model, State.Msg]
   app = Sides.fit(handled(model.with(now: Time.monotonic_ms, clock_s: Time.now_ms / 1000), msg))
+  if app.serving != model.serving or app.opened != model.opened
+    app = Status.tick(app.with(status_segments: [], reading_status: false, status_gone: false))
+  end
+
   # The answer that streams changes on every delta: it is cut again when the stream rests.
   if not stream?(msg)
     app = app.with(entries: Transcript.wrapped(app.entries, app.width, State.folds(app)))
@@ -242,6 +248,10 @@ end
 
 def subscriptions(model: State.Model) -> List[TUI.Sub[State.Msg]]
   subs = [TUI.Sub.Events(->(event) { State.Msg.Key(event) })]
+  if Status.polls?(model)
+    subs = subs.push(TUI.Sub.Tick(Status.STATUS_MS, State.Msg.StatusTick))
+  end
+
   if State.busy?(model)
     subs = subs.push(TUI.Sub.Tick(State.SPIN_MS, State.Msg.Spin))
   end
@@ -257,6 +267,11 @@ private
 
 def handled(app: State.Model, msg: State.Msg) -> State.Model
   case msg
+    State.Msg.StatusTick -> Status.tick(app)
+    State.Msg.StatusRead(opened, serving, generation, result) if opened == app.opened and serving == app.serving and generation == app.status_generation ->
+      Status.read(app, result)
+
+    State.Msg.StatusRead(_, _, _, _) -> app
     State.Msg.Key(TUI.Event.Resize(width, height)) -> Sides.resized(app, width, height)
     State.Msg.Key(event) -> Keys.on_key(app, event)
     State.Msg.Signal(signal) -> Session.signalled(app, signal)

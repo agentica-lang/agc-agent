@@ -194,12 +194,14 @@ The terminal's own selection still works with Shift+drag (Option+drag in iTerm2)
 The two rows under the prompt:
 
 - the session folder (`~` for your home), its git branch and the first line of the session's first message;
-- the status (`ready`, `YOLO`, `approval waiting`), the counts and the key hints that fit, then the profile (unless it is `build`), the model and the thinking level on the right.
+- the status (`ready`, `YOLO`, `approval waiting`), the counts, the quota of a ChatGPT session and the key hints that fit, then the profile (unless it is `build`), the model and the thinking level on the right.
 
 On a short screen the first row goes first, so an approval keeps its rows.
 
 The counts read `↑4.8k ↓40 R3.6k 75% cached $0.013 15.0%/32k`. All but `$` are about the last model call: `↑` its whole prompt (the cached part too), `↓` its output, `R` the prompt read from the cache and the part of the prompt it was, and the prompt as a part of the model's window (its size in tokens while the window is not known). `$` is the session's cost, when the [catalog](providers.md) has prices.
 
-After the counts, `42 tok/s` is how fast the model wrote its last reply: the output tokens of the call, reasoning included, over the time from its first output to its end. While a reply streams, `~42 tok/s` is an estimate from its text (about 4 characters a token). The rate stays until the next one, and a narrow row drops it first.
+After the counts, `42 tok/s` is how fast the model wrote its last reply: the output tokens of the call, reasoning included, over the time from its first output to its end. While a reply streams, `~42 tok/s` is an estimate from its text (about 4 characters a token). The rate stays until the next one, and a narrow row drops it early.
+
+In a ChatGPT session the row also shows what is left of your plan, as `5h 62% · 7d 80%`: the percentages of the five-hour and the seven-day window. The server asks ChatGPT, with your login, for the numbers (about once a minute for all clients; a failed read is not tried again for five to ten minutes, and never renews the login), and the row refreshes them every few seconds. A read that fails keeps the numbers on the row. A narrow row drops the quota before the rate. The numbers come from an internal ChatGPT endpoint that can change; when it fails nothing is shown. `status_line` in [the config file](config.md#the-status-line) changes which segments the row has and their order.
 
 In `finn chat`, answer an approval with `y`, `n` or `a` and Enter. The answers are on [Approvals and security](security.md#answer).

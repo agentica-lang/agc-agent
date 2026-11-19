@@ -70,6 +70,11 @@ def turn(base: String) -> Result[Void]
   asked = Protocol.encode_new_session(Protocol.NewSession(cwd: base, model: none, api: none, provider: none))
   created = try call("#{url}#{Protocol.SESSIONS_PATH}", asked, headers)
   id = (try Protocol.decode_session_created(created)).id
+  status_client = try HTTP.client(HTTP.ClientOptions(timeout_ms: WAIT_MS))
+  status_reply = HTTP.request(status_client, "GET", "#{url}#{Protocol.status_segments_path(id)}", "".bytes, headers)
+  HTTP.close_client(status_client)
+  segments = try Protocol.decode_status_segments(try String.from_bytes((try status_reply).body))
+  try Test.eq(segments.segments.map { |segment| segment.name }, ["example.provider"])
   options = HTTP.ClientOptions(timeout_ms: WAIT_MS)
   stream = try HTTP.open("GET", "#{url}#{Protocol.events_path(id)}", "".bytes, headers, options)
   sent = Protocol.encode_send_message(Protocol.SendMessage(text: "Count the words of one two three."))

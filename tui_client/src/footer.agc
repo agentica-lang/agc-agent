@@ -9,6 +9,16 @@ import Width from "width"
 TITLE_CHARS = 40
 MAX_USD = 1_000_000.0
 
+## The values available to a custom status layout.
+struct Values
+  state: List[String]
+  usage: Optional[Protocol.Usage]
+  hints: List[String]
+  model: String
+  rate: String
+  segments: List[Protocol.StatusSegment] = []
+end
+
 ## Where the session is: `cwd` with `home` as `~`, the branch in parentheses and `title`, one line.
 def place(cwd: String, home: String, branch: String, title: String, width: Int) -> String
   parts = [short_path(cwd, home)]
@@ -28,10 +38,10 @@ def place(cwd: String, home: String, branch: String, title: String, width: Int) 
   padded(" #{parts.join(" · ")}", width)
 end
 
-## The status row: `state` (as `ready`), the counts of `usage`, the `rate` of the model's output, the `hints` that fit,
-## and `right` (the model) at its end, two cells after them. When the row is too narrow, the rate goes first, then the
-## counts lose the part cached, then the window, then the cache read, and then `right` is cut, or left out when fewer
-## than 2 cells are left for it.
+## The status row: `state` (as `ready`), the counts of `usage`, the `rate` of the model's output, the `quota`, the
+## `hints` that fit, and `right` (the model) at its end, two cells after them. When the row is too narrow, the quota
+## goes first, then the rate, then the counts lose the part cached, then the window, then the cache read, and then
+## `right` is cut, or left out when fewer than 2 cells are left for it.
 def status(
   state: List[String],
   usage: Optional[Protocol.Usage],
@@ -39,13 +49,14 @@ def status(
   right: String,
   width: Int,
   rate: String = "",
+  quota: String = "",
 ) -> String
   room = width - Width.text(right) - 3
-  text = left(state, usage, rate, 0)
+  text = left(state, usage, rate, quota, 0)
   for detail in 1..MOST_DROPPED
     break if Width.text(text) <= room
 
-    text = left(state, usage, rate, detail)
+    text = left(state, usage, rate, quota, detail)
   end
 
   model = right
@@ -68,6 +79,28 @@ def status(
   return padded(text, width) if model.empty?
 
   text + " " * (width - Width.text(text) - Width.text(model) - 1) + model + " "
+end
+
+## The segments of a `status_line` layout. When the row is too narrow, whole segments go, from the end of the right side,
+## then from the end of the left; the last one is cut.
+def custom(layout: Protocol.StatusLine, values: Values, width: Int) -> String
+  left = components(layout.left, values)
+  right = components(layout.right, values)
+  while cells(left, right) > width and left.size + right.size > 1
+    if right.empty?
+      left = left.take(left.size - 1)
+    else
+      right = right.take(right.size - 1)
+    end
+  end
+
+  return padded(" #{cut((left + right).join(" · "), width - 1)}", width) if cells(left, right) > width
+
+  joined = left.join(" · ")
+  return padded(" #{joined}", width) if right.empty?
+
+  shown = right.join(" · ")
+  " #{joined}" + " " * (width - Width.text(joined) - Width.text(shown) - 2) + shown + " "
 end
 
 ## The last call: `↑` its whole prompt (cached included), `↓` its output, `R` the prompt read from the cache and the
@@ -128,13 +161,43 @@ end
 
 private
 
-# How many parts the status row drops at most: the rate, then those of `counts`.
-MOST_DROPPED = 4
+# How many parts the status row drops at most: the quota, the rate, then those of `counts`.
+MOST_DROPPED = 5
 
-def left(state: List[String], usage: Optional[Protocol.Usage], rate: String, detail: Int) -> String
-  parts = state + option_list(usage).map { |u| counts(u, [detail - 1, 0].max.unwrap!) }
-  if detail == 0 and not rate.empty?
+def components(names: List[String], values: Values) -> List[String]
+  parts: List[String] = []
+  for name in names
+    text = case name
+      "state" -> values.state.join(" · ")
+      "usage" -> option_list(values.usage).map { |usage| counts(usage) }.join("")
+      "rate" -> values.rate
+      "hints" -> values.hints.join(" · ")
+      "model" -> values.model
+      _ -> values.segments.select { |segment| segment.name == name }.map { |segment| segment.text }.join("")
+    end
+
+    if not text.empty?
+      parts = parts.push(text)
+    end
+  end
+
+  parts
+end
+
+def cells(left: List[String], right: List[String]) -> Int
+  return 1 + Width.text(left.join(" · ")) if right.empty?
+
+  Width.text(left.join(" · ")) + Width.text(right.join(" · ")) + 3
+end
+
+def left(state: List[String], usage: Optional[Protocol.Usage], rate: String, quota: String, detail: Int) -> String
+  parts = state + option_list(usage).map { |u| counts(u, [detail - 2, 0].max.unwrap!) }
+  if detail < 2 and not rate.empty?
     parts = parts.push(rate)
+  end
+
+  if detail == 0 and not quota.empty?
+    parts = parts.push(quota)
   end
 
   " #{parts.join(" · ")}"

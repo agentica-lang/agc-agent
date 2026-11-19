@@ -15,6 +15,7 @@ What an extension can add:
 - **prompts**: text after the system prompt of each new session;
 - **event handlers** for a user message or a compaction;
 - **services** that run as long as the server.
+- **status line segments**: named texts that the user can place in the status row of the full-screen client.
 
 The code of an extension runs in a task of its own, with a time limit. A crash or a hang fails that one tool call, refuses that message, or adds nothing to that compaction, and does not stop a session or a running server. A service that fails to start is the exception: it stops the server's start.
 
@@ -50,6 +51,12 @@ Or let a client start it when no server runs:
 ```sh
 FINN_SERVER_COMMAND="agentica /path/to/my_finn/main.agc" finn tui
 ```
+
+## Status line segments
+
+An extension can add a named text to the status row of the full-screen client with `Core.add_status_segment(registry, Core.StatusProvider(name: "example.provider", value: &status_provider))`. The callback takes a `Core.StatusContext` with `session`, `root`, `provider` and `model`, and returns `Result[String]`. The server accepts up to 16 segments with nonempty, unique names distinct from the built-in ones (`state`, `usage`, `rate`, `hints`, `model` and `chatgpt.quota`). It uses the first 200 characters of each value and removes control and bidirectional formatting characters. A failed, empty or timed-out callback shows nothing. The callbacks run at once, outside the session actor, and each may take 2.5 seconds, so a slow one delays no other (the request waits 50 seconds at most). The server answers at most four requests at once, with an empty list when they are all busy.
+
+An extension does not place its segment: the user does, with `status_line` in [the config file](config.md#the-status-line). A segment that no layout names is not shown. `GET /v1/sessions/ID/status-segments` gives the current values, which the client asks for every five seconds while its row has a segment of this kind.
 
 ## A tool
 

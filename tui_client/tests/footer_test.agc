@@ -3,6 +3,38 @@ import Footer from "../src/footer"
 import Rate from "../src/rate"
 import Width from "../src/width"
 
+# Custom layouts reorder and hide segments, skip the ones that are missing, and drop whole segments from the end of the
+# right side, then of the left, when the row is narrow.
+def test_custom_status_layout() -> Result[Void]
+  values = Footer.Values(state: ["ready"], usage: none, hints: ["Enter send"], model: "model", rate: "")
+  layout = Protocol.StatusLine(left: ["model", "state"], right: ["hints"])
+  try Test.eq(Footer.custom(layout, values, 30), " model · ready     Enter send ")
+  try Test.eq(Footer.custom(layout.with(left: ["model"], right: []), values, 12), " model      ")
+  for width in 0..30
+    try Test.eq(Width.text(Footer.custom(layout, values, width)), width)
+  end
+
+  try Test.eq(Footer.custom(layout.with(left: ["unknown"], right: []), values, 4), "    ")
+  try Test.eq(Footer.custom(layout.with(left: ["unknown", "state"]), values, 30), " ready             Enter send ")
+  try Test.eq(Footer.custom(layout, values, 20), " model · ready      ")
+  try Test.eq(Footer.custom(layout, values, 10), " model    ")
+  Test.eq(Footer.custom(layout.with(left: ["state", "model"], right: ["hints"]), values, 14), " ready · model")
+end
+
+# The default row drops the quota before anything else.
+def test_the_default_row_drops_the_quota_first() -> Result[Void]
+  hints = ["Enter send"]
+  try Test.eq(
+    Footer.status(["ready"], none, hints, "(local) m", 60, "", "5h 62% · 7d 80%"),
+    " ready · 5h 62% · 7d 80% · Enter send             (local) m ",
+  )
+
+  Test.eq(
+    Footer.status(["ready"], none, [], "(local) m", 30, "", "5h 62% · 7d 80%"),
+    " ready" + " " * 14 + "(local) m ",
+  )
+end
+
 # Counts round to the unit shown and never show four digits of one; a cost under a tenth of a cent says so, and a
 # huge one is capped; home with a trailing slash is still `~`.
 def test_counts_and_costs_round_to_what_is_shown() -> Result[Void]

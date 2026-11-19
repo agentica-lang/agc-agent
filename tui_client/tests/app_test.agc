@@ -26,6 +26,93 @@ def test_keys_edit_the_prompt_and_the_view_draws_it() -> Result[Void]
   Test.eq(rows(resized).size, 4)
 end
 
+def test_the_server_status_layout_is_drawn() -> Result[Void]
+  layout = Protocol.StatusLine(left: ["model"], right: ["state"])
+  display = Client.Display(mouse: true, clipboard: Protocol.ClipboardSetting(), statusline: some(layout))
+  app = model_of(60, 8)
+  backend = app.backend.with(display: -> { display })
+  configured = App.configured(app.with(backend: backend, serving: "local/m"))
+  row = rows(configured).last
+  try Test.assert(row.start_with?("(local) m"), row)
+  Test.assert(row.strip.end_with?("ready"), row)
+end
+
+def test_the_default_row_shows_the_quota_and_the_config_reorders_it() -> Result[Void]
+  quota = Protocol.StatusSegments(segments: [Protocol.StatusSegment(name: "chatgpt.quota", text: "5h 62% · 7d 80%")])
+  app = model_of(70, 8).with(serving: "chatgpt/m", status_segments: quota.segments)
+  try Test.assert(rows(app).last.include?("ready · 5h 62% · 7d 80%"), rows(app).last)
+  layout = Protocol.StatusLine(left: ["chatgpt.quota", "state"], right: ["model", "missing"])
+  moved = app.with(statusline: some(layout))
+  try Test.assert(rows(moved).last.start_with?("5h 62% · 7d 80% · ready"), rows(moved).last)
+  narrow = rows(model_of(30, 8).with(serving: "chatgpt/m", status_segments: quota.segments)).last
+  try Test.assert(narrow.start_with?("ready"), narrow)
+  Test.assert(not narrow.include?("5h"), narrow)
+end
+
+def test_extension_status_is_drawn_and_stale_replies_are_ignored() -> Result[Void]
+  layout = Protocol.StatusLine(left: ["extra"], right: ["model"])
+  app = model_of(60, 8).with(statusline: some(layout), serving: "local/m", opened: 2)
+  value = Protocol.StatusSegments(segments: [Protocol.StatusSegment(name: "extra", text: "5h 72%")])
+  stale = App.update(app, App.Msg.StatusRead(1, "local/m", 0, ok(value))).model
+  try Test.eq(stale.status_segments.size, 0)
+  shown = App.update(app, App.Msg.StatusRead(2, "local/m", 0, ok(value))).model
+  try Test.assert(rows(shown).last.start_with?("5h 72%"), rows(shown).last)
+  changed = App.update(
+    app.with(serving: "other/m", reading_status: true),
+    App.Msg.StatusRead(2, "local/m", 0, ok(value)),
+  ).model
+
+  try Test.eq(changed.status_segments.size, 0)
+  try Test.assert(changed.reading_status, "an old reply must not finish the new request")
+  later = App.update(
+    app.with(status_generation: 2, reading_status: true),
+    App.Msg.StatusRead(2, "local/m", 1, ok(value)),
+  ).model
+
+  try Test.eq(later.status_segments.size, 0)
+  Test.assert(later.reading_status, "a reply from an earlier request must be ignored")
+end
+
+def test_status_poll_loads_once_at_a_time_and_recovers_after_failure() -> Result[Void]
+  layout = Protocol.StatusLine(left: ["extra"], right: [])
+  value = Protocol.StatusSegments(segments: [Protocol.StatusSegment(name: "extra", text: "5h 72%")])
+  model = model_of(60, 8)
+  backend = model.backend.with(status_segments: ->(_id) { ok(value) })
+  app = model.with(id: "s1", statusline: some(layout), backend: backend)
+  first = App.update(app, App.Msg.StatusTick)
+  try Test.eq(first.cmds.size, 1)
+  try Test.eq(App.update(first.model, App.Msg.StatusTick).cmds.size, 0)
+  shown = App.update(first.model, run(first.cmds[0])[0]).model
+  try Test.assert(rows(shown).last.start_with?("5h 72%"), rows(shown).last)
+  retry_backend = backend.with(status_segments: ->(_id) { error("connection lost") })
+  next_poll = App.update(shown.with(backend: retry_backend), App.Msg.StatusTick)
+  failed = App.update(next_poll.model, run(next_poll.cmds[0])[0]).model
+  try Test.eq(failed.status_segments, value.segments)
+  recovered = App.update(failed.with(backend: backend), App.Msg.StatusTick)
+  try Test.eq(App.update(recovered.model, run(recovered.cmds[0])[0]).model.status_segments, value.segments)
+  gone_backend = backend.with(status_segments: ->(_id) { error("no route", kind: "not_found", code: 404) })
+  gone_poll = App.update(shown.with(backend: gone_backend), App.Msg.StatusTick)
+  gone = App.update(gone_poll.model, run(gone_poll.cmds[0])[0]).model
+  try Test.eq(App.update(gone, App.Msg.StatusTick).cmds.size, 0)
+  Test.eq(App.subscriptions(gone).size, 1)
+end
+
+# The default row asks for the quota only in a ChatGPT session; a layout with the quota only does the same.
+def test_the_quota_is_polled_only_in_a_chatgpt_session() -> Result[Void]
+  local = model_of(60, 8).with(id: "s1", serving: "local/m")
+  chatgpt = local.with(serving: "chatgpt/m")
+  try Test.eq([App.subscriptions(local).size, App.subscriptions(chatgpt).size], [1, 2])
+  only = some(Protocol.StatusLine(left: ["state", "chatgpt.quota"], right: ["model"]))
+  try Test.eq(
+    [App.subscriptions(local.with(statusline: only)).size, App.subscriptions(chatgpt.with(statusline: only)).size],
+    [1, 2],
+  )
+
+  extra = some(Protocol.StatusLine(left: ["extra"], right: []))
+  try Test.eq(App.subscriptions(local.with(statusline: extra)).size, 2)
+  Test.eq(App.update(local, App.Msg.StatusTick).cmds.size, 0)
+end
+
 # The footer shows the model's output speed: estimated while a reply streams, exact from the call's usage, and kept
 # into the next turn.
 def test_the_footer_shows_the_rate_of_the_output() -> Result[Void]

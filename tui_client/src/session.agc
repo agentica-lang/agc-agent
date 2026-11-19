@@ -69,6 +69,8 @@ def create(app: State.Model) -> Result[State.Model]
     cwd: cwd,
     opened: app.opened + 1,
     serving: serving,
+    status_segments: [],
+    reading_status: false,
     usage: none,
     branch: "",
     profile: profile_name(session),
@@ -156,6 +158,7 @@ def fresh(app: State.Model) -> State.Model
     custom_dir: app.custom_dir,
     host: app.host,
     clipboard: app.clipboard,
+    statusline: app.statusline,
     run: app.run,
   )
 end
@@ -221,6 +224,8 @@ def attach(app: State.Model, session: Protocol.Session, skip_replay: Bool) -> St
     serving: State.serving_of(session),
     profile: profile_name(session),
     opened: app.opened + 1,
+    status_segments: [],
+    reading_status: false,
     cwd: session.cwd,
     usage: session.usage,
     branch: same_folder(app, session.cwd),

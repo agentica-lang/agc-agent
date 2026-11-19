@@ -27,6 +27,8 @@ export Replies.ASKS_KEY
 export Replies.ASKS_URL
 export Replies.ASKS_DEVICE
 export Replies.DEVICE_NONE
+export Replies.BUILTIN_SEGMENTS
+export Replies.QUOTA_SEGMENT
 export Replies.DEVICE_WAITING
 export Replies.DEVICE_DONE
 export Replies.DEVICE_FAILED
@@ -75,6 +77,7 @@ export Routes.mcp_reconnect_path
 export Routes.mcp_log_path
 export Routes.profiles_path
 export Routes.commands_path
+export Routes.status_segments_path
 export Routes.auth_path
 
 export Requests.Decision
@@ -138,6 +141,11 @@ export Replies.ExportEntry
 export Replies.SessionExport
 export Replies.Branched
 export Replies.ServerStatus
+export Replies.StatusLine
+export Replies.StatusSegment
+export Replies.StatusSegments
+export Replies.encode_status_segments
+export Replies.decode_status_segments
 export Replies.ClipboardSetting
 export Replies.KeySetting
 export Replies.ServerLog

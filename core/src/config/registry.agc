@@ -3,6 +3,7 @@
 ## extension runs in a task of its own: a crash or a hang there fails that call, never the session or the server.
 
 import LLM from "pkg/llm/llm"
+import Protocol from "pkg/protocol/protocol"
 import Sandbox from "../tools/sandbox"
 import Spec from "../tools/spec"
 import Logger from "std/logger"
@@ -22,6 +23,9 @@ TARGET_MS = 5000
 END_MS = 1000
 ## How long a call of a tool may take once an extension is in it: the longest `bash` call, and some.
 TOOL_MS = 660_000
+## How long one status segment may take, and how long a request waits for all of them.
+STATUS_MS = 2500
+STATUS_TOTAL_MS = 50_000
 ## The events an observer may be behind by: past them, the next ones are dropped and counted.
 OBSERVER_INBOX = 256
 ## Names an extension tool cannot take: those of the tools of the core that `Tools.all` does not list, and the prefix
@@ -107,7 +111,24 @@ end
 ## `activate_skill` and `run_script` (whose calls inside are wrapped); keep it free of state of its own.
 type Wrapper = Fn[String, Call, Fn[Result[String]], Result[String]]
 
+## The session a status component describes.
+struct StatusContext
+  session: String
+  root: String
+  provider: String
+  model: String
+end
+
+## A named segment of the full screen's status row, computed outside the session actor.
+struct StatusProvider
+  name: String
+  value: Fn[StatusContext, Result[String]]
+  ## How long it may take; 0 for the registry's `status_ms`.
+  ms: Int = 0
+end
+
 struct Registry
+  status_providers: List[StatusProvider] = []
   tools: List[Tool] = []
   wrappers: List[Wrapper] = []
   prompts: List[String] = []
@@ -120,6 +141,8 @@ struct Registry
   tool_before_ms: Int = TOOL_BEFORE_MS
   service_ms: Int = SERVICE_MS
   tool_ms: Int = TOOL_MS
+  ## How long one status segment may take (they run at once, so a slow one delays no other).
+  status_ms: Int = STATUS_MS
 end
 
 ## An observer that runs: its inbox, which its task reads, and the events it lost. Not part of `Core`.
@@ -228,7 +251,52 @@ def clashes(registry: Registry, taken: List[String]) -> List[String]
     seen = seen.push(tool.name)
   end
 
+  if registry.status_providers.size > 16
+    out = out.push("an extension may register at most 16 status segments")
+  end
+
+  names = Protocol.BUILTIN_SEGMENTS + [Protocol.QUOTA_SEGMENT]
+  for provider in registry.status_providers
+    if provider.name.empty? or names.include?(provider.name)
+      out = out.push("an extension status segment cannot be named #{provider.name}: that name is taken or empty")
+    end
+
+    names = names.push(provider.name)
+  end
+
   out
+end
+
+## The registered segments for a session, each run in a task of its own, omitting failed, slow or unsafe values. A
+## request waits `STATUS_TOTAL_MS` at most for all of them.
+def status_segments(registry: Registry, ctx: StatusContext) -> Protocol.StatusSegments
+  deadline = Time.monotonic_ms + STATUS_TOTAL_MS
+  runs = registry.status_providers.map do |provider|
+    ms = registry.status_ms
+    if provider.ms > 0
+      ms = provider.ms
+    end
+
+    Task.spawn(-> { bounded("a status segment", ms, -> { provider.value.call(ctx) }) })
+  end
+
+  segments: List[Protocol.StatusSegment] = []
+  for at in 0...runs.size
+    case Task.await(runs[at], [deadline - Time.monotonic_ms, 1].max.unwrap!)
+      Await.Done(ok(text)) ->
+        size = [text.length, 200].min.unwrap!
+        clean = text.slice(0, size).split("").select { |char| status_char?(char.code) }.join("")
+
+        if not clean.empty?
+          segments = segments.push(Protocol.StatusSegment(name: registry.status_providers[at].name, text: clean))
+        end
+
+      Await.Done(error(_)) -> nil
+      _ -> Task.cancel(runs[at])
+    end
+  end
+
+  Protocol.StatusSegments(segments: segments)
 end
 
 ## The tools of `registry` as tools of the core; a crash or a hang of their code fails the call.
@@ -421,6 +489,8 @@ end
 private
 
 DROPPED = "dropped"
+
+def status_char?(code: Int) -> Bool = code >= 32 and (code < 127 or code > 159) and not Protocol.BIDI.include?(code)
 
 # The task of a service: it starts it, waits for the stop, and stops it.
 def owned(service: Service, news: Channel[Note], stopping: Channel[Bool], ms: Int) -> Void

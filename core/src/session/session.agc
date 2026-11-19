@@ -1154,6 +1154,12 @@ def reloaded(sessions: Sessions) -> Result[Protocol.Reloaded]
     warnings = warnings.push("config: #{config.config}")
   end
 
+  for live in option_list(sessions.options.live)
+    for found in option_list(Config.current(live))
+      warnings = warnings + found.notes
+    end
+  end
+
   for warning in warnings
     Logger.warning("reload: #{warning}")
   end

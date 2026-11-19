@@ -150,6 +150,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
   all = Protocol.SESSIONS_PATH
   one = "#{all}/:id"
   provider = Protocol.auth_path(":provider")
+  status_slots: Channel[Bool] = Channel.new(4)
   (
     Bond.app()
     |> Bond.before(->(conn) { ok(guard(token, control, conn)) })
@@ -183,6 +184,7 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
     |> Bond.get("#{one}/files", ->(conn) { reply(conn, 200, files(sessions, conn)) })
     |> Bond.get("#{one}/profiles", ->(conn) { reply(conn, 200, profiles(sessions, conn)) })
     |> Bond.get("#{one}/commands", ->(conn) { reply(conn, 200, commands(sessions, conn)) })
+    |> Bond.get("#{one}/status-segments", ->(conn) { status_reply(sessions, conn, status_slots) })
     |> Bond.post("#{one}/stop", ->(conn) { reply(conn, 200, stop_turn(sessions, conn)) })
     |> Bond.post("#{one}/approvals/:approval", ->(conn) { reply(conn, 200, approve(sessions, conn)) })
     |> Bond.get("#{one}/events", ->(conn) { events(sessions, conn) })
@@ -192,6 +194,38 @@ def app(token: String, sessions: Sessions.Sessions, control: Control) -> Bond.Ap
 end
 
 private
+
+STATUS_WAIT_MS = 55_000
+
+def status_reply(sessions: Sessions.Sessions, conn: Bond.Conn, slots: Channel[Bool]) -> Result[Bond.Conn]
+  if not slots.send(true, 0).ok?
+    return reply(conn, 200, error("too many status requests at once", kind: Protocol.KIND_SESSION_UNAVAILABLE))
+  end
+
+  work = Task.spawn(-> { status_segments(sessions, conn) })
+  answered = Task.await(work, STATUS_WAIT_MS)
+  Task.cancel(work)
+  _ = slots.recv(0)
+  case answered
+    Await.Done(result) -> reply(conn, 200, result)
+    _ -> reply(conn, 200, error("the status segments took too long", kind: Protocol.KIND_SESSION_UNAVAILABLE))
+  end
+end
+
+def status_segments(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
+  session = try Sessions.snapshot(sessions, try Bond.param(conn, "id"))
+  context = Extensions.StatusContext(
+    session: session.id,
+    root: session.cwd,
+    provider: session.provider,
+    model: session.model,
+  )
+
+  case sessions.options.registry
+    some(served) -> ok(Protocol.encode_status_segments(Extensions.status_segments(served.registry, context)))
+    none -> ok(Protocol.encode_status_segments(Protocol.StatusSegments(segments: [])))
+  end
+end
 
 def serve(options: Config.Options, sessions: Sessions.Sessions, lock: File.Handle) -> Result[Server]
   token = OpenSSL.Random.hex(32)
@@ -276,6 +310,7 @@ def status(sessions: Sessions.Sessions, control: Control) -> Result[String]
         mouse: some(now.mouse),
         clipboard: some(Protocol.ClipboardSetting(provider: now.clipboard, command: now.clipboard_command)),
         keys: some(now.keys.keys.sort.map { |action| Protocol.KeySetting(action: action, key: now.keys[action]) }),
+        statusline: now.status_line,
       ),
     ),
   )

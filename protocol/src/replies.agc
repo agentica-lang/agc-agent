@@ -13,6 +13,9 @@ ASKS_DEVICE = "device"
 DEVICE_NONE = "none"
 DEVICE_WAITING = "waiting"
 DEVICE_DONE = "done"
+## The segments of the status row that the client draws itself, and the one that core serves with the ChatGPT quota.
+BUILTIN_SEGMENTS = ["state", "usage", "rate", "hints", "model"]
+QUOTA_SEGMENT = "chatgpt.quota"
 DEVICE_FAILED = "failed"
 
 ## Who wrote a message of the history. The history is display text: an entry of another kind (a tool call) will be a
@@ -52,6 +55,25 @@ struct ServerStatus
   ## The `keys` of the config file as written, an action and its key each; the full screen checks them. None from a
   ## server older than this field.
   keys: Optional[List[KeySetting]] = none
+  ## The `status_line` of the config file: the segments of the full screen's status row; none keeps its default row.
+  statusline: Optional[StatusLine] = none
+end
+
+## The ordered status components at each side of the full screen's bottom row.
+struct StatusLine
+  left: List[String]
+  right: List[String]
+end
+
+## The text produced for one named status component.
+struct StatusSegment
+  name: String
+  text: String
+end
+
+## The current extension status components of a session.
+struct StatusSegments
+  segments: List[StatusSegment]
 end
 
 ## One entry of `keys` in the user's config file: the action and the name of the key the user gave it.
@@ -401,6 +423,10 @@ def encode_server_status(reply: ServerStatus) -> String = JSON.encode(reply)
 
 def decode_server_status(text: String) -> Result[ServerStatus] = Wire.decode(text, ServerStatus.codec)
 
+def encode_status_segments(reply: StatusSegments) -> String = JSON.encode(reply)
+
+def decode_status_segments(text: String) -> Result[StatusSegments] = Wire.decode(text, StatusSegments.codec)
+
 def encode_server_log(reply: ServerLog) -> String = JSON.encode(reply)
 
 def decode_server_log(text: String) -> Result[ServerLog] = Wire.decode(text, ServerLog.codec)
@@ -556,6 +582,9 @@ def shape() -> List[String]
     Wire.record("SessionExport", SessionExport.members),
     Wire.record("Branched", Branched.members),
     Wire.record("ServerStatus", ServerStatus.members),
+    Wire.record("StatusLine", StatusLine.members),
+    Wire.record("StatusSegment", StatusSegment.members),
+    Wire.record("StatusSegments", StatusSegments.members),
     Wire.record("ClipboardSetting", ClipboardSetting.members),
     Wire.record("KeySetting", KeySetting.members),
     Wire.record("ServerLog", ServerLog.members),

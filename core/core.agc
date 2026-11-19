@@ -27,6 +27,8 @@ import Logger from "std/logger"
 VERSION = "0.0.1"
 
 export Extensions.Registry
+export Extensions.StatusContext
+export Extensions.StatusProvider
 export Extensions.Call
 export Extensions.Tool
 export Extensions.Event
@@ -36,6 +38,11 @@ export Extensions.Check
 export Extensions.Service
 
 def registry() -> Extensions.Registry = Extensions.Registry()
+
+## Adds a named segment that the full screen can place in its status row (`status_line` of the user's config).
+def add_status_segment(registry: Extensions.Registry, provider: Extensions.StatusProvider) -> Extensions.Registry
+  registry.with(status_providers: registry.status_providers.push(provider))
+end
 
 ## A tool the model may call, after the built-in ones. Its name must not be one of theirs, `apply_patch`, `run_script`,
 ## `activate_skill`, another extension tool's, or start with `mcp__`: `serve` refuses it.
@@ -136,6 +143,7 @@ def start(registry: Extensions.Registry) -> Result[Server.Server]
     Extensions.Served(registry: registry)
     |> Builtins.commands(read)
     |> Builtins.skills()
+    |> Builtins.chatgpt_quota(options.login)
     |> Builtins.approvals(options.approvals, options.asking, options.live)
   )
 

@@ -166,6 +166,7 @@ def test_a_reload_changes_the_files_program_the_mouse_and_the_approvals() -> Res
     try Test.eq([first.mouse, first.approvals], [some(true), some(false)])
     try Test.eq(first.clipboard, some(Protocol.ClipboardSetting()))
     try Test.eq(first.keys, some([]))
+    try Test.eq(first.statusline, none)
     command = JSON.from(["sh", "-c", "printf 'b.txt\\n'"])
     files = JSON.object({"command": command})
     try File.write_text(
@@ -177,6 +178,7 @@ def test_a_reload_changes_the_files_program_the_mouse_and_the_approvals() -> Res
           "approvals": JSON.from(true),
           "clipboard": JSON.from("osc52"),
           "keys": JSON.object({"logs": JSON.from("f9")}),
+          "status_line": JSON.object({"left": JSON.from(["chatgpt.quota", "state"]), "right": JSON.from(["model"])}),
         }),
       ),
     )
@@ -189,7 +191,12 @@ def test_a_reload_changes_the_files_program_the_mouse_and_the_approvals() -> Res
     try Test.eq(after.files, ["b.txt"])
     try Test.eq([second.mouse, second.approvals], [some(false), some(true)])
     try Test.eq(second.keys, some([Protocol.KeySetting(action: "logs", key: "f9")]))
-    Test.eq(second.clipboard, some(Protocol.ClipboardSetting(provider: "osc52")))
+    try Test.eq(second.statusline, some(Protocol.StatusLine(left: ["chatgpt.quota", "state"], right: ["model"])))
+    try Test.eq(second.clipboard, some(Protocol.ClipboardSetting(provider: "osc52")))
+    try File.write_text(config, "{\"status_line\": 5}")
+    bad = try reload(h)
+    try Test.eq(bad.warnings.select { |w| w.include?("status_line") }.size, 1)
+    Test.eq((try Protocol.decode_server_status((try H.get(h, Protocol.SERVER_PATH)).text)).statusline, none)
   end
 
   _ = Path.remove(dir)

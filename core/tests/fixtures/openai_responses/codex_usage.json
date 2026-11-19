@@ -1,0 +1,1 @@
+{"rate_limit":{"primary_window":{"limit_window_seconds":18000,"used_percent":28,"reset_at":123},"secondary_window":{"limit_window_seconds":604800,"used_percent":60,"reset_at":456}}}
