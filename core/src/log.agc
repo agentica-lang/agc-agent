@@ -1,5 +1,5 @@
 ## The server log: `std/logger` writes it, each line as `TIME LEVEL MESSAGE key=value` with the UTC time
-## (`2026-11-18T17:30:02.345Z INFO ...`), to stdout (info) and stderr (warning, error), which `finn` sends to
+## (`2026-11-18T17:30:02.345123Z INFO ...`), to stdout (info) and stderr (warning, error), which `finn` sends to
 ## `server.log` of the state folder. `install` makes the handler that does it and also keeps the last warnings of the
 ## process in memory, since the first of them come before the server listens, a warning with a text already kept
 ## counted once, with its times as `(×N)`; `tail` reads the end of the file.

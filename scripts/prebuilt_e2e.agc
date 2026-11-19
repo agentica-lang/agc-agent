@@ -162,7 +162,7 @@ def fresh_project(work: String, repository: String) -> Result[String]
     "#{project}/agentica.toml",
     <<~TOML,
     name = "fresh"
-    agentica = "0.34.0"
+    agentica = "0.35.0"
 
     [dependencies]
     bash = { git = "#{REPOSITORY}", subdir = "bash", tag = "#{TAG}" }

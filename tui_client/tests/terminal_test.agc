@@ -569,13 +569,13 @@ def test_the_warnings_of_the_server_are_a_banner_that_a_click_or_esc_closes() ->
 end
 
 def warned_log(count: Int) -> Protocol.ServerLog
-  warnings = ["2026-11-18T10:00:01.000Z WARNING pr-reviewer is shadowed (×3)"]
+  warnings = ["2026-11-18T10:00:01.000000Z WARNING pr-reviewer is shadowed (×3)"]
   if count == 0
     warnings = []
   end
 
   Protocol.ServerLog(
-    lines: ["2026-11-18T10:00:00.000Z INFO older", "2026-11-18T10:00:01.000Z WARNING bad skill"],
+    lines: ["2026-11-18T10:00:00.000000Z INFO older", "2026-11-18T10:00:01.000000Z WARNING bad skill"],
     warnings: warnings,
     warning_count: count,
   )

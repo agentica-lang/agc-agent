@@ -16,8 +16,8 @@ concurrency:
 env:
   # Each job has a GitHub-hosted runner of its own with 4 vCPUs, so each runs four things at once.
   JOBS: 4
-  AGENTICA_VERSION: 0.34.0
-  AGENTICA_SHA256: d3623164ef097f1cada71749f50440de836f7a943a44336e57ef19b108ae8aa5
+  AGENTICA_VERSION: 0.35.0
+  AGENTICA_SHA256: 379b0494b84c89b121d089fab9b21879e939a4dd7e89661f6be34e70f13f6322
 
 jobs:
   # What a pull request changed decides which jobs run: `code` is every file but the user guide and the top-level .md
@@ -102,8 +102,18 @@ jobs:
       - run: agentica --version
 
       # make check uses rg (with PCRE2) for the coupling rules of the packages; the hosted image does not have it.
+      # From its GitHub release, not apt, so an outage of the Ubuntu archive does not stop CI.
       - name: Install ripgrep
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
+        env:
+          RG_VERSION: 14.1.1
+          RG_SHA256: 4cf9f2741e6c465ffdb7c26f38056a59e2a2544b51f7cc128ef28337eeae4d8e
+        run: |
+          name="ripgrep-$RG_VERSION-x86_64-unknown-linux-musl"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/rg.tar.gz" "https://github.com/BurntSushi/ripgrep/releases/download/$RG_VERSION/$name.tar.gz"
+          echo "$RG_SHA256  $RUNNER_TEMP/rg.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/rg.tar.gz" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/$name/rg" /usr/local/bin/rg
+          rg --pcre2-version
 
       - run: ${{ matrix.run }}
 
