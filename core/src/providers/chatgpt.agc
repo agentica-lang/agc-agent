@@ -125,6 +125,8 @@ def save(login: Login, tokens: Tokens) -> Result[Void]
     return File.replace(login.path, text.bytes)
   end
 
+  # `Path.rename` refuses an existing target: that is how a lost race is detected (`io.exists`), where `Path.replace`
+  # would win it.
   temp = "#{login.path}.#{OpenSSL.Random.hex(8)}.tmp"
   moved = written(temp, login.path, text)
   if not moved.ok?
@@ -503,6 +505,8 @@ end
 
 def written(temp: String, path: String, text: String) -> Result[Void]
   try File.open(temp, "create_private") do |handle| File.write(handle, text) end
+  # `Path.rename` refuses an existing target: that is how a lost race is detected (`io.exists`), where `Path.replace`
+  # would win it.
   Path.rename(temp, path)
 end
 

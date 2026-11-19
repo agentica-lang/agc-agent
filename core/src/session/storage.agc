@@ -129,13 +129,18 @@ def remove_file(path: String) -> Result[Void]
   Path.remove(path)
 end
 
+# Onto what a symbolic link at `path` points to, so the link stays; the new file is made beside it, on its file system.
 def replace_file(path: String, text: String) -> Result[Void]
-  return File.replace(path, text.bytes) if File.stat(path).ok?
-
-  temporary = "#{path}.tmp"
+  target = Path.real(path).unwrap_or(path)
+  temporary = "#{target}.tmp"
   _ = Path.remove(temporary)
   try create_file(temporary, text)
-  Path.rename(temporary, path)
+  replaced = Path.replace(temporary, target)
+  if not replaced.ok?
+    _ = Path.remove(temporary)
+  end
+
+  replaced
 end
 
 def text_in(files: ATS[String, List[String]], path: String) -> Result[String]

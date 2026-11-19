@@ -75,6 +75,8 @@ def create(path: String, keys: Map[String, String], urls: Map[String, String]) -
   parts = path.split("/")
   dir = parts.take(parts.size - 1).join("/")
   try Dir.mkdir(dir)
+  # `Path.rename` refuses an existing target: that is how a lost race is detected (`io.exists`), where `Path.replace`
+  # would win it.
   temp = "#{dir}/.#{FILE}.#{OpenSSL.Random.hex(8)}.tmp"
   moved = written(temp, path, text)
   if not moved.ok?
@@ -122,5 +124,7 @@ def decoded(path: String) -> Result[AuthFile] = JSON.decode(try File.read_text(p
 
 def written(temp: String, path: String, text: String) -> Result[Void]
   try File.open(temp, "create_private") do |handle| File.write(handle, text) end
+  # `Path.rename` refuses an existing target: that is how a lost race is detected (`io.exists`), where `Path.replace`
+  # would win it.
   Path.rename(temp, path)
 end

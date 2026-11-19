@@ -112,27 +112,16 @@ def written_to(file: File.Handle, bytes: Bytes) -> Result[Void]
   ok()
 end
 
-# The new file is written beside the old one, which moves aside until the new one has its name, so either stays.
+# The new file is written beside the old one and replaces it in one step, so either stays whole.
 def replaced(path: String, text: String) -> Result[String]
-  temp = "#{path}.#{System.pid()}-#{Random.int(0, 999_999_999)}"
-  try created("#{temp}.tmp", text)
-  case Path.rename(path, "#{temp}.old", FILE_MS)
-    ok(_) -> nil
+  temp = "#{path}.#{System.pid()}-#{Random.int(0, 999_999_999)}.tmp"
+  try created(temp, text)
+  case Path.replace(temp, path, FILE_MS)
+    ok(_) -> ok(path)
     error(e) ->
-      _ = Path.remove("#{temp}.tmp", FILE_MS)
-      return error(e)
+      _ = Path.remove(temp, FILE_MS)
+      error(e)
   end
-
-  case Path.rename("#{temp}.tmp", path, FILE_MS)
-    ok(_) -> nil
-    error(e) ->
-      _ = Path.rename("#{temp}.old", path, FILE_MS)
-      _ = Path.remove("#{temp}.tmp", FILE_MS)
-      return error(e)
-  end
-
-  _ = Path.remove("#{temp}.old", FILE_MS)
-  ok(path)
 end
 
 # A fence longer than any run of backticks in the text, so the text cannot close it.
