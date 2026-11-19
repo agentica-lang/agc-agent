@@ -147,6 +147,7 @@ def start(registry: Extensions.Registry) -> Result[Server.Server]
 
   extended = options.with(
     reloads: [mounted.reload],
+    mcp: some(mounted.control),
     stops: [mounted.stop],
     tools: options.tools + Extensions.spec_tools(registry),
     registry: some(all),

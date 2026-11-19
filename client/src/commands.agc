@@ -1,5 +1,6 @@
 ## The commands a user types in either client, as `/name argument`. Pure.
 
+import Regex from "std/regex"
 import Protocol from "pkg/protocol/protocol"
 import Keys from "keys"
 
@@ -46,6 +47,11 @@ COMMANDS = [
     name: "/profile",
     args: "[NAME]",
     about: "change the tools the model sees (and its model) from the next turn on; alone: list the profiles",
+  ),
+  Usage(
+    name: "/mcp",
+    args: "[NAME | reconnect NAME]",
+    about: "the MCP servers and their states; with a name, its tools; reconnect starts one again",
   ),
   Usage(name: "/compact", about: "fold the history into a summary now"),
   Usage(
@@ -98,6 +104,8 @@ enum Command
   Confine(Optional[Bool])
   ## Lists the profiles without an argument.
   Profile(Optional[String])
+  ## Lists the MCP servers without a name; with one, its tools, or (the flag) starts it again.
+  Mcp(Optional[String], Bool)
   Compact
   ## The last lines of the server log.
   Logs(Int)
@@ -427,6 +435,39 @@ def profile_listing(list: Protocol.ProfileList, current: String) -> List[String]
   end
 end
 
+## The MCP servers for `/mcp`, one line each: the name, where it is from and how it runs, its state and its tools, or
+## why it failed; printable.
+def mcp_listing(status: Protocol.McpStatus) -> List[String]
+  return ["no MCP servers: put them in ~/.config/finn/mcp.json or .finn/mcp.json"] if status.servers.empty?
+
+  status.servers.map do |server|
+    head = "#{server.name} (#{server.scope}, #{server.transport} #{server.target})"
+    case server.state
+      "connected" -> printable("#{head}: connected, #{server.tools.size} tools")
+      "failed" -> printable("#{head}: failed: #{server.error} (/mcp reconnect #{server.name})")
+      _ -> printable("#{head}: #{server.state}")
+    end
+  end
+end
+
+## The tools of the server `name` for `/mcp NAME`, one line each with the first line of what it says it does; an error
+## line for a name that no server has.
+def mcp_tools(status: Protocol.McpStatus, name: String) -> List[String]
+  case (status.servers.find { |server| server.name == name })
+    ok(server) ->
+      lines = mcp_listing(Protocol.McpStatus(servers: [server]))
+      lines + server.tools.map { |tool| printable("  mcp__#{server.name}__#{tool.name}#{about(tool.description)}") }
+    error(_) -> ["no MCP server named #{printable(name)}: /mcp lists them"]
+  end
+end
+
+## The rows of the banner for the MCP servers that failed, with how to start each again.
+def mcp_failures(status: Protocol.McpStatus) -> List[String]
+  status.servers
+    .select { |server| server.state == "failed" }
+    .map { |server| printable("mcp #{server.name} failed: #{server.error} (/mcp reconnect #{server.name})") }
+end
+
 ## The model's todo list, one line an item: `[x]` completed, `[>]` in progress, `[ ]` pending, then its printable text.
 def todo_lines(todos: List[Protocol.Todo]) -> List[String]
   todos.map do |todo|
@@ -444,8 +485,17 @@ end
 private
 
 SUGGESTED = 3
+SERVER_NAME = /\A[A-Za-z0-9_-]{1,64}\z/
+
 KIND_NETWORK = "llm.network"
 LOCAL = "local"
+
+def about(description: String) -> String
+  first = description.split("\n")[0].strip
+  return "" if first.empty?
+
+  ": #{first}"
+end
 
 def not_here(text: String, current: String, found: List[String]) -> String
   head = "#{printable(text)} is not a model of #{printable(current)}"
@@ -479,6 +529,7 @@ def command(name: String, argument: String) -> Result[Command]
     "/thinking" -> thinking(argument)
     "/confine" -> confine(argument)
     "/profile" -> ok(Command.Profile(given(argument)))
+    "/mcp" -> mcp(argument)
     "/compact" -> bare(Command.Compact, name, argument)
     "/logs" -> logs(argument)
     "/reload" -> bare(Command.Reload, name, argument)
@@ -491,6 +542,25 @@ def command(name: String, argument: String) -> Result[Command]
     # Only `/quit` is left of COMMANDS.
     _ -> bare(Command.Quit, name, argument)
   end
+end
+
+def mcp(argument: String) -> Result[Command]
+  words = argument.split(" ").select { |word| word != "" }
+  return ok(Command.Mcp(none, false)) if words.empty?
+
+  reconnecting = words[0] == "reconnect" and words.size > 1
+  name = words[0]
+  limit = 1
+  if reconnecting
+    name = words[1]
+    limit = 2
+  end
+
+  if words.size > limit or not Regex.match?(name, SERVER_NAME)
+    return error("/mcp takes a server name, as in /mcp NAME or /mcp reconnect NAME", kind: KIND_COMMAND)
+  end
+
+  ok(Command.Mcp(some(name), reconnecting))
 end
 
 def logs(argument: String) -> Result[Command]

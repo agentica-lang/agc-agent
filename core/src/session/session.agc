@@ -148,6 +148,24 @@ def profiles(sessions: Sessions, id: String) -> Result[Protocol.ProfileList]
   ok(Protocol.ProfileList(profiles: (shown + broken).sort_by { |p| p.name }))
 end
 
+## The MCP servers of the user and the project servers of the folder `root` (none when it is empty), with their states.
+def mcp(sessions: Sessions, root: String) -> Result[Protocol.McpStatus]
+  for control in option_list(sessions.options.mcp)
+    return ok(Protocol.McpStatus(servers: control.status.call(root)))
+  end
+
+  ok(Protocol.McpStatus(servers: []))
+end
+
+## Starts the MCP server `name` again, among those of the user or of the folder `root`.
+def mcp_reconnect(sessions: Sessions, root: String, name: String) -> Result[Protocol.McpServer]
+  for control in option_list(sessions.options.mcp)
+    return control.reconnect.call(root, name)
+  end
+
+  error("no MCP server named #{name}", kind: Protocol.KIND_MCP_NOT_FOUND)
+end
+
 ## The sessions, the last changed first.
 def list(sessions: Sessions) -> Result[List[Protocol.SessionSummary]]
   registry = sessions.registry.address

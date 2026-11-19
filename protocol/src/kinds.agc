@@ -45,6 +45,10 @@ KIND_LOGIN_STORAGE = "login.storage"
 ## A reload asked while another one runs and does not end in time (`409`).
 KIND_RELOAD_BUSY = "reload.busy"
 
+## A reconnect of an MCP server that the server does not have (`404`), or one that is still starting (`409`).
+KIND_MCP_NOT_FOUND = "mcp.not_found"
+KIND_MCP_STARTING = "mcp.starting"
+
 ## A request that would start work, while the server stops (`503`): reads, answers to approvals and stops still work.
 KIND_SERVER_STOPPING = "server.stopping"
 
@@ -66,6 +70,8 @@ def shape() -> List[String]
     KIND_LOGIN_REJECTED,
     KIND_LOGIN_STORAGE,
     KIND_RELOAD_BUSY,
+    KIND_MCP_NOT_FOUND,
+    KIND_MCP_STARTING,
     KIND_SERVER_STOPPING,
   ]
 end

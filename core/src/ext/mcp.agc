@@ -162,7 +162,7 @@ end
 ## it). An error for a name the board has not.
 def reconnect(board: Board, name: String) -> Result[Status]
   at = (0...board.servers.size).to_a.find { |i| board.servers[i].name == name }
-  return error("no MCP server named #{name}", kind: "not_found") if not at.ok?
+  return error("no MCP server named #{name}", kind: "mcp.not_found") if not at.ok?
 
   index = at.unwrap!
   dropped: Result[Optional[Mcp.Client]] = Actor.call(board.actor.address, 5000) do |reply| Msg.Drop(index, reply) end

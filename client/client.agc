@@ -44,6 +44,8 @@ export Http.files
 export Http.list_sessions
 export Http.list_providers
 export Http.list_profiles
+export Http.mcp_status
+export Http.mcp_reconnect
 export Http.list_commands
 export Http.update_session
 export Http.list_logins
