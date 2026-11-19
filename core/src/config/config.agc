@@ -160,7 +160,7 @@ end
 ## What the server asks of its MCP servers: the state of those of the user and of the project servers of a folder, and a
 ## new start of one of them by name (the folder is the one of the session whose project servers are meant).
 struct McpControl
-  status: Fn[String, List[Protocol.McpServer]]
+  status: Fn[String, Result[List[Protocol.McpServer]]]
   reconnect: Fn[String, String, Result[Protocol.McpServer]]
 end
 

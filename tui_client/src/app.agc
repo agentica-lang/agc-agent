@@ -262,6 +262,7 @@ def handled(app: State.Model, msg: State.Msg) -> State.Model
     State.Msg.Edited(result) -> Editor.closed(app, result)
     State.Msg.Exported(result) -> Commands.exported(app, result)
     State.Msg.Note(text) -> State.noted(app, text)
+    State.Msg.Mcp(text, status) -> Commands.mcp_reconnected(app, text, status)
     State.Msg.LogTick -> Sides.tick(app)
     State.Msg.LogRead(serial, result) -> Sides.read(app, serial, result)
     State.Msg.Copied(text, method, result, checked) -> Selecting.finished(app, text, method, result, checked)

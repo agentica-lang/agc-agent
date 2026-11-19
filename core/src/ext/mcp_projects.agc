@@ -4,6 +4,7 @@
 
 import Actor from "std/actor"
 import Mcp from "pkg/mcp/mcp"
+import Protocol from "pkg/protocol/protocol"
 import McpTools from "./mcp"
 import Spec from "../tools/spec"
 
@@ -56,13 +57,14 @@ def tools(projects: Projects, root: String, load: Fn[String, List[Mcp.Server]]) 
 end
 
 ## The state of the project servers of the folder `root`, none for a folder with no project servers.
-def status(projects: Projects, root: String) -> List[McpTools.Status]
-  answer: Result[List[McpTools.Status]] = Actor.call(projects.actor.address, CALL_MS) do |reply|
+def status(projects: Projects, root: String) -> Result[List[McpTools.Status]]
+  answer: Result[Result[List[McpTools.Status]]] = Actor.call(projects.actor.address, CALL_MS) do |reply|
     Msg.Status(root, reply)
   end
 
-  nothing: List[McpTools.Status] = []
-  answer.unwrap_or(nothing)
+  return error("the MCP servers are busy, try again", kind: Protocol.KIND_MCP_STARTING) if not answer.ok?
+
+  answer.unwrap!
 end
 
 ## The board of the project servers of `root` once it started, for a reconnect.
@@ -131,7 +133,7 @@ enum Msg
   Tools(String, Channel[Optional[List[Spec.Tool]]])
   Adopt(String, List[Mcp.Server], Channel[List[Spec.Tool]])
   Roots(Channel[List[String]])
-  Status(String, Channel[List[McpTools.Status]])
+  Status(String, Channel[Result[List[McpTools.Status]]])
   Board(String, Channel[Optional[McpTools.Board]])
   Replace(Map[String, List[Mcp.Server]], Channel[List[Int]])
   Ready(String, List[Mcp.Server], McpTools.Board)
@@ -256,15 +258,15 @@ def reaped(state: Held) -> Map[String, Project]
   projects
 end
 
-def status_of(found: Optional[Project]) -> List[McpTools.Status]
+def status_of(found: Optional[Project]) -> Result[List[McpTools.Status]]
   case found
     some(project) ->
       case project.board
         some(board) -> McpTools.status(board)
-        none -> project.servers.map { |server| McpTools.Status(server: server, state: "connecting") }
+        none -> ok(project.servers.map { |server| McpTools.Status(server: server, state: "connecting") })
       end
 
-    none -> []
+    none -> ok([])
   end
 end
 

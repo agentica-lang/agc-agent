@@ -12,6 +12,7 @@
 import Actor from "std/actor"
 import Regex from "std/regex"
 import Mcp from "pkg/mcp/mcp"
+import Protocol from "pkg/protocol/protocol"
 import Sandbox from "../tools/sandbox"
 import Shell from "../tools/shell"
 import Spec from "../tools/spec"
@@ -145,34 +146,40 @@ def background(servers: List[Mcp.Server], warn: Fn[String, Void], options: Mcp.O
   Board(actor: actor, tasks: tasks, servers: servers, options: options)
 end
 
-## The state of each server of the board, in the order of the file.
-def status(board: Board) -> List[Status]
+## The state of each server of the board, in the order of the file; an error when the board does not answer or ended.
+def status(board: Board) -> Result[List[Status]]
   answer: Result[List[Listing]] = Actor.call(board.actor.address, 5000) do |reply| Msg.Listings(reply) end
-  nothing: List[Listing] = []
-  listed = answer.unwrap_or(nothing)
-  (0...board.servers.size).to_a.map do |i|
-    case (listed.find { |l| l.order == i })
-      ok(found) -> status_of(board.servers[i], found.listed)
-      error(_) -> Status(server: board.servers[i], state: "connecting")
-    end
-  end
+  return error("the MCP servers are busy, try again", kind: Protocol.KIND_MCP_STARTING) if not answer.ok?
+
+  listed = answer.unwrap!
+  ok(
+    (0...board.servers.size).to_a.map do |i|
+      case (listed.find { |l| l.order == i })
+        ok(found) -> status_of(board.servers[i], found.listed)
+        error(_) -> Status(server: board.servers[i], state: "connecting")
+      end
+    end,
+  )
 end
 
 ## Starts the server `name` again: its client stops, and a new one starts and lists the tools (the answer waits for
-## it). An error for a name the board has not.
+## it). One start of a server at a time: a server that is still on its first start, or on a reconnect, and a board
+## that ends, refuse it (`mcp.starting`); a name the board has not is `mcp.not_found`. The board's actor does the
+## start, so `wait` waits for it and a client it makes is never left behind.
 def reconnect(board: Board, name: String) -> Result[Status]
   at = (0...board.servers.size).to_a.find { |i| board.servers[i].name == name }
-  return error("no MCP server named #{name}", kind: "mcp.not_found") if not at.ok?
+  return error("no MCP server named #{name}", kind: Protocol.KIND_MCP_NOT_FOUND) if not at.ok?
 
   index = at.unwrap!
-  dropped: Result[Optional[Mcp.Client]] = Actor.call(board.actor.address, 5000) do |reply| Msg.Drop(index, reply) end
-  for client in option_list(try dropped)
-    Mcp.stop(client)
+  address = board.actor.address
+  answer: Result[Result[Task[Void]]] = Actor.call(address, 5000) do |reply|
+    Msg.Reconnect(index, address, board.servers[index], board.options, reply)
   end
 
-  task = Task.spawn { list(board.actor.address, index, board.servers[index], board.options) }
-  Task.await(task)
-  ok(status(board)[index])
+  return error("the MCP servers are restarting, try again", kind: Protocol.KIND_MCP_STARTING) if not answer.ok?
+
+  Task.await(try answer.unwrap!)
+  ok((try status(board))[index])
 end
 
 ## The name of the program of a stdio server (what `env -i VAR=... PROGRAM` starts), or the url without its path and
@@ -193,10 +200,20 @@ end
 ## The tools listed so far.
 def tools(board: Board) -> List[Spec.Tool] = state(board).tools
 
-## Waits until every server listed its tools or was left out, and ends the board; the clients keep running.
+## Waits until every server listed its tools or was left out (and every reconnect ended), and ends the board; the
+## clients keep running. A reconnect asked after that is refused.
 def wait(board: Board) -> Started
   for task in board.tasks
     Task.await(task)
+  end
+
+  while true
+    answer: Result[List[Task[Void]]] = Actor.call(board.actor.address, 5000) do |reply| Msg.Pending(reply) end
+    break if not answer.ok? or answer.unwrap!.empty?
+
+    for task in answer.unwrap!
+      Task.await(task)
+    end
   end
 
   started = state(board)
@@ -227,6 +244,11 @@ struct Listed
   started: Started
   warn: Fn[String, Void]
   listings: List[Listing] = []
+  ## The starts that reconnects began and `wait` has not taken, the servers (by order) that one runs for, and whether
+  ## `wait` found nothing more to wait for: no reconnect starts after that.
+  tracked: List[Task[Void]] = []
+  reconnecting: List[Int] = []
+  closed: Bool = false
 end
 
 struct Listing
@@ -238,7 +260,8 @@ end
 
 enum Msg
   Add(Listing)
-  Drop(Int, Channel[Optional[Mcp.Client]])
+  Reconnect(Int, Address[Msg], Mcp.Server, Mcp.Options, Channel[Result[Task[Void]]])
+  Pending(Channel[List[Task[Void]]])
   Get(Channel[Started])
   Listings(Channel[List[Listing]])
 end
@@ -259,17 +282,44 @@ def handle(state: Listed, msg: Msg) -> Actor.Step[Listed]
         state.warn.call(warning)
       end
 
-      Actor.continue(state.with(started: started, listings: listings))
-    Msg.Drop(order, reply) ->
-      gone = state.listings.find { |l| l.order == order and l.listed.ok? }
-      listings = state.listings.select { |l| l.order != order }
-      client: Optional[Mcp.Client] = none
-      if gone.ok?
-        client = some(gone.unwrap!.client)
+      Actor.continue(
+        state.with(
+          started: started,
+          listings: listings,
+          reconnecting: state.reconnecting.select { |order| order != listing.order },
+        ),
+      )
+    Msg.Reconnect(order, address, server, options, reply) ->
+      found = state.listings.find { |l| l.order == order }
+      if state.closed
+        _ = Actor.reply(reply, error("the MCP servers are stopping", kind: Protocol.KIND_MCP_STARTING))
+        return Actor.continue(state)
       end
 
-      _ = Actor.reply(reply, client)
-      Actor.continue(state.with(started: merged(listings), listings: listings))
+      if state.reconnecting.include?(order) or not found.ok?
+        _ = Actor.reply(reply, error("the MCP server #{server.name} is starting", kind: Protocol.KIND_MCP_STARTING))
+        return Actor.continue(state)
+      end
+
+      old: Optional[Mcp.Client] = none
+      if found.unwrap!.listed.ok?
+        old = some(found.unwrap!.client)
+      end
+
+      task = Task.spawn { restart(address, order, server, options, old) }
+      _ = Actor.reply(reply, ok(task))
+      listings = state.listings.select { |l| l.order != order }
+      Actor.continue(
+        state.with(
+          started: merged(listings),
+          listings: listings,
+          tracked: state.tracked.push(task),
+          reconnecting: state.reconnecting.push(order),
+        ),
+      )
+    Msg.Pending(reply) ->
+      _ = Actor.reply(reply, state.tracked)
+      Actor.continue(state.with(tracked: [], closed: state.tracked.empty?))
     Msg.Get(reply) ->
       _ = Actor.reply(reply, state.started)
       Actor.continue(state)
@@ -310,7 +360,24 @@ def list(address: Address[Msg], order: Int, server: Mcp.Server, options: Mcp.Opt
   end
 
   listing = Listing(order: order, server: server, client: client, listed: listed)
-  _ = Actor.cast(address, Msg.Add(listing))
+  if not Actor.cast(address, Msg.Add(listing)).ok? and listed.ok?
+    Mcp.stop(client)
+  end
+end
+
+# The old client of a server stops, then the new one starts.
+def restart(
+  address: Address[Msg],
+  order: Int,
+  server: Mcp.Server,
+  options: Mcp.Options,
+  old: Optional[Mcp.Client],
+) -> Void
+  for client in option_list(old)
+    Mcp.stop(client)
+  end
+
+  list(address, order, server, options)
 end
 
 def state(board: Board) -> Started

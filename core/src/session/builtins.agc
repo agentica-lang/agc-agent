@@ -132,6 +132,7 @@ end
 private
 
 MCP_CALL_MS = 5000
+MCP_ERROR_CHARS = 300
 MCP_FINISH_MS = 120_000
 
 # The MCP servers that run, in the actor that the tools are read from. A reload only tells the swapper, which stops the
@@ -155,7 +156,7 @@ enum Swap
 end
 
 enum Held
-  Status(Channel[List[McpTools.Status]])
+  Status(Channel[Result[List[McpTools.Status]]])
   Board(Channel[Optional[McpTools.Board]])
   Tools(Channel[List[Spec.Tool]])
   Names(Channel[List[String]])
@@ -331,19 +332,20 @@ def handled(state: Running, msg: Held) -> Actor.Step[Running]
 end
 
 # The servers of the user: their states while the board runs, and `connecting` for the ones a reload is starting.
-def status_of(state: Running) -> List[McpTools.Status]
+def status_of(state: Running) -> Result[List[McpTools.Status]]
   case state.board
     some(board) -> McpTools.status(board)
-    none -> state.servers.map { |server| McpTools.Status(server: server, state: "connecting") }
+    none -> ok(state.servers.map { |server| McpTools.Status(server: server, state: "connecting") })
   end
 end
 
-# The servers of the user, then the project servers of `root`.
-def statuses(address: Address[Held], projects: Projects.Projects, root: String) -> List[Protocol.McpServer]
-  mine: Result[List[McpTools.Status]] = Actor.call(address, MCP_CALL_MS) do |reply| Held.Status(reply) end
-  none_yet: List[McpTools.Status] = []
-  user = mine.unwrap_or(none_yet).map { |found| wire_status(found, "user") }
-  user + Projects.status(projects, root).map { |found| wire_status(found, "project") }
+# The servers of the user, then the project servers of `root`; an error when the servers do not answer in time.
+def statuses(address: Address[Held], projects: Projects.Projects, root: String) -> Result[List[Protocol.McpServer]]
+  mine: Result[Result[List[McpTools.Status]]] = Actor.call(address, MCP_CALL_MS) do |reply| Held.Status(reply) end
+  return error("the MCP servers are busy, try again", kind: Protocol.KIND_MCP_STARTING) if not mine.ok?
+
+  user = (try mine.unwrap!).map { |found| wire_status(found, "user") }
+  ok(user + (try Projects.status(projects, root)).map { |found| wire_status(found, "project") })
 end
 
 def transport_of(server: Mcp.Server) -> String
@@ -359,9 +361,17 @@ def wire_status(found: McpTools.Status, scope: String) -> Protocol.McpServer
     transport: transport_of(found.server),
     target: McpTools.target(found.server),
     state: found.state,
-    error: found.error,
+    error: first_line(found.error),
     tools: found.tools.map { |tool| Protocol.McpTool(name: tool.name, description: tool.description) },
   )
+end
+
+# The first line of an error, at most MCP_ERROR_CHARS characters: a server may put much into its message.
+def first_line(text: String) -> String
+  line = text.split("\n")[0]
+  return line if line.length <= MCP_ERROR_CHARS
+
+  "#{line.slice(0, MCP_ERROR_CHARS)}..."
 end
 
 # Starts the server `name` of the user, else of the project servers of `root`, again.
@@ -378,14 +388,17 @@ def reconnected(
       return ok(wire_status(try McpTools.reconnect(board, name), "user"))
     end
 
-    return error("the MCP server #{name} is starting", kind: "mcp.starting")
+    return error("the MCP server #{name} is starting", kind: Protocol.KIND_MCP_STARTING)
   end
 
   for board in option_list(Projects.board(projects, root))
     return ok(wire_status(try McpTools.reconnect(board, name), "project"))
   end
 
-  error("no MCP server named #{name}", kind: "mcp.not_found")
+  known = (try Projects.status(projects, root)).select { |found| found.server.name == name }
+  return error("the MCP server #{name} is starting", kind: Protocol.KIND_MCP_STARTING) if not known.empty?
+
+  error("no MCP server named #{name}", kind: Protocol.KIND_MCP_NOT_FOUND)
 end
 
 def swapped(state: Swapping, msg: Swap) -> Actor.Step[Swapping]

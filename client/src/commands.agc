@@ -465,12 +465,18 @@ end
 def mcp_failures(status: Protocol.McpStatus) -> List[String]
   status.servers
     .select { |server| server.state == "failed" }
-    .map { |server| printable("mcp #{server.name} failed: #{server.error} (/mcp reconnect #{server.name})") }
+    .map { |server| printable("/mcp reconnect #{server.name}: mcp #{server.name} failed: #{server.error}") }
 end
 
-## The banner with the rows of failed MCP servers: those of an earlier read are replaced by the ones of `status`.
+## The banner with the rows of failed MCP servers: those of an earlier read are replaced by the ones of `status`, and the
+## server's own warning that such a server was left out is not shown twice.
 def mcp_banner(banner: List[String], status: Protocol.McpStatus) -> List[String]
-  banner.select { |row| not row.start_with?("mcp ") } + mcp_failures(status)
+  failed = status.servers.select { |server| server.state == "failed" }.map { |server| "mcp #{server.name} left out:" }
+  kept = banner.select { |row|
+    not row.start_with?("/mcp reconnect ") and not failed.any? { |prefix| row.start_with?(prefix) }
+  }
+
+  kept + mcp_failures(status)
 end
 
 ## The model's todo list, one line an item: `[x]` completed, `[>]` in progress, `[ ]` pending, then its printable text.
@@ -553,7 +559,11 @@ def mcp(argument: String) -> Result[Command]
   words = argument.split(" ").select { |word| word != "" }
   return ok(Command.Mcp(none, false)) if words.empty?
 
-  reconnecting = words[0] == "reconnect" and words.size > 1
+  if words[0] == "reconnect" and words.size == 1
+    return error("/mcp reconnect takes a server name, as in /mcp reconnect NAME", kind: KIND_COMMAND)
+  end
+
+  reconnecting = words[0] == "reconnect"
   name = words[0]
   limit = 1
   if reconnecting

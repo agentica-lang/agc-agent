@@ -4,16 +4,21 @@
 ## `hang` (never answers). `tools/list` comes in two pages, the first after two requests of the server (`ping` and
 ## another), a notification and a line that is no JSON.
 ##
-## Each start adds a line to the file `FAKE_MCP_STARTS`, and each line the client sends goes to `FAKE_MCP_SEEN`, when
-## they are set; `FAKE_MCP_SLOW_MS` waits before the first page of `tools/list`. `FAKE_MCP_MODE`: `loop` gives the same
-## next cursor for ever, `endless` a new one each time, `odd` lists `echo` twice, `probe` and a tool with a bad name,
-## and `shuffle` answers a call first with another id.
+## Each start adds a line to the file `FAKE_MCP_STARTS` and its process id to `FAKE_MCP_PIDS`, and each line the client
+## sends goes to `FAKE_MCP_SEEN`, when they are set; `FAKE_MCP_SLOW_MS` waits before the first page of `tools/list`.
+## `FAKE_MCP_MODE`: `loop` gives the same next cursor for ever, `endless` a new one each time, `odd` lists `echo` twice,
+## `probe` and a tool with a bad name, and `shuffle` answers a call first with another id.
 
 TOOLS = ["echo", "fail", "big", "greeting", "probe", "image", "grandchild", "crash", "hang", "cwd"]
 
 def main() -> Void
   case System.env("FAKE_MCP_STARTS")
     ok(path) if not path.empty? -> _ = File.append_text(path, "start\n")
+    _ -> nil
+  end
+
+  case System.env("FAKE_MCP_PIDS")
+    ok(path) if not path.empty? -> _ = File.append_text(path, "#{System.pid}\n")
     _ -> nil
   end
 

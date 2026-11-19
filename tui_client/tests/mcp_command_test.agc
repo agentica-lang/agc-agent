@@ -7,9 +7,8 @@ import TUI from "pkg/tui/tui"
 import App from "../src/app"
 import Args from "../src/args"
 
-# `/mcp` shows the list and puts the failed server in the banner; `/mcp NAME` shows its tools; a read that finds
-# it well
-# again takes it out of the banner.
+# `/mcp` shows the list and puts the failed server in the banner once, in place of the server's own warning about it;
+# `/mcp NAME` shows its tools; a read that finds it well again takes it out of the banner.
 def test_mcp_lists_the_servers_and_banners_the_failed_ones() -> Result[Void]
   state: Channel[Protocol.McpStatus] = Channel.new(1)
   _ = state.send(status("failed"), 0)
@@ -21,7 +20,8 @@ def test_mcp_lists_the_servers_and_banners_the_failed_ones() -> Result[Void]
     "#{listed.side}",
   )
 
-  try Test.eq(listed.banner, ["mcp web failed: no answer (/mcp reconnect web)"])
+  try Test.eq(listed.banner, ["/mcp reconnect web: mcp web failed: no answer"])
+  try Test.eq(ran(listed, "/mcp").banner, listed.banner)
   tools = ran(listed, "/mcp fs")
   try Test.eq(tools.side.unwrap!.title, "MCP fs")
   try Test.assert(tools.side.unwrap!.lines.any? { |l| l.include?("mcp__fs__read: Reads a file") }, "#{tools.side}")

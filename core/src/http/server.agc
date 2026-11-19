@@ -452,7 +452,7 @@ end
 # The folder of the session in `?session=ID`, empty without one: only the servers of the user then.
 def mcp_folder(sessions: Sessions.Sessions, conn: Bond.Conn) -> Result[String]
   for id in try Bond.query_all(conn, "session")
-    return ok((try Sessions.snapshot(sessions, id)).cwd)
+    return Sessions.folder_of(sessions, id)
   end
 
   ok("")
@@ -585,7 +585,7 @@ def starts_work?(conn: Bond.Conn) -> Bool
   (
     conn.path == Protocol.SESSIONS_PATH or
     conn.path == Protocol.RELOAD_PATH or
-    ["/messages", "/shell", "/compact", "/branch", "/fork"].any? { |end_| conn.path.end_with?(end_) }
+    ["/messages", "/shell", "/compact", "/branch", "/fork", "/reconnect"].any? { |end_| conn.path.end_with?(end_) }
   )
 end
 

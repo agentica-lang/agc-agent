@@ -148,10 +148,18 @@ def profiles(sessions: Sessions, id: String) -> Result[Protocol.ProfileList]
   ok(Protocol.ProfileList(profiles: (shown + broken).sort_by { |p| p.name }))
 end
 
+## The folder of the session `id`, from the registry: the session is not loaded for it.
+def folder_of(sessions: Sessions, id: String) -> Result[String]
+  found = (try entries(sessions)).select { |entry| entry.summary.id == id }
+  return error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND) if found.empty?
+
+  ok(found[0].summary.cwd)
+end
+
 ## The MCP servers of the user and the project servers of the folder `root` (none when it is empty), with their states.
 def mcp(sessions: Sessions, root: String) -> Result[Protocol.McpStatus]
   for control in option_list(sessions.options.mcp)
-    return ok(Protocol.McpStatus(servers: control.status.call(root)))
+    return ok(Protocol.McpStatus(servers: try control.status.call(root)))
   end
 
   ok(Protocol.McpStatus(servers: []))

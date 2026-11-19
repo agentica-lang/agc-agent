@@ -133,6 +133,15 @@ def with_keys(app: State.Model, settings: Optional[List[Protocol.KeySetting]]) -
   end
 end
 
+## The note of a reconnect, and the banner with the servers that are still failed.
+def mcp_reconnected(app: State.Model, text: String, status: Optional[Protocol.McpStatus]) -> State.Model
+  noted = State.noted(app, text)
+  case status
+    some(read) -> noted.with(banner: Client.mcp_banner(noted.banner, read))
+    none -> noted
+  end
+end
+
 private
 
 # The profile after the session's in the order Shift+Tab goes through; the list of the server, without the ones that
@@ -260,6 +269,12 @@ def shown_mcp(app: State.Model, name: String) -> Result[State.Model]
   ok(Sides.shown(app.with(banner: banner), Side.of("MCP #{Client.printable(name)}", Client.mcp_tools(status, name))))
 end
 
+def status_after(read: Result[Protocol.McpStatus]) -> Optional[Protocol.McpStatus]
+  return none if not read.ok?
+
+  some(read.unwrap!)
+end
+
 def reconnect_mcp(app: State.Model, name: String) -> State.Model
   backend = app.backend
   id = app.id
@@ -268,7 +283,11 @@ def reconnect_mcp(app: State.Model, name: String) -> State.Model
     TUI.Cmd.Run(
       -> {
         case backend.mcp_reconnect.call(id, name)
-          ok(server) -> State.Msg.Note(Client.mcp_listing(Protocol.McpStatus(servers: [server]))[0])
+          ok(server) ->
+            State.Msg.Mcp(
+              Client.mcp_listing(Protocol.McpStatus(servers: [server]))[0],
+              status_after(backend.mcp.call(id)),
+            )
           error(e) -> State.Msg.Note("error: mcp #{Client.printable(name)}: #{Client.printable(e.message)}")
         end
       },
