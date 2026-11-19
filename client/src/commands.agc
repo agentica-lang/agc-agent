@@ -4,13 +4,17 @@ import Protocol from "pkg/protocol/protocol"
 
 ## The keys of `finn` (the full screen) as `/help` lists them; the details are in the user guide.
 KEYS = [
-  "Esc                        stop the running turn (with the side panel focused, close it)",
+  "Esc                        close the side panel when it is open (a shown selection is cleared first); else stop the running turn",
   "Ctrl+C                     quit; Ctrl+J or Alt+Enter: a new line or a follow-up",
   "Shift+Tab                  the next thinking level; Ctrl+T shows the thinking, Ctrl+O the tool output",
   "PgUp/PgDn                  scroll the transcript, or the side panel when it has the focus",
   "Ctrl+P                     open the side panel on the server log, or close it",
   "F6                         move the focus between the side panel and the transcript (wide screens)",
+  "Ctrl+Y / Ctrl+N            allow or deny the call that waits for an approval",
+  "Ctrl+G                     edit the prompt in $VISUAL or $EDITOR",
+  "Up / Down                  earlier messages you sent (Up on an empty prompt)",
   "mouse                      drag selects and copies, a double click selects a word; Shift+drag is the terminal's own",
+  "all keys: finn docs cli",
 ]
 
 ## The keys of `finn chat`.

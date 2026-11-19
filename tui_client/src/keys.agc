@@ -33,7 +33,15 @@ SCROLL_STEP = 3
 # Esc with a selection shown and the side panel open only clears the selection; the next Esc closes the panel.
 def clears_selection?(app: State.Model, event: TUI.Event) -> Bool
   case event
-    TUI.Event.Key(TUI.Key.Escape, _) -> app.selection.some? and app.side.some? and not app.approvals.focused
+    TUI.Event.Key(TUI.Key.Escape, _) ->
+      (
+        app.selection.some? and
+        app.side.some? and
+        not app.approvals.focused and
+        app.picker.none? and
+        app.key_for.none? and
+        app.device.none?
+      )
     _ -> false
   end
 end

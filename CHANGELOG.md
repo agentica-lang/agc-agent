@@ -5,7 +5,7 @@
 ### Changed
 
 - **Breaking:** with the side panel open, Esc closes it whatever has the focus (a selection is cleared first); the next Esc does what it did before.
-- The keys are easier to find: `/help` ends with the keys, the panel's title row names F6, and the footer says `^P logs` while the panel is closed.
+- `/help` ends with the keys, the panel's title names F6, and the footer says `^P logs` while the panel is closed.
 - A merge to main that changes only `docs/`, Markdown files or `.github/` makes no `finn-<ts>` tag any more.
 
 ## [finn-20261119085524] - 2026-11-19

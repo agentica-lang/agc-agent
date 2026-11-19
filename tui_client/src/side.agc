@@ -132,7 +132,7 @@ def title(side: Side, room: Int, at: Int, wide: Bool) -> String
     focus = " · F6 focus"
   end
 
-  " #{side.title}#{state}#{focus} · PgUp/PgDn scroll · Esc closes"
+  " #{side.title}#{state} · Esc closes#{focus} · PgUp/PgDn scroll"
 end
 
 def padded(text: String, width: Int) -> String

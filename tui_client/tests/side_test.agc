@@ -6,6 +6,7 @@ import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import App from "../src/app"
+import Approvals from "../src/approvals"
 import Args from "../src/args"
 import Session from "../src/session"
 import Side from "../src/side"
@@ -263,6 +264,40 @@ def test_esc_closes_the_panel_before_it_stops_the_turn() -> Result[Void]
   closed = App.update(away, key(TUI.Key.Escape)).model
   try Test.eq([closed.stopping, closed.side.none?], [false, true])
   Test.eq(App.update(closed, key(TUI.Key.Escape)).model.stopping, true)
+end
+
+# A drag leaves a selection; with the panel open, Esc clears it first and the next Esc closes the panel. Not while
+# a login
+# key is asked for (Esc cancels that), and a focused approval panel takes Esc as before.
+def test_esc_clears_a_selection_before_it_closes_the_panel() -> Result[Void]
+  opened = ran(model_of(120, 12), "/logs")
+  rows = screen(opened)
+  y = (0...rows.size).find { |at| rows[at].include?("hello there") }.unwrap!
+  x = rows[y].index_of("hello there").unwrap!
+  down = App.update(opened, mouse_at(TUI.Mouse.Left, x, y)).model
+  selected = App.update(down, mouse_at(TUI.Mouse.Left, 100, y, motion: true)).model
+  try Test.eq(selected.selection.some?, true)
+  first = App.update(selected, key(TUI.Key.Escape)).model
+  try Test.eq([first.selection.none?, first.side.some?], [true, true])
+  try Test.eq(App.update(first, key(TUI.Key.Escape)).model.side.none?, true)
+  asking = selected.with(key_for: some("anthropic"))
+  try Test.eq(App.update(asking, key(TUI.Key.Escape)).model.key_for.none?, true)
+
+  request = Protocol.ApprovalRequested(
+    approval_id: "a1",
+    call_id: "c1",
+    tool: "write_file",
+    preview: "x.txt",
+    detail: "",
+  )
+
+  waiting = selected.with(approvals: Approvals.requested(Approvals.Panel(guard_ms: 0), request, 0).with(focused: true))
+  Test.eq(App.update(waiting, key(TUI.Key.Escape)).model.side.some?, true)
+end
+
+# At 100 columns the panel is 40 wide and its title still names Esc.
+def test_the_title_of_a_narrow_panel_names_esc() -> Result[Void]
+  Test.assert(screen(ran(model_of(100, 20), "/logs")).any? { |row| row.include?("Esc closes") }, "Esc closes")
 end
 
 # A read that brings the same lines changes nothing, one that fails says so in the panel until a read works, and the
