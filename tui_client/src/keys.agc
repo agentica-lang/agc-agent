@@ -11,6 +11,7 @@ import Selecting from "selecting"
 import Screen from "screen"
 import Transcript from "transcript"
 import State from "state"
+import Keymap from "keymap"
 import Level from "level"
 import Answering from "answering"
 import Editor from "editor"
@@ -60,6 +61,8 @@ def keyed(app: State.Model, event: TUI.Event) -> State.Model
   end
 
   return Logins.on_device_key(app, event) if app.device.some? and not State.ctrl_c?(event)
+
+  event = Keymap.translated(app.keys, event)
 
   for picker in State.option_list(app.picker)
     return Commands.on_picker_key(app, picker, event) if not State.ctrl_c?(event)

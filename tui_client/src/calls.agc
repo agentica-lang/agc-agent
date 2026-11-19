@@ -30,7 +30,7 @@ struct Call
 end
 
 ## The rows of `call` in `width` columns; `open` shows the whole body.
-def rows(call: Call, width: Int, open: Bool) -> List[List[Markdown.Span]]
+def rows(call: Call, width: Int, open: Bool, key: String = "^O") -> List[List[Markdown.Span]]
   head = [[span(LEAD, Markdown.Look.Plain)] + title(call, [width - LEAD.length, 1].max.unwrap!)]
   return head if call.state == State.Running
 
@@ -41,7 +41,7 @@ def rows(call: Call, width: Int, open: Bool) -> List[List[Markdown.Span]]
 
   shown = body
   if not open and body.size > FOLDED_ROWS
-    more = "#{BODY}… #{body.size - FOLDED_ROWS} more lines (click or ^O shows them)"
+    more = "#{BODY}… #{body.size - FOLDED_ROWS} more lines (click or #{key} shows them)"
     shown = body.take(FOLDED_ROWS).push([span(more, Markdown.Look.Muted)])
   end
 

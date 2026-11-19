@@ -165,6 +165,7 @@ def test_a_reload_changes_the_files_program_the_mouse_and_the_approvals() -> Res
     try Test.eq(before.files.size > 1, true)
     try Test.eq([first.mouse, first.approvals], [some(true), some(false)])
     try Test.eq(first.clipboard, some(Protocol.ClipboardSetting()))
+    try Test.eq(first.keys, some([]))
     command = JSON.from(["sh", "-c", "printf 'b.txt\\n'"])
     files = JSON.object({"command": command})
     try File.write_text(
@@ -175,6 +176,7 @@ def test_a_reload_changes_the_files_program_the_mouse_and_the_approvals() -> Res
           "mouse": JSON.from(false),
           "approvals": JSON.from(true),
           "clipboard": JSON.from("osc52"),
+          "keys": JSON.object({"logs": JSON.from("f9")}),
         }),
       ),
     )
@@ -186,6 +188,7 @@ def test_a_reload_changes_the_files_program_the_mouse_and_the_approvals() -> Res
     second = try Protocol.decode_server_status((try H.get(h, Protocol.SERVER_PATH)).text)
     try Test.eq(after.files, ["b.txt"])
     try Test.eq([second.mouse, second.approvals], [some(false), some(true)])
+    try Test.eq(second.keys, some([Protocol.KeySetting(action: "logs", key: "f9")]))
     Test.eq(second.clipboard, some(Protocol.ClipboardSetting(provider: "osc52")))
   end
 

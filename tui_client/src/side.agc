@@ -2,6 +2,7 @@
 ## in a column of its own, beside the transcript on a wide screen and over it on a narrow one. It scrolls by itself and
 ## has its own focus. Pure.
 
+import Client from "pkg/client/client"
 import Layout from "panel"
 import Transcript from "transcript"
 import Width from "width"
@@ -94,7 +95,7 @@ def scrolled(side: Side, rows: Int, room: Int) -> Side
 end
 
 ## The rows of the panel in `width` columns and `height` rows: the title, then the lines, padded to the width.
-def rows(side: Side, width: Int, height: Int, wide: Bool = false) -> List[Layout.Row]
+def rows(side: Side, width: Int, height: Int, wide: Bool, keys: Client.Bindings) -> List[Layout.Row]
   return [] if height <= 0 or width <= 0
 
   room = height - 1
@@ -107,20 +108,20 @@ def rows(side: Side, width: Int, height: Int, wide: Bool = false) -> List[Layout
   shown = side.wrapped.drop(at).take(room)
   body = shown.map { |text| Layout.Row(text: padded(text, width)) }
   blank = (shown.size...room).to_a.map { |_| Layout.Row(text: " " * width) }
-  [Layout.Row(text: padded(title(side, room, at, wide), width), look: look)] + body + blank
+  [Layout.Row(text: padded(title(side, room, at, wide, keys), width), look: look)] + body + blank
 end
 
 private
 
 # The title with what the panel does: its state, and the keys.
-def title(side: Side, room: Int, at: Int, wide: Bool) -> String
+def title(side: Side, room: Int, at: Int, wide: Bool, keys: Client.Bindings) -> String
   state = ""
   if side.live.some? and side.follow
     state = " · following"
   end
 
   if side.live.some? and not side.follow
-    state = " · paused, PgDn to the end follows"
+    state = " · paused, #{label(keys, "page_down")} to the end follows"
   end
 
   if not side.live.some? and side.wrapped.size > room
@@ -129,11 +130,13 @@ def title(side: Side, room: Int, at: Int, wide: Bool) -> String
 
   focus = ""
   if wide
-    focus = " · F6 focus"
+    focus = " · #{label(keys, "side_focus")} focus"
   end
 
-  " #{side.title}#{state} · Esc closes#{focus} · PgUp/PgDn scroll"
+  " #{side.title}#{state} · Esc closes#{focus} · #{label(keys, "page_up")}/#{label(keys, "page_down")} scroll"
 end
+
+def label(keys: Client.Bindings, action: String) -> String = Client.label(Client.key_of(keys, action))
 
 def padded(text: String, width: Int) -> String
   cut = Width.cut(text, width)[0]
