@@ -152,7 +152,26 @@ def test_the_sessions_of_a_folder_are_its_session_files() -> Result[Void] = on_b
 # whole read does. A node keeps the first line of its answer.
 def test_a_tree_read_leaves_a_line_still_being_written() -> Result[Void] = on_both(&partial_line)
 
+def test_a_saved_prompt_leaves_the_title_visible() -> Result[Void] = on_both(&saved_prompt)
+
 private
+
+def saved_prompt(port: Store.Port, dir: String) -> Result[Void]
+  initial = Store.Prompt(base: "x" * (Store.TITLE_BYTES / 2 + 1), catalog: "old", skill_config: "old")
+  header = Store.Header(id: "s1-ab", cwd: "/work", model: "m", created_ms: 7, prompt: some(initial))
+  file = try Store.create(port, dir, header)
+  updated = initial.with(catalog: "new", skill_config: "new")
+  try Store.save_prompt(file, updated)
+  try Store.append_user(file, "Session title")
+  try Test.eq((try Store.listing(file)).title, "Session title")
+  try Test.eq((try Store.load(file)).header.prompt, some(updated))
+  try Store.save_prompt(file, (try Store.load(file)).header.prompt.unwrap!)
+  try Test.error?(Store.save_prompt(file, updated.with(base: "x" * Store.MAX_LINE_BYTES)))
+  try Test.eq((try Store.load(file)).header.prompt, some(updated))
+  try Store.remove(file)
+  try Test.error?(Store.save_prompt(file, updated))
+  Test.eq(try port.names.call(dir), [])
+end
 
 def partial_line(port: Store.Port, dir: String) -> Result[Void]
   path = try linear_in(port, dir)

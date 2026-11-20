@@ -28,7 +28,6 @@ OPEN = "<skill_content name=\""
 CLOSE = "</skill_content>"
 NAME = /\A[a-z0-9-]+\z/
 CATALOG_NAME = /<name>([a-z0-9-]+)<\/name>/
-CATALOG_BLOCK = /\n# Skills\n\nThe following skills [^\n]*\n\n<available_skills>\n(?s:.*?)\n<\/available_skills>\n/
 
 struct Skill
   name: String
@@ -93,19 +92,6 @@ def discover(
   found.with(skills: found.skills.sort_by { |skill| skill.name })
 end
 
-def with_catalog(system: String, skills: List[Skill]) -> String
-  block = catalog(skills)
-  addition = ""
-  if not block.empty?
-    addition = "\n#{block}"
-  end
-
-  case Regex.match(system, CATALOG_BLOCK)
-    ok(old) -> "#{system.slice(0, old.start)}#{addition}#{system.slice(old.stop, system.length - old.stop)}"
-    error(_) -> "#{system}#{addition}"
-  end
-end
-
 ## The catalog for the system prompt: the skills the model may load, sorted; empty when there is none.
 def catalog(skills: List[Skill]) -> String
   shown = skills.select { |skill| skill.for_model }
@@ -124,10 +110,10 @@ def catalog(skills: List[Skill]) -> String
   )
 end
 
-## The skills of a session whose system prompt is `system`, as saved: the model's are only those its catalog lists, so
+## The skills of a session with a saved `catalog`: the model's are only those it lists, so
 ## the tool and the folders `read_file` reads cannot drift from what the model was told.
-def restrict(skills: List[Skill], system: String) -> List[Skill]
-  listed = Regex.find_all(system, CATALOG_NAME).map { |m| m.groups[1].text }
+def restrict(skills: List[Skill], catalog: String) -> List[Skill]
+  listed = Regex.find_all(catalog, CATALOG_NAME).map { |m| m.groups[1].text }
   skills.select { |skill| not skill.for_model or listed.include?(skill.name) }
 end
 

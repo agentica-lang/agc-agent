@@ -40,17 +40,11 @@ end
 def commands(served: Extensions.Served, read: Fn[String, Result[String]]) -> Extensions.Served
   user_dir = Commands.user_folder(read)
   open = ->(place: Extensions.Place, _system: String) { commands_opened(place, user_dir) }
-  Extensions.add_builtin(
-    served,
-    Extensions.Builtin(system: ->(_place: Extensions.Place, system: String) { system }, open: open),
-  )
+  Extensions.add_builtin(served, Extensions.Builtin(open: open))
 end
 
 def skills(served: Extensions.Served) -> Extensions.Served
-  Extensions.add_builtin(
-    served,
-    Extensions.Builtin(system: &catalogued, open: &opened, refresh_skills: some(&recatalogued)),
-  )
+  Extensions.add_builtin(served, Extensions.Builtin(open: &opened, skill_catalog: some(&catalogued)))
 end
 
 ## The segment `chatgpt.quota`: what is left of the five-hour and seven-day windows of a ChatGPT session, from the
@@ -116,10 +110,7 @@ def mcp(
 
   own = Extensions.add_builtin(
     served.with(registry: served.registry.with(events: served.registry.events.push(lifecycle))),
-    Extensions.Builtin(
-      system: ->(_place: Extensions.Place, system: String) { system },
-      open: ->(place: Extensions.Place, _system: String) { project_opened(place, project_servers) },
-    ),
+    Extensions.Builtin(open: ->(place: Extensions.Place, _system: String) { project_opened(place, project_servers) }),
   )
 
   control = Config.McpControl(
@@ -514,19 +505,12 @@ def option_list[T](value: Optional[T]) -> List[T]
   end
 end
 
-def catalogued(place: Extensions.Place, system: String) -> String
-  catalog = Skills.catalog(found(place).skills)
-  return system if catalog == ""
-
-  "#{system}\n#{catalog}"
-end
-
-def recatalogued(place: Extensions.Place, system: String) -> String = Skills.with_catalog(system, found(place).skills)
+def catalogued(place: Extensions.Place) -> String = Skills.catalog(found(place).skills)
 
 # The skills a session's system prompt lists, and those the model does not load.
-def opened(place: Extensions.Place, system: String) -> Extensions.Opened
+def opened(place: Extensions.Place, catalog: String) -> Extensions.Opened
   discovered = found(place)
-  skills = Skills.restrict(discovered.skills, system)
+  skills = Skills.restrict(discovered.skills, catalog)
   Extensions.Opened(
     read_roots: skills.map { |skill| skill.dir },
     tools: Skills.tools(skills),

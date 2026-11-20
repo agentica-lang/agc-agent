@@ -397,6 +397,8 @@ def restarted(h: Harness, setup: Setup, cut: String, body: Fn[Harness, Result[Vo
   Server.stop(h.server)
   if not cut.empty?
     for name in try Dir.list(sessions(h))
+      next if not name.end_with?(".jsonl")
+
       try File.append_text("#{sessions(h)}/#{name}", cut)
     end
   end

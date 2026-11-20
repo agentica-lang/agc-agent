@@ -34,7 +34,7 @@ def copied(state: Session.State, entry: Optional[Int], to: Session.Copying) -> R
   return error(Session.busy_reason(state), kind: Protocol.KIND_SESSION_BUSY) if Session.busy?(state)
 
   point = try Store.point(try Store.entries(state.setup.file, state.entries), entry)
-  header = to.header.with(system: some(state.setup.base_system), skill_config: some(state.setup.skill_config))
+  header = to.header.with(prompt: state.setup.prompt)
   file = try Store.copy(state.setup.file, to.dir, header, point.leaf)
   settings = Store.append_settings(file, Session.choice(state.setup))
   if not settings.ok?

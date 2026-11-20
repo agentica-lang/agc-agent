@@ -599,8 +599,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     cwd: context.root,
     model: model,
     created_ms: Time.now_ms,
-    system: some(new_system(options, context.root)),
-    skill_config: some(skill_config(options, context.root)),
+    prompt: some(new_prompt(options, context.root)),
     api: some(api),
     provider: some(provider),
     profile: some(profile),
@@ -724,15 +723,18 @@ def entry(
 
   endpoint = try loaded_endpoint(options, provider, api)
   context = opened.context
-  system = header.system.unwrap_or(system_of(options, context.root))
+  prompt = header.prompt.unwrap_or(Store.Prompt())
   skill_config = skill_config(options, context.root)
-  if header.skill_config != some(skill_config)
-    place = place_of(options, context.root)
-    system = options.registry.map { |r| Extensions.refresh_skills(r, place, system) }.unwrap_or(system)
-    try Store.append_prompt(file, system, skill_config)
+  if header.prompt.none?
+    prompt = new_prompt(options, context.root)
+    try Store.save_prompt(file, prompt)
+  elsif prompt.skill_config != skill_config
+    prompt = prompt.with(catalog: skill_catalog(options, context.root), skill_config: skill_config)
+    try Store.save_prompt(file, prompt)
   end
 
-  builtins = builtins_of(options, context.root, system)
+  system = assembled(prompt)
+  builtins = builtins_of(options, context.root, prompt.catalog)
   for warning in (builtins.flat_map { |b| b.warnings })
     Logger.warning(warning)
   end
@@ -744,7 +746,7 @@ def entry(
     provider: endpoint.provider,
     system: system,
     base_system: system,
-    skill_config: skill_config,
+    prompt: some(prompt),
     ctx: context.with(
       read_roots: Extensions.read_roots(builtins),
       before: before_of(options, header.id),
@@ -767,7 +769,7 @@ def entry(
     endpoint: some(->(name: String, now: String) { switched_endpoint(Config.now(options), name, now) }),
     profiles: some(-> { profiles_of(options, context.root) }),
     reopen: some(-> { reopened(options, context.root) }),
-    skills: skill_names(options, context.root, system),
+    skills: skill_names(options, context.root, prompt.catalog),
   )
 
   setup = SessionActor.switched(base, endpoint).with(model: header.model, refused: refusal(options, provider))
@@ -1033,17 +1035,29 @@ def warn_profiles(options: Config.Options) -> Void
   end
 end
 
-# The system prompt of a new session in `root`, with what the extensions add.
-def new_system(options: Config.Options, root: String) -> String
-  system = system_of(options, root)
-  options.registry.map { |r| Extensions.new_system(r, place_of(options, root), system) }.unwrap_or(system)
+def new_prompt(options: Config.Options, root: String) -> Store.Prompt
+  Store.Prompt(
+    base: system_of(options, root),
+    catalog: skill_catalog(options, root),
+    skill_config: skill_config(options, root),
+  )
 end
 
-# The names of the skills a session with `system` has.
-def skill_names(options: Config.Options, root: String, system: String) -> List[String]
+def skill_catalog(options: Config.Options, root: String) -> String
+  options.registry.map { |r| Extensions.skill_catalog(r, place_of(options, root)) }.unwrap_or("")
+end
+
+def assembled(prompt: Store.Prompt) -> String
+  return prompt.base if prompt.catalog.empty?
+
+  "#{prompt.base}\n#{prompt.catalog}"
+end
+
+# The names of the skills a session with `catalog` has.
+def skill_names(options: Config.Options, root: String, catalog: String) -> List[String]
   place = place_of(options, root)
   found = Skills.discover(place.root, place.home, place.trusted, place.docs, place.skill_user, place.skill_project)
-  Skills.restrict(found.skills, system).map { |skill| skill.name }
+  Skills.restrict(found.skills, catalog).map { |skill| skill.name }
 end
 
 def skill_config(options: Config.Options, root: String) -> String
@@ -1062,25 +1076,25 @@ end
 # again) with its extensions and its approval, under the options of now.
 def reopened(options: Config.Options, root: String) -> Result[SessionActor.Reopened]
   now = Config.now(options)
-  system = new_system(now, root)
+  prompt = new_prompt(now, root)
   approver = try approver_of(now, root)
-  builtins = builtins_of(now, root, system)
+  builtins = builtins_of(now, root, prompt.catalog)
   warnings = builtins.flat_map { |b| b.warnings }
 
   ok(
     SessionActor.Reopened(
-      system: system,
-      skill_config: skill_config(now, root),
+      system: assembled(prompt),
+      prompt: prompt,
       builtins: builtins,
       approver: approver,
-      skills: skill_names(now, root, system),
+      skills: skill_names(now, root, prompt.catalog),
       warnings: warnings,
     ),
   )
 end
 
-def builtins_of(options: Config.Options, root: String, system: String) -> List[Extensions.Opened]
-  options.registry.map { |r| Extensions.open(r, place_of(options, root), system) }.unwrap_or([])
+def builtins_of(options: Config.Options, root: String, catalog: String) -> List[Extensions.Opened]
+  options.registry.map { |r| Extensions.open(r, place_of(options, root), catalog) }.unwrap_or([])
 end
 
 def late_of(options: Config.Options) -> Optional[Fn[String, List[Tools.Tool]]]

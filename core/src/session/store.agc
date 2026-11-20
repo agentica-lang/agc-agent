@@ -20,6 +20,7 @@ export Storage.Port
 EXTENSION = ".jsonl"
 ## Beside a session file: the model of its last `settings` record, so a list of the sessions need not read the file.
 SETTINGS_EXTENSION = ".settings.json"
+PROMPT_EXTENSION = ".prompt.json"
 ## A listing looks this far into a file for the first user message: the lines, and the bytes.
 TITLE_LINES = 64
 TITLE_BYTES = 262_144
@@ -34,15 +35,20 @@ struct Header
   cwd: String
   model: String
   created_ms: Int
-  ## The system prompt of every call of the session, so a cache of its prefix stays valid after a restart.
-  system: Optional[String] = none
-  skill_config: Optional[String] = none
+  ## The saved prompt keeps the model's cached prefix valid after a restart.
+  prompt: Optional[Prompt] = none
   ## The model API of the session, by its `FINN_API` name; none in a file made before the choice.
   api: Optional[String] = none
   ## The provider of the session; none in a file made before providers.
   provider: Optional[String] = none
   ## The profile of the session; none is `build`.
   profile: Optional[String] = none
+end
+
+struct Prompt
+  base: String = ""
+  catalog: String = ""
+  skill_config: String = ""
 end
 
 struct Logged
@@ -173,8 +179,7 @@ def create(port: Storage.Port, dir: String, header: Header) -> Result[Ref]
     "cwd": JSON.from(header.cwd),
     "model": JSON.from(header.model),
     "created_ms": JSON.from(header.created_ms),
-    "system": JSON.from(header.system),
-    "skill_config": JSON.from(header.skill_config),
+    "prompt": JSON.from(header.prompt),
     "api": JSON.from(header.api),
     "provider": JSON.from(header.provider),
     "profile": JSON.from(header.profile),
@@ -188,6 +193,7 @@ end
 def remove(file: Ref) -> Result[Void]
   try file.port.remove.call(file.path)
   _ = file.port.remove.call(settings_file(file.path))
+  _ = file.port.remove.call(prompt_file(file.path))
   ok()
 end
 
@@ -275,8 +281,12 @@ def append_settings(file: Ref, settings: Choice) -> Result[Void]
   ok()
 end
 
-def append_prompt(file: Ref, system: String, skill_config: String) -> Result[Void]
-  append(file, {"type": JSON.from("prompt"), "system": JSON.from(system), "skill_config": JSON.from(skill_config)})
+def save_prompt(file: Ref, prompt: Prompt) -> Result[Void]
+  text = JSON.encode(JSON.from(prompt))
+  return error("a prompt of #{text.bytesize} bytes is over #{MAX_LINE_BYTES}") if text.bytesize > MAX_LINE_BYTES
+
+  _ = try changed(file)
+  file.port.replace.call(prompt_file(file.path), text)
 end
 
 ## The answer of a turn, as a client draws it.
@@ -339,8 +349,7 @@ def copy(file: Ref, dir: String, header: Header, leaf: Int) -> Result[Ref]
   return error("no entry #{leaf}", kind: Protocol.KIND_INVALID) if not entry?(entries, leaf)
 
   created = try create(file.port, dir, header)
-  records = branch(entries, leaf).select { |record| record.kind != "prompt" }
-  written = write(created, records.map { |record| "#{record.line}\n" }.join(""))
+  written = write(created, branch(entries, leaf).map { |record| "#{record.line}\n" }.join(""))
   if not written.ok?
     _ = created.port.remove.call(created.path)
   end
@@ -427,8 +436,13 @@ def load(file: Ref, leaf: Optional[Int] = none) -> Result[Saved]
   end_at = leaf.unwrap_or(entries.leaf)
   return error("no entry #{end_at}", kind: Protocol.KIND_INVALID) if not entry?(entries, end_at)
 
+  header = entries.header
+  for prompt in option_list(saved_prompt(file))
+    header = header.with(prompt: some(prompt))
+  end
+
   saved = Saved(
-    header: entries.header,
+    header: header,
     events: [],
     history: [],
     shown: [],
@@ -629,7 +643,6 @@ def totals(saved: Saved, entries: Entries) -> Saved
   started = 0
   usage: Optional[JSON.Value] = none
   settings = Settings()
-  header = saved.header
   for at in entries.order
     record = entries.records[at]
     case record.kind
@@ -659,13 +672,11 @@ def totals(saved: Saved, entries: Entries) -> Saved
       "user" -> users = users + 1
       "ids" -> reserved = JSON.int(JSON.get(json_of(record), "until").unwrap_or(JSON.null())).unwrap_or(reserved)
       "settings" -> settings = settings_of(json_of(record)).unwrap_or(settings)
-      "prompt" -> header = prompt_header(header, json_of(record)).unwrap_or(header)
       _ -> nil
     end
   end
 
   saved.with(
-    header: header,
     last_id: last_id,
     reserved: reserved,
     approvals: approvals,
@@ -849,17 +860,12 @@ def decode_header(json: JSON.Value) -> Result[Header]
       cwd: try field(json, "cwd"),
       model: try field(json, "model"),
       created_ms: created_ms_of(json),
-      system: optional_string(json, "system"),
-      skill_config: optional_string(json, "skill_config"),
+      prompt: decoded_prompt(JSON.get(json, "prompt")),
       api: optional_string(json, "api"),
       provider: optional_string(json, "provider"),
       profile: optional_string(json, "profile"),
     ),
   )
-end
-
-def prompt_header(header: Header, json: JSON.Value) -> Result[Header]
-  ok(header.with(system: some(try field(json, "system")), skill_config: some(try field(json, "skill_config"))))
 end
 
 # A session of an early version has no time: it counts as the oldest.
@@ -949,7 +955,6 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
 
       ok(saved.with(history: history, folded: folded, stripped: false))
     "stripped" -> ok(saved.with(stripped: true))
-    "prompt" -> ok(saved)
     "ids" -> ok(saved.with(reserved: try JSON.int(try JSON.get(json, "until"))))
     "settings" ->
       settings = try settings_of(json)
@@ -1126,6 +1131,27 @@ def side_settings(file: Ref) -> JSON.Value
 end
 
 def settings_file(path: String) -> String = "#{path.slice(0, path.length - EXTENSION.length)}#{SETTINGS_EXTENSION}"
+
+def prompt_file(path: String) -> String = "#{path.slice(0, path.length - EXTENSION.length)}#{PROMPT_EXTENSION}"
+
+def saved_prompt(file: Ref) -> Optional[Prompt]
+  case file.port.read_text.call(prompt_file(file.path))
+    ok(text) -> decoded_prompt(JSON.parse(text))
+    error(_) -> none
+  end
+end
+
+def decoded_prompt(json: Result[JSON.Value]) -> Optional[Prompt]
+  case json
+    ok(value) ->
+      case JSON.decode(value, Prompt)
+        ok(prompt) -> some(prompt)
+        error(_) -> none
+      end
+
+    error(_) -> none
+  end
+end
 
 def side_field(side: JSON.Value, name: String) -> Optional[String]
   case field(side, name)

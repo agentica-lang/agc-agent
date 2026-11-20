@@ -4,6 +4,7 @@
 import Protocol from "pkg/protocol/protocol"
 import Builtins from "../src/session/builtins"
 import Extensions from "../src/config/registry"
+import Skills from "../src/ext/skills"
 import Tools from "../src/tools/tools"
 import Fake from "support/fake_llm"
 import H from "support/harness"
@@ -24,6 +25,12 @@ def test_skill_paths_follow_config_on_reload() -> Result[Void]
   )
 
   result = H.using(setup) do |h|
+    example = Skills.catalog([
+      Skills.Skill(name: "example", description: "Example catalog", location: "", dir: "", for_model: true),
+    ])
+
+    instructions = "Keep these instructions.\n\n```text\n#{example}```\n"
+    try File.write_text("#{h.work}/AGENTS.md", instructions)
     try write("#{h.base}/home/.agents/skills/lint/SKILL.md", LINT)
     id = try H.new_session(h)
     try Test.eq(try system_after(h, id, "Before."), false)
@@ -36,12 +43,13 @@ def test_skill_paths_follow_config_on_reload() -> Result[Void]
     try Test.assert(invalid.config.start_with?("kept"), invalid.config)
     try Test.eq(invalid.skills_removed, [])
     try File.write_text(config, "{}")
-    removed = try reload(h)
-    try Test.eq(removed.skills_removed, ["lint"])
-    try Test.eq(try system_after(h, id, "Disabled."), false)
-    try File.write_text(config, "{\"skills\":{\"user\":[\"~/.agents/skills\"]}}")
     H.restarted(h, setup, "") do |r|
-      try Test.eq(try system_after(r, id, "Resumed."), true)
+      resumed = try request_after(r, id, "Resumed.")
+      try Test.eq(system_has_lint(resumed), false)
+      try Test.assert(system_text(resumed).include?(instructions), "the example catalog is still in AGENTS.md")
+      try File.write_text(config, "{\"skills\":{\"user\":[\"~/.agents/skills\"]}}")
+      try Test.eq((try reload(r)).skills_added, ["lint"])
+      try Test.eq(try system_after(r, id, "Enabled again."), true)
       try Path.remove("#{r.base}/home/.agents/skills/lint")
       try Test.eq((try reload(r)).skills_removed, ["lint"])
       try write("#{r.base}/home/.agents/skills/lint/SKILL.md", LINT)
@@ -158,17 +166,23 @@ end
 
 # Sends a message and says whether the system prompt of its call lists the skill `lint`.
 def system_after(h: H.Harness, id: String, text: String) -> Result[Bool]
+  ok(system_has_lint(try request_after(h, id, text)))
+end
+
+def request_after(h: H.Harness, id: String, text: String) -> Result[Fake.Seen]
   a = try H.subscribe(h, id)
   _ = try H.send(h, id, text)
   a = try H.until(a, Protocol.EventKind.TurnFinished)
   H.close(a)
-  ok(system_has_lint(try H.next_request(h)))
+  H.next_request(h)
 end
 
-def system_has_lint(request: Fake.Seen) -> Bool
+def system_has_lint(request: Fake.Seen) -> Bool = system_text(request).include?("<name>lint</name>")
+
+def system_text(request: Fake.Seen) -> String
   messages = JSON.list(JSON.get(JSON.parse(request.body).unwrap_or(JSON.null()), "messages").unwrap_or(JSON.null()))
   system = JSON.string(JSON.get(messages.unwrap_or([JSON.null()])[0], "content").unwrap_or(JSON.null()))
-  system.unwrap_or("").include?("<name>lint</name>")
+  system.unwrap_or("")
 end
 
 # Whether the turn wrote `hello.txt`: a call that a deny rule refuses does not.
