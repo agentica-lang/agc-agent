@@ -378,6 +378,22 @@ def test_a_stalled_error_releases_the_slot_before_retrying_a_slow_head() -> Resu
   Test.assert(result.ok?, result.message)
 end
 
+def test_model_listing_has_its_own_body_idle_timeout() -> Result[Void]
+  hold: Channel[Bool] = Channel.new(1)
+  reply = (try Fake.json(200, "openai_chat/models.json")).with(hold: some(hold))
+  fake = try Fake.start([reply])
+  options = LLM.Options(timeout_ms: 1500, read_timeout_ms: 60, tries: 1)
+  result = LLM.models(LLM.openai_chat(fake.url, KEY, options))
+  hold.close
+  try Fake.stop(fake)
+  case result
+    ok(_) -> error("expected the model listing to time out")
+    error(e) ->
+      try Test.eq(e.kind, "llm.network")
+      Test.assert(e.message.include?("within 60 ms"), e.message)
+  end
+end
+
 private
 
 def serve_provider(listener: TCP.Listener, sse: Bytes, models: Bytes, finish: Channel[Bool]) -> Result[Void]

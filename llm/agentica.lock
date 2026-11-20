@@ -4,9 +4,9 @@ version = 1
 name = "http-client"
 git = "https://github.com/agentica-lang/packages"
 subdir = "http-client"
-tag = "http-client-0.1.0"
-commit = "f9bcf64a2223432c30d0d91b4dc806325ac7e46e"
-hash = "sha256:9e146eab10b8dfd59af7f32dcc2665bc5b379c75446d34e5894223497916d86f"
+tag = "http-client-0.2.0"
+commit = "e8105038dd6ac1556c946d4242731b3e0d5f39f3"
+hash = "sha256:af42611a1134e0a522239f32cfac6c487daf799b40940e5ee86e51ac6e6b9748"
 
 [[package]]
 name = "pool"
