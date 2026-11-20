@@ -28,6 +28,7 @@ OPEN = "<skill_content name=\""
 CLOSE = "</skill_content>"
 NAME = /\A[a-z0-9-]+\z/
 CATALOG_NAME = /<name>([a-z0-9-]+)<\/name>/
+CATALOG_BLOCK = /\n# Skills\n\nThe following skills [^\n]*\n\n<available_skills>\n(?s:.*?)\n<\/available_skills>\n/
 
 struct Skill
   name: String
@@ -74,12 +75,10 @@ def discover(
 ) -> Found
   found = Found(skills: [], warnings: [])
   if trusted
-    found = scope(found, root, project_paths)
+    found = scope(found, (ROOTS + project_paths).map { |path| "#{root}/#{path}" })
   end
 
-  if home != ""
-    found = scope(found, home, user_paths)
-  end
+  found = scope(found, user_roots(home, user_paths))
 
   sorted = found.skills.sort_by { |skill| skill.name }
   found = found.with(skills: sorted)
@@ -92,6 +91,19 @@ def discover(
 
   found = bundled(found, docs)
   found.with(skills: found.skills.sort_by { |skill| skill.name })
+end
+
+def with_catalog(system: String, skills: List[Skill]) -> String
+  block = catalog(skills)
+  addition = ""
+  if not block.empty?
+    addition = "\n#{block}"
+  end
+
+  case Regex.match(system, CATALOG_BLOCK)
+    ok(old) -> "#{system.slice(0, old.start)}#{addition}#{system.slice(old.stop, system.length - old.stop)}"
+    error(_) -> "#{system}#{addition}"
+  end
 end
 
 ## The catalog for the system prompt: the skills the model may load, sorted; empty when there is none.
@@ -318,17 +330,28 @@ end
 
 def escaped(text: String) -> String = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-def scope(found: Found, base: String, extra: List[String]) -> Found
+def user_roots(home: String, paths: List[String]) -> List[String]
+  roots: List[String] = []
+  for path in ROOTS + paths
+    if path.start_with?("/")
+      roots = roots.push(path)
+    elsif home != ""
+      relative = path
+      if path.start_with?("~/")
+        relative = path.slice(2, path.length - 2)
+      end
+
+      roots = roots.push("#{home}/#{relative}")
+    end
+  end
+
+  roots
+end
+
+def scope(found: Found, paths: List[String]) -> Found
   scoped = found
   names = found.skills.map { |skill| skill.name }
-  for root in ROOTS + extra
-    path = "#{base}/#{root}"
-    if root.start_with?("/")
-      path = root
-    elsif root.start_with?("~/")
-      path = "#{base}/#{root.slice(2, root.length - 2)}"
-    end
-
+  for path in paths
     real = Path.real(path)
     next if not real.ok? or not directory?(real.unwrap!)
 

@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- Skills now default to `.finn/skills` only; configure extra user and trusted-project paths with `skills` in `config.json`.
+- Skills now default to `.finn/skills` only. Configure extra user and trusted-project paths with `skills` in `config.json`. Existing sessions pick up path changes on reload or resume.
 - The full-screen status row shows the remaining ChatGPT five-hour and seven-day quota (`5h 62% · 7d 80%`) in ChatGPT sessions, and drops it first on a narrow row.
 - `status_line` in the config file chooses and orders the segments of the full-screen status row; `/reload` applies it.
 - Agentica extensions can add named status line segments with `Core.add_status_segment`.

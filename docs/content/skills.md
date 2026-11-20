@@ -16,7 +16,7 @@ By default Finn searches `~/.finn/skills/` and `.finn/skills/` in the session fo
 {"skills": {"user": ["~/.agents/skills", "~/.claude/skills"], "project": [".agents/skills"]}}
 ```
 
-User paths are absolute, `~/` paths, or relative to the home folder. Project paths are relative to the session folder and cannot contain `..`. Only the user's config can add them, and skills of the session folder count only when it is under a [trusted folder](config.md#trusted-folders). `/reload` applies changes from the next turn.
+User paths are absolute, `~/` paths, or relative to the home folder. Project paths are relative to the session folder and cannot contain `..`. Only the user's config can add them, and skills of the session folder count only when it is under a [trusted folder](config.md#trusted-folders). Loaded sessions apply changes from the next turn after `/reload`. A resumed session refreshes its saved catalog when the configured paths change and keeps the catalog from its last successful reload across restarts.
 
 A project skill hides a home skill of the same name; in each scope `.finn/skills` comes first, followed by the configured paths in order. A collision warns with both paths. Skills folders that are links to one folder count once, with no warning. Finn uses 100 skills at most (the built-in one comes after them).
 

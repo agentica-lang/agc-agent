@@ -36,12 +36,15 @@ def test_only_finn_paths_are_default_and_extra_paths_require_trust() -> Result[V
   try write("#{base}/home/.finn/skills/deploy/SKILL.md", DEPLOY)
   try write("#{base}/home/.agents/skills/release/SKILL.md", RELEASE)
   try write("#{base}/work/.agents/skills/lint/SKILL.md", LINT_PROJECT)
+  try write("#{base}/work/~/.agents/skills/deploy/SKILL.md", DEPLOY)
   defaults = Skills.discover("#{base}/work", "#{base}/home", true)
   user = Skills.discover("#{base}/work", "#{base}/home", false, "", ["~/.agents/skills"], [".agents/skills"])
   project = Skills.discover("#{base}/work", "#{base}/home", true, "", ["~/.agents/skills"], [".agents/skills"])
+  absolute = Skills.discover("#{base}/work", "", true, "", ["#{base}/home/.agents/skills"], ["~/.agents/skills"])
   _ = Path.remove(base)
   try Test.eq(defaults.skills.map { |s| s.name }, ["deploy"])
   try Test.eq(user.skills.map { |s| s.name }, ["deploy", "release"])
+  try Test.eq(absolute.skills.map { |s| s.name }, ["deploy", "release"])
   Test.eq(project.skills.map { |s| s.name }, ["deploy", "lint", "release"])
 end
 

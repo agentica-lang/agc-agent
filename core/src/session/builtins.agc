@@ -47,7 +47,10 @@ def commands(served: Extensions.Served, read: Fn[String, Result[String]]) -> Ext
 end
 
 def skills(served: Extensions.Served) -> Extensions.Served
-  Extensions.add_builtin(served, Extensions.Builtin(system: &catalogued, open: &opened))
+  Extensions.add_builtin(
+    served,
+    Extensions.Builtin(system: &catalogued, open: &opened, refresh_skills: some(&recatalogued)),
+  )
 end
 
 ## The segment `chatgpt.quota`: what is left of the five-hour and seven-day windows of a ChatGPT session, from the
@@ -517,6 +520,8 @@ def catalogued(place: Extensions.Place, system: String) -> String
 
   "#{system}\n#{catalog}"
 end
+
+def recatalogued(place: Extensions.Place, system: String) -> String = Skills.with_catalog(system, found(place).skills)
 
 # The skills a session's system prompt lists, and those the model does not load.
 def opened(place: Extensions.Place, system: String) -> Extensions.Opened

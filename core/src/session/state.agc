@@ -86,6 +86,7 @@ struct Setup
   profile: Optional[Protocol.Profile] = none
   profile_refused: String = ""
   base_system: String = ""
+  skill_config: String = ""
   ## The profiles of the session's folders, read again at each call.
   profiles: Optional[Fn[Profiles.Loaded]] = none
   ## What a reload reads again: the system prompt, the extensions' parts and the approval; none for a session that
@@ -98,6 +99,7 @@ end
 ## the extensions' parts and the approval of the rules now, and the names of the skills.
 struct Reopened
   system: String
+  skill_config: String = ""
   builtins: List[Extensions.Opened]
   approver: Optional[Extensions.Approver]
   skills: List[String]

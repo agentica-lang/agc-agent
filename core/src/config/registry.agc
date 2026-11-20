@@ -197,6 +197,7 @@ end
 struct Builtin
   system: Fn[Place, String, String]
   open: Fn[Place, String, Opened]
+  refresh_skills: Optional[Fn[Place, String, String]] = none
 end
 
 ## What a session gets from one of the core's own extensions: folders that `read_file` reads too, the tools of its
@@ -417,6 +418,17 @@ def new_system(served: Served, place: Place, system: String) -> String
   out = system
   for builtin in served.builtins
     out = builtin.system.call(place, out)
+  end
+
+  out
+end
+
+def refresh_skills(served: Served, place: Place, system: String) -> String
+  out = system
+  for builtin in served.builtins
+    for refresh in option_list(builtin.refresh_skills)
+      out = refresh.call(place, out)
+    end
   end
 
   out

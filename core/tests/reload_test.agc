@@ -17,7 +17,7 @@ def test_skill_paths_follow_config_on_reload() -> Result[Void]
   config = "#{dir}/config.json"
   try File.write_text(config, "{}")
   setup = H.Setup(
-    replies: ["text.sse", "text.sse", "text.sse"],
+    replies: ["text.sse", "text.sse", "text.sse", "text.sse", "text.sse", "text.sse"],
     skills: true,
     live: true,
     env: {"FINN_CONFIG": config, "FINN_STATE_DIR": dir, "FINN_DATA_DIR": dir},
@@ -38,7 +38,18 @@ def test_skill_paths_follow_config_on_reload() -> Result[Void]
     try File.write_text(config, "{}")
     removed = try reload(h)
     try Test.eq(removed.skills_removed, ["lint"])
-    Test.eq(try system_after(h, id, "Disabled."), false)
+    try Test.eq(try system_after(h, id, "Disabled."), false)
+    try File.write_text(config, "{\"skills\":{\"user\":[\"~/.agents/skills\"]}}")
+    H.restarted(h, setup, "") do |r|
+      try Test.eq(try system_after(r, id, "Resumed."), true)
+      try Path.remove("#{r.base}/home/.agents/skills/lint")
+      try Test.eq((try reload(r)).skills_removed, ["lint"])
+      try write("#{r.base}/home/.agents/skills/lint/SKILL.md", LINT)
+      fork = try H.post(r, Protocol.fork_path(id), "{}")
+      forked = (try Protocol.decode_branched(fork.text)).id
+      try Test.eq(try system_after(r, forked, "In the fork."), false)
+      H.restarted(r, setup, "") do |again| Test.eq(try system_after(again, id, "After reload and restart."), false) end
+    end
   end
 
   _ = Path.remove(dir)

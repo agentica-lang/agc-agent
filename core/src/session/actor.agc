@@ -455,6 +455,19 @@ def reload_setup(state: Session.State, reply: Channel[Result[Session.Reloaded]])
         Actor.reply(reply, error(e.message, kind: e.kind))
         return state
       ok(fresh) ->
+        if fresh.system != setup.base_system or fresh.skill_config != setup.skill_config
+          case Stream.save(state, -> { Store.append_prompt(setup.file, fresh.system, fresh.skill_config) })
+            error(e) ->
+              Actor.reply(
+                reply,
+                error("the session file cannot be written: #{e.message}", kind: Protocol.KIND_SESSION_STORAGE),
+              )
+
+              return state.with(broken: some(e.message))
+            ok(_) -> state = state.with(broken: none)
+          end
+        end
+
         approver = fresh.approver
         for old in option_list(setup.approver)
           approver = fresh.approver.map { |a| a.with_accept_edits.call(old.accept_edits) }
@@ -464,6 +477,7 @@ def reload_setup(state: Session.State, reply: Channel[Result[Session.Reloaded]])
         next = setup.with(
           system: fresh.system,
           base_system: fresh.system,
+          skill_config: fresh.skill_config,
           builtins: fresh.builtins,
           approver: approver,
           ctx: ctx,

@@ -36,6 +36,7 @@ struct Header
   created_ms: Int
   ## The system prompt of every call of the session, so a cache of its prefix stays valid after a restart.
   system: Optional[String] = none
+  skill_config: Optional[String] = none
   ## The model API of the session, by its `FINN_API` name; none in a file made before the choice.
   api: Optional[String] = none
   ## The provider of the session; none in a file made before providers.
@@ -173,6 +174,7 @@ def create(port: Storage.Port, dir: String, header: Header) -> Result[Ref]
     "model": JSON.from(header.model),
     "created_ms": JSON.from(header.created_ms),
     "system": JSON.from(header.system),
+    "skill_config": JSON.from(header.skill_config),
     "api": JSON.from(header.api),
     "provider": JSON.from(header.provider),
     "profile": JSON.from(header.profile),
@@ -273,6 +275,10 @@ def append_settings(file: Ref, settings: Choice) -> Result[Void]
   ok()
 end
 
+def append_prompt(file: Ref, system: String, skill_config: String) -> Result[Void]
+  append(file, {"type": JSON.from("prompt"), "system": JSON.from(system), "skill_config": JSON.from(skill_config)})
+end
+
 ## The answer of a turn, as a client draws it.
 def append_answer(file: Ref, text: String) -> Result[Void]
   append(file, {"type": JSON.from("answer"), "text": JSON.from(text)})
@@ -333,7 +339,8 @@ def copy(file: Ref, dir: String, header: Header, leaf: Int) -> Result[Ref]
   return error("no entry #{leaf}", kind: Protocol.KIND_INVALID) if not entry?(entries, leaf)
 
   created = try create(file.port, dir, header)
-  written = write(created, branch(entries, leaf).map { |record| "#{record.line}\n" }.join(""))
+  records = branch(entries, leaf).select { |record| record.kind != "prompt" }
+  written = write(created, records.map { |record| "#{record.line}\n" }.join(""))
   if not written.ok?
     _ = created.port.remove.call(created.path)
   end
@@ -622,6 +629,7 @@ def totals(saved: Saved, entries: Entries) -> Saved
   started = 0
   usage: Optional[JSON.Value] = none
   settings = Settings()
+  header = saved.header
   for at in entries.order
     record = entries.records[at]
     case record.kind
@@ -651,11 +659,13 @@ def totals(saved: Saved, entries: Entries) -> Saved
       "user" -> users = users + 1
       "ids" -> reserved = JSON.int(JSON.get(json_of(record), "until").unwrap_or(JSON.null())).unwrap_or(reserved)
       "settings" -> settings = settings_of(json_of(record)).unwrap_or(settings)
+      "prompt" -> header = prompt_header(header, json_of(record)).unwrap_or(header)
       _ -> nil
     end
   end
 
   saved.with(
+    header: header,
     last_id: last_id,
     reserved: reserved,
     approvals: approvals,
@@ -840,11 +850,16 @@ def decode_header(json: JSON.Value) -> Result[Header]
       model: try field(json, "model"),
       created_ms: created_ms_of(json),
       system: optional_string(json, "system"),
+      skill_config: optional_string(json, "skill_config"),
       api: optional_string(json, "api"),
       provider: optional_string(json, "provider"),
       profile: optional_string(json, "profile"),
     ),
   )
+end
+
+def prompt_header(header: Header, json: JSON.Value) -> Result[Header]
+  ok(header.with(system: some(try field(json, "system")), skill_config: some(try field(json, "skill_config"))))
 end
 
 # A session of an early version has no time: it counts as the oldest.
@@ -934,6 +949,7 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
 
       ok(saved.with(history: history, folded: folded, stripped: false))
     "stripped" -> ok(saved.with(stripped: true))
+    "prompt" -> ok(saved)
     "ids" -> ok(saved.with(reserved: try JSON.int(try JSON.get(json, "until"))))
     "settings" ->
       settings = try settings_of(json)

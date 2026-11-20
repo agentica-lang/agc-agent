@@ -600,6 +600,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     model: model,
     created_ms: Time.now_ms,
     system: some(new_system(options, context.root)),
+    skill_config: some(skill_config(options, context.root)),
     api: some(api),
     provider: some(provider),
     profile: some(profile),
@@ -724,6 +725,13 @@ def entry(
   endpoint = try loaded_endpoint(options, provider, api)
   context = opened.context
   system = header.system.unwrap_or(system_of(options, context.root))
+  skill_config = skill_config(options, context.root)
+  if header.skill_config != some(skill_config)
+    place = place_of(options, context.root)
+    system = options.registry.map { |r| Extensions.refresh_skills(r, place, system) }.unwrap_or(system)
+    try Store.append_prompt(file, system, skill_config)
+  end
+
   builtins = builtins_of(options, context.root, system)
   for warning in (builtins.flat_map { |b| b.warnings })
     Logger.warning(warning)
@@ -736,6 +744,7 @@ def entry(
     provider: endpoint.provider,
     system: system,
     base_system: system,
+    skill_config: skill_config,
     ctx: context.with(
       read_roots: Extensions.read_roots(builtins),
       before: before_of(options, header.id),
@@ -1037,6 +1046,18 @@ def skill_names(options: Config.Options, root: String, system: String) -> List[S
   Skills.restrict(found.skills, system).map { |skill| skill.name }
 end
 
+def skill_config(options: Config.Options, root: String) -> String
+  place = place_of(options, root)
+  JSON.encode(
+    JSON.array([
+      JSON.from(place.home),
+      JSON.from(place.trusted),
+      JSON.from(place.skill_user),
+      JSON.from(place.skill_project),
+    ]),
+  )
+end
+
 # What a reload gives the session in `root`: the system prompt of a new session there (`AGENTS.md` and the skills read
 # again) with its extensions and its approval, under the options of now.
 def reopened(options: Config.Options, root: String) -> Result[SessionActor.Reopened]
@@ -1049,6 +1070,7 @@ def reopened(options: Config.Options, root: String) -> Result[SessionActor.Reope
   ok(
     SessionActor.Reopened(
       system: system,
+      skill_config: skill_config(now, root),
       builtins: builtins,
       approver: approver,
       skills: skill_names(now, root, system),
