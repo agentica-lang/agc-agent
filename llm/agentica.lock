@@ -1,6 +1,22 @@
 version = 1
 
 [[package]]
+name = "http-client"
+git = "https://github.com/agentica-lang/packages"
+subdir = "http-client"
+tag = "http-client-0.1.0"
+commit = "f9bcf64a2223432c30d0d91b4dc806325ac7e46e"
+hash = "sha256:9e146eab10b8dfd59af7f32dcc2665bc5b379c75446d34e5894223497916d86f"
+
+[[package]]
+name = "pool"
+git = "https://github.com/agentica-lang/packages"
+subdir = "pool"
+tag = "pool-0.1.3"
+commit = "6af323a4646d79c3dd5dff0459e042a6ef7e14ec"
+hash = "sha256:fcdfab562a80d352e8cc90e1bea3d4e4aa27ff365db8c939b1c90422c1b62aad"
+
+[[package]]
 name = "sse"
 git = "https://github.com/agentica-lang/agc-agent"
 subdir = "sse"

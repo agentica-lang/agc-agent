@@ -33,9 +33,10 @@ def all_providers(
   customs: List[Providers.Custom],
   keys: Map[String, String],
   access: AnthropicAccess,
+  options: LLM.Options = LLM.Options(),
 ) -> Result[Map[String, Providers.Provider]]
-  providers = builtin(apis(server.base_url, server.api_key, LLM.Options(), access), server.api)
-  offered = Providers.offered(customs, server.read, LLM.Options(), keys)
+  providers = builtin(apis(server.base_url, server.api_key, options, access), server.api)
+  offered = Providers.offered(customs, server.read, options, keys)
   for name in offered.keys
     providers = providers.put(name, offered[name])
   end

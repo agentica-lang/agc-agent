@@ -21,6 +21,7 @@ import Builtins from "src/session/builtins"
 import Tools from "src/tools/tools"
 import Log from "src/log"
 import Logger from "std/logger"
+import LLM from "pkg/llm/llm"
 
 ## The version of the core package, informational (no tag follows it). A server runs the version of Finn, the time of
 ## its commit (`/v1/health`).
@@ -132,8 +133,18 @@ def start(registry: Extensions.Registry) -> Result[Server.Server]
   clashes = Extensions.clashes(registry, Tools.all().map { |tool| tool.name })
   return error(clashes.join("\n")) if not clashes.empty?
 
+  transport = try LLM.transport()
+  result = start_with_transport(registry, transport)
+  if not result.ok?
+    LLM.close_transport(transport)
+  end
+
+  result
+end
+
+def start_with_transport(registry: Extensions.Registry, transport: LLM.Transport) -> Result[Server.Server]
   read = ->(name) { System.env(name) }
-  options = try Config.from_env(read)
+  options = try Config.from_env(read, LLM.Options(transport: some(transport)))
   for warning in options.warnings
     Logger.warning(warning)
   end
@@ -156,7 +167,7 @@ def start(registry: Extensions.Registry) -> Result[Server.Server]
   extended = options.with(
     reloads: [mounted.reload],
     mcp: some(mounted.control),
-    stops: [mounted.stop],
+    stops: [mounted.stop, -> { LLM.close_transport(transport) }],
     tools: options.tools + Extensions.spec_tools(registry),
     registry: some(all),
     catalog: some(catalog),

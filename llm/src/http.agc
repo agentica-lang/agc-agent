@@ -2,6 +2,7 @@
 ## folds it with the provider's wire functions, and `GET /models`.
 
 import HTTP from "std/http"
+import Client from "pkg/http-client/http_client"
 import SSE from "pkg/sse/sse"
 import Api from "api"
 import Errors from "errors"
@@ -12,6 +13,7 @@ EVENTS_CAPACITY = 64
 
 ## How a provider talks to its API.
 struct Options
+  transport: Optional[Transport] = none
   ## The longest wait for the API to answer: the connect and the head (and a whole call, such as `GET /models`).
   timeout_ms: Int = 120_000
   ## The longest wait for the next piece of a stream: a stream silent for longer fails.
@@ -23,6 +25,12 @@ struct Options
   retry_max_ms: Int = 30_000
   ## The longest `Retry-After` that is waited for; a longer one gives its error at once.
   retry_after_max_ms: Int = 120_000
+end
+
+struct Transport
+  private
+
+  client: Client.Client
 end
 
 ## Where an API is and how to reach it.
@@ -49,6 +57,14 @@ struct Wire[S]
   models_of: Optional[Fn[String, Result[List[Types.Model]]]] = none
 end
 
+def transport(pool_size: Int = 10) -> Result[Transport]
+  ok(Transport(client: try Client.new(pool_size: pool_size, max_retries: 0, max_redirects: 0)))
+end
+
+def close_transport(transport: Transport) -> Void
+  Client.close(transport.client)
+end
+
 ## `Authorization: Bearer KEY`, or nothing for an empty key.
 def bearer(api_key: String) -> List[HTTP.Header]
   return [] if api_key.empty?
@@ -70,7 +86,7 @@ private
 struct Job[S]
   config: Config
   wire: Wire[S]
-  http: HTTP.Stream
+  http: Client.Stream
   events: Channel[Types.Event]
 end
 
@@ -91,28 +107,106 @@ end
 
 def start_stream[S](config: Config, wire: Wire[S], request: Types.Request) -> Result[Api.Stream]
   body = (try wire.body.call(request)).bytes
-  http = try Errors.with_retry(retry(config), -> { open(config, wire, body, request.headers) })
   events: Channel[Types.Event] = Channel.new(EVENTS_CAPACITY)
-  job = Job(config: config, wire: wire, http: http, events: events)
-  reader = Task.spawn do read(job) end
+  ready: Channel[Result[Void]] = Channel.new(1)
+  reader = Task.spawn do run_stream(config, wire, body, request.headers, events, ready) end
+  Task.monitor(reader, ready) do |_down| error("llm: the stream task stopped before opening", kind: "llm.network") end
+  opened = await_ready(ready)
+  ready.close
+  try opened
 
-  ok(Api.Stream(events: events, done: reader, stop: -> { stop(http, reader, events) }))
+  ok(Api.Stream(events: events, done: reader, stop: -> { stop(reader, events) }))
 end
 
-def stop(http: HTTP.Stream, reader: Task[Result[Types.Response]], events: Channel[Types.Event]) -> Void
+def await_ready[T](ready: Channel[Result[T]]) -> Result[T]
+  while true
+    case ready.recv(5000)
+      ok(opened) -> return opened
+      error(e) -> return error(e) if ready.closed?
+    end
+  end
+
+  error("llm: the stream task stopped before opening", kind: "llm.network")
+end
+
+def stop(reader: Task[Result[Types.Response]], events: Channel[Types.Event]) -> Void
   Task.cancel(reader)
-  end_http(http)
   events.close
+  _ = Task.await(reader)
 end
 
-# The connection task is the caller's: it is stopped and waited for, so no task outlives the call.
-def end_http(http: HTTP.Stream) -> Void
-  Task.cancel(http.done)
-  _ = Task.await(http.done)
+def run_stream[S](
+  config: Config,
+  wire: Wire[S],
+  body: Bytes,
+  headers: Map[String, String],
+  events: Channel[Types.Event],
+  ready: Channel[Result[Void]],
+) -> Result[Types.Response]
+  result = with_client(config, ->(client) { stream_on(client, config, wire, body, headers, events, ready) })
+  case result
+    error(e) -> _ = ready.send(error(e), 0)
+    ok(_) -> nil
+  end
+
+  events.close
+  result
+end
+
+def stream_on[S](
+  client: Client.Client,
+  config: Config,
+  wire: Wire[S],
+  body: Bytes,
+  headers: Map[String, String],
+  events: Channel[Types.Event],
+  ready: Channel[Result[Void]],
+) -> Result[Types.Response]
+  opened: Channel[Result[Client.Stream]] = Channel.new(1)
+  released: Channel[Bool] = Channel.new(1)
+  exchange = Task.spawn do exchange_on(client, config, wire, body, headers, opened, released) end
+  Task.monitor(exchange, opened) do |_down| error("llm: the HTTP task stopped before opening", kind: "llm.network") end
+  http = try await_ready(opened)
+  try ready.send(ok(), 0)
+  result = read_events(Job(config: config, wire: wire, http: http, events: events))
+  if not http.body.closed?
+    Task.cancel(exchange)
+  end
+
+  http.body.close
+  released.close
+  _ = Task.await(exchange)
+  result
+end
+
+def exchange_on[S](
+  client: Client.Client,
+  config: Config,
+  wire: Wire[S],
+  body: Bytes,
+  headers: Map[String, String],
+  opened: Channel[Result[Client.Stream]],
+  released: Channel[Bool],
+) -> Result[Void]
+  result = Errors.with_retry(retry(config), -> { open(client, config, wire, body, headers) })
+  try opened.send(result, 0)
+  if result.ok?
+    while not released.closed?
+      _ = released.recv(5000)
+    end
+  end
+
+  ok()
 end
 
 # A 2xx answer comes back with its body unread; any other is read whole and becomes its error.
-def open[S](config: Config, wire: Wire[S], body: Bytes, extra: Map[String, String]) -> Result[HTTP.Stream]
+def open[S](
+  client: Client.Client,
+  config: Config,
+  wire: Wire[S],
+  body: Bytes,
+  extra: Map[String, String],
+) -> Result[Client.Stream]
   own = [
     HTTP.Header(name: "Content-Type", value: "application/json"),
     HTTP.Header(name: "Accept", value: "text/event-stream"),
@@ -120,17 +214,10 @@ def open[S](config: Config, wire: Wire[S], body: Bytes, extra: Map[String, Strin
 
   headers = merge_headers(own + wire.headers.call(config.api_key), extra)
   url = "#{config.base_url}#{wire.path}"
-  http = try network(HTTP.open("POST", url, body, headers, client_options(config)))
+  http = try network(Client.stream(client, "POST", url, body: some(body), headers: headers))
   return ok(http) if http.status >= 200 and http.status < 300
 
   Errors.from_status(http.status, http.headers, drain(http))
-end
-
-def read[S](job: Job[S]) -> Result[Types.Response]
-  result = read_events(job)
-  job.events.close
-  end_http(job.http)
-  result
 end
 
 def read_events[S](job: Job[S]) -> Result[Types.Response]
@@ -138,7 +225,8 @@ def read_events[S](job: Job[S]) -> Result[Types.Response]
   state = job.wire.begin.call()
   while not job.wire.ended.call(state)
     case job.http.body.recv(job.config.options.read_timeout_ms)
-      ok(piece) ->
+      ok(read) ->
+        piece = try cut(read, job.config.options.read_timeout_ms)
         fed = try sse_error(SSE.feed(parser, piece))
         parser = fed.parser
         for event in fed.events
@@ -149,12 +237,11 @@ def read_events[S](job: Job[S]) -> Result[Types.Response]
           end
         end
 
-      error(_) -> break if job.http.body.closed? and job.http.body.empty?
-    end
-  end
+      error(e) ->
+        break if job.http.body.closed? and job.http.body.empty?
 
-  if not job.wire.ended.call(state)
-    try cut(Task.await(job.http.done), job.config.options.read_timeout_ms)
+        return silent(job.config.options.read_timeout_ms, e)
+    end
   end
 
   response = try job.wire.finish.call(state)
@@ -172,7 +259,11 @@ def send[S](job: Job[S], event: Types.Event) -> Result[Void]
 end
 
 def list_models[S](config: Config, wire: Wire[S]) -> Result[List[Types.Model]]
-  response = try Errors.with_retry(retry(config), -> { get_models(config, wire) })
+  response = try with_client(
+    config,
+    ->(client) { Errors.with_retry(retry(config), -> { get_models(client, config, wire) }) },
+  )
+
   text = try protocol_text(response.body)
   for parse in option_list(wire.models_of)
     return parse.call(text)
@@ -181,12 +272,9 @@ def list_models[S](config: Config, wire: Wire[S]) -> Result[List[Types.Model]]
   models(text)
 end
 
-def get_models[S](config: Config, wire: Wire[S]) -> Result[HTTP.Response]
-  client = try network(HTTP.client(client_options(config)))
+def get_models[S](client: Client.Client, config: Config, wire: Wire[S]) -> Result[Client.Response]
   url = "#{config.base_url}#{wire.models_path}"
-  result = network(HTTP.request(client, "GET", url, "".bytes, wire.headers.call(config.api_key)))
-  HTTP.close_client(client)
-  response = try result
+  response = try network(Client.get(client, url, headers: wire.headers.call(config.api_key)))
   return ok(response) if response.status >= 200 and response.status < 300
 
   Errors.from_status(response.status, response.headers, response.body)
@@ -224,30 +312,41 @@ def merge_headers(own: List[HTTP.Header], extra: Map[String, String]) -> List[HT
   by_name.values
 end
 
-def client_options(config: Config) -> HTTP.ClientOptions
-  HTTP.ClientOptions(
+def with_client[T](config: Config, call: Fn[Client.Client, Result[T]]) -> Result[T]
+  for shared in option_list(config.options.transport)
+    return call.call(timed(shared.client, config))
+  end
+
+  local = try network(transport())
+  result = call.call(timed(local.client, config))
+  close_transport(local)
+  result
+end
+
+def timed(client: Client.Client, config: Config) -> Client.Client
+  client.with(
+    connect_timeout_ms: config.options.timeout_ms,
     timeout_ms: config.options.timeout_ms,
     read_timeout_ms: config.options.read_timeout_ms,
-    idle_timeout_ms: config.options.timeout_ms,
   )
 end
 
 # The body of an error answer, up to a limit: only its message is used.
-def drain(http: HTTP.Stream) -> Bytes
+def drain(http: Client.Stream) -> Bytes
   pieces: List[Bytes] = []
   size = 0
   while size < ERROR_BODY_BYTES
     case http.body.recv(5000)
-      ok(piece) ->
+      ok(ok(piece)) ->
         pieces = pieces.push(piece)
         size = size + piece.size
+      ok(error(_)) -> break
       error(_) -> break
     end
   end
 
   http.body.close
-  _ = Task.await(http.done)
-  Bytes.concat(pieces)
+  Bytes.concat(pieces).take(ERROR_BODY_BYTES)
 end
 
 def network[T](result: Result[T]) -> Result[T]
@@ -258,13 +357,16 @@ def network[T](result: Result[T]) -> Result[T]
 end
 
 # A stream that the API left silent for `read_ms` is a network failure; any other cut is the API's.
-def cut(result: Result[Void], read_ms: Int) -> Result[Void]
+def cut(result: Result[Bytes], read_ms: Int) -> Result[Bytes]
   case result
-    ok(_) -> ok()
-    error(e) if e.kind == "net.timeout" ->
-      error("llm: the API sent nothing for #{read_ms} ms", kind: "llm.network", cause: e)
+    ok(piece) -> ok(piece)
+    error(e) if e.kind == "http_client.timeout.read" -> silent(read_ms, e)
     error(e) -> error("llm: the stream was cut: #{e.message}", kind: "llm.protocol", cause: e)
   end
+end
+
+def silent[T](read_ms: Int, cause: Error) -> Result[T]
+  error("llm: the API sent nothing for #{read_ms} ms", kind: "llm.network", cause: cause)
 end
 
 def sse_error[T](result: Result[T]) -> Result[T]

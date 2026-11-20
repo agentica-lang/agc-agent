@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Finn reuses HTTP connections for model provider requests and accepts gzip and deflate model lists.
 - `/reload` applies updated approval rules even if saving the updated session prompt fails.
 - Skills now default to `.finn/skills` only. Configure extra user and trusted-project paths with `skills` in `config.json`. Existing sessions pick up path changes on reload or resume.
 - The full-screen status row shows the remaining ChatGPT five-hour and seven-day quota (`5h 62% · 7d 80%`) in ChatGPT sessions, and drops it first on a narrow row.
