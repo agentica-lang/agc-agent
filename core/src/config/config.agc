@@ -211,10 +211,16 @@ struct Reloaded
   asking: Bool = false
 end
 
-def from_env(read: Fn[String, Result[String]]) -> Result[Options] = from_env_with(read, &Offered.ant_token)
+def from_env(read: Fn[String, Result[String]], llm: LLM.Options = LLM.Options()) -> Result[Options]
+  from_env_with(read, &Offered.ant_token, llm)
+end
 
 ## `ant` gives the OAuth token of `ant auth login` when no variable has a credential and `FINN_API` is `anthropic`.
-def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> Result[Options]
+def from_env_with(
+  read: Fn[String, Result[String]],
+  ant: Fn[Result[String]],
+  llm: LLM.Options = LLM.Options(),
+) -> Result[Options]
   moved = try left_behind(read)
   env_url = set(read, "FINN_BASE_URL")
   base_url = env_url.unwrap_or(DEFAULT_BASE_URL)
@@ -249,8 +255,9 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
   rebuilding = ->(more: List[Providers.Custom]) {
     ->(keys: Map[String, String], urls: Map[String, String]) {
       current = server.with(base_url: local_url(base_url, env_url, urls))
-      built = Offered.all_providers(current, more, keys, Offered.access_for(current, keys, claude_key, at_start))
-      Chatgpt.added(built, chatgpt, LLM.Options())
+      access = Offered.access_for(current, keys, claude_key, at_start)
+      built = Offered.all_providers(current, more, keys, access, llm)
+      Chatgpt.added(built, chatgpt, llm)
     }
   }
 

@@ -283,11 +283,17 @@ end
 def test_a_cut_stream_is_llm_protocol() -> Result[Void]
   body = try Fake.fixture("openai_chat/text.sse")
   cut = Fake.Reply(status: 200, body: body.take(body.size / 2), piece_bytes: 100, cut: true)
-  fake = try Fake.start([cut])
-  call = try LLM.stream(provider(fake), LLM.Request(model: MODEL, messages: [Ev.user("Say hello.")]))
+  fake = try Fake.start([cut, try Fake.json(200, "openai_chat/models.json")])
+  shared = try LLM.transport(pool_size: 1)
+  options = LLM.Options(transport: some(shared), timeout_ms: 1500, read_timeout_ms: 0, tries: 1)
+  provider = LLM.openai_chat(fake.url, KEY, options)
+  call = try LLM.stream(provider, LLM.Request(model: MODEL, messages: [Ev.user("Say hello.")]))
   result = LLM.response(call)
+  models = LLM.models(provider)
+  LLM.close_transport(shared)
   try Fake.stop(fake)
-  Test.eq(Ev.kind(result), "llm.protocol")
+  try Test.eq(Ev.kind(result), "llm.protocol")
+  Test.eq(models, ok([LLM.Model(id: MODEL, context: some(4096))]))
 end
 
 def test_cancel_stops_the_stream() -> Result[Void]
@@ -312,7 +318,145 @@ def test_lists_the_models_with_their_context() -> Result[Void]
   Test.eq(models, ok([LLM.Model(id: MODEL, context: some(4096))]))
 end
 
+def test_provider_requests_reuse_one_connection_and_decode_gzip() -> Result[Void]
+  listener = try TCP.listen("127.0.0.1", 0)
+  body = try Zlib.gzip(try Fake.fixture("openai_chat/models.json"))
+  sse = try Fake.fixture("openai_chat/text.sse")
+  finish: Channel[Bool] = Channel.new(1)
+  peer = Task.spawn do serve_provider(listener, sse, body, finish) end
+  shared = try LLM.transport(pool_size: 1)
+  options = LLM.Options(transport: some(shared), timeout_ms: 1500, tries: 1)
+  url = "http://127.0.0.1:#{TCP.local_port(listener)}/v1"
+  provider = LLM.openai_chat(url, KEY, options)
+  call = try LLM.stream(provider, LLM.Request(model: MODEL, messages: [Ev.user("Say hello.")]))
+  _ = Ev.collect(call)
+  try finish.send(true, 0)
+  first = LLM.response(call)
+  second = LLM.models(LLM.openai_chat(url, "another-key", options))
+  LLM.close_transport(shared)
+  TCP.close_listener(listener)
+  try Task.await(peer)
+  expected = [LLM.Model(id: MODEL, context: some(4096))]
+  try Test.assert(first.ok?, first.message)
+  Test.eq(second, ok(expected))
+end
+
+def test_cancelling_a_silent_stream_frees_the_only_pool_slot() -> Result[Void]
+  hold: Channel[Bool] = Channel.new(1)
+  stream = (try Fake.sse("openai_chat/text.sse")).with(hold: some(hold))
+  fake = try Fake.start([stream, try Fake.json(200, "openai_chat/models.json")])
+  shared = try LLM.transport(pool_size: 1)
+  options = LLM.Options(transport: some(shared), timeout_ms: 1500, read_timeout_ms: 10_000, tries: 1)
+  provider = LLM.openai_chat(fake.url, KEY, options)
+  call = try LLM.stream(provider, LLM.Request(model: MODEL, messages: [Ev.user("Say hello.")]))
+  LLM.cancel(call)
+  result = LLM.models(provider)
+  hold.close
+  LLM.close_transport(shared)
+  try Fake.stop(fake)
+  try Test.eq(Ev.kind(LLM.response(call)), "llm.cancelled")
+  Test.eq(result, ok([LLM.Model(id: MODEL, context: some(4096))]))
+end
+
+def test_a_stalled_error_releases_the_slot_before_retrying_a_slow_head() -> Result[Void]
+  hold: Channel[Bool] = Channel.new(1)
+  rejected = Fake.Reply(status: 429, body: "rate limited".bytes, hold: some(hold))
+  answered = (try Fake.sse("openai_chat/text.sse", piece_bytes: 0)).with(head_wait_ms: 150)
+  fake = try Fake.start([rejected, answered])
+  shared = try LLM.transport(pool_size: 1)
+  options = LLM.Options(transport: some(shared), timeout_ms: 1500, read_timeout_ms: 60, tries: 2, retry_base_ms: 1)
+  provider = LLM.openai_chat(fake.url, KEY, options)
+  opened = LLM.stream(provider, LLM.Request(model: MODEL, messages: [Ev.user("Say hello.")]))
+  hold.close
+  result = case opened
+    ok(call) -> LLM.response(call)
+    error(e) -> error(e)
+  end
+
+  LLM.close_transport(shared)
+  try Fake.stop(fake)
+  Test.assert(result.ok?, result.message)
+end
+
+def test_model_listing_has_its_own_body_idle_timeout() -> Result[Void]
+  hold: Channel[Bool] = Channel.new(1)
+  reply = (try Fake.json(200, "openai_chat/models.json")).with(hold: some(hold))
+  fake = try Fake.start([reply])
+  options = LLM.Options(timeout_ms: 1500, read_timeout_ms: 60, tries: 1)
+  result = LLM.models(LLM.openai_chat(fake.url, KEY, options))
+  hold.close
+  try Fake.stop(fake)
+  case result
+    ok(_) -> error("expected the model listing to time out")
+    error(e) ->
+      try Test.eq(e.kind, "llm.network")
+      Test.assert(e.message.include?("within 60 ms"), e.message)
+  end
+end
+
+def test_a_generation_request_over_one_mib_is_refused_locally() -> Result[Void]
+  provider = LLM.openai_chat("http://127.0.0.1:1/v1", KEY, LLM.Options(tries: 1))
+  message = Ev.user("x" * 1_048_576)
+  case LLM.stream(provider, LLM.Request(model: MODEL, messages: [message]))
+    ok(call) ->
+      LLM.cancel(call)
+      error("expected the request body to be refused")
+    error(e) -> Test.eq([e.kind, e.message], ["llm.invalid_request", "llm: the request body exceeds 1048576 bytes"])
+  end
+end
+
 private
+
+def serve_provider(listener: TCP.Listener, sse: Bytes, models: Bytes, finish: Channel[Bool]) -> Result[Void]
+  socket = try TCP.accept(listener, 1500)
+  try Test.eq((try TCP.read_line(socket, 1500)).strip, "POST /v1/chat/completions HTTP/1.1")
+  sent = try peer_headers(socket)
+  try Test.eq(sent.get("authorization"), some("Bearer #{KEY}"))
+  remaining = try sent.get("content-length").unwrap_or("").to_i
+  while remaining > 0
+    piece = try TCP.recv_bytes(socket, remaining, 1500)
+    return error("the provider request ended before its content length") if piece.empty?
+
+    remaining = remaining - piece.size
+  end
+
+  try TCP.send(
+    socket,
+    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n",
+    1500,
+  )
+
+  try TCP.send(socket, "#{format("%x", sse.size)}\r\n", 1500)
+  try TCP.send_bytes(socket, sse, 1500)
+  try TCP.send(socket, "\r\n", 1500)
+  _ = try finish.recv(1500)
+  try TCP.send(socket, "0\r\n\r\n", 1500)
+  try Test.eq((try TCP.read_line(socket, 1500)).strip, "GET /v1/models HTTP/1.1")
+  headers = try peer_headers(socket)
+  try Test.eq(headers.get("authorization"), some("Bearer another-key"))
+  try Test.assert(headers.get("accept-encoding").unwrap_or("").include?("gzip"), headers.inspect)
+  try peer_response(socket, "Content-Encoding: gzip", models)
+  TCP.close(socket)
+  ok()
+end
+
+def peer_headers(socket: TCP.Socket) -> Result[Map[String, String]]
+  headers: Map[String, String] = {}
+  while true
+    line = (try TCP.read_line(socket, 1500)).strip
+    break if line.empty?
+
+    parts = line.split(":")
+    headers = headers.put(parts[0].downcase, parts.drop(1).join(":").strip)
+  end
+
+  ok(headers)
+end
+
+def peer_response(socket: TCP.Socket, header: String, body: Bytes) -> Result[Void]
+  try TCP.send(socket, "HTTP/1.1 200 OK\r\n#{header}\r\nContent-Length: #{body.size}\r\n\r\n", 1500)
+  TCP.send_bytes(socket, body, 1500)
+end
 
 def limit_of(body: JSON.Value) -> String
   for name in ["max_tokens", "max_output_tokens"]

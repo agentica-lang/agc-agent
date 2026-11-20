@@ -22,6 +22,9 @@ ANTHROPIC_MODEL = Anthropic.MODEL
 ANTHROPIC_CHEAP_MODEL = Anthropic.CHEAP_MODEL
 
 export Http.Options
+export Http.Transport
+export Http.transport
+export Http.close_transport
 export Anthropic.anthropic
 export OpenAIChat.openai_chat
 export OpenAIResponses.openai_responses
