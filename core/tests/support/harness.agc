@@ -366,6 +366,8 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     take_ms: setup.take_ms,
     catalog_wait_ms: setup.catalog_wait_ms,
     home: skills_home(setup, base),
+    skill_user: [".agents/skills", ".claude/skills"],
+    skill_project: [".agents/skills", ".claude/skills"],
     docs: docs_folder(setup, base),
     trusted: skills_trusted(setup, base),
     files_command: setup.files_command,

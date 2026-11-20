@@ -1,4 +1,4 @@
-## Agent Skills (agentskills.io): folders with a `SKILL.md` under `.finn/skills`, `.agents/skills` and `.claude/skills`
+## Agent Skills (agentskills.io): folders with a `SKILL.md` under `.finn/skills` and the user's configured paths
 ## of the session folder (only when it is trusted) and of the home folder. The system prompt lists each skill's name and
 ## description; the model loads one with `activate_skill`, the user with `/name` in a message. A loaded skill is its
 ## body in a `<skill_content>` block. The session keeps the names of the skills it loaded (its marks), so a skill loads
@@ -10,7 +10,7 @@ import Regex from "std/regex"
 import Spec from "../tools/spec"
 
 TOOL = "activate_skill"
-ROOTS = [".finn/skills", ".agents/skills", ".claude/skills"]
+ROOTS = [".finn/skills"]
 SKIPPED = [".git", "node_modules"]
 MAX_DEPTH = 4
 MAX_DIRS = 2000
@@ -64,14 +64,21 @@ end
 ## user's and the project's skills count first). A project skill shadows a user skill of the same name, and either the
 ## built-in one; in one scope the first root wins. A skills root may be a link, which is resolved once; a link inside
 ## it is not followed. A folder or a SKILL.md that two roots lead to counts once, with no warning.
-def discover(root: String, home: String, trusted: Bool, docs: String = "") -> Found
+def discover(
+  root: String,
+  home: String,
+  trusted: Bool,
+  docs: String = "",
+  user_paths: List[String] = [],
+  project_paths: List[String] = [],
+) -> Found
   found = Found(skills: [], warnings: [])
   if trusted
-    found = scope(found, root)
+    found = scope(found, root, project_paths)
   end
 
   if home != ""
-    found = scope(found, home)
+    found = scope(found, home, user_paths)
   end
 
   sorted = found.skills.sort_by { |skill| skill.name }
@@ -311,11 +318,18 @@ end
 
 def escaped(text: String) -> String = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-def scope(found: Found, base: String) -> Found
+def scope(found: Found, base: String, extra: List[String]) -> Found
   scoped = found
   names = found.skills.map { |skill| skill.name }
-  for root in ROOTS
-    real = Path.real("#{base}/#{root}")
+  for root in ROOTS + extra
+    path = "#{base}/#{root}"
+    if root.start_with?("/")
+      path = root
+    elsif root.start_with?("~/")
+      path = "#{base}/#{root.slice(2, root.length - 2)}"
+    end
+
+    real = Path.real(path)
     next if not real.ok? or not directory?(real.unwrap!)
 
     dir = real.unwrap!
@@ -332,7 +346,11 @@ def scope(found: Found, base: String) -> Found
           kind = "the project's skill"
         end
 
-        scoped = warned(scoped, "#{skill.location}: #{skill.name} is shadowed by #{kind}")
+        winner = scoped.skills.find { |s| s.name == skill.name }
+        scoped = warned(
+          scoped,
+          "#{skill.location}: #{skill.name} is shadowed by #{kind} at #{winner.unwrap!.location}",
+        )
       else
         scoped = scoped.with(skills: scoped.skills.push(skill))
       end

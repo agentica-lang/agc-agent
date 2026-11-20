@@ -34,8 +34,8 @@ USAGE = <<~TEXT
   .finn/mcp.json of a session folder under FINN_TRUSTED_DIRS, whose servers run with the sessions of that folder (a name the
   user's file has is left out; it cannot read ${NAME} of the environment). Their tools are mcp__NAME__TOOL and ask before each call. A server on stdio gets the short
   environment of bash plus its "env", which is passed on as given (put the keys it needs there); a slow server's tools
-  come once it lists them, from the next turn. Skills (SKILL.md folders under .finn/skills, .agents/skills and
-  .claude/skills) come from the home folder, and from the session folder only when it is under a folder of
+  come once it lists them, from the next turn. Skills (SKILL.md folders under .finn/skills and the extra paths in
+  the user's config file) come from the home folder, and from the session folder only when it is under a folder of
   FINN_TRUSTED_DIRS (separated by :); the model loads one with activate_skill, the user with /name in a message. The
   built-in skill finn has the pages of the docs/content folder of the install that FINN_HOME names (bin/finn sets
   it). The catalog of models.dev (FINN_MODELS_URL, "off" for none), loaded at the start and kept a day in models.json of the

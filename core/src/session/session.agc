@@ -120,9 +120,17 @@ end
 
 ## The slash commands of a session: the user's and a trusted project's, and those that do not load.
 def commands(sessions: Sessions, id: String) -> Result[Protocol.CommandList]
-  place = place_of(sessions.options, (try snapshot(sessions, id)).cwd)
+  place = place_of(Config.now(sessions.options), (try snapshot(sessions, id)).cwd)
   loaded = Commands.load(Commands.user_folder(sessions.options.env), place.root, place.trusted)
-  skills = Skills.discover(place.root, place.home, place.trusted, place.docs).skills.map { |s| s.name }
+  skills = Skills.discover(
+    place.root,
+    place.home,
+    place.trusted,
+    place.docs,
+    place.skill_user,
+    place.skill_project,
+  ).skills.map { |s| s.name }
+
   notes = loaded.warnings + Commands.clashes(loaded, skills)
   listed = loaded.commands.map do |c|
     warnings = notes.select { |n| n.name == c.name }.map { |n| n.text }
@@ -1025,7 +1033,7 @@ end
 # The names of the skills a session with `system` has.
 def skill_names(options: Config.Options, root: String, system: String) -> List[String]
   place = place_of(options, root)
-  found = Skills.discover(place.root, place.home, place.trusted, place.docs)
+  found = Skills.discover(place.root, place.home, place.trusted, place.docs, place.skill_user, place.skill_project)
   Skills.restrict(found.skills, system).map { |skill| skill.name }
 end
 
@@ -1062,7 +1070,14 @@ def late_of(options: Config.Options) -> Optional[Fn[String, List[Tools.Tool]]]
 end
 
 def place_of(options: Config.Options, root: String) -> Extensions.Place
-  Extensions.Place(root: root, home: options.home, trusted: trusted?(options, root), docs: options.docs)
+  Extensions.Place(
+    root: root,
+    home: options.home,
+    trusted: trusted?(options, root),
+    docs: options.docs,
+    skill_user: options.skill_user,
+    skill_project: options.skill_project,
+  )
 end
 
 # A session folder under a folder of `FINN_TRUSTED_DIRS`, whose own skills and all of whose rules count (elsewhere

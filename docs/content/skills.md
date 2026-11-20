@@ -10,13 +10,15 @@ A skill is a folder with a `SKILL.md`: instructions, and any files they need, fo
 
 ## Where Finn finds them
 
-In these folders, of your home folder and of the session folder:
+By default Finn searches `~/.finn/skills/` and `.finn/skills/` in the session folder. It does not automatically search `.agents/skills/` or `.claude/skills/`. Add paths for either scope to your [config file](config.md#the-users-config-file):
 
-- `.finn/skills/`
-- `.agents/skills/`
-- `.claude/skills/`
+```json
+{"skills": {"user": ["~/.agents/skills", "~/.claude/skills"], "project": [".agents/skills"]}}
+```
 
-The skills of the session folder count only when it is under a [trusted folder](config.md#trusted-folders). A project skill hides a home skill of the same name. Folders that are links to one folder (`~/.agents/skills` and `~/.claude/skills`, say) count once, with no warning. Finn uses 100 skills at most (the built-in one comes after them).
+User paths are absolute, `~/` paths, or relative to the home folder. Project paths are relative to the session folder and cannot contain `..`. Only the user's config can add them, and skills of the session folder count only when it is under a [trusted folder](config.md#trusted-folders). `/reload` applies changes from the next turn.
+
+A project skill hides a home skill of the same name; in each scope `.finn/skills` comes first, followed by the configured paths in order. A collision warns with both paths. Skills folders that are links to one folder count once, with no warning. Finn uses 100 skills at most (the built-in one comes after them).
 
 ## The finn skill
 

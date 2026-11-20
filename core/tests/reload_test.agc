@@ -11,6 +11,40 @@ import S from "support/mcp_fakes"
 
 LINT = "---\nname: lint\ndescription: Run the linter.\n---\nLint it.\n"
 
+def test_skill_paths_follow_config_on_reload() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-skill-config-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  config = "#{dir}/config.json"
+  try File.write_text(config, "{}")
+  setup = H.Setup(
+    replies: ["text.sse", "text.sse", "text.sse"],
+    skills: true,
+    live: true,
+    env: {"FINN_CONFIG": config, "FINN_STATE_DIR": dir, "FINN_DATA_DIR": dir},
+  )
+
+  result = H.using(setup) do |h|
+    try write("#{h.base}/home/.agents/skills/lint/SKILL.md", LINT)
+    id = try H.new_session(h)
+    try Test.eq(try system_after(h, id, "Before."), false)
+    try File.write_text(config, "{\"skills\":{\"user\":[\"~/.agents/skills\"]}}")
+    added = try reload(h)
+    try Test.eq(added.skills_added, ["lint"])
+    try Test.eq(try system_after(h, id, "Enabled."), true)
+    try File.write_text(config, "{\"skills\":{\"project\":[\"../outside\"]}}")
+    invalid = try reload(h)
+    try Test.assert(invalid.config.start_with?("kept"), invalid.config)
+    try Test.eq(invalid.skills_removed, [])
+    try File.write_text(config, "{}")
+    removed = try reload(h)
+    try Test.eq(removed.skills_removed, ["lint"])
+    Test.eq(try system_after(h, id, "Disabled."), false)
+  end
+
+  _ = Path.remove(dir)
+  result
+end
+
 # A skill added after a session started is in its system prompt from its next turn, and gone again once it is removed;
 # the answer says which.
 def test_a_reload_adds_and_removes_skills_for_the_next_turn() -> Result[Void]

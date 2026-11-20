@@ -123,6 +123,8 @@ struct Options
   catalog_wait_ms: Int = 1500
   ## The home folder, whose skills every session has; empty for none.
   home: String = ""
+  skill_user: List[String] = []
+  skill_project: List[String] = []
   ## The folder of Finn's own documentation pages, which the built-in skill `finn` reads in place; empty for none.
   docs: String = ""
   ## The folders whose sessions load the skills of their own folder: a project's skills are its instructions.
@@ -186,6 +188,8 @@ struct Settings
   clipboard: Clipboard
   keys: Map[String, String]
   status_line: Optional[Protocol.StatusLine]
+  skill_user: List[String] = []
+  skill_project: List[String] = []
   ## What in the file was not taken and does not stop the server: it keeps its default.
   notes: List[String]
   customs: List[Providers.Custom]
@@ -350,6 +354,8 @@ def from_env_with(read: Fn[String, Result[String]], ant: Fn[Result[String]]) -> 
       models_url: set(read, "FINN_MODELS_URL").unwrap_or(Catalog.URL),
       models_provider: set(read, "FINN_MODELS_PROVIDER").unwrap_or(""),
       home: set(read, "HOME").unwrap_or(""),
+      skill_user: first.skill_user,
+      skill_project: first.skill_project,
       docs: docs_folder(read),
       trusted: set(read, "FINN_TRUSTED_DIRS").unwrap_or("").split(":").select { |dir| dir != "" },
       files_command: first.files_command,
@@ -604,6 +610,39 @@ def setting(found: UserFile, key: String) -> Optional[JSON.Value]
   none
 end
 
+def skill_paths(found: UserFile, side: String) -> Result[List[String]]
+  for skills in option_list(setting(found, "skills"))
+    case JSON.node(skills)
+      JSON.Node.Object(_) -> nil
+      _ -> return error("#{found.path}: skills must be an object")
+    end
+
+    case JSON.get(skills, side)
+      error(_) -> return ok([])
+      ok(value) ->
+        listed = JSON.list(value)
+        return error("#{found.path}: skills.#{side} must be a list of paths") if not listed.ok?
+
+        paths: List[String] = []
+        for item in try listed
+          name = JSON.string(item)
+          return error("#{found.path}: skills.#{side} must be a list of paths") if not name.ok?
+
+          path = try name
+          if path.empty? or (side == "project" and (path.start_with?("/") or path.split("/").include?("..")))
+            return error("#{found.path}: invalid skills.#{side} path #{path.inspect}")
+          end
+
+          paths = paths.push(path)
+        end
+
+        return ok(paths)
+    end
+  end
+
+  ok([])
+end
+
 # `files.command` of the user's config file: a program and its arguments, which the file must name with a program.
 def files_command(found: UserFile) -> Result[List[String]]
   for files in option_list(setting(found, "files"))
@@ -792,6 +831,8 @@ def settings_of(read: Fn[String, Result[String]]) -> Result[Settings]
       clipboard: try clipboard_setting(file),
       keys: try keys_setting(file),
       status_line: status_line.unwrap_or(none),
+      skill_user: try skill_paths(file, "user"),
+      skill_project: try skill_paths(file, "project"),
       notes: status_note(status_line),
       customs: customs,
     ),
@@ -812,6 +853,8 @@ def lived(options: Options) -> Options
           clipboard_command: found.clipboard.command,
           keys: found.keys,
           status_line: found.status_line,
+          skill_user: found.skill_user,
+          skill_project: found.skill_project,
         )
       error(_) -> nil
     end

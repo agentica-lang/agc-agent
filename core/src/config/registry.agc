@@ -186,6 +186,8 @@ struct Place
   root: String
   home: String
   trusted: Bool
+  skill_user: List[String] = []
+  skill_project: List[String] = []
   ## The folder of Finn's own documentation pages (the built-in skill `finn`); empty for none.
   docs: String = ""
 end
