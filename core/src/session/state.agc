@@ -210,6 +210,7 @@ end
 
 struct State
   setup: Setup
+  prompt_pending: Bool = false
   counter: Int = 0
   log: List[Store.Logged] = []
   subscribers: List[Channel[Bytes]] = []

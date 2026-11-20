@@ -262,6 +262,36 @@ def test_a_reload_changes_the_files_program_the_mouse_and_the_approvals() -> Res
   result
 end
 
+def test_a_reload_applies_denies_when_saving_the_prompt_fails() -> Result[Void]
+  dir = "#{System.env("TMPDIR").unwrap_or("/tmp")}/core-reload-deny-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  config = "#{dir}/config.json"
+  try File.write_text(config, "{}")
+  setup = H.Setup(
+    replies: ["write_file.sse", "text.sse"],
+    live: true,
+    env: {"FINN_CONFIG": config, "FINN_STATE_DIR": dir, "FINN_DATA_DIR": dir},
+  )
+
+  result = H.using(setup) do |h|
+    id = try H.new_session(h)
+    prompt = "#{H.sessions(h)}/#{id}.prompt.json"
+    try Dir.mkdir(prompt)
+    try File.write_text("#{h.work}/AGENTS.md", "New project instructions.\n")
+    try File.write_text(config, "{\"permission\":[\"deny write_file(hello.txt)\"]}")
+    done = try reload(h)
+    try Test.eq(done.rules, 1)
+    try Test.eq(try wrote(h, id, "Write hello.txt."), false)
+    try Test.assert(done.warnings.any? { |w| w.include?("session prompt") }, done.warnings.join("\n"))
+    try Path.remove(prompt)
+    _ = try reload(h)
+    Test.eq((try File.stat(prompt)).kind, "file")
+  end
+
+  _ = Path.remove(dir)
+  result
+end
+
 # A request without the token is refused.
 def test_a_reload_needs_the_token() -> Result[Void]
   H.using(H.Setup(replies: [])) do |h| Test.eq((try H.call(h, "POST", Protocol.RELOAD_PATH, "", [])).status, 401) end

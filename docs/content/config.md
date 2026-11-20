@@ -97,7 +97,7 @@ A one-shot run (`finn -p`) never changes the choice, so a script does not reset 
 
 - the user's config file: the permission rules and `approvals`, `files.command`, `mouse`, `status_line`, skill paths and the providers it adds;
 - the MCP servers (the user's file, `FINN_MCP_CONFIG`, and the `.finn/mcp.json` of each folder with sessions): when a list changed, its servers stop and the new list starts (a call that runs on a stopped one fails, and the new tools come as the servers list them); only MCP servers reload, not extensions registered in code;
-- the skills and the `AGENTS.md` of each running session, and its approval.
+- the skills, `AGENTS.md` and approval rules of each running session. If Finn cannot save the updated prompt for a restart, it reports a warning and applies the changes to the running session.
 
 A session that runs uses them from its next turn; a turn that runs keeps what it started with. The answers that a session gave with "always" are forgotten, the accept-edits mode stays. A new session, or one that loads later, reads everything fresh. The answer says what changed (`skills: 2 added, 1 removed; config reloaded (3 rules, approvals on); restarting 1 MCP server(s)`), and the warnings of the load go to `/logs`. Two reloads never run at once, and a draining server refuses one.
 
