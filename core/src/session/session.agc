@@ -120,9 +120,17 @@ end
 
 ## The slash commands of a session: the user's and a trusted project's, and those that do not load.
 def commands(sessions: Sessions, id: String) -> Result[Protocol.CommandList]
-  place = place_of(sessions.options, (try snapshot(sessions, id)).cwd)
+  place = place_of(Config.now(sessions.options), (try snapshot(sessions, id)).cwd)
   loaded = Commands.load(Commands.user_folder(sessions.options.env), place.root, place.trusted)
-  skills = Skills.discover(place.root, place.home, place.trusted, place.docs).skills.map { |s| s.name }
+  skills = Skills.discover(
+    place.root,
+    place.home,
+    place.trusted,
+    place.docs,
+    place.skill_user,
+    place.skill_project,
+  ).skills.map { |s| s.name }
+
   notes = loaded.warnings + Commands.clashes(loaded, skills)
   listed = loaded.commands.map do |c|
     warnings = notes.select { |n| n.name == c.name }.map { |n| n.text }
@@ -591,7 +599,7 @@ def open_session(registry: Registry, request: Protocol.NewSession) -> Result[Ent
     cwd: context.root,
     model: model,
     created_ms: Time.now_ms,
-    system: some(new_system(options, context.root)),
+    prompt: some(new_prompt(options, context.root)),
     api: some(api),
     provider: some(provider),
     profile: some(profile),
@@ -715,8 +723,18 @@ def entry(
 
   endpoint = try loaded_endpoint(options, provider, api)
   context = opened.context
-  system = header.system.unwrap_or(system_of(options, context.root))
-  builtins = builtins_of(options, context.root, system)
+  prompt = header.prompt.unwrap_or(Store.Prompt())
+  skill_config = skill_config(options, context.root)
+  if header.prompt.none?
+    prompt = new_prompt(options, context.root)
+    try Store.save_prompt(file, prompt)
+  elsif prompt.skill_config != skill_config
+    prompt = prompt.with(catalog: skill_catalog(options, context.root), skill_config: skill_config)
+    try Store.save_prompt(file, prompt)
+  end
+
+  system = assembled(prompt)
+  builtins = builtins_of(options, context.root, prompt.catalog)
   for warning in (builtins.flat_map { |b| b.warnings })
     Logger.warning(warning)
   end
@@ -728,6 +746,7 @@ def entry(
     provider: endpoint.provider,
     system: system,
     base_system: system,
+    prompt: some(prompt),
     ctx: context.with(
       read_roots: Extensions.read_roots(builtins),
       before: before_of(options, header.id),
@@ -750,7 +769,7 @@ def entry(
     endpoint: some(->(name: String, now: String) { switched_endpoint(Config.now(options), name, now) }),
     profiles: some(-> { profiles_of(options, context.root) }),
     reopen: some(-> { reopened(options, context.root) }),
-    skills: skill_names(options, context.root, system),
+    skills: skill_names(options, context.root, prompt.catalog),
   )
 
   setup = SessionActor.switched(base, endpoint).with(model: header.model, refused: refusal(options, provider))
@@ -1016,41 +1035,66 @@ def warn_profiles(options: Config.Options) -> Void
   end
 end
 
-# The system prompt of a new session in `root`, with what the extensions add.
-def new_system(options: Config.Options, root: String) -> String
-  system = system_of(options, root)
-  options.registry.map { |r| Extensions.new_system(r, place_of(options, root), system) }.unwrap_or(system)
+def new_prompt(options: Config.Options, root: String) -> Store.Prompt
+  Store.Prompt(
+    base: system_of(options, root),
+    catalog: skill_catalog(options, root),
+    skill_config: skill_config(options, root),
+  )
 end
 
-# The names of the skills a session with `system` has.
-def skill_names(options: Config.Options, root: String, system: String) -> List[String]
+def skill_catalog(options: Config.Options, root: String) -> String
+  options.registry.map { |r| Extensions.skill_catalog(r, place_of(options, root)) }.unwrap_or("")
+end
+
+def assembled(prompt: Store.Prompt) -> String
+  return prompt.base if prompt.catalog.empty?
+
+  "#{prompt.base}\n#{prompt.catalog}"
+end
+
+# The names of the skills a session with `catalog` has.
+def skill_names(options: Config.Options, root: String, catalog: String) -> List[String]
   place = place_of(options, root)
-  found = Skills.discover(place.root, place.home, place.trusted, place.docs)
-  Skills.restrict(found.skills, system).map { |skill| skill.name }
+  found = Skills.discover(place.root, place.home, place.trusted, place.docs, place.skill_user, place.skill_project)
+  Skills.restrict(found.skills, catalog).map { |skill| skill.name }
+end
+
+def skill_config(options: Config.Options, root: String) -> String
+  place = place_of(options, root)
+  JSON.encode(
+    JSON.array([
+      JSON.from(place.home),
+      JSON.from(place.trusted),
+      JSON.from(place.skill_user),
+      JSON.from(place.skill_project),
+    ]),
+  )
 end
 
 # What a reload gives the session in `root`: the system prompt of a new session there (`AGENTS.md` and the skills read
 # again) with its extensions and its approval, under the options of now.
 def reopened(options: Config.Options, root: String) -> Result[SessionActor.Reopened]
   now = Config.now(options)
-  system = new_system(now, root)
+  prompt = new_prompt(now, root)
   approver = try approver_of(now, root)
-  builtins = builtins_of(now, root, system)
+  builtins = builtins_of(now, root, prompt.catalog)
   warnings = builtins.flat_map { |b| b.warnings }
 
   ok(
     SessionActor.Reopened(
-      system: system,
+      system: assembled(prompt),
+      prompt: prompt,
       builtins: builtins,
       approver: approver,
-      skills: skill_names(now, root, system),
+      skills: skill_names(now, root, prompt.catalog),
       warnings: warnings,
     ),
   )
 end
 
-def builtins_of(options: Config.Options, root: String, system: String) -> List[Extensions.Opened]
-  options.registry.map { |r| Extensions.open(r, place_of(options, root), system) }.unwrap_or([])
+def builtins_of(options: Config.Options, root: String, catalog: String) -> List[Extensions.Opened]
+  options.registry.map { |r| Extensions.open(r, place_of(options, root), catalog) }.unwrap_or([])
 end
 
 def late_of(options: Config.Options) -> Optional[Fn[String, List[Tools.Tool]]]
@@ -1062,7 +1106,14 @@ def late_of(options: Config.Options) -> Optional[Fn[String, List[Tools.Tool]]]
 end
 
 def place_of(options: Config.Options, root: String) -> Extensions.Place
-  Extensions.Place(root: root, home: options.home, trusted: trusted?(options, root), docs: options.docs)
+  Extensions.Place(
+    root: root,
+    home: options.home,
+    trusted: trusted?(options, root),
+    docs: options.docs,
+    skill_user: options.skill_user,
+    skill_project: options.skill_project,
+  )
 end
 
 # A session folder under a folder of `FINN_TRUSTED_DIRS`, whose own skills and all of whose rules count (elsewhere

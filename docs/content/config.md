@@ -32,6 +32,7 @@ Finn reads environment variables when the server starts, and a few JSON files. A
 | `clipboard`, `clipboard_command` | how `finn` copies a selection: `auto` (the default) picks tmux, a tool of the local display or OSC 52; `osc52`, `tmux` or `command` forces one, and `command` runs the program that `clipboard_command` lists, such as `["xclip", "-selection", "clipboard"]` ([Copying text](cli.md#copying-text)) |
 | `keys` | change the keys of `finn`: an object from an action to a key, such as `{"thinking_level": "f3", "logs": "f9"}`; case is ignored, a name has no spaces inside, the old key of an action that moved stops working, and Esc is fixed ([Keys of the full screen](cli.md#keys-of-the-full-screen)) |
 | `status_line` | the segments of the status row of `finn`, an object with `left` and `right` lists of names ([The status line](#the-status-line)) |
+| `skills` | extra user and trusted-project skill paths; other agents' folders are opt-in ([Skills](skills.md#where-finn-finds-them)) |
 | `files` | `{"command": ["rg", "--files"]}`: the program that lists the files for the `@` completion, in place of the built-in walk ([The files command](#the-files-command)) |
 
 Every key is optional, and so is the file. How the rules work is on [Approvals and security](security.md#rules), and where they fall short in [What rules cannot do](security.md#what-rules-cannot-do).
@@ -94,9 +95,9 @@ A one-shot run (`finn -p`) never changes the choice, so a script does not reset 
 
 `/reload` (`POST /v1/reload`) makes the running server read these again, with no restart and without stopping a turn:
 
-- the user's config file: the permission rules and `approvals`, `files.command`, `mouse`, `status_line` and the providers it adds;
+- the user's config file: the permission rules and `approvals`, `files.command`, `mouse`, `status_line`, skill paths and the providers it adds;
 - the MCP servers (the user's file, `FINN_MCP_CONFIG`, and the `.finn/mcp.json` of each folder with sessions): when a list changed, its servers stop and the new list starts (a call that runs on a stopped one fails, and the new tools come as the servers list them); only MCP servers reload, not extensions registered in code;
-- the skills and the `AGENTS.md` of each running session, and its approval.
+- the skills, `AGENTS.md` and approval rules of each running session. If Finn cannot save the updated prompt for a restart, it reports a warning and applies the changes to the running session.
 
 A session that runs uses them from its next turn; a turn that runs keeps what it started with. The answers that a session gave with "always" are forgotten, the accept-edits mode stays. A new session, or one that loads later, reads everything fresh. The answer says what changed (`skills: 2 added, 1 removed; config reloaded (3 rules, approvals on); restarting 1 MCP server(s)`), and the warnings of the load go to `/logs`. Two reloads never run at once, and a draining server refuses one.
 

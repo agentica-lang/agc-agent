@@ -1,4 +1,4 @@
-## Agent Skills (agentskills.io): folders with a `SKILL.md` under `.finn/skills`, `.agents/skills` and `.claude/skills`
+## Agent Skills (agentskills.io): folders with a `SKILL.md` under `.finn/skills` and the user's configured paths
 ## of the session folder (only when it is trusted) and of the home folder. The system prompt lists each skill's name and
 ## description; the model loads one with `activate_skill`, the user with `/name` in a message. A loaded skill is its
 ## body in a `<skill_content>` block. The session keeps the names of the skills it loaded (its marks), so a skill loads
@@ -10,7 +10,7 @@ import Regex from "std/regex"
 import Spec from "../tools/spec"
 
 TOOL = "activate_skill"
-ROOTS = [".finn/skills", ".agents/skills", ".claude/skills"]
+ROOTS = [".finn/skills"]
 SKIPPED = [".git", "node_modules"]
 MAX_DEPTH = 4
 MAX_DIRS = 2000
@@ -64,15 +64,20 @@ end
 ## user's and the project's skills count first). A project skill shadows a user skill of the same name, and either the
 ## built-in one; in one scope the first root wins. A skills root may be a link, which is resolved once; a link inside
 ## it is not followed. A folder or a SKILL.md that two roots lead to counts once, with no warning.
-def discover(root: String, home: String, trusted: Bool, docs: String = "") -> Found
+def discover(
+  root: String,
+  home: String,
+  trusted: Bool,
+  docs: String = "",
+  user_paths: List[String] = [],
+  project_paths: List[String] = [],
+) -> Found
   found = Found(skills: [], warnings: [])
   if trusted
-    found = scope(found, root)
+    found = scope(found, (ROOTS + project_paths).map { |path| "#{root}/#{path}" })
   end
 
-  if home != ""
-    found = scope(found, home)
-  end
+  found = scope(found, user_roots(home, user_paths))
 
   sorted = found.skills.sort_by { |skill| skill.name }
   found = found.with(skills: sorted)
@@ -105,10 +110,10 @@ def catalog(skills: List[Skill]) -> String
   )
 end
 
-## The skills of a session whose system prompt is `system`, as saved: the model's are only those its catalog lists, so
+## The skills of a session with a saved `catalog`: the model's are only those it lists, so
 ## the tool and the folders `read_file` reads cannot drift from what the model was told.
-def restrict(skills: List[Skill], system: String) -> List[Skill]
-  listed = Regex.find_all(system, CATALOG_NAME).map { |m| m.groups[1].text }
+def restrict(skills: List[Skill], catalog: String) -> List[Skill]
+  listed = Regex.find_all(catalog, CATALOG_NAME).map { |m| m.groups[1].text }
   skills.select { |skill| not skill.for_model or listed.include?(skill.name) }
 end
 
@@ -311,11 +316,29 @@ end
 
 def escaped(text: String) -> String = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
-def scope(found: Found, base: String) -> Found
+def user_roots(home: String, paths: List[String]) -> List[String]
+  roots: List[String] = []
+  for path in ROOTS + paths
+    if path.start_with?("/")
+      roots = roots.push(path)
+    elsif home != ""
+      relative = path
+      if path.start_with?("~/")
+        relative = path.slice(2, path.length - 2)
+      end
+
+      roots = roots.push("#{home}/#{relative}")
+    end
+  end
+
+  roots
+end
+
+def scope(found: Found, paths: List[String]) -> Found
   scoped = found
   names = found.skills.map { |skill| skill.name }
-  for root in ROOTS
-    real = Path.real("#{base}/#{root}")
+  for path in paths
+    real = Path.real(path)
     next if not real.ok? or not directory?(real.unwrap!)
 
     dir = real.unwrap!
@@ -332,7 +355,11 @@ def scope(found: Found, base: String) -> Found
           kind = "the project's skill"
         end
 
-        scoped = warned(scoped, "#{skill.location}: #{skill.name} is shadowed by #{kind}")
+        winner = scoped.skills.find { |s| s.name == skill.name }
+        scoped = warned(
+          scoped,
+          "#{skill.location}: #{skill.name} is shadowed by #{kind} at #{winner.unwrap!.location}",
+        )
       else
         scoped = scoped.with(skills: scoped.skills.push(skill))
       end

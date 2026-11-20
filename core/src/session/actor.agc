@@ -455,6 +455,17 @@ def reload_setup(state: Session.State, reply: Channel[Result[Session.Reloaded]])
         Actor.reply(reply, error(e.message, kind: e.kind))
         return state
       ok(fresh) ->
+        warnings = fresh.warnings
+        prompt_pending = state.prompt_pending
+        if prompt_pending or some(fresh.prompt) != setup.prompt
+          case Store.save_prompt(setup.file, fresh.prompt)
+            error(e) ->
+              warnings = warnings.push("could not save the session prompt: #{e.message}")
+              prompt_pending = true
+            ok(_) -> prompt_pending = false
+          end
+        end
+
         approver = fresh.approver
         for old in option_list(setup.approver)
           approver = fresh.approver.map { |a| a.with_accept_edits.call(old.accept_edits) }
@@ -464,6 +475,7 @@ def reload_setup(state: Session.State, reply: Channel[Result[Session.Reloaded]])
         next = setup.with(
           system: fresh.system,
           base_system: fresh.system,
+          prompt: some(fresh.prompt),
           builtins: fresh.builtins,
           approver: approver,
           ctx: ctx,
@@ -481,12 +493,12 @@ def reload_setup(state: Session.State, reply: Channel[Result[Session.Reloaded]])
             Session.Reloaded(
               added: fresh.skills.select { |name| not setup.skills.include?(name) },
               removed: setup.skills.select { |name| not fresh.skills.include?(name) },
-              warnings: fresh.warnings,
+              warnings: warnings,
             ),
           ),
         )
 
-        return state.with(setup: next)
+        return state.with(setup: next, prompt_pending: prompt_pending)
     end
   end
 

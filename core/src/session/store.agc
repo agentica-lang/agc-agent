@@ -20,6 +20,7 @@ export Storage.Port
 EXTENSION = ".jsonl"
 ## Beside a session file: the model of its last `settings` record, so a list of the sessions need not read the file.
 SETTINGS_EXTENSION = ".settings.json"
+PROMPT_EXTENSION = ".prompt.json"
 ## A listing looks this far into a file for the first user message: the lines, and the bytes.
 TITLE_LINES = 64
 TITLE_BYTES = 262_144
@@ -34,14 +35,20 @@ struct Header
   cwd: String
   model: String
   created_ms: Int
-  ## The system prompt of every call of the session, so a cache of its prefix stays valid after a restart.
-  system: Optional[String] = none
+  ## The saved prompt keeps the model's cached prefix valid after a restart.
+  prompt: Optional[Prompt] = none
   ## The model API of the session, by its `FINN_API` name; none in a file made before the choice.
   api: Optional[String] = none
   ## The provider of the session; none in a file made before providers.
   provider: Optional[String] = none
   ## The profile of the session; none is `build`.
   profile: Optional[String] = none
+end
+
+struct Prompt
+  base: String = ""
+  catalog: String = ""
+  skill_config: String = ""
 end
 
 struct Logged
@@ -172,7 +179,7 @@ def create(port: Storage.Port, dir: String, header: Header) -> Result[Ref]
     "cwd": JSON.from(header.cwd),
     "model": JSON.from(header.model),
     "created_ms": JSON.from(header.created_ms),
-    "system": JSON.from(header.system),
+    "prompt": JSON.from(header.prompt),
     "api": JSON.from(header.api),
     "provider": JSON.from(header.provider),
     "profile": JSON.from(header.profile),
@@ -186,6 +193,7 @@ end
 def remove(file: Ref) -> Result[Void]
   try file.port.remove.call(file.path)
   _ = file.port.remove.call(settings_file(file.path))
+  _ = file.port.remove.call(prompt_file(file.path))
   ok()
 end
 
@@ -271,6 +279,14 @@ def append_settings(file: Ref, settings: Choice) -> Result[Void]
   try append(file, fields.put("profile", JSON.from(settings.profile)))
   _ = file.port.replace.call(settings_file(file.path), JSON.encode(JSON.object(chosen)))
   ok()
+end
+
+def save_prompt(file: Ref, prompt: Prompt) -> Result[Void]
+  text = JSON.encode(JSON.from(prompt))
+  return error("a prompt of #{text.bytesize} bytes is over #{MAX_LINE_BYTES}") if text.bytesize > MAX_LINE_BYTES
+
+  _ = try changed(file)
+  file.port.replace.call(prompt_file(file.path), text)
 end
 
 ## The answer of a turn, as a client draws it.
@@ -420,8 +436,13 @@ def load(file: Ref, leaf: Optional[Int] = none) -> Result[Saved]
   end_at = leaf.unwrap_or(entries.leaf)
   return error("no entry #{end_at}", kind: Protocol.KIND_INVALID) if not entry?(entries, end_at)
 
+  header = entries.header
+  for prompt in option_list(saved_prompt(file))
+    header = header.with(prompt: some(prompt))
+  end
+
   saved = Saved(
-    header: entries.header,
+    header: header,
     events: [],
     history: [],
     shown: [],
@@ -839,7 +860,7 @@ def decode_header(json: JSON.Value) -> Result[Header]
       cwd: try field(json, "cwd"),
       model: try field(json, "model"),
       created_ms: created_ms_of(json),
-      system: optional_string(json, "system"),
+      prompt: decoded_prompt(JSON.get(json, "prompt")),
       api: optional_string(json, "api"),
       provider: optional_string(json, "provider"),
       profile: optional_string(json, "profile"),
@@ -1110,6 +1131,27 @@ def side_settings(file: Ref) -> JSON.Value
 end
 
 def settings_file(path: String) -> String = "#{path.slice(0, path.length - EXTENSION.length)}#{SETTINGS_EXTENSION}"
+
+def prompt_file(path: String) -> String = "#{path.slice(0, path.length - EXTENSION.length)}#{PROMPT_EXTENSION}"
+
+def saved_prompt(file: Ref) -> Optional[Prompt]
+  case file.port.read_text.call(prompt_file(file.path))
+    ok(text) -> decoded_prompt(JSON.parse(text))
+    error(_) -> none
+  end
+end
+
+def decoded_prompt(json: Result[JSON.Value]) -> Optional[Prompt]
+  case json
+    ok(value) ->
+      case JSON.decode(value, Prompt)
+        ok(prompt) -> some(prompt)
+        error(_) -> none
+      end
+
+    error(_) -> none
+  end
+end
 
 def side_field(side: JSON.Value, name: String) -> Optional[String]
   case field(side, name)

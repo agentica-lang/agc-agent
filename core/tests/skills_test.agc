@@ -20,6 +20,34 @@ EXTENSIONS_PAGE = (
 TOOLS_PAGE = "---\ntitle: Tools\ndescription: What the model can call.\n---\n\n# Tools\n"
 OWN_FINN = "---\nname: finn\ndescription: My own notes on Finn.\n---\nMine.\n"
 
+def discover(root: String, home: String, trusted: Bool, docs: String = "") -> Skills.Found
+  Skills.discover(
+    root,
+    home,
+    trusted,
+    docs,
+    [".agents/skills", ".claude/skills"],
+    [".agents/skills", ".claude/skills"],
+  )
+end
+
+def test_only_finn_paths_are_default_and_extra_paths_require_trust() -> Result[Void]
+  base = try fresh()
+  try write("#{base}/home/.finn/skills/deploy/SKILL.md", DEPLOY)
+  try write("#{base}/home/.agents/skills/release/SKILL.md", RELEASE)
+  try write("#{base}/work/.agents/skills/lint/SKILL.md", LINT_PROJECT)
+  try write("#{base}/work/~/.agents/skills/deploy/SKILL.md", DEPLOY)
+  defaults = Skills.discover("#{base}/work", "#{base}/home", true)
+  user = Skills.discover("#{base}/work", "#{base}/home", false, "", ["~/.agents/skills"], [".agents/skills"])
+  project = Skills.discover("#{base}/work", "#{base}/home", true, "", ["~/.agents/skills"], [".agents/skills"])
+  absolute = Skills.discover("#{base}/work", "", true, "", ["#{base}/home/.agents/skills"], ["~/.agents/skills"])
+  _ = Path.remove(base)
+  try Test.eq(defaults.skills.map { |s| s.name }, ["deploy"])
+  try Test.eq(user.skills.map { |s| s.name }, ["deploy", "release"])
+  try Test.eq(absolute.skills.map { |s| s.name }, ["deploy", "release"])
+  Test.eq(project.skills.map { |s| s.name }, ["deploy", "lint", "release"])
+end
+
 # A skill loads once a session, by the model or by the user, and stays loaded after a restart; the model cannot load
 # a skill that only the user loads.
 def test_the_model_and_the_user_load_skills_once() -> Result[Void]
@@ -109,11 +137,11 @@ def test_a_skill_of_the_same_name_hides_the_built_in_one() -> Result[Void]
   base = try fresh()
   try write("#{base}/docs/extensions.md", EXTENSIONS_PAGE)
   try write("#{base}/home/.agents/skills/finn/SKILL.md", OWN_FINN)
-  mine = Skills.discover("#{base}/work", "#{base}/home", false, "#{base}/docs").skills
+  mine = discover("#{base}/work", "#{base}/home", false, "#{base}/docs").skills
   try Test.eq(mine.map { |skill| skill.description }, ["My own notes on Finn."])
-  built_in = Skills.discover("#{base}/work", "#{base}/nohome", false, "#{base}/docs").skills
+  built_in = discover("#{base}/work", "#{base}/nohome", false, "#{base}/docs").skills
   try Test.eq(built_in.map { |skill| skill.name }, ["finn"])
-  Test.eq(Skills.discover("#{base}/work", "#{base}/nohome", false, "#{base}/nodocs").skills.size, 0)
+  Test.eq(discover("#{base}/work", "#{base}/nohome", false, "#{base}/nodocs").skills.size, 0)
 end
 
 # A `Message` handler of an extension gets the message after the skills it names are expanded.
@@ -209,8 +237,8 @@ def test_discovery_skips_what_it_cannot_use_with_a_warning() -> Result[Void]
   try write("#{skills}/n65/SKILL.md", "---\nname: #{"b" * 65}\ndescription: d\n---\n")
   try write("#{base}/elsewhere/linked/SKILL.md", "---\ndescription: behind a link\n---\n")
   try link("#{base}/elsewhere", "#{skills}/via-link")
-  untrusted = Skills.discover("#{base}/project", "#{base}/home", false)
-  trusted = Skills.discover("#{base}/project", "#{base}/home", true)
+  untrusted = discover("#{base}/project", "#{base}/home", false)
+  trusted = discover("#{base}/project", "#{base}/home", true)
   _ = Path.remove(base)
   try Test.eq(untrusted.skills.map { |s| s.name }, ["a" * 64, "deep", "long", "renamed"])
   try Test.eq(trusted.skills.map { |s| s.name }, ["a" * 64, "deep", "lint", "long", "renamed"])
@@ -230,21 +258,26 @@ def test_a_folder_reached_twice_gives_each_skill_once() -> Result[Void]
   try write("#{base}/shared/lint/SKILL.md", LINT_PROJECT)
   try link("#{base}/shared", "#{base}/home/.agents/skills")
   try link("#{base}/shared", "#{base}/home/.claude/skills")
-  twice = Skills.discover("#{base}/work", "#{base}/home", false)
+  twice = discover("#{base}/work", "#{base}/home", false)
   try Test.eq([twice.skills.map { |s| s.name }, twice.warnings], [["lint", "release"], []])
   try write("#{base}/own/.agents/skills/group/deep/SKILL.md", "---\ndescription: nested\n---\n")
   try link("#{base}/own/.agents/skills/group", "#{base}/own/.claude/skills")
-  nested = Skills.discover("#{base}/work", "#{base}/own", false)
+  nested = discover("#{base}/work", "#{base}/own", false)
   try Test.eq([nested.skills.map { |s| s.name }, nested.warnings], [["deep"], []])
   try link("#{base}/shared", "#{base}/work/.agents/skills")
-  project = Skills.discover("#{base}/work", "#{base}/home", true)
+  project = discover("#{base}/work", "#{base}/home", true)
   try Test.eq([project.skills.map { |s| s.name }, project.warnings], [["lint", "release"], []])
   try write("#{base}/apart/.agents/skills/lint/SKILL.md", LINT_HOME)
   try write("#{base}/apart/.claude/skills/lint/SKILL.md", LINT_PROJECT)
-  apart = Skills.discover("#{base}/none", "#{base}/apart", false)
+  apart = discover("#{base}/none", "#{base}/apart", false)
   _ = Path.remove(base)
   try Test.eq(apart.skills.size, 1)
-  Test.eq(apart.warnings.size, 1)
+  try Test.eq(apart.warnings.size, 1)
+  Test.assert(
+    apart.warnings[0].include?(".claude/skills/lint/SKILL.md") and
+    apart.warnings[0].include?(".agents/skills/lint/SKILL.md"),
+    apart.warnings[0],
+  )
 end
 
 # At most 100 skills are used, the first by name; a warning says how many there were.
@@ -255,7 +288,7 @@ def test_discovery_keeps_at_most_100_skills() -> Result[Void]
     try write("#{base}/home/.agents/skills/#{name}/SKILL.md", "---\ndescription: d\n---\n")
   end
 
-  found = Skills.discover(base, "#{base}/home", false)
+  found = discover(base, "#{base}/home", false)
   _ = Path.remove(base)
   try Test.eq([found.skills.size.to_s, found.skills.last.name], ["100", "s1099"])
   Test.assert(found.warnings.any? { |w| w.include?("101 skills") }, "#{found.warnings}")
@@ -271,11 +304,11 @@ def test_the_built_in_skill_never_takes_the_place_of_another() -> Result[Void]
     try write("#{base}/home/.agents/skills/#{name}/SKILL.md", "---\ndescription: d\n---\n")
   end
 
-  full = Skills.discover(base, "#{base}/home", false, "#{base}/docs")
+  full = discover(base, "#{base}/home", false, "#{base}/docs")
   try Test.eq([full.skills.size.to_s, full.skills.any? { |skill| skill.name == "finn" }.to_s], ["100", "false"])
   try Test.eq(full.warnings, [])
   _ = Path.remove("#{base}/home/.agents/skills/s1099")
-  room = Skills.discover(base, "#{base}/home", false, "#{base}/docs")
+  room = discover(base, "#{base}/home", false, "#{base}/docs")
   _ = Path.remove(base)
   try Test.eq([room.skills.size.to_s, room.skills.any? { |skill| skill.name == "finn" }.to_s], ["100", "true"])
   Test.eq(room.skills.map { |skill| skill.name }, room.skills.map { |skill| skill.name }.sort)
@@ -288,13 +321,13 @@ def test_the_built_in_skill_lists_only_regular_pages() -> Result[Void]
   try write("#{base}/outside.md", "secret\n")
   try write("#{base}/docs/extensions.md", EXTENSIONS_PAGE)
   try link("#{base}/outside.md", "#{base}/docs/secret.md")
-  skills = Skills.discover("#{base}/work", "", false, "#{base}/docs").skills
+  skills = discover("#{base}/work", "", false, "#{base}/docs").skills
   loaded = Skills.on_message("/finn", skills, []).text
   try Test.assert(loaded.include?("- extensions.md:"), loaded)
   try Test.assert(not loaded.include?("secret"), loaded)
   try write("#{base}/only/_index.md", "---\ndescription: Home.\n---\n")
   try link("#{base}/outside.md", "#{base}/only/secret.md")
-  Test.eq(Skills.discover("#{base}/work", "", false, "#{base}/only").skills.size, 0)
+  Test.eq(discover("#{base}/work", "", false, "#{base}/only").skills.size, 0)
 end
 
 # A session reads a loaded skill's files by their absolute path, not a relative one; a `/name` marks the skill at once,
@@ -365,7 +398,7 @@ def test_read_file_reads_in_a_skill_folder_behind_a_link() -> Result[Void]
   try write("#{base}/dot/skills/release/SKILL.md", RELEASE)
   try write("#{base}/dot/skills/release/references/steps.md", "1. tag\n")
   try link("#{base}/dot", "#{base}/home/.claude")
-  skills = Skills.discover("#{base}/work", "#{base}/home", false).skills
+  skills = discover("#{base}/work", "#{base}/home", false).skills
   ctx = try Tools.context("#{base}/work", ->(_name: String) { error("unset") }, true)
   roots = ctx.with(read_roots: skills.map { |s| s.dir })
   read = ->(path: String, c: Tools.Context) { Tools.run(c, "read_file", JSON.object({"path": JSON.from(path)})) }
@@ -389,7 +422,7 @@ def test_the_catalog_is_escaped_and_restricts_the_model_skills_and_a_fold_keeps_
   try write("#{base}/home/.agents/skills/release/SKILL.md", RELEASE)
   try write("#{base}/home/.agents/skills/lint/SKILL.md", LINT_HOME)
   try write("#{base}/home/.agents/skills/deploy/SKILL.md", DEPLOY)
-  skills = Skills.discover(base, "#{base}/home", false).skills
+  skills = discover(base, "#{base}/home", false).skills
   catalog = Skills.catalog(skills)
   old = Skills.catalog(skills.select { |s| s.name != "lint" })
   fold = Skills.on_fold(skills)

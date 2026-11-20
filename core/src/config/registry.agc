@@ -186,15 +186,16 @@ struct Place
   root: String
   home: String
   trusted: Bool
+  skill_user: List[String] = []
+  skill_project: List[String] = []
   ## The folder of Finn's own documentation pages (the built-in skill `finn`); empty for none.
   docs: String = ""
 end
 
-## One of the core's own extensions, which needs more than the public API: `system` adds to the system prompt of a new
-## session, and `open` gives a session what it needs as it opens with its system prompt. Not part of `Core`.
+## One of the core's own extensions, opened with the session's saved skill catalog. Not part of `Core`.
 struct Builtin
-  system: Fn[Place, String, String]
   open: Fn[Place, String, Opened]
+  skill_catalog: Optional[Fn[Place, String]] = none
 end
 
 ## What a session gets from one of the core's own extensions: folders that `read_file` reads too, the tools of its
@@ -410,19 +411,20 @@ def late_tools(served: Served) -> Optional[Fn[String, List[Spec.Tool]]]
   some(->(root: String) { late.flat_map { |tools| tools.call(root) } })
 end
 
-## The system prompt of a new session in `place`: `system` with what the core's own extensions add.
-def new_system(served: Served, place: Place, system: String) -> String
-  out = system
+## The skill catalog of a new session in `place`.
+def skill_catalog(served: Served, place: Place) -> String
   for builtin in served.builtins
-    out = builtin.system.call(place, out)
+    for read in option_list(builtin.skill_catalog)
+      return read.call(place)
+    end
   end
 
-  out
+  ""
 end
 
-## What the core's own extensions give a session in `place` that opens with `system`.
-def open(served: Served, place: Place, system: String) -> List[Opened]
-  served.builtins.map { |builtin| builtin.open.call(place, system) }
+## What the core's own extensions give a session in `place` that opens with `catalog`.
+def open(served: Served, place: Place, catalog: String) -> List[Opened]
+  served.builtins.map { |builtin| builtin.open.call(place, catalog) }
 end
 
 ## The approval of a session in `place`, none when the server has none; an error when it cannot open (a broken project
