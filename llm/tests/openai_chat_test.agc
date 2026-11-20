@@ -394,6 +394,17 @@ def test_model_listing_has_its_own_body_idle_timeout() -> Result[Void]
   end
 end
 
+def test_a_generation_request_over_one_mib_is_refused_locally() -> Result[Void]
+  provider = LLM.openai_chat("http://127.0.0.1:1/v1", KEY, LLM.Options(tries: 1))
+  message = Ev.user("x" * 1_048_576)
+  case LLM.stream(provider, LLM.Request(model: MODEL, messages: [message]))
+    ok(call) ->
+      LLM.cancel(call)
+      error("expected the request body to be refused")
+    error(e) -> Test.eq([e.kind, e.message], ["llm.invalid_request", "llm: the request body exceeds 1048576 bytes"])
+  end
+end
+
 private
 
 def serve_provider(listener: TCP.Listener, sse: Bytes, models: Bytes, finish: Channel[Bool]) -> Result[Void]
