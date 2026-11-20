@@ -48,8 +48,9 @@ tests = out=$$(cd $(1) && $(AGENTICA) test --jobs $(or $(3),$(JOBS)) $(2)); stat
 
 .PHONY: install check coupling fmt-check native-source native-gen native-header native-check native-lib prebuilt-e2e prebuilt-e2e-run check-library-test unit unit-package leftovers smoke pty peer test smoke-llama smoke-monty live-fireworks smoke-anthropic live-anthropic-core
 
-# The packages from outside this repository (bond, agentica-tui) go into the package's deps/ (gitignored).
+# The packages from outside this repository go into each package's deps/ (gitignored).
 install: native-source
+	cd llm && $(AGENTICA) install
 	cd core && $(AGENTICA) install
 	cd tui_client && $(AGENTICA) install
 	cd examples/extension && $(AGENTICA) install

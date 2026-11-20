@@ -20,6 +20,7 @@ struct Reply
   ## After this many bytes, the body stays silent for `STALL_MS`: an API that stalls. -1 never stalls.
   stall_after: Int = -1
   hold: Optional[Channel[Bool]] = none
+  head_wait_ms: Int = 0
 end
 
 ## A request the fake got.
@@ -118,6 +119,10 @@ def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Res
   )
 
   reply = script.replies.recv(0).unwrap_or(Reply(status: 500, body: "{\"error\": \"no reply left\"}".bytes))
+  if reply.head_wait_ms > 0
+    Task.sleep(reply.head_wait_ms)
+  end
+
   if reply.piece_bytes == 0 and not reply.cut and reply.stall_after < 0 and reply.hold.none?
     return ok(HTTP.Answer.Whole(HTTP.Response(status: reply.status, headers: reply.headers, body: reply.body)))
   end

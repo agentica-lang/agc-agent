@@ -26,7 +26,7 @@ Your config file can add more, or replace one of these: see [Your own provider](
 
 A model call fails when its API sends nothing for 2 minutes in the middle of an answer.
 
-Finn reuses HTTP connections to the same provider origin. Model lists can use gzip or deflate. Model answers stream as uncompressed server-sent events.
+Finn reuses HTTP connections to the same provider origin. A request waiting for a free connection uses part of its request timeout. Model lists can use gzip or deflate. Model answers stream as uncompressed server-sent events.
 
 ## Log in
 

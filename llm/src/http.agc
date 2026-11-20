@@ -10,6 +10,8 @@ import Types from "types"
 
 ERROR_BODY_BYTES = 65_536
 EVENTS_CAPACITY = 64
+TAIL_WAIT_MS = 250
+UNBOUNDED_IDLE_MS = 31_536_000_000
 
 ## How a provider talks to its API.
 struct Options
@@ -58,7 +60,17 @@ struct Wire[S]
 end
 
 def transport(pool_size: Int = 10) -> Result[Transport]
-  ok(Transport(client: try Client.new(pool_size: pool_size, max_retries: 0, max_redirects: 0)))
+  ok(
+    Transport(
+      client: try Client.new(
+        pool_size: pool_size,
+        pool_timeout_ms: UNBOUNDED_IDLE_MS,
+        max_body_bytes: 1_048_576,
+        max_retries: 0,
+        max_redirects: 0,
+      ),
+    ),
+  )
 end
 
 def close_transport(transport: Transport) -> Void
@@ -88,6 +100,12 @@ struct Job[S]
   wire: Wire[S]
   http: Client.Stream
   events: Channel[Types.Event]
+end
+
+struct Exchange
+  http: Client.Stream
+  task: Task[Result[Void]]
+  released: Channel[Bool]
 end
 
 struct ModelList
@@ -162,33 +180,43 @@ def stream_on[S](
   events: Channel[Types.Event],
   ready: Channel[Result[Void]],
 ) -> Result[Types.Response]
-  opened: Channel[Result[Client.Stream]] = Channel.new(1)
-  released: Channel[Bool] = Channel.new(1)
-  exchange = Task.spawn do exchange_on(client, config, wire, body, headers, opened, released) end
-  Task.monitor(exchange, opened) do |_down| error("llm: the HTTP task stopped before opening", kind: "llm.network") end
-  http = try await_ready(opened)
+  attempt = try Errors.with_retry(retry(config), -> { open(client, config, wire, body, headers) })
   try ready.send(ok(), 0)
-  result = read_events(Job(config: config, wire: wire, http: http, events: events))
-  if not http.body.closed?
-    Task.cancel(exchange)
+  result = read_events(Job(config: config, wire: wire, http: attempt.http, events: events))
+  events.close
+  if result.ok?
+    _ = drain(attempt.http, TAIL_WAIT_MS)
   end
 
-  http.body.close
-  released.close
-  _ = Task.await(exchange)
+  release(attempt)
   result
 end
 
-def exchange_on[S](
+def start_exchange(client: Client.Client, url: String, body: Bytes, headers: List[HTTP.Header]) -> Result[Exchange]
+  opened: Channel[Result[Client.Stream]] = Channel.new(1)
+  released: Channel[Bool] = Channel.new(1)
+  exchange = Task.spawn do exchange_on(client, url, body, headers, opened, released) end
+  Task.monitor(exchange, opened) do |_down| error("llm: the HTTP task stopped before opening", kind: "llm.network") end
+  result = await_ready(opened)
+  opened.close
+  case result
+    ok(http) -> ok(Exchange(http: http, task: exchange, released: released))
+    error(e) ->
+      released.close
+      _ = Task.await(exchange)
+      error(e)
+  end
+end
+
+def exchange_on(
   client: Client.Client,
-  config: Config,
-  wire: Wire[S],
+  url: String,
   body: Bytes,
-  headers: Map[String, String],
+  headers: List[HTTP.Header],
   opened: Channel[Result[Client.Stream]],
   released: Channel[Bool],
 ) -> Result[Void]
-  result = Errors.with_retry(retry(config), -> { open(client, config, wire, body, headers) })
+  result = network(Client.stream(client, "POST", url, body: some(body), headers: headers))
   try opened.send(result, 0)
   if result.ok?
     while not released.closed?
@@ -199,6 +227,16 @@ def exchange_on[S](
   ok()
 end
 
+def release(attempt: Exchange) -> Void
+  if not attempt.http.body.closed?
+    Task.cancel(attempt.task)
+  end
+
+  attempt.http.body.close
+  attempt.released.close
+  _ = Task.await(attempt.task)
+end
+
 # A 2xx answer comes back with its body unread; any other is read whole and becomes its error.
 def open[S](
   client: Client.Client,
@@ -206,7 +244,7 @@ def open[S](
   wire: Wire[S],
   body: Bytes,
   extra: Map[String, String],
-) -> Result[Client.Stream]
+) -> Result[Exchange]
   own = [
     HTTP.Header(name: "Content-Type", value: "application/json"),
     HTTP.Header(name: "Accept", value: "text/event-stream"),
@@ -214,17 +252,32 @@ def open[S](
 
   headers = merge_headers(own + wire.headers.call(config.api_key), extra)
   url = "#{config.base_url}#{wire.path}"
-  http = try network(Client.stream(client, "POST", url, body: some(body), headers: headers))
-  return ok(http) if http.status >= 200 and http.status < 300
+  attempt = try start_exchange(client, url, body, headers)
+  http = attempt.http
+  return ok(attempt) if http.status >= 200 and http.status < 300
 
-  Errors.from_status(http.status, http.headers, drain(http))
+  read_ms = config.options.read_timeout_ms
+  error_wait = 5000
+  if read_ms > 0
+    error_wait = [error_wait, read_ms].min.unwrap!
+  end
+
+  bytes = drain(http, error_wait)
+  release(attempt)
+  Errors.from_status(http.status, http.headers, bytes)
 end
 
 def read_events[S](job: Job[S]) -> Result[Types.Response]
   parser = SSE.parser()
   state = job.wire.begin.call()
+  read_ms = job.config.options.read_timeout_ms
+  wait_ms = read_ms
+  if read_ms == 0
+    wait_ms = UNBOUNDED_IDLE_MS
+  end
+
   while not job.wire.ended.call(state)
-    case job.http.body.recv(job.config.options.read_timeout_ms)
+    case job.http.body.recv(wait_ms)
       ok(read) ->
         piece = try cut(read, job.config.options.read_timeout_ms)
         fed = try sse_error(SSE.feed(parser, piece))
@@ -240,7 +293,7 @@ def read_events[S](job: Job[S]) -> Result[Types.Response]
       error(e) ->
         break if job.http.body.closed? and job.http.body.empty?
 
-        return silent(job.config.options.read_timeout_ms, e)
+        return silent(read_ms, e) if read_ms != 0
     end
   end
 
@@ -324,19 +377,25 @@ def with_client[T](config: Config, call: Fn[Client.Client, Result[T]]) -> Result
 end
 
 def timed(client: Client.Client, config: Config) -> Client.Client
-  client.with(
-    connect_timeout_ms: config.options.timeout_ms,
-    timeout_ms: config.options.timeout_ms,
-    read_timeout_ms: config.options.read_timeout_ms,
-  )
+  timeout = config.options.timeout_ms
+  read_timeout = [timeout, config.options.read_timeout_ms].max.unwrap!
+  if config.options.read_timeout_ms == 0
+    read_timeout = UNBOUNDED_IDLE_MS
+  end
+
+  client.with(timeout_ms: timeout, read_timeout_ms: read_timeout)
 end
 
 # The body of an error answer, up to a limit: only its message is used.
-def drain(http: Client.Stream) -> Bytes
+def drain(http: Client.Stream, wait_ms: Int) -> Bytes
   pieces: List[Bytes] = []
   size = 0
+  deadline = Time.monotonic_ms() + wait_ms
   while size < ERROR_BODY_BYTES
-    case http.body.recv(5000)
+    left = deadline - Time.monotonic_ms()
+    break if left <= 0
+
+    case http.body.recv(left)
       ok(ok(piece)) ->
         pieces = pieces.push(piece)
         size = size + piece.size
@@ -345,7 +404,6 @@ def drain(http: Client.Stream) -> Bytes
     end
   end
 
-  http.body.close
   Bytes.concat(pieces).take(ERROR_BODY_BYTES)
 end
 
