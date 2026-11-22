@@ -15,7 +15,7 @@ doctype = @{ "<!" ~ (!">" ~ ANY)* ~ ">" }
 style_element = { style_open ~ style_text ~ style_close }
 style_open = { "<" ~ ^"style" ~ attr* ~ ">" }
 style_close = { "</" ~ ^"style" ~ ">" }
-style_text = @{ (!"</" ~ ANY)* }
+style_text = @{ (!("</" ~ ^"style") ~ ANY)* }
 
 script_element = { script_open ~ script_text ~ script_close }
 script_open = { "<" ~ ^"script" ~ attr* ~ ">" }

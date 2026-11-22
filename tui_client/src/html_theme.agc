@@ -43,7 +43,7 @@ HTML_GRAMMAR = <<~G
   style_element = { style_open ~ style_text ~ style_close }
   style_open = { "<" ~ ^"style" ~ attr* ~ ">" }
   style_close = { "</" ~ ^"style" ~ ">" }
-  style_text = @{ (!"</" ~ ANY)* }
+  style_text = @{ (!("</" ~ ^"style") ~ ANY)* }
 
   script_element = { script_open ~ script_text ~ script_close }
   script_open = { "<" ~ ^"script" ~ attr* ~ ">" }
@@ -151,9 +151,15 @@ def theme_file(env: Fn[String, Result[String]]) -> String
     return path
   end
 
-  "#{config_dir(env)}/theme.html"
+  dir = config_dir(env)
+  return "" if dir.empty?
+
+  "#{dir}/theme.html"
 end
 
+## `""` when no config folder is known (no `FINN_CONFIG`, no `XDG_CONFIG_HOME`
+## and an unset or empty `HOME`): `theme_file` passes it through, and `load`
+## keeps the base theme silently.
 def config_dir(env: Fn[String, Result[String]]) -> String
   for path in option_list(setting(env, "FINN_CONFIG"))
     return parent_dir(path)
@@ -163,12 +169,17 @@ def config_dir(env: Fn[String, Result[String]]) -> String
     return "#{base}/finn"
   end
 
-  "#{env.call("HOME").unwrap_or("")}/.config/finn"
+  for home in option_list(setting(env, "HOME"))
+    return "#{home}/.config/finn"
+  end
+
+  ""
 end
 
 ## The theme `base` with the file at `path` applied: a missing file keeps
 ## `base` with no warning; a file that reads or parses warns and keeps `base`.
 def load(base: Theme.Theme, path: String, files: Files) -> Loaded
+  return Loaded(theme: base) if path.empty?
   return Loaded(theme: base) if not files.exists.call(path)
 
   case files.read.call(path)
@@ -178,6 +189,10 @@ def load(base: Theme.Theme, path: String, files: Files) -> Loaded
 end
 
 def parsed(base: Theme.Theme, path: String, text: String) -> Loaded
+  if text.length > 1048576
+    return Loaded(theme: base, warning: some("theme file #{path} is over 1 MiB, keeping the built-in theme"))
+  end
+
   case style_texts(text)
     ok(css) -> styled(base, path, css)
     error(e) -> Loaded(theme: base, warning: some("cannot parse theme file #{path}: #{e.message}"))
@@ -205,7 +220,7 @@ def style_texts(html: String) -> Result[List[String]]
   ok(texts)
 end
 
-## Every `class` of `html` in document order, each value split on spaces.
+## Every `class` of `html` in document order, each value split on ASCII whitespace.
 def classes(html: String) -> Result[List[String]] = attributes(html, "class")
 
 ## Every `id` of `html` in document order.
@@ -260,21 +275,20 @@ end
 
 private
 
+## The tags carry the attributes: gathered across every tag rule with their
+## offsets, then sorted, so a self-closing tag before an open tag still comes
+## out first.
 def attributes(html: String, name: String) -> Result[List[String]]
   grammar = try Grammy.compile(HTML_GRAMMAR)
   root = try Grammy.run(grammar, "document", html)
-  found: List[String] = []
+  values: List[Grammy.Node] = []
   for rule in ["open_tag", "self_tag", "void_tag", "style_open", "script_open"]
     for tag in Grammy.find_all(root, rule)
       for attr in Grammy.children_of(tag, "attr")
         for aname in option_list(Grammy.first_child(attr, "attr_name"))
           if Grammy.text(aname, html).downcase == name
             for avalue in option_list(Grammy.first_child(attr, "attr_value"))
-              for part in unquoted(Grammy.text(avalue, html)).split(" ")
-                if not part.empty?
-                  found = found.push(part)
-                end
-              end
+              values = values.push(avalue)
             end
           end
         end
@@ -282,7 +296,37 @@ def attributes(html: String, name: String) -> Result[List[String]]
     end
   end
 
+  found: List[String] = []
+  for avalue in (values.sort_by { |node| node.start })
+    for part in split_whitespace(unquoted(Grammy.text(avalue, html)))
+      found = found.push(part)
+    end
+  end
+
   ok(found)
+end
+
+## A value split on ASCII whitespace (space, tab, LF, CR, FF).
+def split_whitespace(value: String) -> List[String]
+  words: List[String] = []
+  current = ""
+  for char in value.split("")
+    code = char.code
+    if code == 32 or code == 9 or code == 10 or code == 13 or code == 12
+      if not current.empty?
+        words = words.push(current)
+        current = ""
+      end
+    else
+      current = "#{current}#{char}"
+    end
+  end
+
+  if not current.empty?
+    words = words.push(current)
+  end
+
+  words
 end
 
 def unquoted(value: String) -> String
@@ -468,6 +512,7 @@ def apply_patch(theme: Theme.Theme, key: String, patch: Patch) -> Theme.Theme
   end
 end
 
+# The user's theme wins even on eight-color terminals: a patch overlays `basic()`, never replacing it.
 def overlaid(base: TUI.Style, patch: Patch) -> TUI.Style
   TUI.Style(
     fg: patch.fg.unwrap_or(base.fg),

@@ -166,6 +166,55 @@ def test_the_theme_file_is_finn_theme_or_next_to_the_config() -> Result[Void]
   Test.eq(HtmlTheme.theme_file(env_of({"HOME": "/h", "XDG_CONFIG_HOME": "/xdg"})), "/xdg/finn/theme.html")
 end
 
+# Attributes come out in document order even when the tags are of different kinds.
+def test_attributes_follow_document_order_across_tag_kinds() -> Result[Void]
+  html = "<br class=\"a\"/><div class=\"b\">x</div><img class=\"c\">"
+  Test.eq(try HtmlTheme.classes(html), ["a", "b", "c"])
+end
+
+# CSS holding `"</"` that does not close the style block no longer drops the theme.
+def test_style_text_keeps_css_containing_a_close_bracket() -> Result[Void]
+  html = "<style>.a { content: \"</3\"; color: red; }</style>"
+  blocks = try HtmlTheme.style_texts(html)
+  try Test.eq(blocks.size, 1)
+  try Test.assert(blocks[0].include?("</3"), blocks[0])
+  Test.assert(blocks[0].include?("color: red"), blocks[0])
+end
+
+# A class list splits on any ASCII whitespace, not just spaces.
+def test_classes_split_on_ascii_whitespace() -> Result[Void]
+  tab = String.from_code(9)
+  lf = String.from_code(10)
+  cr = String.from_code(13)
+  ff = String.from_code(12)
+  html = "<div class=\"a#{tab}b#{lf}c#{cr}d#{ff}e\">x</div>"
+  Test.eq(try HtmlTheme.classes(html), ["a", "b", "c", "d", "e"])
+end
+
+# With no known config folder there is no theme file, and `load` stays silent.
+def test_an_empty_home_gives_no_theme_file() -> Result[Void]
+  try Test.eq(HtmlTheme.config_dir(env_of({"OTHER": "1"})), "")
+  try Test.eq(HtmlTheme.theme_file(env_of({"OTHER": "1"})), "")
+  try Test.eq(HtmlTheme.theme_file(env_of({"HOME": ""})), "")
+  try Test.eq(HtmlTheme.theme_file(env_of({"FINN_CONFIG": "/c/config.json"})), "/c/theme.html")
+  loaded = HtmlTheme.load(Theme.basic(), HtmlTheme.theme_file(env_of({"OTHER": "1"})), files_with(ok("<style>")))
+  try Test.eq(loaded.theme, Theme.basic())
+  Test.eq(loaded.warning, none)
+end
+
+# A theme file over 1 MiB is refused before parsing, keeping the base with a warning.
+def test_an_oversized_theme_file_keeps_the_base() -> Result[Void]
+  big = "<style>"
+  for _ in 0...21
+    big = "#{big}#{big}"
+  end
+
+  loaded = HtmlTheme.load(Theme.basic(), "theme.html", files_with(ok(big)))
+  try Test.eq(loaded.theme, Theme.basic())
+  try Test.assert(loaded.warning.some?, "expected a too-big warning")
+  Test.assert(loaded.warning.unwrap_or("").include?("theme.html"), loaded.warning.unwrap_or(""))
+end
+
 private
 
 def files_with(read: Result[String]) -> HtmlTheme.Files
