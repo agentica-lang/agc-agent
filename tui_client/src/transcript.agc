@@ -8,6 +8,8 @@ import Width from "width"
 
 ## Every row starts one column in.
 INDENT = " "
+## The gutter of a user message: one more column than other rows, so the tinted block reads indented like a bubble.
+USER_INDENT = "  "
 
 enum Kind
   User
@@ -352,8 +354,21 @@ def entry_lines(entry: Entry, width: Int, folds: Folds) -> List[Line]
     return rows.map { |row| Line(kind: entry.kind, spans: [lead] + row.spans, join: row.join, indent: row.indent) }
   end
 
-  wrap_marked(entry.text, width - INDENT.length).map do |row|
-    Line(kind: entry.kind, spans: [Markdown.Span(text: INDENT + row.text, look: Markdown.Look.Plain)], join: row.join)
+  gutter = INDENT
+  extra = 0
+  if entry.kind == Kind.User
+    gutter = USER_INDENT
+    # The columns past `Select.GUTTER` that a copy leaves out with the gutter.
+    extra = 1
+  end
+
+  wrap_marked(entry.text, width - gutter.length).map do |row|
+    Line(
+      kind: entry.kind,
+      spans: [Markdown.Span(text: gutter + row.text, look: Markdown.Look.Plain)],
+      join: row.join,
+      indent: extra,
+    )
   end
 end
 

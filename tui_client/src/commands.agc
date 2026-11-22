@@ -269,12 +269,8 @@ def shown_mcp(app: State.Model, name: String) -> Result[State.Model]
   banner = Client.mcp_banner(app.banner, status)
   return ok(McpPanel.opened(app.with(banner: banner), status)) if name.empty?
 
-  ok(
-    Sides.shown(
-      app.with(banner: banner),
-      Side.of("MCP #{Client.printable(name)}", McpPanel.names_of(status.servers, name), true),
-    ),
-  )
+  shown = "MCP #{Client.printable(name)} tools"
+  ok(Sides.shown(app.with(banner: banner), Side.of(shown, McpPanel.names_of(status.servers, name), true)))
 end
 
 def status_after(read: Result[Protocol.McpStatus]) -> Optional[Protocol.McpStatus]
@@ -322,7 +318,7 @@ def bold_head(line: String) -> String
   head = line.slice(0, width).strip
   return line if head.empty? or head.length > 25
   rest = line.slice(width, line.length - width).strip
-  return "**#{head}**" if rest.empty?
+  return line if rest.empty?
 
   "**#{head}**#{" " * ([27 - head.length, 2].max.unwrap!)}#{rest}"
 end
@@ -332,7 +328,7 @@ end
 def aired(lines: List[String]) -> List[String]
   out: List[String] = []
   for line in lines
-    if not out.empty? and not line.start_with?(" ") and out.last != ""
+    if not line.empty? and not out.empty? and not line.start_with?(" ") and out.last != ""
       out = out.push("")
     end
 

@@ -206,21 +206,17 @@ def panel_row(row: Layout.Row, colors: Theme.PanelColors) -> TUI.Node
   TUI.line([TUI.span(row.text, panel_style(row.look, colors))])
 end
 
-## A panel line with `**bold**` segments in the head style, the rest in the text style; an unbalanced marker stays
-## plain text.
+## A panel line with `**bold**` segments in the head style, the rest in the text style, through the markdown helper
+## so `**` never draws itself; an unclosed `**` makes the rest bold.
 def rich_row(text: String, colors: Theme.PanelColors) -> TUI.Node
-  parts = text.split("**")
-  spans: List[TUI.Span] = []
-  for i in 0...parts.size
-    if parts[i] != ""
-      style = colors.text
-      if i % 2 == 1
-        style = colors.head
-      end
-
-      spans = spans.push(TUI.span(parts[i], style))
+  spans = Markdown.inline(text, Markdown.Look.Plain).map { |span|
+    style = colors.text
+    if span.look == Markdown.Look.Bold
+      style = colors.head
     end
-  end
+
+    TUI.span(span.text, style)
+  }
 
   TUI.line(spans)
 end

@@ -161,6 +161,8 @@ The mouse answers the keys of a panel, opens a tool call or the thinking, and mo
 
 Local output that is not part of the conversation opens in a panel on the right, so that the transcript holds only what the model sees: `/logs` (the server log, which the panel follows as the server writes), `/help`, `/shortcuts`, the report of `/reload` and the list of `/profile`. Short confirmations (`mouse on`, `copied 12 characters (xclip)`, `sent 12 characters to the terminal (OSC 52)`, `model X from the next turn`) stay in the transcript as notes, and so do the warnings of a profile and the end of a compaction.
 
+`/help` and `/shortcuts` list one entry per line with air between them and the names in bold, and `/mcp NAME` lists the tools of one the same way; CSS `.panel-text` and `.panel-head` style them.
+
 On a screen of 100 columns or more, the panel sits beside the transcript, prompt and footer, which take the columns it leaves (40% of the screen, 40 to 80 columns). On a narrower one it takes the place of the transcript, and the prompt and the footer stay.
 
 The panel has its own scroll and its own focus. It has the focus when it opens, and on a narrow screen always. PgUp and PgDn scroll the side that has the focus, the mouse wheel the side it is over, and a click in a side, or F6, gives it the focus. Esc closes the panel whatever has the focus (with a selection shown, the first Esc clears it); the next Esc does what it did, such as stop a running turn. The panel's title row names F6 and Esc, the footer says `^P logs` while the panel is closed, and `/help` ends with the keys. Ctrl+P closes the panel, or opens it on the server log. A drag that begins in the transcript goes on over the panel and copies as usual, but the text of the panel itself cannot be selected yet (use Shift+drag, the terminal's own selection, or `finn server logs`). Opening another output replaces the one shown, and `/new` or `/resume` closes it.
@@ -170,6 +172,8 @@ The server log is read again every second while the panel follows its end. Scrol
 ## Copying text
 
 In `finn`, drag over the transcript to select text; letting go copies it and a note says what was done. The copy is the transcript's text, without the gutter and the breaks the screen made to fit its width. A double click selects a word, and any key clears the selection. The selection follows the text when the transcript scrolls or grows.
+
+User messages draw one column further in than the rest, like a bubble; the extra column is part of the gutter, so a copy is still the exact text.
 
 `finn` picks where the copy goes the way Neovim does, over SSH or not:
 

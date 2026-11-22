@@ -130,20 +130,20 @@ def rows(side: Side, width: Int, height: Int, wide: Bool, keys: Client.Bindings)
 
   room = height - 1
   at = first(side, room)
-  look = Layout.Look.Plain
+  title_look = Layout.Look.Plain
   if side.focused
-    look = Layout.Look.Selected
+    title_look = Layout.Look.Selected
   end
 
   shown = side.wrapped.drop(at).take(room)
-  look = Layout.Look.Plain
+  body_look = Layout.Look.Plain
   if side.rich
-    look = Layout.Look.Rich
+    body_look = Layout.Look.Rich
   end
 
-  body = shown.map { |text| Layout.Row(text: padded(text, width), look: look) }
+  body = shown.map { |text| Layout.Row(text: padded(text, width), look: body_look) }
   blank = (shown.size...room).to_a.map { |_| Layout.Row(text: " " * width) }
-  [Layout.Row(text: padded(title(side, room, at, wide, keys), width), look: look)] + body + blank
+  [Layout.Row(text: padded(title(side, room, at, wide, keys), width), look: title_look)] + body + blank
 end
 
 private
