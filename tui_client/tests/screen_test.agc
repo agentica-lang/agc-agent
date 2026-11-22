@@ -128,6 +128,26 @@ def test_the_cursor_row_draws_through_input_row() -> Result[Void]
   Test.eq(prompt.rows.size, 1)
 end
 
+# `beside` draws through `Components.sidebar_segments`: the same cells as the flat tail spliced beside the content.
+def test_beside_draws_through_sidebar_segments() -> Result[Void]
+  theme = Theme.default()
+  left = TUI.line([TUI.span("L", theme.panel.text)])
+  side = [Layout.Row(text: "a"), Layout.Row(text: "bb")]
+  cells = TUI.layout(Screen.beside(left, side, theme), 4, 2)
+  content = side.map { |row| TUI.line([TUI.span(row.text, theme.panel.text)]) }
+  wanted = TUI.layout(TUI.row([left] + Components.sidebar_segments(content, theme)), 4, 2)
+  try Test.eq(cells.size, wanted.size)
+  for cell in wanted
+    found = try cells.find { |c| c.x == cell.x and c.y == cell.y }
+    try Test.eq(found.char, cell.char)
+    try Test.eq(found.style, cell.style)
+  end
+
+  try Test.eq((try cells.find { |cell| cell.x == 1 and cell.y == 0 }).char, "│")
+  try Test.eq((try cells.find { |cell| cell.x == 1 and cell.y == 0 }).style, theme.panel.text)
+  Test.eq((try cells.find { |cell| cell.x == 2 and cell.y == 1 }).char, "b")
+end
+
 def parts_of(prompt: Prompt.View) -> Screen.Parts
   Screen.Parts(prompt: prompt, picker: &nothing, panel: &nothing, label: "", level: none, status: "ready")
 end

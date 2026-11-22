@@ -15,10 +15,14 @@ def modal(title: String, rows: List[TUI.Node], width: Int, theme: Theme.Theme) -
 end
 
 ## The right-side column beside the content: the `│` edge maps to `theme.panel.text`, as `Screen.beside` draws it.
-def sidebar(rows: List[TUI.Node], theme: Theme.Theme) -> TUI.Node
+## `sidebar_segments` holds its flat tail (the edge column, then the content column) without the outer row,
+## so `Screen.beside` splices the two columns into its own single-level row; `sidebar` wraps the same tail.
+def sidebar_segments(rows: List[TUI.Node], theme: Theme.Theme) -> List[TUI.Node]
   edge = rows.map { |_| TUI.line([TUI.span("│", theme.panel.text)]) }
-  TUI.row([TUI.col(edge), TUI.col(rows)])
+  [TUI.col(edge), TUI.col(rows)]
 end
+
+def sidebar(rows: List[TUI.Node], theme: Theme.Theme) -> TUI.Node = TUI.row(sidebar_segments(rows, theme))
 
 ## A one-line banner: the text maps to `theme.banner.text`.
 def notice(text: String, theme: Theme.Theme) -> TUI.Node

@@ -162,8 +162,8 @@ end
 
 ## `left` with the side panel beside it, a column of its own between them: the rows of the panel, the full height.
 def beside(left: TUI.Node, side: List[Layout.Row], theme: Theme.Theme) -> TUI.Node
-  edge = side.map { |_| panel_row(Layout.Row(text: "│"), theme.panel) }
-  TUI.row([left, TUI.col(edge), TUI.col(side.map { |row| panel_row(row, theme.panel) })])
+  rows = side.map { |row| panel_row(row, theme.panel) }
+  TUI.row([left] + Components.sidebar_segments(rows, theme))
 end
 
 ## The row of the transcript area that screen row `y` is: the banner above it is taken off.

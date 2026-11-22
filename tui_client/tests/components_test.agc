@@ -45,6 +45,33 @@ def test_sidebar_with_no_rows_draws_nothing() -> Result[Void]
   Test.eq(TUI.layout(Components.sidebar([], Theme.default()), 4, 2).size, 0)
 end
 
+def test_sidebar_segments_returns_the_flat_tail_without_wrapping() -> Result[Void]
+  theme = Theme.default()
+  rows = [TUI.line([TUI.span("a", theme.panel.text)]), TUI.line([TUI.span("bb", theme.panel.text)])]
+  segments = Components.sidebar_segments(rows, theme)
+  try Test.eq(segments.size, 2)
+  cells = TUI.layout(TUI.row(segments), 4, 2)
+  try Test.eq((try at(cells, 0, 0).to_result("no cell at 0,0")).char, "│")
+  try Test.eq((try at(cells, 0, 0).to_result("no cell at 0,0")).style, theme.panel.text)
+  try Test.eq(row_text(cells, 0, 4), "│a  ")
+  try Test.eq(row_text(cells, 1, 4), "│bb ")
+  wanted = TUI.layout(Components.sidebar(rows, theme), 4, 2)
+  try Test.eq(cells.size, wanted.size)
+  for cell in wanted
+    found = try at(cells, cell.x, cell.y).to_result("no cell at #{cell.x},#{cell.y}")
+    try Test.eq(found.char, cell.char)
+    try Test.eq(found.style, cell.style)
+  end
+
+  Test.eq(cells.size > 0, true)
+end
+
+def test_sidebar_segments_with_no_rows_draws_nothing() -> Result[Void]
+  segments = Components.sidebar_segments([], Theme.default())
+  try Test.eq(segments.size, 2)
+  Test.eq(TUI.layout(TUI.row(segments), 4, 2).size, 0)
+end
+
 def test_notice_draws_a_single_line_in_the_banner_style() -> Result[Void]
   theme = Theme.default()
   cells = TUI.layout(Components.notice("hello", theme), 8, 1)

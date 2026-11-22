@@ -144,6 +144,26 @@ The key variables of the providers are on [Providers](providers.md).
 - later rules win over earlier ones, declarations of one rule merge in order, and every change adds to the built-in theme instead of clearing it (even on eight-color terminals).
 - a file that does not parse, or is over 1 MiB, keeps the built-in theme with a note; a missing file changes nothing.
 
+Copy this to `theme.html` next to the config file and tweak it:
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+.transcript-user { color: red; font-weight: bold; }
+.transcript-code { color: magenta; }
+.panel-selected { background-color: ansi(24); }
+.banner-text { color: black; background-color: #ffcc00; }
+.editor-text { color: white; }
+.footer-status { color: ansi(245); font-style: italic; }
+.rules-high { color: red; font-weight: bold; }
+</style>
+</head>
+<body></body>
+</html>
+```
+
 ## Coming from agc-agent
 
 Finn was called agc-agent before. Some old names still work:

@@ -11,6 +11,7 @@
 - `status_line` in the config file chooses and orders the segments of the full-screen status row; `/reload` applies it.
 - Agentica extensions can add named status line segments with `Core.add_status_segment`.
 - The full screen draws its banner through the shared notice component and the prompt's cursor row through the shared input-row component, with no visual change.
+- The full screen draws its side panel edge through the shared sidebar segments, with no visual change.
 ### Changed
 
 - The ChatGPT provider asks for the model catalog of Codex 0.170.0, which lists GPT-6.2 Sol and the other new models of your plan.
