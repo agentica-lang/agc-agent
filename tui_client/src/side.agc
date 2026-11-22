@@ -15,6 +15,8 @@ MAX_COLUMNS = 80
 struct Side
   title: String
   lines: List[String]
+  ## Lines carry `**bold**` segments in the head style; off, every line is plain text.
+  rich: Bool = false
   ## The lines cut to the width the panel has (`wrapped_at`), so that a draw cuts nothing.
   wrapped: List[String] = []
   wrapped_at: Int = 0
@@ -33,7 +35,7 @@ struct Side
 end
 
 ## A panel of fixed `lines`, shown from the top.
-def of(title: String, lines: List[String]) -> Side = Side(title: title, lines: lines)
+def of(title: String, lines: List[String], rich: Bool = false) -> Side = Side(title: title, lines: lines, rich: rich)
 
 ## The server log: its last `count` lines, followed as they come.
 def log(lines: List[String], count: Int) -> Side
@@ -79,8 +81,8 @@ def replaced(side: Side, lines: List[String]) -> Side
 end
 
 ## The panel with another title, keys and lines, cut again for its width; where it is scrolled stays.
-def retitled(side: Side, title: String, keys: String, lines: List[String]) -> Side
-  fitted(side.with(title: title, keys: keys, lines: lines, note: "", wrapped_at: 0), side.wrapped_at)
+def retitled(side: Side, title: String, keys: String, lines: List[String], rich: Bool = false) -> Side
+  fitted(side.with(title: title, keys: keys, lines: lines, rich: rich, note: "", wrapped_at: 0), side.wrapped_at)
 end
 
 ## The panel scrolled so that line `index` shows whole (or its first `room` rows when it is taller), as wrapped for
@@ -128,15 +130,20 @@ def rows(side: Side, width: Int, height: Int, wide: Bool, keys: Client.Bindings)
 
   room = height - 1
   at = first(side, room)
-  look = Layout.Look.Plain
+  title_look = Layout.Look.Plain
   if side.focused
-    look = Layout.Look.Selected
+    title_look = Layout.Look.Selected
   end
 
   shown = side.wrapped.drop(at).take(room)
-  body = shown.map { |text| Layout.Row(text: padded(text, width)) }
+  body_look = Layout.Look.Plain
+  if side.rich
+    body_look = Layout.Look.Rich
+  end
+
+  body = shown.map { |text| Layout.Row(text: padded(text, width), look: body_look) }
   blank = (shown.size...room).to_a.map { |_| Layout.Row(text: " " * width) }
-  [Layout.Row(text: padded(title(side, room, at, wide, keys), width), look: look)] + body + blank
+  [Layout.Row(text: padded(title(side, room, at, wide, keys), width), look: title_look)] + body + blank
 end
 
 private

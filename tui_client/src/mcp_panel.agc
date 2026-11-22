@@ -100,6 +100,21 @@ def log_read(app: State.Model, serial: Int, name: String, result: Result[Protoco
   app
 end
 
+## The tool names of the server `panel` shows: only names, one per line with a blank line between them, the name
+## in bold. They draw in the panel text and head styles, so CSS `.panel-text` and `.panel-head` style them.
+def tool_lines(panel: State.McpPanel) -> List[String] = names_of(panel.servers, panel.name)
+
+def names_of(servers: List[Protocol.McpServer], name: String) -> List[String]
+  case (servers.find { |server| server.name == name })
+    ok(server) ->
+      names = server.tools.map { |tool| "- **#{Client.printable(tool.name)}**" }
+      return ["no tools on #{Client.printable(name)}"] if names.empty?
+
+      names.flat_map { |line| [line, ""] }.take(names.size * 2 - 1)
+    error(_) -> ["no MCP server named #{Client.printable(name)}: /mcp lists them"]
+  end
+end
+
 private
 
 def plain?(mods: TUI.Mods) -> Bool = not mods.ctrl and not mods.alt
@@ -180,7 +195,8 @@ end
 def drawn(app: State.Model) -> State.Model
   for panel in State.option_list(app.mcp)
     for side in State.option_list(app.side)
-      shown = app.with(side: some(Side.retitled(side, title_of(panel), keys_of(panel), lines_of(panel))))
+      rich = panel.view == "tools"
+      shown = app.with(side: some(Side.retitled(side, title_of(panel), keys_of(panel), lines_of(panel), rich)))
       return shown if panel.view != "" or panel.servers.empty?
 
       return Sides.revealed(shown, panel.cursor)
@@ -204,7 +220,7 @@ end
 
 def lines_of(panel: State.McpPanel) -> List[String]
   case panel.view
-    "tools" -> Client.mcp_tools(Protocol.McpStatus(servers: panel.servers), panel.name)
+    "tools" -> tool_lines(panel)
     "log" -> panel.log
     _ -> listed(panel)
   end

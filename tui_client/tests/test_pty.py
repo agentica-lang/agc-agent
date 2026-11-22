@@ -659,7 +659,7 @@ class PtyTest(unittest.TestCase):
         reply.release.set()
         term.wait_for(ANSWER)
         rows = term.wait_for("ready")
-        self.assertIn(" hello there", rows)
+        self.assertIn("  hello there", rows)
         request = self.fake.requests.get(timeout=1)
         self.assertEqual(request["messages"][-1]["content"], "hello there")
         term.type("\x03")
@@ -1080,7 +1080,7 @@ class PtyTest(unittest.TestCase):
         term.wait_for(ANSWER)
         rows = term.wait_for("ready")
         self.assertEqual(text_of(rows).count("Hello!"), 1, text_of(rows))
-        self.assertEqual(rows.count(" hi"), 1, text_of(rows))
+        self.assertEqual(rows.count("  hi"), 1, text_of(rows))
         reads = [path for path in self.proxy.paths if path.startswith("GET") and not path.endswith("/events")]
         self.assertTrue(any("/sessions/" in path for path in reads), self.proxy.paths)
 

@@ -43,7 +43,7 @@ def test_streamed_text_joins_the_last_entry_of_its_kind() -> Result[Void]
   texts = entries.map { |entry| entry.text }
   try Test.eq(texts, ["hi", "Hello", "stopped", "again"])
   rows = Transcript.lines(entries, 20, Transcript.Folds()).map { |line| Markdown.plain(line.spans) }
-  Test.eq(rows, [" hi", "", " Hello", "", " stopped", "", " again"])
+  Test.eq(rows, ["  hi", "", " Hello", "", " stopped", "", " again"])
 end
 
 def test_the_prompt_shows_its_last_rows_with_a_lead() -> Result[Void]

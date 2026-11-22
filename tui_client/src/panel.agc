@@ -30,6 +30,8 @@ enum Look
   Selected
   Removed
   Added
+  ## A line with `**bold**` segments, drawn in the text style with the segments in the head style.
+  Rich
 end
 
 struct Row

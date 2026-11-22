@@ -60,7 +60,7 @@ A server name is letters, digits, `_` and `-`, with no `__`. A server has either
 
 ## Its state
 
-`/mcp` lists the servers with their state: `connecting` while one starts, `connected` with its number of tools, or `failed` with the reason. `connected` means it listed its tools at its last start; a stdio server that crashed since starts again at its next call, and the list does not know it yet. It shows where each one comes from (`user` for your file, `project` for the `.finn/mcp.json` of the session folder) and how it runs: the program of a stdio server or the origin of an HTTP one, never its environment or headers. `/mcp NAME` lists the tools of one. A server that failed to start is in the banner at the top of `finn`.
+`/mcp` lists the servers with their state: `connecting` while one starts, `connected` with its number of tools, or `failed` with the reason. `connected` means it listed its tools at its last start; a stdio server that crashed since starts again at its next call, and the list does not know it yet. It shows where each one comes from (`user` for your file, `project` for the `.finn/mcp.json` of the session folder) and how it runs: the program of a stdio server or the origin of an HTTP one, never its environment or headers. `/mcp NAME` lists the tools of one, one per line with air between them and the names in bold. A server that failed to start is in the banner at the top of `finn`.
 
 `/mcp reconnect NAME` stops the client of that server and starts it again: use it after you fixed what made it fail (a missing program, a key, a server that was down). The answer comes when the server has listed its tools. A server that crashed later starts again by itself at its next call.
 

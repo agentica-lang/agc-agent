@@ -8,6 +8,7 @@ import TUI from "pkg/tui/tui"
 import App from "../src/app"
 import Approvals from "../src/approvals"
 import Args from "../src/args"
+import Layout from "../src/panel"
 import Session from "../src/session"
 import Side from "../src/side"
 import Transcript from "../src/transcript"
@@ -92,6 +93,8 @@ def test_local_output_goes_to_the_panel_and_not_to_the_transcript() -> Result[Vo
     helped = ran(start, "/help")
     try Test.eq(texts(helped), texts(start))
     try Test.eq(helped.side.unwrap!.title, "Help")
+    try Test.assert(helped.side.unwrap!.lines.any? { |line| line.start_with?("**") }, "commands are bold")
+    try Test.assert(helped.side.unwrap!.lines.include?(""), "entries have air")
     try Test.eq(local(start, "/help"), [0, 0])
     try Test.eq(local(start, "/reload"), [0, 0])
     reported = ran(start, "/reload")
@@ -244,10 +247,10 @@ end
 # `/shortcuts` lists the keys, and the footer with the panel closed names Ctrl+P.
 def test_shortcuts_lists_the_keys_and_the_closed_footer_names_the_panel() -> Result[Void]
   start = model_of(120, 20)
-  try Test.assert(
-    ran(start, "/shortcuts").side.unwrap!.lines.any? { |line| line.include?("F6") },
-    "keys in /shortcuts",
-  )
+  opened = ran(start, "/shortcuts").side.unwrap!.lines
+  try Test.assert(opened.any? { |line| line.include?("F6") }, "keys in /shortcuts")
+  try Test.assert(opened.any? { |line| line.start_with?("**") }, "keys are bold")
+  try Test.assert(opened.include?(""), "entries have air")
 
   try Test.assert(screen(start).last.include?("^P logs"), screen(start).last)
   logs = ran(start, "/logs")
@@ -354,4 +357,24 @@ def test_the_follow_keeps_the_same_lines_and_shows_a_failed_read() -> Result[Voi
   try Test.assert(screen(opened).any? { |row| row.include?("Esc close panel") }, screen(opened).join("\n"))
   away = App.update(opened, key(TUI.Key.F(6))).model
   Test.assert(screen(away).any? { |row| row.include?("F6 panel") }, screen(away).join("\n"))
+end
+
+# Only the title takes the focus style: a focused log keeps a plain body, and a rich panel keeps a rich body while
+# its title alone shows the focus.
+def test_only_the_title_takes_the_focus_style() -> Result[Void]
+  keys = model_of(120, 20).keys
+  plain = Side.fitted(Side.log(["a line"], 5), 40)
+  focused = Side.rows(plain, 40, 6, true, keys)
+  try Test.eq(focused[0].look, Layout.Look.Selected)
+  try Test.eq(focused[1].look, Layout.Look.Plain)
+  unfocused = Side.rows(plain.with(focused: false), 40, 6, true, keys)
+  try Test.eq(unfocused[0].look, Layout.Look.Plain)
+  try Test.eq(unfocused[1].look, Layout.Look.Plain)
+  rich = Side.fitted(Side.of("Help", ["**/quit**  leave"], true), 40)
+  rich_focused = Side.rows(rich, 40, 6, true, keys)
+  try Test.eq(rich_focused[0].look, Layout.Look.Selected)
+  try Test.eq(rich_focused[1].look, Layout.Look.Rich)
+  rich_plain = Side.rows(rich.with(focused: false), 40, 6, true, keys)
+  try Test.eq(rich_plain[0].look, Layout.Look.Plain)
+  Test.eq(rich_plain[1].look, Layout.Look.Rich)
 end

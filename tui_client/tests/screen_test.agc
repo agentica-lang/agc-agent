@@ -135,6 +135,17 @@ def test_the_cursor_row_draws_through_input_row() -> Result[Void]
   Test.eq(cursor.char, "i")
 end
 
+# A rich panel line draws its `**bold**` segments in the head style, the rest in the text style.
+def test_a_rich_panel_line_bolds_its_marked_segments() -> Result[Void]
+  theme = Theme.basic()
+  node = Screen.panel_row(Layout.Row(text: "run **/mcp** now", look: Layout.Look.Rich), theme.panel)
+  cells = TUI.layout(node, 12, 1)
+  try Test.eq(cells.select { |cell| cell.x < 4 }.map { |cell| cell.char }.join(""), "run ")
+  try Test.eq(cells.select { |cell| cell.x >= 4 and cell.x < 8 }.map { |cell| cell.char }.join(""), "/mcp")
+  try Test.eq((try cells.find { |cell| cell.x == 4 }).style, theme.panel.head)
+  Test.eq((try cells.find { |cell| cell.x == 0 }).style, theme.panel.text)
+end
+
 # `beside` draws through `Components.sidebar_segments`: the same cells as the flat tail spliced beside the content.
 def test_beside_draws_through_sidebar_segments() -> Result[Void]
   theme = Theme.default()

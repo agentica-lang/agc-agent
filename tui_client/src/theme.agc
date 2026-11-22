@@ -69,7 +69,7 @@ end
 def default() -> Theme
   Theme(
     transcript: TranscriptColors(
-      user: TUI.Style(fg: TUI.Color.Index(255), bold: true),
+      user: TUI.Style(fg: TUI.Color.Index(255), bg: TUI.Color.Index(236), bold: true),
       assistant: TUI.Style(),
       bold: TUI.Style(bold: true),
       heading: TUI.Style(fg: TUI.Color.Index(221), bold: true),

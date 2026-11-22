@@ -75,7 +75,7 @@ def test_the_hints_and_the_help_show_the_keys_in_effect() -> Result[Void]
   helped = App.update(model.with(prompt: "/shortcuts", cursor: 10), enter()).model
   lines = helped.side.unwrap!.lines.join("\n")
   try Test.assert(
-    lines.include?("Alt+M") and lines.include?("F9 ") and lines.include?("the next thinking level"),
+    lines.include?("Alt+M") and lines.include?("**F9**") and lines.include?("the next thinking level"),
     lines,
   )
 
@@ -106,12 +106,12 @@ def test_shortcuts_opens_the_panel_with_the_keys_in_effect() -> Result[Void]
   side = opened.side.unwrap!
   try Test.eq(side.title, "Shortcuts")
   try Test.assert(
-    side.lines.any? { |line| line.start_with?("Ctrl+L ") and line.include?("server log") },
+    side.lines.any? { |line| line.include?("**Ctrl+L**") and line.include?("server log") },
     "#{side.lines}",
   )
 
-  try Test.assert(not side.lines.any? { |line| line.start_with?("Ctrl+P") }, "the default key is gone: #{side.lines}")
-  Test.assert(side.lines.any? { |line| line.start_with?("/mcp: r ") }, "the panel keys: #{side.lines}")
+  try Test.assert(not side.lines.any? { |line| line.include?("Ctrl+P") }, "the default key is gone: #{side.lines}")
+  Test.assert(side.lines.any? { |line| line.include?("**/mcp: r**") }, "the panel keys: #{side.lines}")
 end
 
 # `/reload` reads the keys of the server's config again: the new ones apply, the report lists the entries that were not

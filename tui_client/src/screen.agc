@@ -200,6 +200,27 @@ def style(kind: Transcript.Kind, look: Markdown.Look, colors: Theme.TranscriptCo
   end
 end
 
+def panel_row(row: Layout.Row, colors: Theme.PanelColors) -> TUI.Node
+  return rich_row(row.text, colors) if row.look == Layout.Look.Rich
+
+  TUI.line([TUI.span(row.text, panel_style(row.look, colors))])
+end
+
+## A panel line with `**bold**` segments in the head style, the rest in the text style, through the markdown helper
+## so `**` never draws itself; an unclosed `**` makes the rest bold.
+def rich_row(text: String, colors: Theme.PanelColors) -> TUI.Node
+  spans = Markdown.inline(text, Markdown.Look.Plain).map { |span|
+    style = colors.text
+    if span.look == Markdown.Look.Bold
+      style = colors.head
+    end
+
+    TUI.span(span.text, style)
+  }
+
+  TUI.line(spans)
+end
+
 private
 
 def editor_rows(frame: Frame) -> Int
@@ -245,10 +266,6 @@ def rule_style(level: Optional[String], colors: Theme.RuleColors) -> TUI.Style
     "high" -> colors.high
     _ -> colors.default
   end
-end
-
-def panel_row(row: Layout.Row, colors: Theme.PanelColors) -> TUI.Node
-  TUI.line([TUI.span(row.text, panel_style(row.look, colors))])
 end
 
 # The argument of a tool call, tinted by how the call went.
@@ -321,6 +338,8 @@ def panel_style(look: Layout.Look, colors: Theme.PanelColors) -> TUI.Style
     Layout.Look.Selected -> colors.selected
     Layout.Look.Removed -> colors.removed
     Layout.Look.Added -> colors.added
+    # Rich lines never reach here: `panel_row` splits them into spans first.
+    Layout.Look.Rich -> colors.text
   end
 end
 
