@@ -193,6 +193,10 @@ A selection over 74000 bytes is not sent as OSC 52 (a note says so): terminals a
 
 The terminal's own selection still works with Shift+drag (Option+drag in iTerm2), which does not reach `finn`. `/mouse` turns the mouse reporting of `finn` off, so the terminal selects with a plain drag (and a click no longer folds a tool call), and on again; `"mouse": false` in [the config file](config.md#the-users-config-file) starts `finn` with it off.
 
+## Tables in the full-screen transcript
+
+Markdown pipe tables render with aligned columns, highlighted headers and box-drawing separators. Long cells wrap within their columns. If the terminal is too narrow even for the columns and separators, the table falls back to normal text wrapping. Tables inside fenced code blocks stay literal.
+
 ## Footer of the full screen
 
 The two rows under the prompt:

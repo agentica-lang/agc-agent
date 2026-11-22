@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- The full-screen transcript renders Markdown pipe tables with aligned columns, styled headers and wrapping within each cell.
 - Finn reuses HTTP connections for model provider requests and accepts gzip and deflate model lists.
 - `FINN_THEME` (or `theme.html` next to the config file) styles the full screen: its `<style>` blocks name the theme regions (`.transcript-user`, `.panel-selected`, ...).
 - User messages in the transcript draw on a subtle tinted background, so they read apart from the assistant's; CSS `.transcript-user` tunes it.

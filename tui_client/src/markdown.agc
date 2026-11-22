@@ -1,4 +1,4 @@
-## The markdown the transcript draws: headings, list items, fenced code blocks and `**bold**`, wrapped to a width.
+## The markdown the transcript draws: headings, lists, fenced code, pipe tables and `**bold**`.
 ## Everything else is plain text. Pure.
 
 import Width from "width"
@@ -46,17 +46,27 @@ def marked(text: String, width: Int) -> List[Marked]
   columns = [width, 1].max.unwrap!
   out: List[Marked] = []
   code = false
-  for line in text.split("\n")
+  lines = text.split("\n")
+  at = 0
+  while at < lines.size
+    line = lines[at]
+    at = at + 1
     if line.strip.start_with?(FENCE)
       code = not code
     elsif code
       pieces = chunks(line, columns)
       out = (
         out +
-        (0...pieces.size).to_a.map { |at| Marked(spans: [Span(text: pieces[at], look: Look.Code)], join: if_cut(at)) }
+        (0...pieces.size).to_a.map { |i| Marked(spans: [Span(text: pieces[i], look: Look.Code)], join: if_cut(i)) }
       )
     else
-      out = out + block(line, columns)
+      table = table_at(line, lines, at, columns)
+      if table.rows.empty?
+        out = out + block(line, columns)
+      else
+        out = out + table.rows
+        at = table.after
+      end
     end
   end
 
@@ -106,6 +116,107 @@ def inline(text: String, look: Look) -> List[Span]
 end
 
 private
+
+struct Table
+  rows: List[Marked] = []
+  after: Int = 0
+end
+
+# A header and a delimiter row distinguish a table from prose containing pipes.
+def table_at(header: String, lines: List[String], at: Int, width: Int) -> Table
+  return Table() if at >= lines.size or not header.include?("|") or not lines[at].include?("|")
+
+  labels = cells(header)
+  rules = cells(lines[at])
+  return Table() if (labels.empty? or labels.size != rules.size or not rules.all? { |rule| table_rule?(rule) })
+
+  body = [labels]
+  after = at + 1
+  while after < lines.size and lines[after].include?("|") and not lines[after].strip.start_with?(FENCE)
+    row = cells(lines[after])
+    break if row.size != labels.size
+
+    body = body.push(row)
+    after = after + 1
+  end
+
+  widths = (0...labels.size).to_a.map { |i|
+    body.map { |row| Width.text(plain(inline(row[i], Look.Plain))) }.max.unwrap!
+  }
+
+  budget = width - 3 * labels.size + 1
+  if widths.sum > budget
+    cap = budget / labels.size
+    return Table() if cap < 2
+
+    widths = widths.map { |size| [size, cap].min.unwrap! }
+  end
+
+  rule = widths.map { |size| "─" * (size + 2) }.join("┼")
+  heading = table_row(labels, widths, Look.Heading)
+  divider = Marked(spans: [Span(text: rule, look: Look.Plain)])
+  rows = heading.push(divider)
+  for row in body.drop(1)
+    rows = rows + table_row(row, widths, Look.Plain)
+  end
+
+  Table(rows: rows, after: after)
+end
+
+def cells(line: String) -> List[String]
+  text = line.strip
+  parts = text.split("|")
+  start = 0
+  if text.start_with?("|")
+    start = 1
+  end
+
+  stop = parts.size
+  if text.end_with?("|")
+    stop = stop - 1
+  end
+
+  parts.take(stop).drop(start).map { |cell| cell.strip }
+end
+
+def table_rule?(rule: String) -> Bool
+  marks = rule.split("")
+  if rule.start_with?(":")
+    marks = marks.drop(1)
+  end
+
+  if not marks.empty? and rule.end_with?(":")
+    marks = marks.take(marks.size - 1)
+  end
+
+  not marks.empty? and marks.all? { |mark| mark == "-" }
+end
+
+def table_row(row: List[String], widths: List[Int], look: Look) -> List[Marked]
+  columns = (0...row.size).to_a.map { |i| wrapped(inline(row[i], look), widths[i]) }
+  height = columns.map { |column| column.size }.max.unwrap!
+  (0...height).to_a.map { |y| table_line(columns, widths, y) }
+end
+
+def table_line(columns: List[List[Marked]], widths: List[Int], y: Int) -> Marked
+  spans: List[Span] = []
+  for i in 0...columns.size
+    if i > 0
+      spans = spans.push(Span(text: "│", look: Look.Plain))
+    end
+
+    content: List[Span] = []
+    if y < columns[i].size
+      content = columns[i][y].spans
+    end
+
+    pad = widths[i] - Width.text(plain(content))
+    spans = spans.push(Span(text: " ", look: Look.Plain)) + content
+    spans = spans.push(Span(text: " " * (pad + 1), look: Look.Plain))
+  end
+
+  Marked(spans: spans)
+end
 
 def bold_if(bold: Bool, look: Look) -> Look
   return Look.Bold if bold and look == Look.Plain
