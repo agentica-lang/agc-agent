@@ -412,7 +412,7 @@ def test_a_cut_stream_is_llm_protocol() -> Result[Void]
 end
 
 def test_cancel_stops_the_stream() -> Result[Void]
-  fake = try Fake.start([try Fake.sse("openai_responses/reasoning.sse", piece_bytes: 1)])
+  fake = try Fake.start([try Fake.sse_long("openai_responses/reasoning.sse")])
   call = try LLM.stream(provider(fake), LLM.Request(model: MODEL, messages: [Ev.user("What is 2 + 3?")]))
   _ = call.events.recv(5000)
   LLM.cancel(call)

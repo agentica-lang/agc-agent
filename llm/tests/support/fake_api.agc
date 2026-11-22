@@ -21,6 +21,8 @@ struct Reply
   stall_after: Int = -1
   hold: Optional[Channel[Bool]] = none
   head_wait_ms: Int = 0
+  ## Starts `body` over when it ends, until the client leaves: a stream that never ends on its own.
+  repeat: Bool = false
 end
 
 ## A request the fake got.
@@ -75,6 +77,22 @@ def sse(name: String, piece_bytes: Int = 7) -> Result[Reply]
   ok(Reply(status: 200, body: body, headers: [content_type("text/event-stream")], piece_bytes: piece_bytes))
 end
 
+## A 200 event stream of the fixture `name`, repeated until the client leaves: a client that cancels after its
+## first event always leaves the stream early and `Fake.left` always fires, no matter how big the buffers are. The
+## pieces are wide on purpose: cutting the body copies it, so 1-byte pieces of an endless body are slow.
+def sse_long(name: String, piece_bytes: Int = 65536) -> Result[Reply]
+  body = try fixture(name)
+  ok(
+    Reply(
+      status: 200,
+      body: body,
+      headers: [content_type("text/event-stream")],
+      piece_bytes: piece_bytes,
+      repeat: true,
+    ),
+  )
+end
+
 ## A JSON answer with the fixture `name`.
 def json(status: Int, name: String, headers: List[HTTP.Header] = []) -> Result[Reply]
   body = try fixture(name)
@@ -123,14 +141,14 @@ def answer(script: Script, request: HTTP.Request, body: HTTP.RequestBody) -> Res
     Task.sleep(reply.head_wait_ms)
   end
 
-  if reply.piece_bytes == 0 and not reply.cut and reply.stall_after < 0 and reply.hold.none?
+  if reply.piece_bytes == 0 and not reply.cut and not reply.repeat and reply.stall_after < 0 and reply.hold.none?
     return ok(HTTP.Answer.Whole(HTTP.Response(status: reply.status, headers: reply.headers, body: reply.body)))
   end
 
   pieces: Channel[Bytes] = Channel.new(8)
   Task.spawn(&produce, Pieces(channel: pieces, reply: reply, left: script.left))
   length: Optional[Int] = none
-  if reply.cut
+  if reply.cut and not reply.repeat
     length = some(reply.body.size + 1)
   end
 
@@ -148,9 +166,21 @@ def produce(job: Pieces) -> Void
   end
 
   size = [job.reply.piece_bytes, 1].max.unwrap!
+  if job.reply.body.size == 0
+    job.channel.close
+    return
+  end
+
+  sent = 0
   start = 0
-  while start < job.reply.body.size
-    if job.reply.stall_after >= 0 and start >= job.reply.stall_after
+  while true
+    if start >= job.reply.body.size
+      break if not job.reply.repeat
+
+      start = 0
+    end
+
+    if job.reply.stall_after >= 0 and sent >= job.reply.stall_after
       Task.sleep(STALL_MS)
     end
 
@@ -160,6 +190,7 @@ def produce(job: Pieces) -> Void
     end
 
     start = start + size
+    sent = sent + size
   end
 
   job.channel.close
