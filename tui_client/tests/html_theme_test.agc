@@ -16,7 +16,11 @@ def test_style_blocks_classes_and_ids_come_out_in_order() -> Result[Void]
   try Test.eq(blocks.size, 2)
   try Test.assert(blocks[0].include?(".transcript-user"), blocks[0])
   try Test.assert(blocks[1].include?(".banner-text"), blocks[1])
-  try Test.eq(try HtmlTheme.classes(html), ["transcript-user", "panel-selected", "notice"])
+  try Test.eq(
+    try HtmlTheme.classes(html),
+    ["transcript-user", "panel-selected", "notice", "editor-text", "footer-status"],
+  )
+
   Test.eq(try HtmlTheme.ids(html), ["main"])
 end
 

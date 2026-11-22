@@ -1,4 +1,5 @@
 import TUI from "pkg/tui/tui"
+import Components from "../src/components"
 import Layout from "../src/panel"
 import Prompt from "../src/prompt"
 import Screen from "../src/screen"
@@ -90,6 +91,41 @@ def test_the_cursor_after_a_full_row_ending_in_a_wide_character() -> Result[Void
   cells = TUI.layout(Screen.view(frame, Theme.default()), 6, 4)
   try Test.eq((try cells.find { |cell| cell.y == 1 and cell.x == 3 }).char, "中")
   Test.eq((try cells.find { |cell| cell.y == 1 and cell.x == 5 }).style, TUI.Style(reverse: true))
+end
+
+# The banner draws through `Components.notice`: the same text in the banner style.
+def test_the_banner_draws_through_notice() -> Result[Void]
+  theme = Theme.default()
+  frame = Screen.frame(12, 8, [], 0, parts_of(Prompt.view("", 0, 12, 8)).with(banner: ["oops"]))
+  cells = TUI.layout(Screen.view(frame, theme), 12, 8)
+  wanted = TUI.layout(Components.notice(frame.banner[0], theme), 12, 1)
+  for cell in wanted
+    found = try cells.find { |c| c.x == cell.x and c.y == 0 }
+    try Test.eq(found.char, cell.char)
+    try Test.eq(found.style, cell.style)
+  end
+
+  try Test.eq((try cells.find { |cell| cell.x == 1 and cell.y == 0 }).style, theme.banner.text)
+  Test.eq(frame.banner.size, 1)
+end
+
+# The row of the cursor draws through `Components.input_row`: the same cells, with the cursor in the cursor style.
+def test_the_cursor_row_draws_through_input_row() -> Result[Void]
+  theme = Theme.default()
+  prompt = Prompt.view("hi", 1, 12, 8)
+  frame = Screen.frame(12, 8, [], 0, parts_of(prompt))
+  cells = TUI.layout(Screen.view(frame, theme), 12, 8)
+  at = frame.area + frame.queued.size + 1 + prompt.cursor_y
+  wanted = TUI.layout(Components.input_row(prompt.rows[prompt.cursor_y], prompt.cursor_x, 12, theme), 12, 1)
+  for cell in wanted
+    found = try cells.find { |c| c.x == cell.x and c.y == at }
+    try Test.eq(found.char, cell.char)
+    try Test.eq(found.style, cell.style)
+  end
+
+  cursor = try cells.find { |cell| cell.x == prompt.cursor_x and cell.y == at }
+  try Test.eq(cursor.style, theme.editor.cursor)
+  Test.eq(prompt.rows.size, 1)
 end
 
 def parts_of(prompt: Prompt.View) -> Screen.Parts
