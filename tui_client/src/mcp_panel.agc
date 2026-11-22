@@ -204,9 +204,22 @@ end
 
 def lines_of(panel: State.McpPanel) -> List[String]
   case panel.view
-    "tools" -> Client.mcp_tools(Protocol.McpStatus(servers: panel.servers), panel.name)
+    "tools" -> tool_lines(panel)
     "log" -> panel.log
     _ -> listed(panel)
+  end
+end
+
+## The tool names of the server `panel` shows: only names, one per line with a blank line between them. They draw
+## in the panel text style, so CSS `.panel-text` styles them.
+def tool_lines(panel: State.McpPanel) -> List[String]
+  case (panel.servers.find { |server| server.name == panel.name })
+    ok(server) ->
+      names = server.tools.map { |tool| "- #{Client.printable(tool.name)}" }
+      return ["no tools on #{Client.printable(panel.name)}"] if names.empty?
+
+      names.flat_map { |name| [name, ""] }.take(names.size * 2 - 1)
+    error(_) -> ["no MCP server named #{Client.printable(panel.name)}: /mcp lists them"]
   end
 end
 

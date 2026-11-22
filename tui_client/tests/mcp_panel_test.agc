@@ -59,10 +59,7 @@ def test_tools_and_log_open_and_go_back() -> Result[Void]
   opened = ran(model_of(Channel.new(4)), "/mcp")
   tools = App.update(opened, char("t"))
   try Test.eq(tools.model.side.unwrap!.title, "MCP fs tools")
-  try Test.assert(
-    tools.model.side.unwrap!.lines.any? { |line| line.include?("mcp__fs__read: Reads a file") },
-    "#{tools.model.side}",
-  )
+  try Test.eq(tools.model.side.unwrap!.lines, ["- read"])
 
   try Test.eq(tools.cmds.size > 0, true)
   back = App.update(tools.model, key(TUI.Key.Escape)).model
