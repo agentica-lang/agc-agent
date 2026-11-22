@@ -9,7 +9,7 @@ import Wire from "openai_responses_wire"
 
 ## What Codex is told of the client that calls it: the `originator` header, and the version its model list is for.
 CODEX_ORIGINATOR = "llm-async-codex"
-CODEX_CLIENT_VERSION = "0.170.0"
+CODEX_CLIENT_VERSION = "0.171.0"
 
 ## The provider for an API at `base_url` (such as `https://api.openai.com/v1`). An empty `api_key` sends no
 ## `Authorization` header. Fields such as `store: false` and `include: ["reasoning.encrypted_content"]` go in

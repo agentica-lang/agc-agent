@@ -17,7 +17,7 @@
 - `.footer-status-<segment>` in the theme file styles one named segment of the full-screen status row (`state`, `usage`, `rate`, `hints`, `model`, `chatgpt.quota` or an extension's name, lowercased with its dots kept); `.footer-status` stays the base for the filler, the separators and any segment no rule names, so a file without segment rules looks as before.
 ### Changed
 
-- The ChatGPT provider asks for the model catalog of Codex 0.170.0, which lists GPT-6.2 Sol and the other new models of your plan.
+- The ChatGPT provider asks for the model catalog of Codex 0.171.0, which lists GPT-6.2 Sol and the other new models of your plan.
 
 ## [finn-20261119135800] - 2026-11-19
 
