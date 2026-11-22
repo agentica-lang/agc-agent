@@ -4,6 +4,7 @@
 
 - Finn reuses HTTP connections for model provider requests and accepts gzip and deflate model lists.
 - `FINN_THEME` (or `theme.html` next to the config file) styles the full screen: its `<style>` blocks name the theme regions (`.transcript-user`, `.panel-selected`, ...).
+- User messages in the transcript draw on a subtle tinted background, so they read apart from the assistant's; CSS `.transcript-user` tunes it.
 - Model provider calls to an `https://` API use HTTP/2 (negotiated with ALPN) on http-client 0.5.0, whose streams a session reads piece by piece; one whose peer does not negotiate `h2` falls back to HTTP/1.1 and stays there, a plain `http://` provider keeps HTTP/1.1, and `FINN_HTTP2=0` keeps HTTP/1.1 to every provider.
 - `/reload` applies updated approval rules even if saving the updated session prompt fails.
 - Skills now default to `.finn/skills` only. Configure extra user and trusted-project paths with `skills` in `config.json`. Existing sessions pick up path changes on reload or resume.
