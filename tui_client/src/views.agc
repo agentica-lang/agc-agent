@@ -227,7 +227,7 @@ def label(app: State.Model) -> String
 end
 
 # What the turn does is in the top rule; the status line says when the client is ready.
-def status(app: State.Model, width: Int) -> String
+def status(app: State.Model, width: Int) -> List[Footer.Span]
   state: List[String] = []
   if app.options.yolo
     state = state.push("YOLO")
@@ -252,7 +252,7 @@ def status(app: State.Model, width: Int) -> String
 
   case app.statusline
     some(layout) ->
-      Footer.custom(
+      Footer.custom_spans(
         layout,
         Footer.Values(
           state: state,
@@ -265,7 +265,7 @@ def status(app: State.Model, width: Int) -> String
         width,
       )
     none ->
-      Footer.status(
+      Footer.status_spans(
         state,
         app.usage,
         hints(app),

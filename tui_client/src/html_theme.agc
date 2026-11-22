@@ -6,7 +6,11 @@
 ## Selectors are `.class`, `#id` or element names, matched case-insensitively
 ## against one spelling per region (see `apply_patch`); specificity is order
 ## only, later rules winning over earlier ones, and declarations merge in CSS
-## order. Unknown selectors, properties and values are ignored, never errors:
+## order. `.footer-status` is the base of the status row (its filler, separators
+## and any segment no rule names); `.footer-status-<name>` names one segment
+## (`state`, `usage`, `rate`, `hints`, `model`, `chatgpt.quota` or an extension's
+## name, lowercased with its dots kept, so `chatgpt.quota` stays dotted). Unknown
+## selectors, properties and values are ignored, never errors:
 ## a file that does not parse keeps the built-in theme with a warning.
 ## Properties, one spelling each: `color` and `background-color` (a named
 ## color, `#rgb`/`#rrggbb` or `ansi(n)`), `font-weight: bold`,
@@ -496,6 +500,7 @@ def apply_patch(theme: Theme.Theme, key: String, patch: Patch) -> Theme.Theme
     "panel-added" -> theme.with(panel: theme.panel.with(added: overlaid(theme.panel.added, patch)))
     "banner-text" -> theme.with(banner: theme.banner.with(text: overlaid(theme.banner.text, patch)))
     "footer-status" -> theme.with(footer: theme.footer.with(status: overlaid(theme.footer.status, patch)))
+    _ if key.start_with?("footer-status-") -> segment_patched(theme, key.slice(14, key.length - 14), patch)
     "editor-text" -> theme.with(editor: theme.editor.with(text: overlaid(theme.editor.text, patch)))
     "editor-cursor" -> theme.with(editor: theme.editor.with(cursor: overlaid(theme.editor.cursor, patch)))
     "rules-default" -> theme.with(rules: theme.rules.with(default: overlaid(theme.rules.default, patch)))
@@ -510,6 +515,17 @@ def apply_patch(theme: Theme.Theme, key: String, patch: Patch) -> Theme.Theme
     "tooltip" -> theme.with(banner: theme.banner.with(text: overlaid(theme.banner.text, patch)))
     _ -> theme
   end
+end
+
+# One named status segment: `.footer-status-<name>` overlays the segment it names, starting from what that
+# segment already has, or from `footer.status` when no rule named it yet. `<name>` is the lowercased segment
+# name with its dots kept, so `chatgpt.quota` is `.footer-status-chatgpt.quota`; names that differ only in case
+# share one entry, and an empty name changes nothing.
+def segment_patched(theme: Theme.Theme, name: String, patch: Patch) -> Theme.Theme
+  return theme if name.strip.empty?
+
+  current = theme.footer.segments.get(name).unwrap_or(theme.footer.status)
+  theme.with(footer: theme.footer.with(segments: theme.footer.segments.put(name, overlaid(current, patch))))
 end
 
 # The user's theme wins even on eight-color terminals: a patch overlays `basic()`, never replacing it.

@@ -14,6 +14,7 @@
 - Agentica extensions can add named status line segments with `Core.add_status_segment`.
 - The full screen draws its banner through the shared notice component and the prompt's cursor row through the shared input-row component, with no visual change.
 - The full screen draws its side panel edge through the shared sidebar segments, with no visual change.
+- `.footer-status-<segment>` in the theme file styles one named segment of the full-screen status row (`state`, `usage`, `rate`, `hints`, `model`, `chatgpt.quota` or an extension's name, lowercased with its dots kept); `.footer-status` stays the base for the filler, the separators and any segment no rule names, so a file without segment rules looks as before.
 ### Changed
 
 - The ChatGPT provider asks for the model catalog of Codex 0.170.0, which lists GPT-6.2 Sol and the other new models of your plan.

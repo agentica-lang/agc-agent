@@ -1,5 +1,8 @@
 import TUI from "pkg/tui/tui"
+import Protocol from "pkg/protocol/protocol"
 import Components from "../src/components"
+import Footer from "../src/footer"
+import HtmlTheme from "../src/html_theme"
 import Layout from "../src/panel"
 import Prompt from "../src/prompt"
 import Screen from "../src/screen"
@@ -166,8 +169,77 @@ def test_beside_draws_through_sidebar_segments() -> Result[Void]
   Test.eq((try cells.find { |cell| cell.x == 2 and cell.y == 1 }).char, "b")
 end
 
+# The status line styles each named segment (built-ins, the dotted quota and extensions) and keeps the
+# filler in the base style; with no segment rule every cell falls back to the base.
+def test_the_status_line_styles_each_named_segment() -> Result[Void]
+  css = <<~C
+    .footer-status { color: red; }
+    .footer-status-state { color: green; }
+    .footer-status-usage { color: yellow; }
+    .footer-status-chatgpt.quota { color: blue; }
+    .footer-status-extra { color: magenta; }
+    .footer-status-model { color: cyan; }
+  C
+
+  theme = HtmlTheme.apply_rules(Theme.basic(), try HtmlTheme.parse_rules(css))
+  used = Protocol.Usage(input: 1200, output: 340, cache_read: 0, cache_write: 0, context: 1200, call_output: some(340))
+
+  values = Footer.Values(
+    state: ["ready"],
+    usage: some(used),
+    hints: ["Enter send"],
+    model: "(local) m",
+    rate: "",
+    segments: [
+      Protocol.StatusSegment(name: "chatgpt.quota", text: "5h 62%"),
+      Protocol.StatusSegment(name: "extra", text: "ex 1"),
+    ],
+  )
+
+  layout = Protocol.StatusLine(left: ["state", "usage", "chatgpt.quota", "extra"], right: ["model"])
+  spans = Footer.custom_spans(layout, values, 60)
+  try Test.eq(Footer.spans_text(spans).length > 0, true)
+  frame = Screen.frame(60, 6, [], 0, parts_of(Prompt.view("", 0, 60, 6)).with(status: spans))
+  cells = TUI.layout(Screen.view(frame, theme), 60, 6)
+  y = 5
+  # Walk the spans left to right, checking every cell they cover.
+  x = 0
+  for span in spans
+    wide = span.text.length
+    for dx in 0...wide
+      cell = try cells.find { |found| found.x == x + dx and found.y == y }
+      try Test.eq(cell.char, span.text.split("")[dx])
+      try Test.eq(cell.style, Theme.footer_style(theme.footer, span.name))
+    end
+
+    x = x + wide
+  end
+
+  try Test.eq(x, 60)
+  # The named spans use their own colors, the separators the base.
+  try Test.assert(Theme.footer_style(theme.footer, "state") != theme.footer.status, "state is styled")
+  try Test.assert(Theme.footer_style(theme.footer, "extra") != theme.footer.status, "extension is styled")
+  try Test.assert(Theme.footer_style(theme.footer, "chatgpt.quota") != theme.footer.status, "dotted quota is styled")
+
+  # With no segment rule the same spans all draw in the base style.
+  plain = TUI.layout(Screen.view(frame, Theme.basic()), 60, 6)
+  wanted = plain.select { |found| found.y == y }
+  for cell in wanted
+    try Test.eq(cell.style, Theme.basic().footer.status)
+  end
+
+  ok()
+end
+
 def parts_of(prompt: Prompt.View) -> Screen.Parts
-  Screen.Parts(prompt: prompt, picker: &nothing, panel: &nothing, label: "", level: none, status: "ready")
+  Screen.Parts(
+    prompt: prompt,
+    picker: &nothing,
+    panel: &nothing,
+    label: "",
+    level: none,
+    status: [Footer.Span(name: "", text: "ready")],
+  )
 end
 
 def nothing(_room: Int) -> List[Layout.Row] = []

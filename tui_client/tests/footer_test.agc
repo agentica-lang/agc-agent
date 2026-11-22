@@ -98,6 +98,103 @@ def test_a_narrow_row_drops_the_rate_first() -> Result[Void]
   Test.eq(Footer.status(["ready"], some(used), [], model, fits, "~42 tok/s"), "#{full}  #{model} ")
 end
 
+# The named spans join to the plain row, keep their names through width and clipping, and leave the
+# separators unnamed: the default row names each segment, the padding stays unnamed.
+def test_status_spans_keep_names_and_width() -> Result[Void]
+  used = Protocol.Usage(
+    input: 1200,
+    output: 340,
+    cache_read: 3600,
+    cache_write: 0,
+    context: 4800,
+    session_cost: some(0.0125),
+    window: some(32_000),
+    call_output: some(40),
+  )
+
+  model = Footer.model("anthropic/claude-sonnet-4-5-20250929", some("high"))
+  spans = Footer.status_spans(["ready"], some(used), ["Enter send"], model, 140, "~42 tok/s", "5h 62%")
+  try Test.eq(
+    Footer.spans_text(spans),
+    Footer.status(["ready"], some(used), ["Enter send"], model, 140, "~42 tok/s", "5h 62%"),
+  )
+
+  try Test.eq(Width.text(Footer.spans_text(spans)), 140)
+  try Test.eq(spans[0], Footer.Span(name: "", text: " "))
+  try Test.eq(spans[1], Footer.Span(name: "state", text: "ready"))
+  try Test.assert(spans.any? { |span| span.name == "usage" }, Footer.spans_text(spans))
+  try Test.assert(spans.any? { |span| span.name == "rate" and span.text == "~42 tok/s" }, Footer.spans_text(spans))
+  try Test.assert(
+    spans.any? { |span| span.name == "chatgpt.quota" and span.text == "5h 62%" },
+    Footer.spans_text(spans),
+  )
+
+  try Test.assert(spans.any? { |span| span.name == "hints" and span.text == "Enter send" }, Footer.spans_text(spans))
+  try Test.eq(spans[spans.size - 2], Footer.Span(name: "model", text: model))
+  try Test.eq(spans[spans.size - 1], Footer.Span(name: "", text: " "))
+  # Every separator between two segments is unnamed filler, never a segment color.
+  for at in 1...(spans.size - 1)
+    if spans[at].text == " · "
+      try Test.eq(spans[at].name, "")
+    end
+  end
+
+  # Narrow rows keep the names: the quota goes first, then the rate, then the model is cut in its own span.
+  narrow = Footer.status_spans(["ready"], some(used), ["Enter send"], model, 50, "~42 tok/s", "5h 62%")
+  try Test.eq(
+    Footer.spans_text(narrow),
+    Footer.status(["ready"], some(used), ["Enter send"], model, 50, "~42 tok/s", "5h 62%"),
+  )
+
+  try Test.eq(Width.text(Footer.spans_text(narrow)), 50)
+  try Test.eq(narrow.any? { |span| span.name == "chatgpt.quota" }, false)
+  try Test.eq(narrow.any? { |span| span.name == "rate" }, false)
+  model_span = narrow.select { |span| span.name == "model" }[0]
+  try Test.assert(model_span.text.end_with?("…"), model_span.text)
+  Test.eq(Footer.spans_text(narrow).length > 0, true)
+end
+
+# Custom spans keep one span per segment, drop whole segments from the end when narrow, and cut the last one with
+# `…` in its own span; missing names are skipped without a word.
+def test_custom_spans_preserve_names_through_clipping() -> Result[Void]
+  values = Footer.Values(
+    state: ["ready"],
+    usage: none,
+    hints: ["Enter send"],
+    model: "model",
+    rate: "",
+    segments: [Protocol.StatusSegment(name: "extra", text: "5h 72%")],
+  )
+
+  layout = Protocol.StatusLine(left: ["state", "extra"], right: ["model"])
+  full = Footer.custom_spans(layout, values, 30)
+  try Test.eq(Footer.spans_text(full), Footer.custom(layout, values, 30))
+  try Test.eq(Width.text(Footer.spans_text(full)), 30)
+  try Test.eq(full.map { |span| span.name }.select { |name| name != "" }, ["state", "extra", "model"])
+  # The separators between them are unnamed.
+  try Test.eq(full.select { |span| span.text == " · " }.map { |span| span.name }, [""])
+  # A narrow row drops the model first, then the extension segment, keeping the names of what is left.
+  clipped = Footer.custom_spans(layout, values, 10)
+  try Test.eq(Footer.spans_text(clipped), Footer.custom(layout, values, 10))
+  try Test.eq(Width.text(Footer.spans_text(clipped)), 10)
+  try Test.eq(clipped.any? { |span| span.name == "model" }, false)
+  # The last span still names its segment when cut.
+  tiny = Footer.custom_spans(layout, values, 5)
+  try Test.eq(Footer.spans_text(tiny), Footer.custom(layout, values, 5))
+  try Test.eq(Width.text(Footer.spans_text(tiny)), 5)
+  cut = tiny.select { |span| span.text.include?("…") }
+  try Test.eq(cut.size, 1)
+  try Test.assert(cut[0].name != "", cut[0].name)
+  # Missing names leave no span and no extra separator.
+  missing = Footer.custom_spans(layout.with(left: ["unknown", "state"], right: []), values, 30)
+  try Test.eq(
+    Footer.spans_text(missing),
+    Footer.custom(layout.with(left: ["unknown", "state"], right: []), values, 30),
+  )
+
+  Test.eq(missing.map { |span| span.name }.select { |name| name != "" }, ["state"])
+end
+
 # While a call streams the rate is estimated at 4 characters a token, once it has streamed for half a second; its usage
 # gives the exact rate, its output tokens over the time of its output. No data, or output that came in one burst, shows
 # no rate.

@@ -7,6 +7,7 @@
 import Client from "pkg/client/client"
 import TUI from "pkg/tui/tui"
 import Components from "components"
+import Footer from "footer"
 import Layout from "panel"
 import Markdown from "markdown"
 import Prompt from "prompt"
@@ -32,7 +33,7 @@ struct Parts
   ## What the top rule says ("" when idle), and the thinking level its color shows (none for the model's default).
   label: String
   level: Optional[String]
-  status: String
+  status: List[Footer.Span]
   ## The messages waiting for the end of the turn, one row each above the editor.
   queued: List[String] = []
   ## The row above the status: where the session is.
@@ -65,7 +66,7 @@ struct Frame
   panel: List[Layout.Row]
   ## The place row, none on a screen too short for it.
   place: List[String]
-  status: String
+  status: List[Footer.Span]
   ## The banner rows above the transcript, as many as the screen has room for.
   banner: List[String] = []
   ## The rows of the side panel in the transcript's place, which then shows no lines.
@@ -155,7 +156,8 @@ def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
   top = TUI.line([TUI.span(rule_text(frame.label, frame.width), rule)])
   bottom = TUI.line([TUI.span(rule_text("", frame.width), rule)])
   panel = frame.panel.map { |row| panel_row(row, theme.panel) }
-  footer = (frame.place + [frame.status]).map { |text| TUI.line([TUI.span(text, theme.footer.status)]) }
+  placed = frame.place.map { |text| TUI.line([TUI.span(text, theme.footer.status)]) }
+  footer = placed + [status_line(frame.status, theme)]
   queued = frame.queued.map { |text| TUI.line([TUI.span(text, theme.transcript.notice)]) }
   TUI.col(shown + rows + blank + queued + [top] + editor + [bottom] + panel + footer)
 end
@@ -222,6 +224,12 @@ def rich_row(text: String, colors: Theme.PanelColors) -> TUI.Node
 end
 
 private
+
+# The status row: each named span draws in its `footer-status-<name>` entry when one names it, else in
+# `footer.status`; an unnamed span (a separator, the leading space or the padding) is `footer.status`.
+def status_line(spans: List[Footer.Span], theme: Theme.Theme) -> TUI.Node
+  TUI.line(spans.map { |span| TUI.span(span.text, Theme.footer_style(theme.footer, span.name)) })
+end
 
 def editor_rows(frame: Frame) -> Int
   return frame.prompt.rows.size if frame.picker.empty?

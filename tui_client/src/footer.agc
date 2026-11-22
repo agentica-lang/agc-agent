@@ -1,6 +1,12 @@
 ## The two rows under the editor: where the session is (its folder, the git branch and its first message), then the
 ## status (what the client waits for, the key hints that fit), the tokens of the last model call and the session's
 ## cost, and the model with its thinking level on the right. Pure.
+##
+## The status row is a list of named spans: one per segment (`state`, `usage`, `rate`, `hints`, `model`,
+## `chatgpt.quota` and an extension's names) with the separators, the leading space and the padding as unnamed
+## spans. The theme draws an unnamed span in `footer.status` and a named one in its `footer-status-<name>` entry
+## when one names it, else in `footer.status`. `status` and `custom` are the joined texts of `status_spans` and
+## `custom_spans`, so the widths, the order, the skips and the clipping are the same either way.
 
 import Protocol from "pkg/protocol/protocol"
 import Width from "width"
@@ -8,6 +14,13 @@ import Width from "width"
 ## The characters of the first message that name the session.
 TITLE_CHARS = 40
 MAX_USD = 1_000_000.0
+
+## One piece of the status row: `name` is the segment (`state`, `usage`, `rate`, `hints`, `model`,
+## `chatgpt.quota` or an extension's name), or "" for a separator, the leading space and the padding.
+struct Span
+  name: String
+  text: String
+end
 
 ## The values available to a custom status layout.
 struct Values
@@ -51,42 +64,62 @@ def status(
   rate: String = "",
   quota: String = "",
 ) -> String
-  room = width - Width.text(right) - 3
-  text = left(state, usage, rate, quota, 0)
-  for detail in 1..MOST_DROPPED
-    break if Width.text(text) <= room
+  spans_text(status_spans(state, usage, hints, right, width, rate, quota))
+end
 
-    text = left(state, usage, rate, quota, detail)
+## The same row as named spans, with the separators and the padding unnamed.
+def status_spans(
+  state: List[String],
+  usage: Optional[Protocol.Usage],
+  hints: List[String],
+  right: String,
+  width: Int,
+  rate: String = "",
+  quota: String = "",
+) -> List[Span]
+  room = width - Width.text(right) - 3
+  current = left_spans(state, usage, rate, quota, 0)
+  for d in 1..MOST_DROPPED
+    break if spans_width(current) <= room
+
+    current = left_spans(state, usage, rate, quota, d)
   end
 
+  text_spans = current
   model = right
-  if Width.text(text) > room
-    model = cut(right, width - Width.text(text) - 3)
+  if spans_width(text_spans) > room
+    model = cut(right, width - spans_width(text_spans) - 3)
   end
 
   room = width - Width.text(model) - 3
   for hint in hints
-    more = "#{text} · #{hint}"
-    if text == " "
-      more = " #{hint}"
+    candidate = text_spans + [Span(name: "", text: " · "), Span(name: "hints", text: hint)]
+    if spans_text(text_spans) == " "
+      candidate = [Span(name: "", text: " "), Span(name: "hints", text: hint)]
     end
 
-    break if Width.text(more) > room
+    break if spans_width(candidate) > room
 
-    text = more
+    text_spans = candidate
   end
 
-  return padded(text, width) if model.empty?
+  return padded_spans(text_spans, width) if model.empty?
 
-  text + " " * (width - Width.text(text) - Width.text(model) - 1) + model + " "
+  filler = width - spans_width(text_spans) - Width.text(model) - 1
+  text_spans + [Span(name: "", text: " " * filler), Span(name: "model", text: model), Span(name: "", text: " ")]
 end
 
 ## The segments of a `status_line` layout. When the row is too narrow, whole segments go, from the end of the right side,
 ## then from the end of the left; the last one is cut.
 def custom(layout: Protocol.StatusLine, values: Values, width: Int) -> String
-  left = components(layout.left, values)
-  right = components(layout.right, values)
-  while cells(left, right) > width and left.size + right.size > 1
+  spans_text(custom_spans(layout, values, width))
+end
+
+## The same segments as named spans, with the separators and the padding unnamed.
+def custom_spans(layout: Protocol.StatusLine, values: Values, width: Int) -> List[Span]
+  left = component_lists(layout.left, values)
+  right = component_lists(layout.right, values)
+  while cells_of(left, right) > width and left.size + right.size > 1
     if right.empty?
       left = left.take(left.size - 1)
     else
@@ -94,14 +127,24 @@ def custom(layout: Protocol.StatusLine, values: Values, width: Int) -> String
     end
   end
 
-  return padded(" #{cut((left + right).join(" · "), width - 1)}", width) if cells(left, right) > width
+  if cells_of(left, right) > width
+    flat = flatten_comps(left + right)
+    return padded_spans([Span(name: "", text: " ")] + cut_spans(flat, width - 1), width)
+  end
 
-  joined = left.join(" · ")
-  return padded(" #{joined}", width) if right.empty?
+  joined = flatten_comps(left)
+  return padded_spans([Span(name: "", text: " ")] + joined, width) if right.empty?
 
-  shown = right.join(" · ")
-  " #{joined}" + " " * (width - Width.text(joined) - Width.text(shown) - 2) + shown + " "
+  shown = flatten_comps(right)
+  filler = width - spans_width(joined) - spans_width(shown) - 2
+  [Span(name: "", text: " ")] + joined + [Span(name: "", text: " " * filler)] + shown + [Span(name: "", text: " ")]
 end
+
+## The joined text of `spans`.
+def spans_text(spans: List[Span]) -> String = spans.map { |span| span.text }.join("")
+
+## How many columns the joined text of `spans` takes.
+def spans_width(spans: List[Span]) -> Int = Width.text(spans_text(spans))
 
 ## The last call: `↑` its whole prompt (cached included), `↓` its output, `R` the prompt read from the cache and the
 ## part of the prompt it was; then the session's cost, and the prompt as a part of the window (in tokens while the
@@ -164,51 +207,160 @@ private
 # How many parts the status row drops at most: the quota, the rate, then those of `counts`.
 MOST_DROPPED = 5
 
-def components(names: List[String], values: Values) -> List[String]
-  parts: List[String] = []
-  for name in names
-    text = case name
-      "state" -> values.state.join(" · ")
-      "usage" -> option_list(values.usage).map { |usage| counts(usage) }.join("")
-      "rate" -> values.rate
-      "hints" -> values.hints.join(" · ")
-      "model" -> values.model
-      _ -> values.segments.select { |segment| segment.name == name }.map { |segment| segment.text }.join("")
-    end
-
-    if not text.empty?
-      parts = parts.push(text)
+def left_spans(
+  state: List[String],
+  usage: Optional[Protocol.Usage],
+  rate: String,
+  quota: String,
+  detail: Int,
+) -> List[Span]
+  parts: List[Span] = []
+  for item in state
+    if not item.empty?
+      parts = parts.push(Span(name: "state", text: item))
     end
   end
 
-  parts
-end
+  for item in option_list(usage)
+    text = counts(item, [detail - 2, 0].max.unwrap!)
+    if not text.empty?
+      parts = parts.push(Span(name: "usage", text: text))
+    end
+  end
 
-def cells(left: List[String], right: List[String]) -> Int
-  return 1 + Width.text(left.join(" · ")) if right.empty?
-
-  Width.text(left.join(" · ")) + Width.text(right.join(" · ")) + 3
-end
-
-def left(state: List[String], usage: Optional[Protocol.Usage], rate: String, quota: String, detail: Int) -> String
-  parts = state + option_list(usage).map { |u| counts(u, [detail - 2, 0].max.unwrap!) }
   if detail < 2 and not rate.empty?
-    parts = parts.push(rate)
+    parts = parts.push(Span(name: "rate", text: rate))
   end
 
   if detail == 0 and not quota.empty?
-    parts = parts.push(quota)
+    parts = parts.push(Span(name: Protocol.QUOTA_SEGMENT, text: quota))
   end
 
-  " #{parts.join(" · ")}"
+  return [Span(name: "", text: " ")] if parts.empty?
+
+  out: List[Span] = [Span(name: "", text: " "), parts[0]]
+  for part in parts.drop(1)
+    out = out.push(Span(name: "", text: " · "))
+    out = out.push(part)
+  end
+
+  out
 end
 
-# `text` in `cells` cells at most, its end replaced by `…` when cut; "" when there is no room.
-def cut(text: String, cells: Int) -> String
-  return text if Width.text(text) <= cells
-  return "" if cells < 2
+def component_lists(names: List[String], values: Values) -> List[List[Span]]
+  out: List[List[Span]] = []
+  for name in names
+    spans = component_spans(name, values).select { |span| not span.text.empty? }
+    if not spans.empty?
+      out = out.push(spans)
+    end
+  end
 
-  "#{Width.cut(text, cells - 1)[0]}…"
+  out
+end
+
+def component_spans(name: String, values: Values) -> List[Span]
+  case name
+    "state" -> values.state.map { |item| Span(name: "state", text: item) }
+    "usage" -> option_list(values.usage).map { |usage| Span(name: "usage", text: counts(usage)) }
+    "rate" ->
+      if values.rate.empty?
+        []
+      else
+        [Span(name: "rate", text: values.rate)]
+      end
+
+    "hints" -> values.hints.map { |hint| Span(name: "hints", text: hint) }
+    "model" ->
+      if values.model.empty?
+        []
+      else
+        [Span(name: "model", text: values.model)]
+      end
+
+    _ ->
+      text = values.segments.select { |segment| segment.name == name }.map { |segment| segment.text }.join("")
+      if text.empty?
+        []
+      else
+        [Span(name: name, text: text)]
+      end
+  end
+end
+
+def flatten_comps(comps: List[List[Span]]) -> List[Span]
+  all: List[Span] = []
+  for comp in comps
+    for span in comp
+      all = all.push(span)
+    end
+  end
+
+  return [] if all.empty?
+
+  out: List[Span] = [all[0]]
+  for span in all.drop(1)
+    out = out.push(Span(name: "", text: " · "))
+    out = out.push(span)
+  end
+
+  out
+end
+
+def cells_of(left: List[List[Span]], right: List[List[Span]]) -> Int
+  return 1 + spans_width(flatten_comps(left)) if right.empty?
+
+  spans_width(flatten_comps(left)) + spans_width(flatten_comps(right)) + 3
+end
+
+# `spans` cut to `cells` columns, the cut end replaced by `…` in the span it cuts; [] when there is no room.
+def cut_spans(spans: List[Span], cells: Int) -> List[Span]
+  return spans if spans_width(spans) <= cells
+  return [] if cells < 2
+
+  taken = take_spans(spans, cells - 1)
+  used = 0
+  name = ""
+  for span in spans
+    wide = Width.text(span.text)
+    if used + wide > cells - 1
+      name = span.name
+      break
+    end
+
+    used = used + wide
+  end
+
+  taken.push(Span(name: name, text: "…"))
+end
+
+def take_spans(spans: List[Span], width: Int) -> List[Span]
+  out: List[Span] = []
+  used = 0
+  for span in spans
+    break if used >= width
+    break if width <= 0
+
+    remaining = width - used
+    wide = Width.text(span.text)
+    if wide <= remaining
+      out = out.push(span)
+      used = used + wide
+    else
+      out = out.push(Span(name: span.name, text: Width.cut(span.text, remaining)[0]))
+      used = width
+    end
+  end
+
+  out
+end
+
+def padded_spans(spans: List[Span], width: Int) -> List[Span]
+  taken = take_spans(spans, width)
+  used = spans_width(taken)
+  return taken if used >= width
+
+  taken.push(Span(name: "", text: " " * (width - used)))
 end
 
 def short_path(cwd: String, given: String) -> String
@@ -230,6 +382,14 @@ def tenths(count: Int) -> String = "#{count / 10}.#{count % 10}"
 def padded(text: String, width: Int) -> String
   cut = Width.cut(text, width)[0]
   cut + " " * [width - Width.text(cut), 0].max.unwrap!
+end
+
+# `text` in `cells` cells at most, its end replaced by `…` when cut; "" when there is no room.
+def cut(text: String, cells: Int) -> String
+  return text if Width.text(text) <= cells
+  return "" if cells < 2
+
+  "#{Width.cut(text, cells - 1)[0]}…"
 end
 
 def option_list[T](value: Optional[T]) -> List[T]
