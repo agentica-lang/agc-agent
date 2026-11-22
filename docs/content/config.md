@@ -127,6 +127,7 @@ A config file that does not read stays as it was, with the reason as a warning: 
 | `FINN_MODELS_URL` | the models.dev catalog of prices and windows; `off` for none |
 | `FINN_MODELS_PROVIDER` | the provider of the model in that catalog |
 | `FINN_DRAIN_MS` | how long `finn server stop` waits for the running turns (60000) |
+| `FINN_HTTP2` | `0` or `off` keeps HTTP/1.1 to the model providers; by default an `https://` provider is reached over HTTP/2 (ALPN) and a plain `http://` one over HTTP/1.1 |
 | `FINN_STATE_DIR`, `FINN_DATA_DIR` | the folders above |
 | `FINN_SERVER_COMMAND` | the program a client runs to start a server |
 

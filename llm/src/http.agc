@@ -18,6 +18,9 @@ BODY_POLL_MS = 120_000
 ## How a provider talks to its API.
 struct Options
   transport: Optional[Transport] = none
+  ## HTTP/2 to an `https://` API, which negotiates `h2` with ALPN; a plain `http://` API keeps HTTP/1.1, whose peer
+  ## would have to take the HTTP/2 connection preface with no negotiation (`FINN_HTTP2=0` keeps HTTP/1.1 to both).
+  http2: Bool = true
   ## The longest wait for the API to answer: the connect and the head (and a whole call, such as `GET /models`).
   timeout_ms: Int = 120_000
   ## The longest wait for the next piece of a stream: a stream silent for longer fails.
@@ -31,10 +34,20 @@ struct Options
   retry_after_max_ms: Int = 120_000
 end
 
+## The clients of the APIs: HTTP/1.1, and HTTP/2 for an `https://` one, which picks its transport by ALPN. An origin
+## whose peer does not negotiate `h2` is kept on HTTP/1.1 (`no_h2`).
 struct Transport
   private
 
-  client: Client.Client
+  http1: Client.Client
+  http2: Client.Client
+  no_h2: ATS[String, Bool]
+end
+
+## The client of a call, and the HTTP/1.1 one to fall back to when an `https://` peer refuses `h2`.
+struct Clients
+  main: Client.Client
+  fallback: Optional[Client.Client] = none
 end
 
 ## Where an API is and how to reach it.
@@ -62,21 +75,85 @@ struct Wire[S]
 end
 
 def transport(pool_size: Int = 10) -> Result[Transport]
-  ok(
-    Transport(
-      client: try Client.new(
-        pool_size: pool_size,
-        pool_timeout_ms: POOL_WAIT_MS,
-        max_body_bytes: 1_048_576,
-        max_retries: 0,
-        max_redirects: 0,
-      ),
-    ),
+  http1 = try client(pool_size, Client.Protocol.Http1)
+  case client(pool_size, Client.Protocol.Http2)
+    ok(http2) -> ok(Transport(http1: http1, http2: http2, no_h2: ATS.new()))
+    error(e) ->
+      Client.close(http1)
+      error(e)
+  end
+end
+
+def client(pool_size: Int, protocol: Client.Protocol) -> Result[Client.Client]
+  Client.new(
+    pool_size: pool_size,
+    pool_timeout_ms: POOL_WAIT_MS,
+    max_body_bytes: 1_048_576,
+    max_retries: 0,
+    max_redirects: 0,
+    protocol: protocol,
   )
 end
 
 def close_transport(transport: Transport) -> Void
-  Client.close(transport.client)
+  Client.close(transport.http1)
+  Client.close(transport.http2)
+end
+
+## The clients of `url`: HTTP/2 with an HTTP/1.1 fallback when it is on and the API is `https://` (`h2?`); else
+## HTTP/1.1 alone.
+def clients_for(transport: Transport, url: String, http2: Bool) -> Clients
+  return Clients(main: transport.http2, fallback: some(transport.http1)) if h2?(transport, url, http2)
+
+  Clients(main: transport.http1)
+end
+
+## A plain `http://` API keeps HTTP/1.1, since its peer would have to take the HTTP/2 connection preface with no
+## negotiation, and an origin whose ALPN gave no `h2` before stays on HTTP/1.1.
+def h2?(transport: Transport, url: String, http2: Bool) -> Bool
+  return false if not http2 or not url.start_with?("https://")
+
+  case transport.no_h2.get(url)
+    ok(blocked) -> not blocked
+    error(_) -> true
+  end
+end
+
+## The origin of `url` (`scheme://host`, with an explicit port kept as written): the key of `no_h2`, so the
+## path of a `base_url` never splits an origin. The scheme and the host read lowercased.
+def origin_of(url: String) -> String
+  at = url.index_of("://").unwrap_or(-1)
+  return url if at < 0
+
+  scheme = url.slice(0, at).downcase
+  rest = url.slice(at + 3, url.length - at - 3)
+  stop = first_mark(rest, ["/", "?", "#"]).unwrap_or(rest.length)
+  "#{scheme}://#{authority_of(rest.slice(0, stop))}"
+end
+
+## The authority with its host lowercased and an explicit port kept as written.
+def authority_of(authority: String) -> String
+  if authority.start_with?("[")
+    case authority.index_of("]")
+      some(close) ->
+        host = authority.slice(0, close + 1).downcase
+        return "#{host}#{authority.slice(close + 1, authority.length - close - 1)}"
+      none -> return authority.downcase
+    end
+  end
+
+  case authority.index_of(":")
+    some(colon) ->
+      host = authority.slice(0, colon).downcase
+      "#{host}#{authority.slice(colon, authority.length - colon)}"
+    none -> authority.downcase
+  end
+end
+
+## The first position of any of `marks` in `text`.
+def first_mark(text: String, marks: List[String]) -> Optional[Int]
+  found = marks.map { |mark| text.index_of(mark) }.select { |at| at.some? }.map { |at| at.unwrap! }
+  found.min
 end
 
 ## `Authorization: Bearer KEY`, or nothing for an empty key.
@@ -105,8 +182,10 @@ struct Job[S]
 end
 
 struct Lease
-  client: Client.Client
-  owned: Optional[Transport] = none
+  transport: Transport
+  clients: Clients
+  url: String
+  owned: Bool = false
 end
 
 struct ModelList
@@ -131,7 +210,7 @@ def start_stream[S](config: Config, wire: Wire[S], request: Types.Request) -> Re
   end
 
   lease = try acquire(config)
-  case Errors.with_retry(retry(config), -> { open(lease.client, config, wire, body, request.headers) })
+  case Errors.with_retry(retry(config), -> { open(lease, config, wire, body, request.headers) })
     error(e) ->
       close_lease(lease)
       error(e)
@@ -171,7 +250,7 @@ end
 
 # A 2xx answer comes back with its body unread; any other is read whole and becomes its error.
 def open[S](
-  client: Client.Client,
+  lease: Lease,
   config: Config,
   wire: Wire[S],
   body: Bytes,
@@ -184,7 +263,8 @@ def open[S](
 
   headers = merge_headers(own + wire.headers.call(config.api_key), extra)
   url = "#{config.base_url}#{wire.path}"
-  http = try network(Client.stream(client, "POST", url, body: some(body), headers: headers))
+  stream = ->(client: Client.Client) { Client.stream(client, "POST", url, body: some(body), headers: headers) }
+  http = try network(over_http1(lease, stream))
   return ok(http) if http.status >= 200 and http.status < 300
 
   read_ms = config.options.read_timeout_ms
@@ -235,7 +315,7 @@ end
 
 def list_models[S](config: Config, wire: Wire[S]) -> Result[List[Types.Model]]
   lease = try acquire(config)
-  result = Errors.with_retry(retry(config), -> { get_models(lease.client, config, wire) })
+  result = Errors.with_retry(retry(config), -> { get_models(lease, config, wire) })
   close_lease(lease)
   response = try result
   text = try protocol_text(response.body)
@@ -246,9 +326,10 @@ def list_models[S](config: Config, wire: Wire[S]) -> Result[List[Types.Model]]
   models(text)
 end
 
-def get_models[S](client: Client.Client, config: Config, wire: Wire[S]) -> Result[Client.Response]
+def get_models[S](lease: Lease, config: Config, wire: Wire[S]) -> Result[Client.Response]
   url = "#{config.base_url}#{wire.models_path}"
-  response = try network(Client.get(client, url, headers: wire.headers.call(config.api_key)))
+  get = ->(client: Client.Client) { Client.get(client, url, headers: wire.headers.call(config.api_key)) }
+  response = try network(over_http1(lease, get))
   return ok(response) if response.status >= 200 and response.status < 300
 
   Errors.from_status(response.status, response.headers, response.body)
@@ -287,17 +368,42 @@ def merge_headers(own: List[HTTP.Header], extra: Map[String, String]) -> List[HT
 end
 
 def acquire(config: Config) -> Result[Lease]
-  for shared in option_list(config.options.transport)
-    return ok(Lease(client: timed(shared.client, config.options)))
+  options = config.options
+  for shared in option_list(options.transport)
+    return ok(leased(shared, config.base_url, options, false))
   end
 
   local = try network(transport())
-  ok(Lease(client: timed(local.client, config.options), owned: some(local)))
+  ok(leased(local, config.base_url, options, true))
+end
+
+def leased(transport: Transport, url: String, options: Options, owned: Bool) -> Lease
+  origin = origin_of(url)
+  found = clients_for(transport, origin, options.http2)
+  clients = Clients(main: timed(found.main, options), fallback: found.fallback.map { |client| timed(client, options) })
+  Lease(transport: transport, clients: clients, url: origin, owned: owned)
+end
+
+## The call, and over HTTP/1.1 when an `https://` peer refused the `h2` of ALPN: it then keeps HTTP/1.1.
+def over_http1[T](lease: Lease, call: Fn[Client.Client, Result[T]]) -> Result[T]
+  origin = origin_of(lease.url)
+  case lease.transport.no_h2.get(origin)
+    ok(true) if lease.clients.fallback.some? -> return call.call(lease.clients.fallback.unwrap!)
+    _ -> nil
+  end
+
+  result = call.call(lease.clients.main)
+  case result
+    error(e) if e.is_a?("http_client.http2.alpn") and lease.clients.fallback.some? ->
+      lease.transport.no_h2.put(origin, true)
+      call.call(lease.clients.fallback.unwrap!)
+    _ -> result
+  end
 end
 
 def close_lease(lease: Lease) -> Void
-  for owned in option_list(lease.owned)
-    close_transport(owned)
+  if lease.owned
+    close_transport(lease.transport)
   end
 end
 
