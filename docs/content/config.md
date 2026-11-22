@@ -137,7 +137,8 @@ The key variables of the providers are on [Providers](providers.md).
 ### The theme file
 
 `FINN_THEME` names the HTML file whose `<style>` blocks style the full screen (`theme.html` next to the config file by default; with no known config folder there is none).
-- selectors name a region: `.transcript-user`, `.transcript-assistant`, `.transcript-bold`, `.transcript-heading`, `.transcript-code`, `.transcript-thinking`, `.transcript-notice`, `.transcript-tool`, `.transcript-arg-running`, `.transcript-arg-done`, `.transcript-arg-failed`, `.transcript-output`, `.transcript-removed`, `.transcript-added`, `.panel-head`, `.panel-text`, `.panel-selected`, `.panel-removed`, `.panel-added`, `.banner-text`, `.footer-status`, `.editor-text`, `.editor-cursor`, `.rules-default`, `.rules-low`, `.rules-medium`, `.rules-high` (`.sidebar`, `.modal`, `.panel` and `.popover` style the panel text, `.notice` the notice, `.input` the prompt, `.tooltip` the banner).
+- selectors name a region: `.transcript-user`, `.transcript-assistant`, `.transcript-bold`, `.transcript-heading`, `.transcript-code`, `.transcript-thinking`, `.transcript-notice`, `.transcript-tool`, `.transcript-arg-running`, `.transcript-arg-done`, `.transcript-arg-failed`, `.transcript-output`, `.transcript-removed`, `.transcript-added`, `.panel-head`, `.panel-text`, `.panel-selected`, `.panel-removed`, `.panel-added`, `.banner-text`, `.footer-status`, `.footer-status-<segment>`, `.editor-text`, `.editor-cursor`, `.rules-default`, `.rules-low`, `.rules-medium`, `.rules-high` (`.sidebar`, `.modal`, `.panel` and `.popover` style the panel text, `.notice` the notice, `.input` the prompt, `.tooltip` the banner).
+- `.footer-status` is the base of the status row: its filler, separators and any segment no rule names. `.footer-status-<segment>` styles one named segment: `state`, `usage`, `rate`, `hints`, `model`, `chatgpt.quota` or an extension's name, lowercased with its dots kept (`.footer-status-chatgpt.quota` styles `chatgpt.quota`). Names that differ only in case share one entry; with no rule for it a segment draws in `.footer-status`, so a file that only sets `.footer-status` looks as before.
 - shared screen parts draw with that mapping: `modal` (title `panel.head`, frame `panel.text`), `sidebar` (edge `panel.text`), `notice` (`banner.text`), `input_row` (text `editor.text`, cursor `editor.cursor`), `tooltip` and `popover` (frame `panel.text`), `select_list` (cursor `panel.selected`, rest `panel.text`).
 - selectors are `.class`, `#id` or element names, matched case-insensitively; anything else is ignored.
 - properties are `color` and `background-color` (a named color, `#rgb`/`#rrggbb` or `ansi(0)`–`ansi(255)`), `font-weight: bold`, `font-style: italic`, `text-decoration: underline` and `dim: true`; unknown properties and values are ignored.
@@ -157,6 +158,9 @@ Copy this to `theme.html` next to the config file and tweak it:
 .banner-text { color: black; background-color: #ffcc00; }
 .editor-text { color: white; }
 .footer-status { color: ansi(245); font-style: italic; }
+.footer-status-model { color: white; }
+.footer-status-usage { color: ansi(250); }
+.footer-status-chatgpt.quota { color: cyan; }
 .rules-high { color: red; font-weight: bold; }
 </style>
 </head>

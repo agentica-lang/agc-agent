@@ -75,6 +75,50 @@ def test_later_rules_win_and_declarations_merge() -> Result[Void]
   Test.eq(theme.transcript.user, TUI.Style(fg: TUI.Color.Green, bold: true))
 end
 
+# `.footer-status-<name>` styles one named status segment: built-ins, the dotted quota and extensions share the
+# spelling (lowercased, dots kept); the base keeps the filler and any segment no rule names.
+def test_footer_status_segments_name_each_segment() -> Result[Void]
+  css = <<~C
+    .footer-status { color: red; }
+    .footer-status-model { color: green; }
+    .footer-status-chatgpt.quota { color: blue; }
+    .FOOTER-STATUS-EXTRA { background-color: ansi(24); }
+  C
+
+  theme = HtmlTheme.apply_rules(Theme.basic(), try HtmlTheme.parse_rules(css))
+  try Test.eq(theme.footer.status, TUI.Style(fg: TUI.Color.Red, dim: true))
+  try Test.eq(Theme.footer_style(theme.footer, "model"), TUI.Style(fg: TUI.Color.Green, dim: true))
+  try Test.eq(Theme.footer_style(theme.footer, "chatgpt.quota"), TUI.Style(fg: TUI.Color.Blue, dim: true))
+  try Test.eq(Theme.footer_style(theme.footer, "CHATGPT.QUOTA"), TUI.Style(fg: TUI.Color.Blue, dim: true))
+
+  try Test.eq(
+    Theme.footer_style(theme.footer, "extra"),
+    TUI.Style(fg: TUI.Color.Red, bg: TUI.Color.Index(24), dim: true),
+  )
+
+  # A segment no rule names falls back to the base, and the base keeps its dim.
+  try Test.eq(Theme.footer_style(theme.footer, "usage"), theme.footer.status)
+  try Test.eq(Theme.footer_style(theme.footer, ""), theme.footer.status)
+  # Later segment rules win over earlier ones for the same name.
+  again = HtmlTheme.apply_rules(
+    Theme.basic(),
+    try HtmlTheme.parse_rules(".footer-status-model { color: red; } .footer-status-model { color: green; }"),
+  )
+
+  try Test.eq(again.footer.segments.get("model").unwrap!, TUI.Style(fg: TUI.Color.Green, dim: true))
+  # A segment rule starts from the base in effect: a later base rule does not clear what it set.
+  ordered = HtmlTheme.apply_rules(
+    Theme.basic(),
+    try HtmlTheme.parse_rules(".footer-status-model { color: green; } .footer-status { color: red; }"),
+  )
+
+  try Test.eq(ordered.footer.status, TUI.Style(fg: TUI.Color.Red, dim: true))
+  try Test.eq(Theme.footer_style(ordered.footer, "model"), TUI.Style(fg: TUI.Color.Green, dim: true))
+  # An empty segment name changes nothing.
+  unchanged = HtmlTheme.apply_rules(Theme.basic(), try HtmlTheme.parse_rules(".footer-status- { color: red; }"))
+  Test.eq(unchanged, Theme.basic())
+end
+
 # Unknown selectors, properties and values change nothing; one bad declaration
 # never stops the good ones of its rule.
 def test_unknown_selectors_properties_and_values_are_ignored() -> Result[Void]

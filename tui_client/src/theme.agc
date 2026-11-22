@@ -39,6 +39,9 @@ end
 
 struct FooterColors
   status: TUI.Style
+  ## One style per named status segment (`state`, `usage`, `rate`, `hints`, `model`, `chatgpt.quota` and an
+  ## extension's names), keyed by the lowercased segment name; a name missing here draws in `status`.
+  segments: Map[String, TUI.Style] = {}
 end
 
 ## The prompt.
@@ -139,6 +142,12 @@ def basic() -> Theme
       high: TUI.Style(fg: TUI.Color.Magenta),
     ),
   )
+end
+
+## The style of one named status segment: its entry of `colors.segments` (keyed by the lowercased name), or
+## `colors.status` when no rule named it. Filler (separators, padding and the place row) always uses `status`.
+def footer_style(colors: FooterColors, name: String) -> TUI.Style
+  colors.segments.get(name.strip.downcase).unwrap_or(colors.status)
 end
 
 ## Whether a terminal shows the 256-color palette, from its `TERM` and `COLORTERM`.
