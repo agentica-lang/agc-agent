@@ -106,7 +106,9 @@ def test_the_banner_draws_through_notice() -> Result[Void]
   end
 
   try Test.eq((try cells.find { |cell| cell.x == 1 and cell.y == 0 }).style, theme.banner.text)
-  Test.eq(frame.banner.size, 1)
+  try Test.eq(frame.banner.size, 1)
+  # Golden, independent of the builder: the padded banner row spells its text and tail.
+  Test.eq(rows(frame)[0], "oops     x")
 end
 
 # The row of the cursor draws through `Components.input_row`: the same cells, with the cursor in the cursor style.
@@ -125,7 +127,12 @@ def test_the_cursor_row_draws_through_input_row() -> Result[Void]
 
   cursor = try cells.find { |cell| cell.x == prompt.cursor_x and cell.y == at }
   try Test.eq(cursor.style, theme.editor.cursor)
-  Test.eq(prompt.rows.size, 1)
+  try Test.eq(prompt.rows.size, 1)
+  # Goldens, independent of the builder: the row spells the prompt, cursor on the second char.
+  try Test.eq(rows(frame)[at], "hi")
+  try Test.eq((try cells.find { |cell| cell.x == 0 and cell.y == at }).char, " ")
+  try Test.eq((try cells.find { |cell| cell.x == 1 and cell.y == at }).char, "h")
+  Test.eq(cursor.char, "i")
 end
 
 # `beside` draws through `Components.sidebar_segments`: the same cells as the flat tail spliced beside the content.
