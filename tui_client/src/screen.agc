@@ -6,6 +6,7 @@
 
 import Client from "pkg/client/client"
 import TUI from "pkg/tui/tui"
+import Components from "components"
 import Layout from "panel"
 import Markdown from "markdown"
 import Prompt from "prompt"
@@ -143,12 +144,12 @@ def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
     rows = frame.cover.map { |row| panel_row(row, theme.panel) }
   end
 
-  shown = frame.banner.map { |text| TUI.line([TUI.span(text, theme.banner.text)]) }
+  shown = frame.banner.map { |text| Components.notice(text, theme) }
   blank = (rows.size...frame.area).to_a.map { |_| TUI.line([]) }
   rule = rule_style(frame.level, theme.rules)
   editor = frame.picker.map { |row| panel_row(row, theme.panel) }
   if frame.picker.empty?
-    editor = (0...frame.prompt.rows.size).to_a.map { |y| prompt_row(frame.prompt, y, frame.width, theme.editor) }
+    editor = (0...frame.prompt.rows.size).to_a.map { |y| prompt_row(frame.prompt, y, frame.width, theme) }
   end
 
   top = TUI.line([TUI.span(rule_text(frame.label, frame.width), rule)])
@@ -323,18 +324,13 @@ def panel_style(look: Layout.Look, colors: Theme.PanelColors) -> TUI.Style
   end
 end
 
-# The row of the cursor shows the character under it reversed (a space past the end of the text), in the last column
-# at most.
-def prompt_row(prompt: Prompt.View, y: Int, width: Int, colors: Theme.EditorColors) -> TUI.Node
+# Other rows show their text; the row of the cursor draws through `Components.input_row`: the character under it
+# reversed (a space past the end of the text), in the last column at most.
+def prompt_row(prompt: Prompt.View, y: Int, width: Int, theme: Theme.Theme) -> TUI.Node
   text = prompt.rows[y]
-  return TUI.line([TUI.span(text, colors.text)]) if y != prompt.cursor_y
+  return TUI.line([TUI.span(text, theme.editor.text)]) if y != prompt.cursor_y
 
-  parts = Width.cut(text, [prompt.cursor_x, width - 1].min.unwrap!)
-  return TUI.line([TUI.span(parts[0], colors.text), TUI.span(" ", colors.cursor)]) if parts[1] == ""
-
-  under = parts[1].slice(0, 1)
-  rest = parts[1].slice(1, parts[1].length - 1)
-  TUI.line([TUI.span(parts[0], colors.text), TUI.span(under, colors.cursor), TUI.span(rest, colors.text)])
+  Components.input_row(text, prompt.cursor_x, width, theme)
 end
 
 def option_list[T](value: Optional[T]) -> List[T]
