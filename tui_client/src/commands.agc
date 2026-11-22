@@ -299,11 +299,26 @@ def reconnect_mcp(app: State.Model, name: String) -> State.Model
 end
 
 # `/help`, after the session's slash commands were read again.
-def help_command(app: State.Model) -> State.Model = Sides.shown(app, Side.of("Help", Client.help(app.custom)))
+def help_command(app: State.Model) -> State.Model = Sides.shown(app, Side.of("Help", aired(Client.help(app.custom))))
 
 # `/shortcuts`: the keys in effect, as the footer names them.
 def shortcuts_command(app: State.Model) -> State.Model
-  Sides.shown(app, Side.of("Shortcuts", Client.key_lines(app.keys)))
+  Sides.shown(app, Side.of("Shortcuts", aired(Client.key_lines(app.keys))))
+end
+
+## The panel lines with air: a blank line starts every entry but the first. An entry is a non-indented line with its
+## indented continuation lines, so commands keep their detail line and key rows stay grouped.
+def aired(lines: List[String]) -> List[String]
+  out: List[String] = []
+  for line in lines
+    if not out.empty? and not line.start_with?(" ") and out.last != ""
+      out = out.push("")
+    end
+
+    out = out.push(line)
+  end
+
+  out
 end
 
 def thinking_command(app: State.Model, level: Optional[String]) -> State.Model
