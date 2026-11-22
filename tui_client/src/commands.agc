@@ -269,7 +269,12 @@ def shown_mcp(app: State.Model, name: String) -> Result[State.Model]
   banner = Client.mcp_banner(app.banner, status)
   return ok(McpPanel.opened(app.with(banner: banner), status)) if name.empty?
 
-  ok(Sides.shown(app.with(banner: banner), Side.of("MCP #{Client.printable(name)}", Client.mcp_tools(status, name))))
+  ok(
+    Sides.shown(
+      app.with(banner: banner),
+      Side.of("MCP #{Client.printable(name)}", McpPanel.names_of(status.servers, name), true),
+    ),
+  )
 end
 
 def status_after(read: Result[Protocol.McpStatus]) -> Optional[Protocol.McpStatus]
@@ -299,11 +304,27 @@ def reconnect_mcp(app: State.Model, name: String) -> State.Model
 end
 
 # `/help`, after the session's slash commands were read again.
-def help_command(app: State.Model) -> State.Model = Sides.shown(app, Side.of("Help", aired(Client.help(app.custom))))
+def help_command(app: State.Model) -> State.Model
+  Sides.shown(app, Side.of("Help", aired(bolded(Client.help(app.custom))), true))
+end
 
 # `/shortcuts`: the keys in effect, as the footer names them.
 def shortcuts_command(app: State.Model) -> State.Model
-  Sides.shown(app, Side.of("Shortcuts", aired(Client.key_lines(app.keys))))
+  Sides.shown(app, Side.of("Shortcuts", aired(bolded(Client.key_lines(app.keys))), true))
+end
+
+## The entry heads in bold: the label column of a help or shortcut line, kept aligned; anything else stays as it is.
+def bolded(lines: List[String]) -> List[String] = lines.map { |line| bold_head(line) }
+
+def bold_head(line: String) -> String
+  return line if line.empty? or line.start_with?(" ")
+  width = [27, line.length].min.unwrap!
+  head = line.slice(0, width).strip
+  return line if head.empty? or head.length > 25
+  rest = line.slice(width, line.length - width).strip
+  return "**#{head}**" if rest.empty?
+
+  "**#{head}**#{" " * ([27 - head.length, 2].max.unwrap!)}#{rest}"
 end
 
 ## The panel lines with air: a blank line starts every entry but the first. An entry is a non-indented line with its

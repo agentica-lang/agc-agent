@@ -28,7 +28,7 @@ def test_mcp_lists_the_servers_and_banners_the_failed_ones() -> Result[Void]
 
   tools = ran(App.update(listed, App.Msg.Key(TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))).model, "/mcp fs")
   try Test.eq(tools.side.unwrap!.title, "MCP fs")
-  try Test.assert(tools.side.unwrap!.lines.any? { |l| l.include?("mcp__fs__read: Reads a file") }, "#{tools.side}")
+  try Test.eq(tools.side.unwrap!.lines, ["- **read**"])
   _ = state.recv(0)
   _ = state.send(status("connected"), 0)
   Test.eq(ran(tools, "/mcp").banner, [])

@@ -92,6 +92,8 @@ def test_local_output_goes_to_the_panel_and_not_to_the_transcript() -> Result[Vo
     helped = ran(start, "/help")
     try Test.eq(texts(helped), texts(start))
     try Test.eq(helped.side.unwrap!.title, "Help")
+    try Test.assert(helped.side.unwrap!.lines.any? { |line| line.start_with?("**") }, "commands are bold")
+    try Test.assert(helped.side.unwrap!.lines.include?(""), "entries have air")
     try Test.eq(local(start, "/help"), [0, 0])
     try Test.eq(local(start, "/reload"), [0, 0])
     reported = ran(start, "/reload")
@@ -244,10 +246,10 @@ end
 # `/shortcuts` lists the keys, and the footer with the panel closed names Ctrl+P.
 def test_shortcuts_lists_the_keys_and_the_closed_footer_names_the_panel() -> Result[Void]
   start = model_of(120, 20)
-  try Test.assert(
-    ran(start, "/shortcuts").side.unwrap!.lines.any? { |line| line.include?("F6") },
-    "keys in /shortcuts",
-  )
+  opened = ran(start, "/shortcuts").side.unwrap!.lines
+  try Test.assert(opened.any? { |line| line.include?("F6") }, "keys in /shortcuts")
+  try Test.assert(opened.any? { |line| line.start_with?("**") }, "keys are bold")
+  try Test.assert(opened.include?(""), "entries have air")
 
   try Test.assert(screen(start).last.include?("^P logs"), screen(start).last)
   logs = ran(start, "/logs")
