@@ -8,6 +8,13 @@ tag = "finn-20261118093950"
 workspace = true
 
 [[package]]
+name = "grammy"
+git = "https://github.com/agentica-lang/agc-grammy"
+ref = "9d3f06322a4626dc3e549518d3e877bf7e959126"
+commit = "9d3f06322a4626dc3e549518d3e877bf7e959126"
+hash = "sha256:ed87de919d2b7ed018226abf7458ff5838e75132765d9d64704d3909cff26ca4"
+
+[[package]]
 name = "protocol"
 git = "https://github.com/agentica-lang/agc-agent"
 subdir = "protocol"

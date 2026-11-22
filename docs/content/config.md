@@ -115,6 +115,7 @@ A config file that does not read stays as it was, with the reason as a warning: 
 | `FINN_CONFINE_FILES` | `1` keeps the file tools in the session folder, `0` lets them reach any path, over the config file |
 | `FINN_APPROVALS` | `1` turns the approvals on; `0` keeps them off over the config file |
 | `FINN_CONFIG` | the user's config file |
+| `FINN_THEME` | the HTML file whose `<style>` blocks style the full screen (`theme.html` next to the config file by default) |
 | `FINN_TRUSTED_DIRS` | the [trusted folders](#trusted-folders) |
 | `FINN_HOME` | the install, the folder with `docs/`: `bin/finn` sets it, for the [skill `finn`](skills.md#the-finn-skill) and `finn docs` |
 | `FINN_MCP_CONFIG` | the JSON file of MCP servers, in place of `~/.config/finn/mcp.json` ([MCP](mcp.md)) |

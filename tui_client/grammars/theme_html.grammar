@@ -1,0 +1,48 @@
+// Minimal HTML for Finn's theme files: elements with their attributes, text
+// and comments. Enough to find the `style` blocks (their text is the CSS the
+// theme reads) and the elements carrying `class` or `id`, which later passes
+// may use for layout. Matching is lenient: a close tag need not name its open
+// tag, `script` blocks are skipped as raw text like `style`, and unknown
+// `<!...>` declarations are skipped whole.
+// (Phase 2 will attach layout, not just Style, to these same parsed elements.)
+
+document = { SOI ~ node* ~ EOI }
+node = { comment | doctype | style_element | script_element | element | text }
+
+comment = @{ "<!--" ~ (!"-->" ~ ANY)* ~ "-->" }
+doctype = @{ "<!" ~ (!">" ~ ANY)* ~ ">" }
+
+style_element = { style_open ~ style_text ~ style_close }
+style_open = { "<" ~ ^"style" ~ attr* ~ ">" }
+style_close = { "</" ~ ^"style" ~ ">" }
+style_text = @{ (!"</" ~ ANY)* }
+
+script_element = { script_open ~ script_text ~ script_close }
+script_open = { "<" ~ ^"script" ~ attr* ~ ">" }
+script_close = { "</" ~ ^"script" ~ ">" }
+script_text = @{ (!"</" ~ ANY)* }
+
+element = { open_tag ~ node* ~ close_tag | self_tag | void_tag }
+// A void element never opens: without the guard `<br>` would match `open_tag`
+// and swallow the `</body>` after it as its own close tag (PEG keeps the first
+// alternative that succeeds, so `void_tag` would never run).
+open_tag = { "<" ~ !void_name ~ tag_name ~ attr* ~ ">" }
+close_tag = { "</" ~ tag_name ~ ">" }
+self_tag = { "<" ~ tag_name ~ attr* ~ "/>" }
+void_tag = { "<" ~ void_name ~ attr* ~ "/>" | "<" ~ void_name ~ attr* ~ ">" }
+void_name = {
+  ^"area" | ^"base" | ^"br" | ^"col" | ^"embed" | ^"hr" | ^"img" | ^"input" | ^"link" | ^"meta" | ^"param" |
+    ^"source" | ^"track" | ^"wbr"
+}
+
+tag_name = @{ ASCII_ALPHA ~ (ASCII_ALPHANUMERIC | "-" | "_")* }
+attr = { attr_name ~ ("=" ~ attr_value)? }
+attr_name = @{ (ASCII_ALPHANUMERIC | "-" | "_" | ":")+ }
+attr_value = { dquoted | squoted | bare }
+dquoted = @{ "\"" ~ (!"\"" ~ ANY)* ~ "\"" }
+squoted = @{ "'" ~ (!"'" ~ ANY)* ~ "'" }
+bare = @{ (ASCII_ALPHANUMERIC | "-" | "_" | "." | ":" | "#" | "+" | "%")+ }
+
+text = @{ (!"<" ~ ANY)+ }
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }

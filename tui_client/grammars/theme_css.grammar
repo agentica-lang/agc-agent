@@ -1,0 +1,24 @@
+// Minimal CSS for Finn's theme files: a rule is a selector list with
+// declarations. Selectors are raw text up to `{` (`.class`, `#id` or an
+// element name; anything else is ignored when the theme is applied).
+// Declarations are `property: value` pairs; unknown properties or values are
+// ignored there too. At-rules (`@media` and the like) are skipped whole: their
+// inner rules do not apply. `/* */` comments are skipped anywhere.
+// (Phase 2 will attach layout, not just Style, to these same parsed rules.)
+
+stylesheet = { SOI ~ item* ~ EOI }
+item = { rule | at_skip }
+
+rule = { selectors ~ "{" ~ declaration* ~ "}" }
+selectors = { selector ~ ("," ~ selector)* }
+selector = @{ (!("," | "{" | "}") ~ ANY)+ }
+
+declaration = { property ~ ":" ~ value ~ ";"? }
+property = @{ "-"* ~ (ASCII_ALPHANUMERIC | "-" | "_")+ }
+value = @{ (!(";" | "}") ~ ANY)+ }
+
+at_skip = { "@" ~ (!(";" | "{") ~ ANY)* ~ (";" | block) }
+block = { "{" ~ (block | (!("{" | "}") ~ ANY))* ~ "}" }
+
+WHITESPACE = _{ " " | "\t" | "\r" | "\n" }
+COMMENT = _{ "/*" ~ (!"*/" ~ ANY)* ~ "*/" }
