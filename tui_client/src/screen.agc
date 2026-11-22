@@ -136,6 +136,58 @@ def frame(width: Int, height: Int, lines: List[Transcript.Line], scroll: Int, pa
   )
 end
 
+## The MCP dialog is centered over the session, which remains visible around it.
+def modal(
+  behind: TUI.Node,
+  side: Side.Side,
+  width: Int,
+  height: Int,
+  keys: Client.Bindings,
+  theme: Theme.Theme,
+) -> TUI.Node
+  box_width = Side.modal_width(width)
+  box_height = Side.modal_height(height)
+  inner = [box_width - 2, 1].max.unwrap!
+  rows = Side.rows(side, inner, [box_height - 2, 1].max.unwrap!, false, keys)
+  body = rows.drop(1).map { |row| panel_row(row, theme.panel) }
+  box = Components.modal(rows[0].text.strip, body, box_width, theme)
+  return box if box_width == width and box_height == height
+
+  left = (width - box_width) / 2
+  top = (height - box_height) / 2
+  right = left + box_width
+  bottom = top + box_height
+  cells: Map[Int, TUI.Cell] = {}
+  for cell in TUI.layout(behind, width, height)
+    if cell.y < top or cell.y >= bottom or cell.x + Width.text(cell.char) <= left or cell.x >= right
+      cells = cells.put(cell.y * width + cell.x, cell)
+    end
+  end
+
+  for cell in TUI.layout(box, box_width, box_height)
+    cells = cells.put((top + cell.y) * width + left + cell.x, cell)
+  end
+
+  TUI.col((0...height).to_a.map { |y| overlay_line(cells, width, y) })
+end
+
+def overlay_line(cells: Map[Int, TUI.Cell], width: Int, y: Int) -> TUI.Node
+  spans: List[TUI.Span] = []
+  x = 0
+  while x < width
+    case cells.get(y * width + x)
+      some(cell) ->
+        spans = spans.push(TUI.span(cell.char, cell.style))
+        x = x + [Width.text(cell.char), 1].max.unwrap!
+      none ->
+        spans = spans.push(TUI.span(" "))
+        x = x + 1
+    end
+  end
+
+  TUI.line(spans)
+end
+
 def view(frame: Frame, theme: Theme.Theme) -> TUI.Node
   rows = (0...frame.transcript.size).to_a.map { |y|
     chosen_row(frame.transcript[y], theme.transcript, mark_of(frame, y))

@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- `/mcp` opens a centered dialog that keeps the session visible around it and owns the keyboard until dismissed.
 - The full-screen transcript renders Markdown pipe tables with aligned columns, styled headers and wrapping within each cell.
 - Finn reuses HTTP connections for model provider requests and accepts gzip and deflate model lists.
 - `FINN_THEME` (or `theme.html` next to the config file) styles the full screen: its `<style>` blocks name the theme regions (`.transcript-user`, `.panel-selected`, ...).

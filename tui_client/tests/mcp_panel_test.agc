@@ -8,7 +8,6 @@ import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import App from "../src/app"
 import Args from "../src/args"
-import Side from "../src/side"
 
 # The cursor starts on the first server, moves with the arrows and with j and k, and stops at the ends.
 def test_the_cursor_moves_over_the_servers() -> Result[Void]
@@ -76,64 +75,40 @@ def test_tools_and_log_open_and_go_back() -> Result[Void]
   Test.eq(closed.side.none?, true)
 end
 
-# With the panel on the transcript's side (F6) the prompt has the keys: a letter goes into it and does nothing to the
-# servers, and the title and the footer name the panel's keys only while it has them.
-def test_a_letter_typed_in_the_prompt_does_nothing_to_the_servers() -> Result[Void]
+def test_the_modal_has_a_border_and_keeps_focus_until_escape() -> Result[Void]
   asked: Channel[String] = Channel.new(4)
   opened = ran(model_of(asked), "/mcp")
-  try Test.assert(title_of(opened).include?("j/k r t l"), title_of(opened))
-  try Test.assert(footer(opened).include?("r reconnect"), footer(opened))
+  cells = TUI.layout(App.view(opened), opened.screen_width, opened.height)
+  try Test.assert(cells.any? { |c| c.x > 0 and c.y == 2 and c.char == "┌" }, "the frame is inset")
+  footer = cells.select { |c| c.y == opened.height - 1 }.map { |c| c.char }.join("")
+  try Test.assert(footer.include?("Enter send"), "the session footer stays visible below the dialog")
   away = App.update(opened, key(TUI.Key.F(6))).model
-  try Test.eq(away.side.unwrap!.focused, false)
-  try Test.eq(title_of(away).include?("j/k r t l"), false)
-  try Test.eq(footer(away).include?("r reconnect"), false)
-  typed = away
-  for letter in ["r", "t", "l", "j"]
-    step = App.update(typed, char(letter))
-    try Test.eq(step.cmds.empty?, true)
-    typed = step.model
-  end
-
-  try Test.eq(typed.prompt, "rtlj")
-  try Test.eq(drain(asked), [])
-  try Test.eq(marked(typed), ["> fs", "  web", "  db"])
-  plain = App.update(model_of(Channel.new(4)), char("r"))
-  try Test.eq(plain.model.prompt, "r")
-  Test.eq(plain.cmds.empty?, true)
+  typed = App.update(away, char("x")).model
+  try Test.eq(typed.prompt, "")
+  try Test.eq(marked(App.update(typed, char("j")).model), ["  fs", "> web", "  db"])
+  closed = App.update(typed, key(TUI.Key.Escape)).model
+  try Test.eq(closed.mcp.none?, true)
+  Test.eq(App.update(closed, char("x")).model.prompt, "x")
 end
 
 # The panel scrolls with the cursor: with more servers than rows, and with rows that wrap, the marked row stays on the
 # screen however far the cursor goes.
-def test_the_panel_follows_the_cursor() -> Result[Void]
-  for width in [120, 60, 40]
-    moved = ran(model_of(Channel.new(4), width, 14, 10), "/mcp")
-    for _ in 1..9
-      moved = App.update(moved, char("j")).model
-    end
+def test_the_panel_follows_the_cursor() -> Result[Void] = cursor_follows(120)
 
-    try Test.assert(screen(moved).include?("> srv10"), "srv10 shows at #{width}: #{screen(moved)}")
-    for _ in 1..9
-      moved = App.update(moved, char("k")).model
-    end
+def test_the_narrow_panel_follows_the_cursor() -> Result[Void] = cursor_follows(40)
 
-    try Test.assert(screen(moved).include?("> srv1 "), "srv1 shows again at #{width}: #{screen(moved)}")
+def cursor_follows(width: Int) -> Result[Void]
+  moved = ran(model_of(Channel.new(4), width, 14, 10), "/mcp")
+  for _ in 1..9
+    moved = App.update(moved, char("j")).model
   end
 
-  ok()
-end
+  try Test.assert(screen(moved).include?("> srv10"), "srv10 shows at #{width}")
+  for _ in 1..9
+    moved = App.update(moved, char("k")).model
+  end
 
-# The panel gives its keys up while the prompt has text: on a narrow screen, where the panel covers the transcript,
-# `xr` is typed, and the keys are named in the title only while they are the panel's.
-def test_a_prompt_with_text_keeps_every_key() -> Result[Void]
-  asked: Channel[String] = Channel.new(4)
-  opened = ran(model_of(asked, 60, 14), "/mcp")
-  try Test.assert(screen(opened).include?("j/k r t l"), screen(opened))
-  typed = App.update(App.update(opened, char("x")).model, char("r"))
-  try Test.eq(typed.model.prompt, "xr")
-  try Test.eq(typed.cmds.empty?, true)
-  try Test.eq(drain(asked), [])
-  try Test.eq(screen(typed.model).include?("j/k r t l"), false)
-  Test.eq(marked(typed.model), ["> fs", "  web", "  db"])
+  Test.assert(screen(moved).include?("> srv1 "), "srv1 shows again at #{width}")
 end
 
 # `t` and `l` switch between the views of a server, and `r` in the log view reads the log again after it.
@@ -178,18 +153,6 @@ end
 
 def marked(app: App.Model) -> List[String]
   app.side.unwrap!.lines.map { |line| line.slice(0, line.index_of(" (").unwrap_or(line.length)) }
-end
-
-def title_of(app: App.Model) -> String = Side.rows(app.side.unwrap!, 100, 8, true, app.keys)[0].text
-
-def footer(app: App.Model) -> String
-  cells = TUI.layout(App.view(app), app.width, app.height)
-  (
-    (0...app.height)
-      .to_a
-      .map { |y| cells.select { |cell| cell.y == y }.map { |cell| cell.char }.join("").strip }
-      .join("\n")
-  )
 end
 
 def many(count: Int) -> Protocol.McpStatus

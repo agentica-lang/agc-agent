@@ -23,6 +23,7 @@ import McpPanel from "mcp_panel"
 import Views from "views"
 
 def on_key(model: State.Model, event: TUI.Event) -> State.Model
+  return McpPanel.on_key(model, event) if model.mcp.some? and not State.ctrl_c?(event)
   return unmarked(model, event) if clears_selection?(model, event)
 
   Files.asked(keyed(aimed(Sides.focused_by(unmarked(model, event), event), event), event))
@@ -72,10 +73,6 @@ def keyed(app: State.Model, event: TUI.Event) -> State.Model
   case Approvals.decision(app.approvals, event, app.now, not Views.panel(app).empty?)
     some(decision) -> return Answering.answer(app, decision)
     none -> nil
-  end
-
-  for panel_key in State.option_list(McpPanel.on_key(app, event))
-    return panel_key
   end
 
   return app if Approvals.captures?(app.approvals, event)

@@ -254,6 +254,11 @@ def update(model: State.Model, msg: State.Msg) -> TUI.Step[State.Model, State.Ms
 end
 
 def view(model: State.Model) -> TUI.Node
+  if model.mcp.some? and model.side.some?
+    behind = Screen.view(Views.framed(model.with(side: none, mcp: none)), model.theme)
+    return Screen.modal(behind, model.side.unwrap!, model.screen_width, model.height, model.keys, model.theme)
+  end
+
   left = Screen.view(Views.framed(model), model.theme)
   side = Views.beside(model)
   return left if side.empty?

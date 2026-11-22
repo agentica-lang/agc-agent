@@ -34,6 +34,19 @@ struct Side
   keys: String = ""
 end
 
+## Leave space around the modal on ordinary terminals, and use the available space on tiny ones.
+def modal_width(width: Int) -> Int
+  return width if width < 40
+
+  [width - 12, 96].min.unwrap!
+end
+
+def modal_height(height: Int) -> Int
+  return height if height < 10
+
+  height - 4
+end
+
 ## A panel of fixed `lines`, shown from the top.
 def of(title: String, lines: List[String], rich: Bool = false) -> Side = Side(title: title, lines: lines, rich: rich)
 

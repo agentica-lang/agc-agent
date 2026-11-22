@@ -5,6 +5,7 @@
 import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
+import Keymap from "keymap"
 import Side from "side"
 import Sides from "sides"
 import State from "state"
@@ -17,30 +18,31 @@ LOG_LINES = 200
 ## The panel open on the servers of `status`, with the keys.
 def opened(app: State.Model, status: Protocol.McpStatus) -> State.Model
   shown = Sides.shown(app, Side.of(TITLE, []))
-  drawn(shown.with(mcp: some(State.McpPanel(servers: status.servers))))
+  dialog = shown.with(mcp: some(State.McpPanel(servers: status.servers)))
+  drawn(Sides.resized(dialog, app.screen_width, app.height))
 end
 
-## Whether the keys are for the panel: it is the MCP panel, it has the keys, and the prompt has nothing typed (a prompt
-## with text keeps every key, as the mention list does).
-def keyed?(app: State.Model) -> Bool = app.mcp.some? and Sides.active?(app) and app.prompt == ""
-
-## The model after a key that the panel takes, none for a key that is not its own.
-def on_key(app: State.Model, event: TUI.Event) -> Optional[State.Model]
-  return none if not keyed?(app)
-
+## The dialog owns input until it closes.
+def on_key(app: State.Model, raw: TUI.Event) -> State.Model
   panel = app.mcp.unwrap!
+  event = Keymap.translated(app.keys, raw)
   case event
-    TUI.Event.Key(TUI.Key.Up, _) -> some(step(app, panel, -1))
-    TUI.Event.Key(TUI.Key.Down, _) -> some(step(app, panel, 1))
-    TUI.Event.Char("k", mods) if plain?(mods) -> some(step(app, panel, -1))
-    TUI.Event.Char("j", mods) if plain?(mods) -> some(step(app, panel, 1))
-    TUI.Event.Char("r", mods) if plain?(mods) -> some(reconnect(app, panel))
-    TUI.Event.Char("t", mods) if plain?(mods) -> some(tools(app, panel))
-    TUI.Event.Key(TUI.Key.Enter, mods) if not mods.alt and panel.view == "" -> some(tools(app, panel))
-    TUI.Event.Char("l", mods) if plain?(mods) -> some(log(app, panel))
-    TUI.Event.Key(TUI.Key.Escape, _) if panel.view != "" -> some(drawn(app.with(mcp: some(panel.with(view: "")))))
-    TUI.Event.Key(TUI.Key.Backspace, _) if panel.view != "" -> some(drawn(app.with(mcp: some(panel.with(view: "")))))
-    _ -> none
+    TUI.Event.Key(TUI.Key.Up, _) -> step(app, panel, -1)
+    TUI.Event.Key(TUI.Key.Down, _) -> step(app, panel, 1)
+    TUI.Event.Char("k", mods) if plain?(mods) -> step(app, panel, -1)
+    TUI.Event.Char("j", mods) if plain?(mods) -> step(app, panel, 1)
+    TUI.Event.Char("r", mods) if plain?(mods) -> reconnect(app, panel)
+    TUI.Event.Char("t", mods) if plain?(mods) -> tools(app, panel)
+    TUI.Event.Key(TUI.Key.Enter, mods) if not mods.alt and panel.view == "" -> tools(app, panel)
+    TUI.Event.Char("l", mods) if plain?(mods) -> log(app, panel)
+    TUI.Event.Key(TUI.Key.PageUp, _) -> Sides.paged(app, -1)
+    TUI.Event.Key(TUI.Key.PageDown, _) -> Sides.paged(app, 1)
+    TUI.Event.Mouse(TUI.Mouse.WheelUp, _, _, _) -> Sides.moved(app, -3)
+    TUI.Event.Mouse(TUI.Mouse.WheelDown, _, _, _) -> Sides.moved(app, 3)
+    TUI.Event.Key(TUI.Key.Escape, _) if panel.view == "" -> Sides.closed(app)
+    TUI.Event.Key(TUI.Key.Escape, _), TUI.Event.Key(TUI.Key.Backspace, _) if panel.view != "" ->
+      drawn(app.with(mcp: some(panel.with(view: ""))))
+    _ -> app
   end
 end
 

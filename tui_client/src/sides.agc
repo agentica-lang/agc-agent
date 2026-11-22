@@ -29,14 +29,14 @@ end
 ## The screen is `width` by `height`: the app takes the columns the panel leaves, and the panel is cut again for its own.
 ## The selection, the press and the click were about the old rows.
 def resized(app: State.Model, width: Int, height: Int) -> State.Model
-  columns = Side.left(width, app.side.some?)
+  columns = Side.left(width, app.side.some? and app.mcp.none?)
   fit(app.with(screen_width: width, width: columns, height: height, selection: none, pressed: none, click: none))
 end
 
 ## The panel cut for the columns it has now.
 def fit(app: State.Model) -> State.Model
   case app.side
-    some(side) -> app.with(side: some(Side.fitted(side, Side.columns(app.screen_width))))
+    some(side) -> app.with(side: some(Side.fitted(side, panel_columns(app))))
     none -> app
   end
 end
@@ -73,7 +73,7 @@ end
 ## The panel scrolled so that its line `index` shows.
 def revealed(app: State.Model, index: Int) -> State.Model
   case app.side
-    some(side) -> app.with(side: some(Side.revealed(side, index, room(app), Side.columns(app.screen_width))))
+    some(side) -> app.with(side: some(Side.revealed(side, index, room(app), panel_columns(app))))
     none -> app
   end
 end
@@ -168,4 +168,14 @@ end
 private
 
 # The rows of the panel that show lines: the title takes one.
-def room(app: State.Model) -> Int = Views.side_rows(app) - 1
+def room(app: State.Model) -> Int
+  return [Side.modal_height(app.height) - 3, 0].max.unwrap! if app.mcp.some?
+
+  Views.side_rows(app) - 1
+end
+
+def panel_columns(app: State.Model) -> Int
+  return [Side.modal_width(app.screen_width) - 2, 1].max.unwrap! if app.mcp.some?
+
+  Side.columns(app.screen_width)
+end
