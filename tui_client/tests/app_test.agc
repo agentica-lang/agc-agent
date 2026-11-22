@@ -1002,7 +1002,7 @@ def test_slash_lists_the_commands_and_tab_completes_one() -> Result[Void]
   try Test.eq([partial.model.prompt, partial.model.outbox.size.to_s, partial.cmds.size.to_s], ["/clone", "0", "0"])
   helped = App.update(model_of(80, 20).with(id: "s1", prompt: "/help", cursor: 5), enter()).model
   try Test.eq(helped.prompt, "")
-  try Test.assert(helped.side.unwrap!.lines.include?("/quit                      leave"), "the help is in the panel")
+  try Test.assert(helped.side.unwrap!.lines.include?("**/quit**" + " " * 22 + "leave"), "the help is in the panel")
   try Test.eq(helped.entries, model_of(80, 20).entries)
 
   # Esc, then Enter, sends a prefix as text.
