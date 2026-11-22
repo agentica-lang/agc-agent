@@ -23,6 +23,7 @@ import Status from "status"
 import Level from "level"
 import Answering from "answering"
 import Files from "files"
+import HtmlTheme from "html_theme"
 import Logins from "logins"
 import McpPanel from "mcp_panel"
 import Turn from "turn"
@@ -84,10 +85,24 @@ def started(
     start = start.with(theme: Theme.basic())
   end
 
+  start = themed(start)
+
   last = try driven(TUI.Raw.backend(screen), start, output)
   outcome = try outcome(last)
   hint = Client.resume_hint("finn", last.id, not Session.content?(last))
   ok(outcome.with(hint: joined(server_report(backend), hint)))
+end
+
+## `start` with the HTML theme applied: `theme.html` next to the user's config
+## file, or `FINN_THEME` (see `HtmlTheme.theme_file`). A file that does not
+## parse keeps the built-in theme with a note; a missing file changes nothing.
+def themed(start: State.Model) -> State.Model
+  loaded = HtmlTheme.load(start.theme, HtmlTheme.theme_file(->(name: String) { System.env(name) }), HtmlTheme.disk())
+  noted = start.with(theme: loaded.theme)
+  case loaded.warning
+    some(text) -> State.noted(noted, text)
+    none -> noted
+  end
 end
 
 ## Runs the app from the model `start` and its effects on `backend` until it ends: the exit code. The tests give it a

@@ -6,6 +6,7 @@ agentica = "0.35.0"
 blank_line_after_end = true
 
 [dependencies]
+grammy = { git = "https://github.com/agentica-lang/agc-grammy", ref = "9d3f06322a4626dc3e549518d3e877bf7e959126" }
 client = { git = "https://github.com/agentica-lang/agc-agent", subdir = "client", tag = "finn-20261118093950" }
 protocol = { git = "https://github.com/agentica-lang/agc-agent", subdir = "protocol", tag = "finn-20261118093950" }
 sse = { git = "https://github.com/agentica-lang/agc-agent", subdir = "sse", tag = "finn-20261118093950" }

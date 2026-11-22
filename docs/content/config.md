@@ -115,6 +115,7 @@ A config file that does not read stays as it was, with the reason as a warning: 
 | `FINN_CONFINE_FILES` | `1` keeps the file tools in the session folder, `0` lets them reach any path, over the config file |
 | `FINN_APPROVALS` | `1` turns the approvals on; `0` keeps them off over the config file |
 | `FINN_CONFIG` | the user's config file |
+| `FINN_THEME` | the HTML file whose `<style>` blocks style the full screen (`theme.html` next to the config file by default) |
 | `FINN_TRUSTED_DIRS` | the [trusted folders](#trusted-folders) |
 | `FINN_HOME` | the install, the folder with `docs/`: `bin/finn` sets it, for the [skill `finn`](skills.md#the-finn-skill) and `finn docs` |
 | `FINN_MCP_CONFIG` | the JSON file of MCP servers, in place of `~/.config/finn/mcp.json` ([MCP](mcp.md)) |
@@ -132,6 +133,15 @@ A config file that does not read stays as it was, with the reason as a warning: 
 | `FINN_SERVER_COMMAND` | the program a client runs to start a server |
 
 The key variables of the providers are on [Providers](providers.md).
+
+### The theme file
+
+`FINN_THEME` names the HTML file whose `<style>` blocks style the full screen (`theme.html` next to the config file by default; with no known config folder there is none).
+- selectors name a region: `.transcript-user`, `.transcript-assistant`, `.transcript-bold`, `.transcript-heading`, `.transcript-code`, `.transcript-thinking`, `.transcript-notice`, `.transcript-tool`, `.transcript-arg-running`, `.transcript-arg-done`, `.transcript-arg-failed`, `.transcript-output`, `.transcript-removed`, `.transcript-added`, `.panel-head`, `.panel-text`, `.panel-selected`, `.panel-removed`, `.panel-added`, `.banner-text`, `.footer-status`, `.editor-text`, `.editor-cursor`, `.rules-default`, `.rules-low`, `.rules-medium`, `.rules-high` (`.sidebar`, `.modal`, `.panel` and `.popover` style the panel text, `.notice` the notice, `.input` the prompt, `.tooltip` the banner).
+- selectors are `.class`, `#id` or element names, matched case-insensitively; anything else is ignored.
+- properties are `color` and `background-color` (a named color, `#rgb`/`#rrggbb` or `ansi(0)`–`ansi(255)`), `font-weight: bold`, `font-style: italic`, `text-decoration: underline` and `dim: true`; unknown properties and values are ignored.
+- later rules win over earlier ones, declarations of one rule merge in order, and every change adds to the built-in theme instead of clearing it (even on eight-color terminals).
+- a file that does not parse, or is over 1 MiB, keeps the built-in theme with a note; a missing file changes nothing.
 
 ## Coming from agc-agent
 
