@@ -4,7 +4,8 @@
 ## local llama-server by default), `FINN_API_KEY` and `FINN_MODEL`; `FINN_MAX_TOKENS` (the most tokens of a reply; by
 ## default the model's own limit in the catalog, else the API's); `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for
 ## compaction; `FINN_DRAIN_MS` (how long a stop waits for the turns, 60000); `FINN_MODELS_URL` (the models.dev catalog
-## of prices and windows, `off` for none) and `FINN_MODELS_PROVIDER` (the provider of the model there).
+## of prices and windows, `off` for none) and `FINN_MODELS_PROVIDER` (the provider of the model there); `FINN_HTTP2`
+## (`0` keeps HTTP/1.1 to the providers).
 ## Code mode is on unless `FINN_CODE_MODE=0` (`--no-codemode`); its Monty worker is `FINN_MONTY` (a trusted Monty 1.6.0
 ## binary: its hash is not checked), else the pinned one fetched at the first script into `$XDG_CACHE_HOME/finn` (else
 ## `~/.cache/finn`, which must be private to the user). With neither for this platform, there is no code mode. Skills: those of the home folder always, those of a session folder only under a folder of
@@ -250,6 +251,8 @@ def from_env_with(
   )
 
   claude_key = stored.keys.get(Providers.ANTHROPIC).unwrap_or("")
+  # `FINN_HTTP2=0` keeps HTTP/1.1 to every provider.
+  llm = llm.with(http2: http2_on(read))
   # `ant` runs here only: a login or a logout later builds the providers without it.
   at_start = try Offered.anthropic_access(read, api == "anthropic", ant, claude_key)
   rebuilding = ->(more: List[Providers.Custom]) {
@@ -495,6 +498,14 @@ def approvals_switch(read: Fn[String, Result[String]]) -> Result[Optional[Bool]]
     some("0") -> ok(some(false))
     some(other) -> error("FINN_APPROVALS must be 0 or 1, not #{other.inspect}")
     none -> ok(none)
+  end
+end
+
+## `FINN_HTTP2=0` (or `off`) keeps HTTP/1.1 to every provider; by default an `https://` API is reached over HTTP/2.
+def http2_on(read: Fn[String, Result[String]]) -> Bool
+  case set(read, "FINN_HTTP2")
+    some(value) -> not ["0", "off"].include?(value)
+    none -> true
   end
 end
 

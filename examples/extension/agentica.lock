@@ -33,9 +33,9 @@ hash = "sha256:af0102fa1d841dfd14718875a734f2519fc213debeb9ce168ec74279b6bdb653"
 name = "http-client"
 git = "https://github.com/agentica-lang/packages"
 subdir = "http-client"
-tag = "http-client-0.3.0"
-commit = "1f30c511c4007570d0d1bbc2879e09b377a5e85b"
-hash = "sha256:e15bca871f2b8965ce1dfd6b615f6d39a35d9aee858b6ad73fd753d70fb6301c"
+tag = "http-client-0.5.0"
+commit = "d7e0fa6728d82060e9852f4be46e68a86f8aa278"
+hash = "sha256:af1381fb6f1df65d018f4cb7de882a874aeaa0752ccc254d4bfdcef075ec434e"
 
 [[package]]
 name = "llm"
