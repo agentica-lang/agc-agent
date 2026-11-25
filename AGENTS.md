@@ -36,7 +36,7 @@ client/              what every client shares: finding or starting the server, t
                      as a record of functions; a test fills its own), the event reader, the session rules of
                      both clients; client.agc is its public module
 cli/                 the line-mode client: depends only on client and protocol; main.agc is the entry point
-tui_client/          the TUI client on agentica-tui (pinned commit): client, protocol and tui; main.agc is the
+tui_client/          the TUI client on agentica-tui (pinned tag): client, protocol and tui; main.agc is the
                      entry point; app.agc routes each message to a file per feature (state.agc holds the
                      model); tests/test_pty.py runs it under a pty against core and a fake model
 examples/extension/  how to extend Finn: a program that serves core with a tool and a wrapper; core's
