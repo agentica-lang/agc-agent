@@ -138,6 +138,11 @@ end
 
 def list_tools(state: State) -> Done[List[Rpc.Tool]]
   deadline = Time.monotonic_ms() + state.options.timeout_ms
+  # A start has a budget of its own (`start_ms`), so the pages still get the whole `timeout_ms` after it.
+  if not up?(state)
+    deadline = deadline + state.options.start_ms
+  end
+
   tools: List[Rpc.Tool] = []
   cursor = ""
   seen: Set[String] = Set.new([])
@@ -183,12 +188,15 @@ def request(state: State, method: String, params: JSON.Value, deadline: Int) -> 
   end
 end
 
+# `deadline` is the caller's: a start that `started` makes has a budget of its own, so the request still gets the
+# whole `timeout_ms`; a server that was up keeps the caller's deadline.
 def attempt(state: State, method: String, params: JSON.Value, deadline: Int) -> Done[JSON.Value]
+  fresh = not up?(state)
   case started(state)
     ok(ready) ->
       id = ready.next_id
       next = ready.with(next_id: id + 1)
-      result = send(next, id, method, params, deadline)
+      result = send(next, id, method, params, at(state, fresh, deadline))
       case result
         error(e) if e.kind == UNAVAILABLE -> Done(state: closed(next), result: result)
         error(e) if e.kind == Http.EXPIRED -> Done(state: next.with(link: none), result: result)
@@ -197,6 +205,16 @@ def attempt(state: State, method: String, params: JSON.Value, deadline: Int) -> 
 
     error(e) -> Done(state: closed(state), result: error(e))
   end
+end
+
+def up?(state: State) -> Bool = state.process.some? or state.link.some?
+
+# The deadline of the request that follows the start: a start made in this attempt has a budget of its own
+# (`start_ms`), so the request gets the whole `timeout_ms` after it. A server that was up keeps the caller's.
+def at(state: State, fresh: Bool, deadline: Int) -> Int
+  return deadline if not fresh or not up?(state)
+
+  Time.monotonic_ms() + state.options.timeout_ms
 end
 
 def send(state: State, id: Int, method: String, params: JSON.Value, deadline: Int) -> Result[JSON.Value]

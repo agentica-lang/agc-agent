@@ -11,6 +11,7 @@
 - The `/mcp` tools view, `/help` and `/shortcuts` list one entry per line with air between them and the names in bold (CSS `.panel-text` and `.panel-head` style them).
 - Model provider calls to an `https://` API use HTTP/2 (negotiated with ALPN) on http-client 0.5.0, whose streams a session reads piece by piece; one whose peer does not negotiate `h2` falls back to HTTP/1.1 and stays there, a plain `http://` provider keeps HTTP/1.1, and `FINN_HTTP2=0` keeps HTTP/1.1 to every provider.
 - `/reload` applies updated approval rules even if saving the updated session prompt fails.
+- An MCP server that a call starts (or a `/mcp` listing that starts it) is charged to `start_ms`, so the call still gets its whole `timeout_ms`; before, the start ate the call's budget and a slow server failed every call (and made the restart of a hung server flaky).
 - Skills now default to `.finn/skills` only. Configure extra user and trusted-project paths with `skills` in `config.json`. Existing sessions pick up path changes on reload or resume.
 - The full-screen status row shows the remaining ChatGPT five-hour and seven-day quota (`5h 62% · 7d 80%`) in ChatGPT sessions, and drops it first on a narrow row.
 - `status_line` in the config file chooses and orders the segments of the full-screen status row; `/reload` applies it.
