@@ -128,7 +128,7 @@ def table_at(header: String, lines: List[String], at: Int, width: Int) -> Table
 
   labels = cells(header)
   rules = cells(lines[at])
-  return Table() if (labels.empty? or labels.size != rules.size or not rules.all? { |rule| table_rule?(rule) })
+  return Table() if labels.empty? or labels.size != rules.size or not rules.all? { |rule| table_rule?(rule) }
 
   body = [labels]
   after = at + 1

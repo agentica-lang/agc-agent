@@ -93,7 +93,7 @@ def refusal(path: String, owner: Optional[Int]) -> Optional[String]
 
   info = stat.unwrap!
   return some("#{path} may be read by others: its keys are not used (chmod 600 #{path})") if info.mode % 64 != 0
-  if (owner.map { |id| id != info.user_id } == some(true))
+  if owner.map { |id| id != info.user_id } == some(true)
     return some("#{path} belongs to another user: its keys are not used")
   end
 

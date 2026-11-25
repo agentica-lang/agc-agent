@@ -154,7 +154,7 @@ def status(board: Board) -> Result[List[Status]]
   listed = answer.unwrap!
   ok(
     (0...board.servers.size).to_a.map do |i|
-      case (listed.find { |l| l.order == i })
+      case listed.find { |l| l.order == i }
         ok(found) -> status_of(board.servers[i], found.listed)
         error(_) -> Status(server: board.servers[i], state: "connecting")
       end
@@ -272,7 +272,7 @@ end
 def handle(state: Listed, msg: Msg) -> Actor.Step[Listed]
   case msg
     Msg.Add(listing) ->
-      for before in (state.listings.select { |l| l.order == listing.order and l.listed.ok? })
+      for before in state.listings.select { |l| l.order == listing.order and l.listed.ok? }
         Mcp.stop(before.client)
       end
 
@@ -492,7 +492,7 @@ def added(started: Started, server: Mcp.Server, client: Mcp.Client, listed: Resu
       out = out.with(
         warnings: out.warnings.push("mcp #{server.name}: tool name too long or odd: #{tool.name.inspect}"),
       )
-    elsif (out.tools.any? { |t| t.name == name })
+    elsif out.tools.any? { |t| t.name == name }
       out = out.with(warnings: out.warnings.push("mcp #{server.name}: #{name} is there already; this one is left out"))
     else
       out = out.with(tools: out.tools.push(spec(server, client, tool)))
@@ -630,7 +630,7 @@ def expand(text: String, place: String, read: Fn[String, Result[String]]) -> Res
   end
 
   out = "#{out}#{rest}"
-  return error("#{place} has a control character") if (out.bytes.to_a.any? { |b| (b < 32 and b != 9) or b == 127 })
+  return error("#{place} has a control character") if out.bytes.to_a.any? { |b| (b < 32 and b != 9) or b == 127 }
 
   ok(out)
 end

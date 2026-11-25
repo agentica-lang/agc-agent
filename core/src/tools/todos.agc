@@ -50,16 +50,16 @@ def todos(input: JSON.Value) -> Result[List[Todo]]
   list = args.todos.map { |t| t.with(content: one_line(t.content)) }
   for todo in list
     chars = todo.content.split("")
-    if (chars.any? { |c| c.code < 0x20 or (c.code >= 0x7f and c.code < 0xa0) })
+    if chars.any? { |c| c.code < 0x20 or (c.code >= 0x7f and c.code < 0xa0) }
       return error("a todo has a control character")
     end
 
-    return error("a todo has no content") if (chars.all? { |c| c.strip.empty? or invisible?(c.code) })
+    return error("a todo has no content") if chars.all? { |c| c.strip.empty? or invisible?(c.code) }
     return error("a todo is over #{MAX_CONTENT} characters") if todo.content.length > MAX_CONTENT
     return error("unknown status: use #{STATUSES.join(", ")}") if not STATUSES.include?(todo.status)
   end
 
-  return error("at most one todo is in_progress") if (list.count { |t| t.status == "in_progress" } > 1)
+  return error("at most one todo is in_progress") if list.count { |t| t.status == "in_progress" } > 1
 
   ok(list)
 end

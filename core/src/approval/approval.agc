@@ -254,7 +254,7 @@ end
 def outside_verdict(rules: Rules, ctx: Spec.Context, tool: String, target: String) -> Spec.Verdict
   return Spec.Verdict.Allow if tool == "bash" or not FILE_TOOLS.include?(tool)
   # The folders of the skills the session can load are read as part of the session.
-  return Spec.Verdict.Allow if (READS.include?(tool) and ctx.read_roots.any? { |dir| Sandbox.inside?(dir, target) })
+  return Spec.Verdict.Allow if READS.include?(tool) and ctx.read_roots.any? { |dir| Sandbox.inside?(dir, target) }
 
   case Shell.external(ctx.root, target)
     some(glob) -> decide_one(rules, Shell.EXTERNAL, glob, true)
@@ -276,7 +276,7 @@ def path_verdict(rules: Rules, ctx: Spec.Context, t: Patch.Touched) -> Spec.Verd
 
   return Spec.Verdict.Deny if outside == Spec.Verdict.Deny
   return Spec.Verdict.Ask if outside == Spec.Verdict.Ask
-  return Spec.Verdict.Allow if (allowing.any? { |tool| decide.call(tool) == Spec.Verdict.Allow })
+  return Spec.Verdict.Allow if allowing.any? { |tool| decide.call(tool) == Spec.Verdict.Allow }
 
   Spec.Verdict.Ask
 end

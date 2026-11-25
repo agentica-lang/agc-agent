@@ -417,7 +417,7 @@ def summary_break(turn: Turn, json: JSON.Value) -> Types.Fold[Turn]
 end
 
 def add_text(turn: Turn, output_index: Int, text: String, kind: PieceKind) -> Types.Fold[Turn]
-  case (turn.parts.find_index { |p| p.output_index == output_index })
+  case turn.parts.find_index { |p| p.output_index == output_index }
     some(index) ->
       part = turn.parts[index]
       return fold(turn, []) if text.empty?
@@ -441,7 +441,7 @@ end
 
 def done_item(turn: Turn, json: JSON.Value) -> Types.Fold[Turn]
   output_index = int_at(json, "output_index")
-  case (turn.parts.find_index { |p| p.output_index == output_index })
+  case turn.parts.find_index { |p| p.output_index == output_index }
     some(index) ->
       fold(turn.with(parts: turn.parts.set(index, turn.parts[index].with(item: json_at(json, "item")))), [])
     none -> fold(turn, [])
@@ -490,9 +490,9 @@ end
 
 def stop_reason(turn: Turn) -> StopReason
   return incomplete_reason(turn.reason) if turn.status == "incomplete"
-  return StopReason.Refusal if (turn.parts.any? { |p| refused?(p) })
+  return StopReason.Refusal if turn.parts.any? { |p| refused?(p) }
 
-  return StopReason.ToolUse if (turn.parts.any? { |p| p.kind == PartKind.Call or p.kind == PartKind.CustomCall })
+  return StopReason.ToolUse if turn.parts.any? { |p| p.kind == PartKind.Call or p.kind == PartKind.CustomCall }
 
   StopReason.EndTurn
 end

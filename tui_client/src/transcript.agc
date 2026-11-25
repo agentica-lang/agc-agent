@@ -239,7 +239,7 @@ end
 
 ## The entries with their rows cut for `width` and `folds`, so that `lines` and `tail` cut only what changed.
 def wrapped(entries: List[Entry], width: Int, folds: Folds) -> List[Entry]
-  return entries if (entries.all? { |entry| fresh?(entry, width, folds) })
+  return entries if entries.all? { |entry| fresh?(entry, width, folds) }
 
   (0...entries.size).to_a.map do |index|
     entry = entries[index]

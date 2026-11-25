@@ -90,22 +90,22 @@ def read_frame() -> Result[Bytes]
   head = try IO.read_bytes(4)
   return ok("".bytes) if head.length < 4
 
-  IO.read_bytes(try Binary.read_u32_le(head, 0))
+  IO.read_bytes((try Binary.read_u32_le(head, 0)).to_i)
 end
 
 def worker_frame(worker: Process) -> Bytes
   head = Process.read_bytes(worker, 4, 30_000).unwrap_or("".bytes)
   return "".bytes if head.length < 4
 
-  Process.read_bytes(worker, Binary.read_u32_le(head, 0).unwrap!, 30_000).unwrap_or("".bytes)
+  Process.read_bytes(worker, Binary.read_u32_le(head, 0).unwrap!.to_i, 30_000).unwrap_or("".bytes)
 end
 
 def send(worker: Process, frame: Bytes) -> Void
-  Process.send_bytes(worker, Bytes.concat([Binary.write_u32_le(frame.length).unwrap!, frame]), 30_000).unwrap!
+  Process.send_bytes(worker, Bytes.concat([Binary.write_u32_le(frame.length.to_uint32!), frame]), 30_000).unwrap!
 end
 
 def write(out: File.Handle, frame: Bytes) -> Void
-  File.write_bytes(out, Bytes.concat([Binary.write_u32_le(frame.length).unwrap!, frame])).unwrap!
+  File.write_bytes(out, Bytes.concat([Binary.write_u32_le(frame.length.to_uint32!), frame])).unwrap!
   File.flush(out).unwrap!
 end
 

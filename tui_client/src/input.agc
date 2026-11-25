@@ -69,7 +69,7 @@ def expanded(text: String, pastes: List[String]) -> String
 
   out = ""
   from = 0
-  for pair in (found.sort_by { |pair| pair[0] })
+  for pair in found.sort_by { |pair| pair[0] }
     next if pair[0] < from
 
     piece = token(pair[1] + 1, pastes[pair[1]])

@@ -154,7 +154,7 @@ def alive?(pid: String) -> Bool
 end
 
 def answer_to(sent: List[JSON.Value], id: String) -> Result[JSON.Value]
-  case (sent.find { |j| JSON.string(JSON.get(j, "id").unwrap_or(JSON.from(0))) == ok(id) })
+  case sent.find { |j| JSON.string(JSON.get(j, "id").unwrap_or(JSON.from(0))) == ok(id) }
     ok(found) -> ok(found)
     error(_) -> error("no answer to #{id}")
   end
@@ -188,7 +188,7 @@ def binary() -> String
 end
 
 def existing(paths: List[String]) -> Result[String]
-  case (paths.find { |path| File.stat(path).ok? })
+  case paths.find { |path| File.stat(path).ok? }
     ok(path) -> ok(path)
     error(_) -> error("none of #{paths.join(", ")} exists")
   end

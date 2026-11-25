@@ -125,7 +125,7 @@ end
 ## The key variable of each provider that has one, offered or not.
 def key_envs(customs: List[Custom]) -> Map[String, String]
   out: Map[String, String] = {}
-  for custom in (customs.select { |c| not c.key_env.empty? })
+  for custom in customs.select { |c| not c.key_env.empty? }
     out = out.put(custom.name, custom.key_env)
   end
 
@@ -139,7 +139,7 @@ def shared_keys(customs: List[Custom]) -> List[String]
   warnings: List[String] = []
   for at in 0...names.size
     name = names[at]
-    for other in (names.take(at).select { |n| owners[n] == owners[name] })
+    for other in names.take(at).select { |n| owners[n] == owners[name] }
       warnings = warnings.push("providers #{other} and #{name} both take #{owners[name]}")
     end
   end
@@ -180,7 +180,7 @@ def custom_of(wire: CustomWire) -> Custom
     models: wire.models.unwrap_or([]),
   )
 
-  for preset in (presets().select { |p| p.name == custom.name })
+  for preset in presets().select { |p| p.name == custom.name }
     return custom.with(check_path: preset.check_path, model: preset.model, headers: preset.headers)
   end
 

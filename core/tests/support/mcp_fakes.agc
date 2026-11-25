@@ -35,7 +35,7 @@ def binary() -> String
 end
 
 def existing(paths: List[String]) -> Result[String]
-  case (paths.find { |path| File.stat(path).ok? })
+  case paths.find { |path| File.stat(path).ok? }
     ok(path) -> ok(path)
     error(_) -> error("none of #{paths.join(", ")} exists")
   end

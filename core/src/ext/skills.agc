@@ -132,13 +132,13 @@ end
 def on_message(text: String, skills: List[Skill], marks: List[String]) -> Expanded
   blocks: List[String] = []
   names: List[String] = []
-  for word in (text.split(" ").flat_map { |part| part.split("\n") })
+  for word in text.split(" ").flat_map { |part| part.split("\n") }
     next if not word.start_with?("/")
 
     name = word.slice(1, word.length - 1)
     next if names.include?(name) or marks.include?(name)
 
-    for skill in (skills.select { |s| s.name == name })
+    for skill in skills.select { |s| s.name == name }
       loaded_skill = content(skill)
       if loaded_skill.ok?
         blocks = blocks.push(loaded_skill.unwrap!)
@@ -270,7 +270,7 @@ def folded_skills(skills: List[Skill], marks: List[String], kept: List[LLM.Messa
   for name in marks
     next if loaded_in(kept, name)
 
-    for skill in (skills.select { |s| s.name == name })
+    for skill in skills.select { |s| s.name == name }
       loaded_skill = content(skill)
       if loaded_skill.ok?
         blocks = blocks.push(loaded_skill.unwrap!)
@@ -347,9 +347,9 @@ def scope(found: Found, paths: List[String]) -> Found
     scoped = scoped.with(roots: scoped.roots.push(dir))
     walk = walked(Walk(found: Found(skills: [], warnings: []), dirs: 0), dir, 0)
     for skill in walk.found.skills
-      next if (scoped.skills.any? { |s| s.location == skill.location })
+      next if scoped.skills.any? { |s| s.location == skill.location }
 
-      if (scoped.skills.any? { |s| s.name == skill.name })
+      if scoped.skills.any? { |s| s.name == skill.name }
         kind = "a skill of the same name"
         if names.include?(skill.name)
           kind = "the project's skill"
@@ -428,7 +428,7 @@ end
 
 def bundled(found: Found, docs: String) -> Found
   return found if docs == "" or found.skills.size >= MAX_SKILLS
-  return found if (found.skills.any? { |skill| skill.name == BUNDLED })
+  return found if found.skills.any? { |skill| skill.name == BUNDLED }
 
   real = Path.real(docs)
   return found if not real.ok? or not directory?(real.unwrap!)
@@ -520,7 +520,7 @@ def files(dir: String, prefix: String, depth: Int, found: List[String]) -> List[
 end
 
 def named(skills: List[Skill], name: String) -> Result[Skill]
-  case (skills.find { |skill| skill.name == name })
+  case skills.find { |skill| skill.name == name }
     ok(skill) -> ok(skill)
     error(_) -> error("unknown skill: #{name}")
   end

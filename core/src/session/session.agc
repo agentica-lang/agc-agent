@@ -735,7 +735,7 @@ def entry(
 
   system = assembled(prompt)
   builtins = builtins_of(options, context.root, prompt.catalog)
-  for warning in (builtins.flat_map { |b| b.warnings })
+  for warning in builtins.flat_map { |b| b.warnings }
     Logger.warning(warning)
   end
 

@@ -8,7 +8,7 @@ weight: 10
 
 ## Install
 
-Finn runs on [Agentica](https://github.com/agentica-lang/agentica) 0.35.0 or later: `agentica` on your `PATH`, or `AGENTICA` set to the binary.
+Finn runs on [Agentica](https://github.com/agentica-lang/agentica) 0.39.0 or later: `agentica` on your `PATH`, or `AGENTICA` set to the binary.
 
 1. Clone the repository: `git clone https://github.com/agentica-lang/agc-agent`. Use a git clone, not an archive of the source: the parser of the `bash` package is a submodule, and a `bash` fetched as a package never builds from source (`agentica install` downloads the prebuilt library of its release for linux x86_64 and arm64, macos x86_64 and arm64, or windows x86_64; no other target has the module).
 2. In the clone, run `make install`. It fetches the packages that the server and the TUI depend on, and the submodule.

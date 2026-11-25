@@ -12,7 +12,7 @@ import Prompt from "prompt"
 import Rate from "rate"
 import Select from "select"
 import Side from "side"
-import Terminal from "terminal"
+import Tty from "terminal"
 import Theme from "theme"
 import Transcript from "transcript"
 import Yolo from "pkg/client/yolo"
@@ -284,7 +284,7 @@ def seed(
     yolo: Yolo.Yolo(on: options.yolo),
     theme: Theme.default(),
     home: System.env("HOME").unwrap_or(""),
-    write: &Terminal.write,
+    write: &Tty.write,
     host: Clipboard.Host(),
     clipboard: Protocol.ClipboardSetting(),
     keys: Client.defaults(),

@@ -513,7 +513,7 @@ def given(read: Fn[String, Result[String]], name: String, fallback: String) -> R
     _ -> fallback
   end
 
-  return ok(url) if (url.start_with?("https://") or LOOPBACK.any? { |start| url.start_with?(start) })
+  return ok(url) if url.start_with?("https://") or LOOPBACK.any? { |start| url.start_with?(start) }
 
   error("#{name} must be an https:// URL (http:// only on this machine)")
 end

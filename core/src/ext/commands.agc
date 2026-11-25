@@ -76,7 +76,7 @@ def expanded(loaded: Loaded, text: String) -> String
   ends = chars.find_index { |c| c.strip.empty? }.unwrap_or(chars.size)
   head = text.slice(0, ends)
   name = head.slice(1, head.length - 1)
-  case (loaded.commands.find { |c| c.name == name })
+  case loaded.commands.find { |c| c.name == name }
     ok(command) ->
       rest = text.slice(head.length, text.length - head.length).strip
       return command.body.replace(ARGUMENTS, rest) if command.body.include?(ARGUMENTS)
@@ -151,7 +151,7 @@ end
 # `loaded` with the command of one file, or with its error in `broken`; either replaces a command of that name.
 def with_file(loaded: Loaded, path: String, name: String, source: String, size: Int) -> Loaded
   warnings = loaded.warnings
-  for replaced in (loaded.commands.select { |c| c.name == name })
+  for replaced in loaded.commands.select { |c| c.name == name }
     warnings = warnings.push(Note(name: name, text: "#{path} replaces the #{replaced.source} command /#{name}"))
   end
 

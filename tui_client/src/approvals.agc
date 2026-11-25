@@ -31,7 +31,7 @@ struct Outcome
 end
 
 def requested(panel: Panel, request: Protocol.ApprovalRequested, now: Int) -> Panel
-  return panel if (panel.pending.any? { |p| p.approval_id == request.approval_id })
+  return panel if panel.pending.any? { |p| p.approval_id == request.approval_id }
 
   changed(panel, panel.pending.push(request), now)
 end

@@ -69,7 +69,7 @@ def login_entries(customs: List[Providers.Custom], anthropic_url: String) -> Lis
   )
 
   out = [claude]
-  for custom in (customs.select { |c| not c.key_env.empty? })
+  for custom in customs.select { |c| not c.key_env.empty? }
     out = out.select { |e| e.name != custom.name }.push(custom)
   end
 

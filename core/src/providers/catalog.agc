@@ -238,7 +238,7 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
 end
 
 def lookup(models: List[Model], provider: String, id: String) -> Optional[Model]
-  case (models.find { |m| m.provider == provider and m.id == id })
+  case models.find { |m| m.provider == provider and m.id == id }
     ok(found) -> some(found)
     error(_) -> none
   end

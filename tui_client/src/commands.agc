@@ -11,7 +11,7 @@ import Status from "status"
 import Logins from "logins"
 import McpPanel from "mcp_panel"
 import Turn from "turn"
-import Terminal from "terminal"
+import Tty from "terminal"
 import Session from "session"
 
 def on_picker_key(app: State.Model, picker: Picker.Picker, event: TUI.Event) -> State.Model
@@ -114,7 +114,7 @@ end
 
 ## The model with the mouse reporting set, the terminal told.
 def turn_mouse(app: State.Model, on: Bool) -> State.Model
-  app.write.call(Terminal.mouse(on))
+  app.write.call(Tty.mouse(on))
   app.with(mouse: on, selection: none, pressed: none, click: none)
 end
 

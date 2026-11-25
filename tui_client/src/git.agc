@@ -74,7 +74,7 @@ def named(head: String) -> String
     return Client.printable(name.slice(0, [name.length, MAX_NAME].min.unwrap!))
   end
 
-  return "" if (not [40, 64].include?(text.length) or not text.split("").all? { |c| HEX.include?(c) })
+  return "" if not [40, 64].include?(text.length) or not text.split("").all? { |c| HEX.include?(c) }
 
   text.slice(0, 7)
 end

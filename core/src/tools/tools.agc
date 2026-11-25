@@ -138,7 +138,7 @@ end
 
 ## The tool of that name the session offers: one of its context, else a base tool or `apply_patch`.
 def offered_tool(ctx: Spec.Context, name: String) -> Result[Spec.Tool]
-  case (Spec.more_tools(ctx).find { |tool| tool.name == name })
+  case Spec.more_tools(ctx).find { |tool| tool.name == name }
     ok(tool) -> ok(tool)
     error(_) -> find(name)
   end

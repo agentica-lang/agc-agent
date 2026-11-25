@@ -10,7 +10,7 @@ import App from "../src/app"
 import Editor from "../src/editor"
 import Select from "../src/select"
 import Selecting from "../src/selecting"
-import Terminal from "../src/terminal"
+import Tty from "../src/terminal"
 import Transcript from "../src/transcript"
 import Approvals from "../src/approvals"
 import Args from "../src/args"
@@ -688,7 +688,7 @@ def dragged(rig: Rig) -> Result[Void]
   try press(rig, mouse(TUI.Mouse.Left, [last[1] + 8, last[0]], motion: true))
   try TUI.Testing.wait_for(rig.fake, ->(_rows: List[String]) { reversed_at?(rig.fake, start[1], start[0]) })
   try press(rig, mouse(TUI.Mouse.Release, [last[1] + 8, last[0]]))
-  try Test.eq(try rig.written.recv(2000), Terminal.osc52(TEXT))
+  try Test.eq(try rig.written.recv(2000), Tty.osc52(TEXT))
   try shows(rig, "sent #{TEXT.length} characters")
   try press(rig, TUI.Event.Key(TUI.Key.Escape, TUI.Mods()))
   try TUI.Testing.wait_for(rig.fake, ->(_rows: List[String]) { not reversed_at?(rig.fake, start[1], start[0]) })
@@ -715,7 +715,7 @@ def scrolled(rig: Rig) -> Result[Void]
   top = try find(rig, "m25")
   try press(rig, mouse(TUI.Mouse.Left, [top[1], top[0]], motion: true))
   try press(rig, mouse(TUI.Mouse.Release, [top[1], top[0]]))
-  Test.eq(try rig.written.recv(2000), Terminal.osc52("m25\n\nm26\n\nm27\n\nm28\n\nm29"))
+  Test.eq(try rig.written.recv(2000), Tty.osc52("m25\n\nm26\n\nm27\n\nm28\n\nm29"))
 end
 
 # A double click selects the word under it and copies it.
@@ -729,7 +729,7 @@ def doubled(rig: Rig) -> Result[Void]
     try press(rig, mouse(TUI.Mouse.Release, cell))
   end
 
-  Test.eq(try rig.written.recv(2000), Terminal.osc52("gamma"))
+  Test.eq(try rig.written.recv(2000), Tty.osc52("gamma"))
 end
 
 # `/mouse` turns the mouse reporting off and on again, and the terminal is told each time.
@@ -744,9 +744,9 @@ def toggled(rig: Rig) -> Result[Void]
     try press(rig, TUI.Event.Key(TUI.Key.Enter, TUI.Mods()))
   end
 
-  try Test.eq(try rig.written.recv(2000), Terminal.mouse(false))
+  try Test.eq(try rig.written.recv(2000), Tty.mouse(false))
   try shows(rig, "mouse off: the terminal selects text")
-  try Test.eq(try rig.written.recv(2000), Terminal.mouse(true))
+  try Test.eq(try rig.written.recv(2000), Tty.mouse(true))
   try shows(rig, "mouse on: drag to select and copy")
   ok()
 end
@@ -767,7 +767,7 @@ def test_the_config_can_turn_the_mouse_off() -> Result[Void]
   within(60, 12, &configured, replies: replies, first: some(&App.configured))
 end
 
-def configured(rig: Rig) -> Result[Void] = Test.eq(try rig.written.recv(2000), Terminal.mouse(false))
+def configured(rig: Rig) -> Result[Void] = Test.eq(try rig.written.recv(2000), Tty.mouse(false))
 
 # A word longer than the row is cut where it must: the copy joins its pieces with nothing, and the rows cut at a space
 # with one space. The sequence is the literal OSC 52 one, base64 of the UTF-8 bytes, wide characters whole.
@@ -782,7 +782,7 @@ def long_word(rig: Rig) -> Result[Void]
   try press(rig, mouse(TUI.Mouse.Left, [start[1], start[0]]))
   try press(rig, mouse(TUI.Mouse.Left, [last[1] + 5, last[0]], motion: true))
   try press(rig, mouse(TUI.Mouse.Release, [last[1] + 5, last[0]]))
-  Test.eq(try rig.written.recv(2000), Terminal.osc52("see https://example.com/a/very/long/path/to/file.txt ok"))
+  Test.eq(try rig.written.recv(2000), Tty.osc52("see https://example.com/a/very/long/path/to/file.txt ok"))
 end
 
 def test_the_copy_is_the_literal_sequence_and_keeps_wide_characters() -> Result[Void]
@@ -819,7 +819,7 @@ def growing(rig: Rig) -> Result[Void]
   last = try find(rig, "eta theta")
   try press(rig, mouse(TUI.Mouse.Left, [last[1] + 8, last[0]], motion: true))
   try press(rig, mouse(TUI.Mouse.Release, [last[1] + 8, last[0]]))
-  Test.eq(try rig.written.recv(2000), Terminal.osc52(TEXT))
+  Test.eq(try rig.written.recv(2000), Tty.osc52(TEXT))
 end
 
 # A resize drops the selection, and a key does too (the copy leaves it shown until then).
@@ -859,7 +859,7 @@ def double_on_tool(rig: Rig) -> Result[Void]
     try press(rig, mouse(TUI.Mouse.Release, [at[1] + 1, at[0]]))
   end
 
-  try Test.eq(try rig.written.recv(2000), Terminal.osc52("seq"))
+  try Test.eq(try rig.written.recv(2000), Tty.osc52("seq"))
   rows = try shows(rig, "6 more lines")
   Test.assert(not rows.any? { |row| row.include?("line 10") }, "the call stayed folded")
 end
@@ -887,7 +887,7 @@ def test_the_editor_ending_keeps_the_mouse_off_when_it_was_off() -> Result[Void]
   seeded = App.seed(Client.unreachable_backend(), options(), Channel.new(1), 40, 12)
   model = seeded.with(write: ->(sent: String) { _ = written.send(sent, 0) })
   _ = Editor.closed(model.with(mouse: false), ok("text"))
-  try Test.eq(written.recv(0), ok(Terminal.mouse(false)))
+  try Test.eq(written.recv(0), ok(Tty.mouse(false)))
   _ = Editor.closed(model, ok("text"))
   Test.error?(written.recv(0))
 end
@@ -910,5 +910,5 @@ def list_item(rig: Rig) -> Result[Void]
   try press(rig, mouse(TUI.Mouse.Left, [start[1], start[0]]))
   try press(rig, mouse(TUI.Mouse.Left, [last[1] + 5, last[0]], motion: true))
   try press(rig, mouse(TUI.Mouse.Release, [last[1] + 5, last[0]]))
-  Test.eq(try rig.written.recv(2000), Terminal.osc52("• see https://very.example.com/a/long/path/x now"))
+  Test.eq(try rig.written.recv(2000), Tty.osc52("• see https://very.example.com/a/long/path/x now"))
 end
