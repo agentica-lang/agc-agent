@@ -35,7 +35,8 @@ end
 struct Options
   ## The longest wait for the start and the `initialize` answer.
   start_ms: Int = 30_000
-  ## The longest wait for the answer to one request (all the pages of `tools/list`).
+  ## The longest wait for the answer to one request (all the pages of `tools/list` share it), counted from when the
+  ## server is up: a start has `start_ms` of its own.
   timeout_ms: Int = 60_000
   ## The largest JSON answer or SSE event over HTTP.
   max_message_bytes: Int = 4_194_304
@@ -96,8 +97,11 @@ end
 struct Done[T]
   state: State
   result: Result[T]
+  ## The deadline of the request, or 0 while no request was sent.
+  deadline: Int = 0
 end
 
+# The longest a caller waits for the actor: the start, the request's own time, and a margin for the actor.
 def wait_ms(client: Client) -> Int = client.options.start_ms + client.options.timeout_ms + CALL_MARGIN_MS
 
 def flat[T](result: Result[Result[T]]) -> Result[T]
@@ -137,12 +141,14 @@ def closed(state: State) -> State
 end
 
 def list_tools(state: State) -> Done[List[Rpc.Tool]]
-  deadline = Time.monotonic_ms() + state.options.timeout_ms
-  # A start has a budget of its own (`start_ms`), so the pages still get the whole `timeout_ms` after it.
-  if not up?(state)
-    deadline = deadline + state.options.start_ms
+  case started(state)
+    error(e) -> Done(state: closed(state), result: error(e))
+    ok(ready) -> pages(ready, deadline_after_start(ready))
   end
+end
 
+# The pages of `tools/list` inside one deadline, so a slow start does not eat the pages' budget (`started` ran first).
+def pages(state: State, deadline: Int) -> Done[List[Rpc.Tool]]
   tools: List[Rpc.Tool] = []
   cursor = ""
   seen: Set[String] = Set.new([])
@@ -164,8 +170,9 @@ def list_tools(state: State) -> Done[List[Rpc.Tool]]
   Done(state: current, result: ok(tools))
 end
 
+# A `tools/call` sets its own deadline (0): its start, and the first use of the server, must not eat it.
 def call_tool(state: State, name: String, arguments: JSON.Value) -> Done[Rpc.Output]
-  done = request(state, "tools/call", Rpc.call_params(name, arguments), Time.monotonic_ms() + state.options.timeout_ms)
+  done = request(state, "tools/call", Rpc.call_params(name, arguments), 0)
   case done.result
     ok(result) -> Done(state: done.state, result: ok(Rpc.output(result)))
     error(e) -> Done(state: done.state, result: error(e))
@@ -173,12 +180,12 @@ def call_tool(state: State, name: String, arguments: JSON.Value) -> Done[Rpc.Out
 end
 
 # A request on a started server. A failure that leaves the server in doubt stops it; a session that the server ended
-# starts again, once.
+# starts again once, inside the same deadline.
 def request(state: State, method: String, params: JSON.Value, deadline: Int) -> Done[JSON.Value]
   done = attempt(state, method, params, deadline)
   case done.result
     error(e) if e.kind == Http.EXPIRED ->
-      again = attempt(done.state, method, params, deadline)
+      again = attempt(done.state, method, params, done.deadline)
       case again.result
         error(e2) if e2.kind == Http.EXPIRED -> Done(state: again.state, result: error(e2.message, kind: UNAVAILABLE))
         _ -> again
@@ -188,34 +195,32 @@ def request(state: State, method: String, params: JSON.Value, deadline: Int) -> 
   end
 end
 
-# `deadline` is the caller's: a start that `started` makes has a budget of its own, so the request still gets the
-# whole `timeout_ms`; a server that was up keeps the caller's deadline.
+# A `deadline` of 0 is this attempt's to set: a start has a budget of its own (`start_ms`), so the request that follows
+# it gets the whole `timeout_ms`. A deadline from the caller is kept, and so is one after a start that fails.
 def attempt(state: State, method: String, params: JSON.Value, deadline: Int) -> Done[JSON.Value]
-  fresh = not up?(state)
   case started(state)
     ok(ready) ->
       id = ready.next_id
       next = ready.with(next_id: id + 1)
-      result = send(next, id, method, params, at(state, fresh, deadline))
-      case result
-        error(e) if e.kind == UNAVAILABLE -> Done(state: closed(next), result: result)
-        error(e) if e.kind == Http.EXPIRED -> Done(state: next.with(link: none), result: result)
-        _ -> Done(state: next, result: result)
+      due = deadline
+      if due <= 0
+        due = deadline_after_start(ready)
       end
 
-    error(e) -> Done(state: closed(state), result: error(e))
+      result = send(next, id, method, params, due)
+      case result
+        error(e) if e.kind == UNAVAILABLE -> Done(state: closed(next), result: result, deadline: due)
+        error(e) if e.kind == Http.EXPIRED -> Done(state: next.with(link: none), result: result, deadline: due)
+        _ -> Done(state: next, result: result, deadline: due)
+      end
+
+    error(e) -> Done(state: closed(state), result: error(e), deadline: deadline)
   end
 end
 
-def up?(state: State) -> Bool = state.process.some? or state.link.some?
-
-# The deadline of the request that follows the start: a start made in this attempt has a budget of its own
-# (`start_ms`), so the request gets the whole `timeout_ms` after it. A server that was up keeps the caller's.
-def at(state: State, fresh: Bool, deadline: Int) -> Int
-  return deadline if not fresh or not up?(state)
-
-  Time.monotonic_ms() + state.options.timeout_ms
-end
+# The deadline of a request on a state whose start already ran: `start_ms` covered it, so the request gets its whole
+# `timeout_ms` from now.
+def deadline_after_start(state: State) -> Int = Time.monotonic_ms() + state.options.timeout_ms
 
 def send(state: State, id: Int, method: String, params: JSON.Value, deadline: Int) -> Result[JSON.Value]
   case state.link

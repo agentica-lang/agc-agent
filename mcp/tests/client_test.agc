@@ -123,17 +123,16 @@ def test_a_hung_server_is_stopped_and_starts_again() -> Result[Void]
   end
 end
 
-# The start has the budget of `start_ms`; the call that follows it gets the whole `timeout_ms`. A start charged to the
-# call would fail here: after the hang the restart takes 1.5 s, over the 1 s of the call.
-def test_a_slow_start_does_not_eat_the_calls_timeout() -> Result[Void]
+# The start has the budget of `start_ms`; the call and the list that follow it get the whole `timeout_ms`. A start
+# charged to the request would fail here: the start takes 1.5 s, over the 1 s of the request's own time.
+def test_a_slow_start_does_not_eat_the_requests_timeout() -> Result[Void]
   within_dir do |dir|
-    slow = sh("sleep 1.5; exec \"$0\" \"$1\"", try fake(dir, {}))
+    slow = sh("sleep 1.5; exec \"$@\"", try fake(dir, {}))
     client = Mcp.start(slow, Mcp.Options(start_ms: 30_000, timeout_ms: 1000))
-    began = Time.monotonic_ms()
+    called = Mcp.call(client, "echo", JSON.object({"text": JSON.from("hello")}))
     listed = Mcp.tools(client)
-    took = Time.monotonic_ms() - began
     Mcp.stop(client)
-    try Test.assert(took < 6000, "the list took #{took} ms")
+    try Test.eq(called, ok(Mcp.Output(text: "hello", is_error: false)))
     try Test.eq((try listed).size, 10)
     Test.eq(starts(dir), 1)
   end
@@ -161,9 +160,9 @@ def fake(dir: String, env: Map[String, String]) -> Result[Mcp.Server]
   )
 end
 
-# The same server, started by a shell that waits first.
+# The same server, started by a shell that waits first: the command and its args go to `exec "$@"`, every one of them.
 def sh(script: String, server: Mcp.Server) -> Mcp.Server
-  server.with(command: "/bin/sh", args: ["-c", script] + [server.command] + server.args)
+  server.with(command: "/bin/sh", args: ["-c", script, server.command] + server.args)
 end
 
 # A process that exited but was not reaped yet is a zombie: it counts as gone.
