@@ -10,4 +10,4 @@ grammy = { git = "https://github.com/agentica-lang/agc-grammy", ref = "9d3f06322
 client = { git = "https://github.com/agentica-lang/agc-agent", subdir = "client", tag = "finn-20261118093950" }
 protocol = { git = "https://github.com/agentica-lang/agc-agent", subdir = "protocol", tag = "finn-20261118093950" }
 sse = { git = "https://github.com/agentica-lang/agc-agent", subdir = "sse", tag = "finn-20261118093950" }
-tui = { git = "https://github.com/agentica-lang/agentica-tui", ref = "ec8def90d7eedec036fa80a6dff4f5a83b7bb191" }
+tui = { git = "https://github.com/agentica-lang/agentica-tui", tag = "0.1.0" }

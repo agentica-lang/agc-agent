@@ -18,6 +18,7 @@
 - The full screen draws its banner through the shared notice component and the prompt's cursor row through the shared input-row component, with no visual change.
 - The full screen draws its side panel edge through the shared sidebar segments, with no visual change.
 - `.footer-status-<segment>` in the theme file styles one named segment of the full-screen status row (`state`, `usage`, `rate`, `hints`, `model`, `chatgpt.quota` or an extension's name, lowercased with its dots kept); `.footer-status` stays the base for the filler, the separators and any segment no rule names, so a file without segment rules looks as before.
+- The full screen runs on agentica-tui 0.1.0, written in Agentica alone: no native termbox library is loaded, so there is no C code under the TUI. It draws on standard input and output, which must both be terminals, and reads SGR mouse reports only; a terminal that does not answer the status request of `ESC [ 5 n` delays the exit or the editor by half a second.
 ### Changed
 
 - The ChatGPT provider asks for the model catalog of Codex 0.171.0, which lists GPT-6.2 Sol and the other new models of your plan.
