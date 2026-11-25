@@ -422,7 +422,7 @@ def touches(ctx: Spec.Context, hunks: List[Hunk]) -> Result[List[Touched]]
   for hunk in hunks
     for t in touches_of(hunk)
       relative = Sandbox.relative(ctx.root, try Sandbox.reach(ctx.root, t.path, ctx.confine))
-      return error("the patch touches #{relative} twice") if (out.any? { |o| o.path == relative })
+      return error("the patch touches #{relative} twice") if out.any? { |o| o.path == relative }
 
       out = out.push(t.with(path: relative))
     end

@@ -209,7 +209,7 @@ def providers(
   end
 
   keyed = keys
-  for preset in (Providers.presets().select { |p| setup.presets.include?(p.name) })
+  for preset in Providers.presets().select { |p| setup.presets.include?(p.name) }
     customs = customs.push(preset.with(base_url: "#{root}/#{preset.name}"))
     keyed = keyed.put(preset.name, "sk-#{preset.name}")
   end

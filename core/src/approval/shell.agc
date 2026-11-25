@@ -64,7 +64,7 @@ def scan(root: String, command: String) -> Scan
       end
 
       if READS.include?(name)
-        for path in (read_args(name, tokens).flat_map { |arg| resolved(root, arg) })
+        for path in read_args(name, tokens).flat_map { |arg| resolved(root, arg) }
           read = Resource(tool: READ, pattern: read_target(root, path), literal: true)
           found = found.with(asked: pushed(found.asked, read))
         end
@@ -109,7 +109,7 @@ def always(c: Bash.Command, redirected: Bool) -> Resource
   name = c.words.take(1).map { |w| w.text }.join("")
   return exact if not PREFIXES.include?(name) or (text != name and not text.start_with?("#{name} "))
   return exact if redirected
-  return exact if (c.words.any? { |w| not PLAIN.include?(w.kind) or w.text.include?("$") or w.text.include?("`") })
+  return exact if c.words.any? { |w| not PLAIN.include?(w.kind) or w.text.include?("$") or w.text.include?("`") }
 
   Resource(tool: "bash", pattern: "#{name} *")
 end
@@ -139,7 +139,7 @@ def read_args(name: String, tokens: List[String]) -> List[String]
   given = options.any? { |o| given?(o) }
   words = tokens.drop(1).select { |w| not w.start_with?("-") and not w.split("").all? { |c| DIGITS.include?(c) } }
   return words.drop(1) if name == "grep" and not given and not options.include?("--")
-  if (name == "cp" and not options.any? { |o| TARGET_GIVEN.any? { |p| o.start_with?(p) } })
+  if name == "cp" and not options.any? { |o| TARGET_GIVEN.any? { |p| o.start_with?(p) } }
     return words.take(words.size - 1)
   end
 

@@ -185,7 +185,7 @@ end
 
 # The first non-empty line of the session's first user message, as the screen can show it.
 def session_name(app: State.Model) -> String
-  case (app.entries.find { |entry| entry.kind == Transcript.Kind.User })
+  case app.entries.find { |entry| entry.kind == Transcript.Kind.User }
     ok(entry) ->
       Client.printable(
         entry.text.split("\n").map { |line| line.strip }.select { |line| not line.empty? }.take(1).join(""),

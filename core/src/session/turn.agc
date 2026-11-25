@@ -201,7 +201,7 @@ def answer_approval(
   decision: Protocol.Decision,
   reply: Channel[Result[Void]],
 ) -> Session.State
-  if (not state.pending.any? { |w| w.request.approval_id == approval_id })
+  if not state.pending.any? { |w| w.request.approval_id == approval_id }
     kind = Protocol.KIND_APPROVAL_NOT_FOUND
     if state.resolved.include?(approval_id)
       kind = Protocol.KIND_APPROVAL_RESOLVED

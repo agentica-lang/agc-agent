@@ -135,13 +135,13 @@ def printed(state: State, text: String, max: Int) -> State
 end
 
 def send(process: Process, message: Bytes) -> Result[Void]
-  head = try Binary.write_u32_le(message.length)
+  head = Binary.write_u32_le(try message.length.to_uint32)
   Process.send_bytes(process, Bytes.concat([head, message]), SEND_MS)
 end
 
 def receive(process: Process, wait_ms: Int) -> Result[Wire.Event]
   head = try read_exactly(process, 4, wait_ms)
-  size = try Binary.read_u32_le(head, 0)
+  size = (try Binary.read_u32_le(head, 0)).to_i
   return error("monty: a frame of #{size} bytes is over the limit", kind: "monty.protocol") if size > MAX_FRAME
 
   body = try read_exactly(process, size, wait_ms)

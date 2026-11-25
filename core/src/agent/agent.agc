@@ -261,7 +261,7 @@ def local?(url: String) -> Bool = LOCAL_HOSTS.any? { |host| url.start_with?(host
 
 ## What a fold adds for the todo list `list`: nothing when it is empty or a `todo_write` call that stays gave it.
 def folded_todos(staying: List[LLM.Message], list: List[Todos.Todo]) -> String
-  return "" if (list.empty? or last_todo_call(staying).map { |call| call.todos } == some(list))
+  return "" if list.empty? or last_todo_call(staying).map { |call| call.todos } == some(list)
 
   "\n\nYour todo list (`todo_write`) when the history was summarized:\n#{Todos.shown(list)}"
 end
@@ -532,7 +532,7 @@ def shown?(turn: Turn, name: String) -> Bool
 end
 
 def turn_tool(turn: Turn, name: String) -> Optional[Tools.TurnTool]
-  case (turn.turn_tools.find { |t| t.tool.name == name })
+  case turn.turn_tools.find { |t| t.tool.name == name }
     ok(found) -> some(found)
     error(_) -> none
   end

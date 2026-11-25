@@ -25,7 +25,7 @@ def attach(state: Session.State, last: Optional[Int], reply: Channel[Channel[Byt
     replay = [frame("", Protocol.Event.Resync)]
   else
     replay = lost_after(state, from)
-    for logged in (state.log.select { |l| l.id > from })
+    for logged in state.log.select { |l| l.id > from }
       replay = replay.push(frame(Protocol.format_event_id(logged.id), logged.event)) + lost_after(state, logged.id)
     end
   end

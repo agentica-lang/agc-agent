@@ -138,13 +138,13 @@ def double(fields: List[Field], number: Int) -> Float
     end
   end
 
-  Float.from_bits(bits)
+  Float.from_bits(bits.wrap_uint64)
 end
 
 ## A repeated varint field, packed or not.
 def packed(fields: List[Field], number: Int) -> Result[List[Int]]
   values: List[Int] = []
-  for field in (fields.select { |f| f.number == number })
+  for field in fields.select { |f| f.number == number }
     if field.wire == WIRE_VARINT
       values = values.push(field.value)
     elsif field.wire == WIRE_LEN
@@ -197,9 +197,9 @@ end
 
 def fixed(data: Bytes, at: Int, size: Int) -> Result[Int]
   return error("protobuf: a fixed field runs past the message") if at + size > data.length
-  return Binary.read_u32_le(data, at) if size == 4
+  return ok((try Binary.read_u32_le(data, at)).to_i) if size == 4
 
-  low = try Binary.read_u32_le(data, at)
-  high = try Binary.read_u32_le(data, at + 4)
+  low = (try Binary.read_u32_le(data, at)).to_i
+  high = (try Binary.read_u32_le(data, at + 4)).to_i
   ok(high.shift_left(32).bit_or(low))
 end

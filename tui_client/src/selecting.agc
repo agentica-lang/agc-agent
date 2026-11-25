@@ -4,7 +4,7 @@ import TUI from "pkg/tui/tui"
 import Clipboard from "clipboard"
 import Select from "select"
 import State from "state"
-import Terminal from "terminal"
+import Tty from "terminal"
 import Transcript from "transcript"
 
 ## Copies the selected text where the clipboard provider says and notes how: a program in a command (its end comes back
@@ -56,7 +56,7 @@ end
 def sent(app: State.Model, text: String, why: String) -> State.Model
   return too_large(app, text, Clipboard.MAX_OSC52_BYTES, why) if text.bytesize > Clipboard.MAX_OSC52_BYTES
 
-  app.write.call(Terminal.osc52(text))
+  app.write.call(Tty.osc52(text))
   State.noted(app, "#{why}sent #{text.length} characters to the terminal (OSC 52)")
 end
 

@@ -181,8 +181,8 @@ end
 
 def allowed?(real_root: String, hidden: Optional[Fn[String, Bool]], path: String) -> Bool
   parts = path.split("/")
-  return false if (path == "" or path.start_with?("/") or parts.any? { |p| p == "" or p == "." or p == ".." })
-  return false if (path.split("").any? { |c| printable(c) != c })
+  return false if path == "" or path.start_with?("/") or parts.any? { |p| p == "" or p == "." or p == ".." }
+  return false if path.split("").any? { |c| printable(c) != c }
 
   prefix = ""
   for part in parts

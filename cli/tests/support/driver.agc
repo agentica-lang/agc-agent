@@ -415,7 +415,7 @@ end
 def all_gone_within(servers: List[Served], limit_ms: Int) -> Bool
   waited = 0
   while waited < limit_ms
-    return true if (servers.all? { |server| not same_alive?(server) })
+    return true if servers.all? { |server| not same_alive?(server) }
 
     Task.sleep(POLL_MS)
     waited = waited + POLL_MS

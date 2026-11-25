@@ -330,7 +330,7 @@ end
 
 # A piece goes to the block of its `index`; one for a block that never started is dropped.
 def add_text(turn: Turn, index: Int, text: String, kind: String) -> Types.Fold[Turn]
-  case (turn.parts.find_index { |p| p.index == index })
+  case turn.parts.find_index { |p| p.index == index }
     some(at) if not text.empty? ->
       part = turn.parts[at]
       piece = Types.Piece(index: at, text: text)
@@ -347,7 +347,7 @@ def add_text(turn: Turn, index: Int, text: String, kind: String) -> Types.Fold[T
 end
 
 def add_signature(turn: Turn, index: Int, signature: String) -> Types.Fold[Turn]
-  case (turn.parts.find_index { |p| p.index == index })
+  case turn.parts.find_index { |p| p.index == index }
     some(at) ->
       part = turn.parts[at]
       fold(turn.with(parts: turn.parts.set(at, part.with(signature: part.signature + signature))), [])

@@ -86,7 +86,7 @@ def shutdown() -> Bytes = Proto.bytes_field(10, "".bytes)
 
 def decode(data: Bytes) -> Result[Event]
   fields = try Proto.fields(data)
-  for field in (fields.select { |f| f.wire == Proto.WIRE_LEN and f.number <= 19 })
+  for field in fields.select { |f| f.wire == Proto.WIRE_LEN and f.number <= 19 }
     return event(field.number, field.data)
   end
 
@@ -288,7 +288,7 @@ def node_value(data: Bytes, done: List[Node]) -> Result[Node]
     4 -> leaf(JSON.from(field.value != 0))
     5 -> leaf(JSON.from(Proto.unzigzag(field.value)))
     6 -> leaf(JSON.from("<int too large>"))
-    7 -> leaf(JSON.from(Float.from_bits(field.value)))
+    7 -> leaf(JSON.from(Float.from_bits(field.value.wrap_uint64)))
     8, 9, 26, 27, 29, 30, 33 -> text_leaf(Proto.utf8(field.data))
     11, 12, 15, 16 ->
       items: List[Node] = []

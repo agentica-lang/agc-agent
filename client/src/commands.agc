@@ -135,7 +135,7 @@ def parse_command(line: String) -> Optional[Result[Command]]
 
   words = text.split(" ").select { |word| word != "" }
   name = words[0]
-  return none if (not COMMANDS.any? { |usage| usage.name == name })
+  return none if not COMMANDS.any? { |usage| usage.name == name }
 
   some(command(name, text.slice(name.length, text.length - name.length).strip))
 end
@@ -356,13 +356,13 @@ end
 ## changes unless asked for. Any other text is the model alone.
 def model_change(list: Protocol.ProviderList, current: String, text: String) -> Result[Protocol.UpdateSession]
   own = list.providers.select { |p| p.name == current }
-  return ok(Protocol.UpdateSession(model: some(text))) if (own.any? { |p| p.models.include?(text) })
+  return ok(Protocol.UpdateSession(model: some(text))) if own.any? { |p| p.models.include?(text) }
 
   case text.index_of("/")
     some(at) ->
       provider = text.slice(0, at)
       model = text.slice(at + 1, text.length - at - 1)
-      if (not model.empty? and list.providers.any? { |p| p.name == provider })
+      if not model.empty? and list.providers.any? { |p| p.name == provider }
         return ok(Protocol.UpdateSession(provider: some(provider), model: some(model)))
       end
 
@@ -399,7 +399,7 @@ end
 
 ## The id `/resume` chose: the number of a line of `listing`, or an id of the list (an empty session's too).
 def pick(list: Protocol.SessionList, choice: String, current: String = "") -> Result[String]
-  return ok(choice) if (list.sessions.any? { |s| s.id == choice })
+  return ok(choice) if list.sessions.any? { |s| s.id == choice }
 
   ids = resumable(list, current).map { |s| s.id }
   case choice.to_i
@@ -472,7 +472,7 @@ end
 ## The tools of the server `name` for `/mcp NAME`, one line each with the first line of what it says it does; an error
 ## line for a name that no server has.
 def mcp_tools(status: Protocol.McpStatus, name: String) -> List[String]
-  case (status.servers.find { |server| server.name == name })
+  case status.servers.find { |server| server.name == name }
     ok(server) ->
       lines = mcp_listing(Protocol.McpStatus(servers: [server]))
       lines + server.tools.map { |tool| printable("  mcp__#{server.name}__#{tool.name}#{about(tool.description)}") }

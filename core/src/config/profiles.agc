@@ -107,7 +107,7 @@ end
 def find(loaded: Loaded, name: String) -> Result[Profile]
   return error(loaded.broken[name]) if loaded.broken.has_key?(name)
 
-  case (loaded.profiles.find { |p| p.name == name })
+  case loaded.profiles.find { |p| p.name == name }
     ok(found) -> return ok(found)
     error(_) -> nil
   end
@@ -237,7 +237,7 @@ end
 # `loaded` with the profile of one file, or with its error in `broken`; either replaces a profile of that name.
 def with_file(loaded: Loaded, path: String, name: String, source: String) -> Loaded
   warnings = loaded.warnings
-  for replaced in (loaded.profiles.select { |p| p.name == name and source == PROJECT })
+  for replaced in loaded.profiles.select { |p| p.name == name and source == PROJECT }
     warnings = warnings.push(Warning(name: name, text: "#{path} replaces the #{replaced.source} profile #{name}"))
   end
 

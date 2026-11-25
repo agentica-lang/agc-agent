@@ -154,7 +154,7 @@ def login(holder: Holder, name: String, key: String) -> Result[Status]
   return error("the key is empty", kind: Protocol.KIND_INVALID) if key.strip.empty?
 
   # A key file that cannot take the key is said before the key goes anywhere.
-  for path in (option_list(setup.path).select { |p| File.stat(p).ok? })
+  for path in option_list(setup.path).select { |p| File.stat(p).ok? }
     for why in option_list(Auth.refusal(path, setup.owner))
       return error(why, kind: Protocol.KIND_LOGIN_STORAGE)
     end
@@ -186,7 +186,7 @@ def login_url(holder: Holder, name: String, url: String) -> Result[Status]
     )
   end
 
-  for path in (option_list(setup.path).select { |p| File.stat(p).ok? })
+  for path in option_list(setup.path).select { |p| File.stat(p).ok? }
     for why in option_list(Auth.refusal(path, setup.owner))
       return error(why, kind: Protocol.KIND_LOGIN_STORAGE)
     end
@@ -354,7 +354,7 @@ def plain_url?(url: String) -> Bool
   end
 
   host = rest.split("/")[0]
-  return false if (host.empty? or host.start_with?(":") or ["@", "?", "#"].any? { |c| url.include?(c) })
+  return false if host.empty? or host.start_with?(":") or ["@", "?", "#"].any? { |c| url.include?(c) }
 
   url.split("").all? { |c| plain_char?(c.code) }
 end
@@ -601,7 +601,7 @@ def status_of(setup: Setup, stored: Auth.Stored, entry: Providers.Custom) -> Sta
     from = FROM_FILE
   end
 
-  if (env_names(entry).any? { |name| not setup.read.call(name).unwrap_or("").empty? })
+  if env_names(entry).any? { |name| not setup.read.call(name).unwrap_or("").empty? }
     from = FROM_ENV
   end
 

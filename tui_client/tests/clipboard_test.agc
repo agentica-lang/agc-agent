@@ -8,7 +8,7 @@ import App from "../src/app"
 import Clipboard from "../src/clipboard"
 import Select from "../src/select"
 import Selecting from "../src/selecting"
-import Terminal from "../src/terminal"
+import Tty from "../src/terminal"
 import Transcript from "../src/transcript"
 import Args from "../src/args"
 
@@ -143,7 +143,7 @@ def test_a_tool_that_fails_falls_back_to_osc52_and_says_so() -> Result[Void]
   done = finished(rig)
   try Test.eq(note(done), "tmux failed (exit code 1); sent 11 characters to the terminal (OSC 52)")
   try Test.eq(rig.ran.recv(0), ok("tmux load-buffer -w - <- #{TEXT}"))
-  Test.eq(rig.written.recv(0), ok(Terminal.osc52(TEXT)))
+  Test.eq(rig.written.recv(0), ok(Tty.osc52(TEXT)))
 end
 
 # tmux sends the text on only to a terminal with the `clipboard` feature: the note says when its list has none, and
@@ -192,7 +192,7 @@ def test_osc52_says_sent_not_copied() -> Result[Void]
   done = finished(rig)
   try Test.eq(note(done), "sent 11 characters to the terminal (OSC 52)")
   try Test.error?(rig.ran.recv(0))
-  Test.eq(rig.written.recv(0), ok(Terminal.osc52(TEXT)))
+  Test.eq(rig.written.recv(0), ok(Tty.osc52(TEXT)))
 end
 
 # The real run: the text reaches the program's input, a failing or missing program is an error, and a tool that leaves

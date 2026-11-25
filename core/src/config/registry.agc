@@ -365,7 +365,7 @@ def wanted?(observers: List[Observer], name: String) -> Bool = observers.any? { 
 
 ## Gives `seen` to the observers that want it, without waiting: a full inbox drops it and counts the drop.
 def publish(observers: List[Observer], seen: Seen) -> Void
-  for observer in (observers.select { |o| o.names.include?(seen.name) })
+  for observer in observers.select { |o| o.names.include?(seen.name) }
     if not observer.inbox.send(seen, 0).ok?
       _ = observer.dropped.add(DROPPED, 1)
     end

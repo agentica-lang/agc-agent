@@ -807,7 +807,7 @@ end
 def turn_message(history: List[LLM.Message]) -> Int
   at = history.size
   for i in 0...history.size
-    if (history[i].role == LLM.Role.User and history[i].content.any? { |b| text_block?(b) })
+    if history[i].role == LLM.Role.User and history[i].content.any? { |b| text_block?(b) }
       at = i
     end
   end

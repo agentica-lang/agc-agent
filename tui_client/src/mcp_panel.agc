@@ -107,7 +107,7 @@ end
 def tool_lines(panel: State.McpPanel) -> List[String] = names_of(panel.servers, panel.name)
 
 def names_of(servers: List[Protocol.McpServer], name: String) -> List[String]
-  case (servers.find { |server| server.name == name })
+  case servers.find { |server| server.name == name }
     ok(server) ->
       names = server.tools.map { |tool| "- **#{Client.printable(tool.name)}**" }
       return ["no tools on #{Client.printable(name)}"] if names.empty?

@@ -37,7 +37,7 @@ def shown(folder: String, pages: List[Page], name: String) -> Result[Int]
     wanted = "#{name}.md"
   end
 
-  if (not pages.any? { |page| page.name == wanted })
+  if not pages.any? { |page| page.name == wanted }
     IO.warn("finn docs: no page #{name}\n#{table(pages)}")
     return ok(1)
   end

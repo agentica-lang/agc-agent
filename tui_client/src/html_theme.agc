@@ -301,7 +301,7 @@ def attributes(html: String, name: String) -> Result[List[String]]
   end
 
   found: List[String] = []
-  for avalue in (values.sort_by { |node| node.start })
+  for avalue in values.sort_by { |node| node.start }
     for part in split_whitespace(unquoted(Grammy.text(avalue, html)))
       found = found.push(part)
     end

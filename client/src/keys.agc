@@ -120,7 +120,7 @@ def key_of(bindings: Bindings, action: String) -> String = bindings.keys.get(act
 
 ## The action that has `key`, none for a key that no action has.
 def action_of(bindings: Bindings, key: String) -> Optional[String]
-  case (bindings.keys.keys.find { |name| bindings.keys[name] == key })
+  case bindings.keys.keys.find { |name| bindings.keys[name] == key }
     ok(name) -> some(name)
     error(_) -> none
   end
@@ -128,7 +128,7 @@ end
 
 ## The default key of `action`, empty for a name that is none.
 def default_of(action: String) -> String
-  case (ACTIONS.find { |a| a.name == action })
+  case ACTIONS.find { |a| a.name == action }
     ok(found) -> found.key
     error(_) -> ""
   end

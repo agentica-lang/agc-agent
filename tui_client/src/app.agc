@@ -15,7 +15,7 @@ import Args from "args"
 import Clipboard from "clipboard"
 import Screen from "screen"
 import Selecting from "selecting"
-import Terminal from "terminal"
+import Tty from "terminal"
 import Theme from "theme"
 import Transcript from "transcript"
 import State from "state"
@@ -142,7 +142,7 @@ def driven(backend: TUI.Backend, start: State.Model, output: TUI.OutputMode) -> 
     output: output,
   )
 
-  TUI.Raw.program(Terminal.guarded(backend), app)
+  TUI.Raw.program(Tty.guarded(backend), app)
 end
 
 def why(last: State.Model, code: Int) -> String
