@@ -50,6 +50,11 @@ struct Settings
   ## Fields of every request, as the turn's.
   extra: Map[String, JSON.Value] = {}
   headers: Map[String, String] = {}
+  ## The provider that writes the summary when it is not the turn's: the API of the summary model on a provider that
+  ## routes its models.
+  provider: Optional[LLM.Provider] = none
+  ## Why no summary can be written (the summary model uses an API Finn does not speak); empty when one can.
+  refused: String = ""
 end
 
 def due?(settings: Settings, context: Int) -> Bool
@@ -97,6 +102,8 @@ def summarize(
   history: List[LLM.Message],
   span: Compaction,
 ) -> Result[Compaction]
+  return error(settings.refused) if not settings.refused.empty?
+
   text = transcript(history.drop(span.from).take(span.to - span.from))
   prompt = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
   stream = try LLM.stream(

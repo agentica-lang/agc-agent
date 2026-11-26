@@ -37,6 +37,12 @@ struct Provider
   catalog: String = ""
   ## The models it names in the config file, for a client to offer.
   models: List[String] = []
+  ## It serves each model with the API its catalog entry names (`anthropic`, `openai_responses` or `openai`): a model
+  ## whose API Finn does not speak is not offered. Only the `opencode-go` preset sets it.
+  routed: Bool = false
+  ## The URL of the provider, and, for a routed one, how to make a model API at another URL of the catalog.
+  base_url: String = ""
+  at: Optional[Fn[String, String, ModelApi]] = none
 end
 
 ## A provider of the config file.
@@ -52,6 +58,8 @@ struct Custom
   model: String = ""
   ## HTTP headers of every request; `${session}` in a value is the session's id.
   headers: Map[String, String] = {}
+  ## See `Provider.routed`.
+  routed: Bool = false
 end
 
 ## A provider a login will offer, with no flow yet (a subscription): its name and what it is.
@@ -81,6 +89,7 @@ def presets() -> List[Custom]
       key_env: "OPENCODE_API_KEY",
       model: "deepseek-v4.1-flash",
       headers: {"x-opencode-client": "finn", "x-opencode-session": "${session}"},
+      routed: true,
     ),
   ]
 end
@@ -152,6 +161,16 @@ def stateless() -> Map[String, JSON.Value]
   {"store": JSON.from(false), "include": JSON.from(["reasoning.encrypted_content"])}
 end
 
+## Where a routed provider sends a model: the URL its catalog entry gives the model when it is on the scheme, host and
+## port of `base` (so the key never goes to another host), else `base`.
+def model_url(base: String, given: String) -> String
+  return base if given.empty? or origin(given) != origin(base)
+
+  given
+end
+
+def origin(url: String) -> String = url.split("/").take(3).join("/").downcase
+
 private
 
 ## The catalog id of a preset, where it differs from its name.
@@ -181,7 +200,12 @@ def custom_of(wire: CustomWire) -> Custom
   )
 
   for preset in presets().select { |p| p.name == custom.name }
-    return custom.with(check_path: preset.check_path, model: preset.model, headers: preset.headers)
+    return custom.with(
+      check_path: preset.check_path,
+      model: preset.model,
+      headers: preset.headers,
+      routed: preset.routed,
+    )
   end
 
   custom
@@ -203,25 +227,38 @@ def checked(path: String, customs: List[Custom]) -> Result[List[Custom]]
   ok(customs)
 end
 
+## The model API `api` of `custom` at `url`: `anthropic` (the Messages API, with the prompt cache), `openai_responses`,
+## else `openai` (chat completions).
+def model_api(custom: Custom, key: String, options: LLM.Options, api: String, url: String) -> ModelApi
+  made = ModelApi(
+    provider: LLM.openai_chat(url, key, options),
+    model: custom.model,
+    headers: custom.headers,
+    local: false,
+  )
+
+  if api == "openai_responses"
+    made = made.with(provider: LLM.openai_responses(url, key, options), extra: stateless())
+  elsif api == "anthropic"
+    made = made.with(provider: LLM.anthropic(url, key, options), cache: true)
+  end
+
+  made
+end
+
 def provider_of(custom: Custom, key: String, options: LLM.Options) -> Provider
-  chat = ModelApi(
-    provider: LLM.openai_chat(custom.base_url, key, options),
-    model: custom.model,
-    headers: custom.headers,
-    local: false,
-  )
-
-  responses = ModelApi(
-    provider: LLM.openai_responses(custom.base_url, key, options),
-    extra: stateless(),
-    model: custom.model,
-    headers: custom.headers,
-    local: false,
-  )
-
+  chat = model_api(custom, key, options, "openai", custom.base_url)
+  responses = model_api(custom, key, options, "openai_responses", custom.base_url)
   apis = {"openai": chat}
   if custom.api == "openai_responses"
     apis = {"openai_responses": responses, "openai": chat}
+  end
+
+  at: Optional[Fn[String, String, ModelApi]] = none
+  if custom.routed
+    messages = model_api(custom, key, options, "anthropic", custom.base_url)
+    apis = {"openai": chat, "openai_responses": responses, "anthropic": messages}
+    at = some(->(api: String, url: String) { model_api(custom, key, options, api, url) })
   end
 
   catalog = custom.name
@@ -229,5 +266,13 @@ def provider_of(custom: Custom, key: String, options: LLM.Options) -> Provider
     catalog = CATALOG[custom.name]
   end
 
-  Provider(apis: apis, api: custom.api, catalog: catalog, models: custom.models)
+  Provider(
+    apis: apis,
+    api: custom.api,
+    catalog: catalog,
+    models: custom.models,
+    routed: custom.routed,
+    base_url: custom.base_url,
+    at: at,
+  )
 end

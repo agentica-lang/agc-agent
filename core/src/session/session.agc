@@ -769,6 +769,7 @@ def entry(
     observers: options.observers,
     origin: "#{chosen.provider}/#{chosen.api}",
     endpoint: some(->(name: String, now: String) { switched_endpoint(Config.now(options), name, now) }),
+    routed: some(->(name: String, model: String) { routed_endpoint(Config.now(options), name, model) }),
     profiles: some(-> { profiles_of(options, context.root) }),
     reopen: some(-> { reopened(options, context.root) }),
     skills: skill_names(options, context.root, prompt.catalog),
@@ -872,7 +873,7 @@ def provider_info(options: Config.Options, name: String) -> Protocol.ProviderInf
 
   for catalog in option_list(options.catalog)
     if not listed.empty?
-      models = models + Catalog.models(catalog, listed)
+      models = models + Catalog.models(catalog, listed, found.routed)
     end
   end
 
@@ -933,6 +934,45 @@ def endpoint_of(options: Config.Options, provider: String, api: String) -> Resul
       catalog_provider: catalog_of(options, found),
     ),
   )
+end
+
+# The endpoint of the API that the catalog gives `model` on a provider that routes its models (`opencode-go`). A model
+# of another API than chat completions is called at the URL the catalog gives it when that is on the provider's host;
+# chat completions keep the provider's URL. None on another provider, and for a model the catalog does not know (it
+# stays on the provider's own API); an error for a model whose API Finn does not speak.
+def routed_endpoint(
+  options: Config.Options,
+  provider: String,
+  model: String,
+) -> Result[Optional[SessionActor.Endpoint]]
+  for found in option_list(options.providers.get(provider))
+    next if not found.routed
+
+    for catalog in option_list(options.catalog)
+      _ = Catalog.wait(catalog, options.catalog_wait_ms)
+      for listed in option_list(Catalog.find(catalog, found.catalog, model))
+        if listed.api.empty? or not found.apis.has_key?(listed.api)
+          return error("model #{model} uses an API Finn does not speak", kind: Protocol.KIND_INVALID)
+        end
+
+        endpoint = try endpoint_of(options, provider, listed.api)
+        url = found.base_url
+        if listed.api != "openai"
+          url = Providers.model_url(found.base_url, listed.api_url)
+        end
+
+        for make in option_list(found.at)
+          next if url == found.base_url
+
+          endpoint = endpoint.with(provider: make.call(listed.api, url).provider)
+        end
+
+        return ok(some(endpoint))
+      end
+    end
+  end
+
+  ok(none)
 end
 
 # A `PATCH` to `provider` keeps the model API in use when the provider speaks it, else takes the provider's own.

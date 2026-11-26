@@ -19,7 +19,7 @@ A provider is where the model runs: a company's API or a server of your own. The
 | `fireworks` | its key is set or stored | `FIREWORKS_API_KEY` | OpenAI chat completions |
 | `groq` | its key is set or stored | `GROQ_API_KEY` | OpenAI chat completions |
 | `deepseek` | its key is set or stored | `DEEPSEEK_API_KEY` | OpenAI chat completions |
-| `opencode-go` | its key is set or stored | `OPENCODE_API_KEY` | OpenAI chat completions |
+| `opencode-go` | its key is set or stored | `OPENCODE_API_KEY` | the API of each model: chat completions, OpenAI Responses or Anthropic Messages ([OpenCode Go](#opencode-go)) |
 | `chatgpt` | you signed in with `finn login chatgpt` | your ChatGPT plan ([ChatGPT](#chatgpt-plus-or-pro)) | OpenAI Responses (Codex) |
 
 Your config file can add more, or replace one of these: see [Your own provider](#your-own-provider).
@@ -56,14 +56,14 @@ The server takes any model name. `/model NAME` with a name that the session's pr
 
 ## OpenCode Go
 
-`opencode-go` is the OpenCode Go subscription, through its OpenAI chat completions endpoint (`https://opencode.ai/inference/go/v1`). Give it the key of your OpenCode account, then pick a model:
+`opencode-go` is the OpenCode Go subscription, at `https://opencode.ai/inference/go/v1`. Give it the key of your OpenCode account, then pick a model:
 
 ```sh
 finn login opencode-go        # or set OPENCODE_API_KEY
 finn --provider opencode-go   # the model is deepseek-v4.1-flash; --model NAME picks another
 ```
 
-Finn speaks OpenAI chat completions to it, so `/model` lists only the models of that kind from [models.dev](https://models.dev); the ones that models.dev gives the Anthropic, OpenAI Responses or Google API are left out. Each call carries `x-opencode-client: finn` and `x-opencode-session` with the session id, which OpenCode requires to route a call.
+Each model is served with the API that [models.dev](https://models.dev) gives it: OpenAI chat completions, OpenAI Responses (`/responses`) or Anthropic Messages (`/messages`, the key in `x-api-key`), at the URL above; a Responses or Messages model is called at the URL its entry gives instead when that has the same scheme, host and port, so your key goes to no other host. A model the catalog does not list uses chat completions. `/model` leaves out the models whose API Finn does not speak, such as Google's, and choosing one is refused. Each call carries `x-opencode-client: finn` and `x-opencode-session` with the session id, which OpenCode requires to route a call.
 
 ## Local: llama.cpp and other servers
 
@@ -129,7 +129,7 @@ The `providers` list of your config file (`~/.config/finn/config.json`) adds an 
 - With `key_env`, the provider is offered only when that variable is set or a login stored its key. Without it, the provider needs no key.
 - `models` are the names a client offers in `/model`.
 
-An entry that replaces a preset keeps what the preset sets besides the URL, the key variable and the models: the default model and the headers of `opencode-go`, and where a login checks a key.
+An entry that replaces a preset keeps what the preset sets besides the URL, the key variable and the models: the default model and the headers of `opencode-go`, that `opencode-go` serves each model with its own API, and where a login checks a key.
 
 The server warns when two providers take the same key variable: that key would go to both URLs.
 

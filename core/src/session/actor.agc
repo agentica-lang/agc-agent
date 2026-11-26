@@ -165,7 +165,7 @@ def compact_now(address: Address[Session.Msg]) -> Result[Bool]
   summary: Result[Optional[Compaction.Compaction]] = ok(none)
   for span in option_list(fold.span)
     renewal = Agent.with_token(
-      fold.provider,
+      fold.settings.provider.unwrap_or(fold.provider),
       fold.refresh,
       ->(p: LLM.Provider) { Compaction.summarize(p, fold.settings, fold.history, span) },
     )
@@ -417,6 +417,15 @@ def update_setup(state: Session.State, change: Protocol.UpdateSession, reply: Ch
   end
 
   setup = setup.with(model: change.model.unwrap_or(setup.model))
+  if change.model.some? or change.provider.some?
+    case Turn.route(setup)
+      error(e) ->
+        Actor.reply(reply, error(e.message, kind: Protocol.KIND_INVALID))
+        return state
+      ok(_) -> nil
+    end
+  end
+
   for on in option_list(change.accept_edits)
     setup = setup.with(approver: setup.approver.map { |a| a.with_accept_edits.call(on) })
   end

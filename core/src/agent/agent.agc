@@ -368,7 +368,7 @@ def compacted(turn: Turn, context: Int, folded: Folded, marks: List[String]) -> 
 
   for span in option_list(Compaction.span(folded.messages))
     renewal = with_token(
-      turn.provider,
+      turn.compaction.provider.unwrap_or(turn.provider),
       turn.refresh,
       ->(p: LLM.Provider) { Compaction.summarize(p, turn.compaction, folded.messages, span) },
     )
