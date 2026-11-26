@@ -53,6 +53,8 @@ A message you send while the model works waits in the turn's queue: the turn rea
 
 In `finn`, Alt+Enter sends a message after the turn ends instead.
 
+A turn stops after 500 tool rounds (`max_rounds`), and the loop guard (`loop_guard`) stops it sooner when the same one to three tool rounds, with the same calls and results, come three times in a row.
+
 ## Compaction
 
 Past 80 % of the model's context window, the history after the first task becomes one summary. The last round of the running turn stays whole, with its tool call and result. `/compact` folds the history now.
