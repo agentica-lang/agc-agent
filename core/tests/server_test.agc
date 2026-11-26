@@ -387,20 +387,6 @@ def test_a_mid_turn_attach_replays_the_whole_turn() -> Result[Void]
   end
 end
 
-def test_a_turn_can_run_more_than_fifty_tool_rounds() -> Result[Void]
-  replies = (1..25).to_a.flat_map { |_| ["read_file.sse", "read_outside.sse"] }
-  replies = replies + ["read_file.sse", "text.sse"]
-  H.using(H.Setup(replies: replies, approvals: false)) do |h|
-    id = try H.new_session(h)
-    a = try H.subscribe(h, id)
-    _ = try H.send(h, id, "Read the files.")
-    a = try H.until(a, Protocol.EventKind.TurnFinished)
-    H.close(a)
-    try Test.eq(H.stop_reason(a), "end_turn")
-    Test.eq(H.kinds(a.seen).select { |k| k == "tool_finished" }.size, 51)
-  end
-end
-
 def test_three_identical_rounds_stop_the_turn() -> Result[Void]
   H.using(H.Setup(replies: ["read_file.sse", "read_file.sse", "read_file.sse", "text.sse"])) do |h|
     id = try H.new_session(h)

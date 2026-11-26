@@ -53,8 +53,6 @@ A message you send while the model works waits in the turn's queue: the turn rea
 
 In `finn`, Alt+Enter sends a message after the turn ends instead.
 
-A turn has no fixed limit on tool rounds. The loop guard still stops a turn after three identical tool rounds in a row.
-
 ## Compaction
 
 Past 80 % of the model's context window, the history after the first task becomes one summary. The last round of the running turn stays whole, with its tool call and result. `/compact` folds the history now.
