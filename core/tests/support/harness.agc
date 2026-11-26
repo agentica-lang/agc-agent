@@ -125,8 +125,8 @@ struct Setup
   fresh_token: String = ""
   ## How long a turn waits for its queued messages.
   take_ms: Int = 5000
-  ## `max_rounds` of a turn.
-  max_rounds: Int = 500
+  ## The most tool rounds of a turn; none takes the server's.
+  max_rounds: Optional[Int] = none
   ## Variables of the server's environment, over the fake one.
   env: Map[String, String] = {}
   ## How long a turn waits for a catalog that still loads.

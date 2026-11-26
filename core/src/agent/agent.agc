@@ -1,6 +1,6 @@
 ## One turn of the agent: the model answers, the tools it calls run (after the `gate` when there is one), their
-## results go back in one user message, and so on until the model ends the turn, the round limit stops it or the loop guard
-## does.
+## results go back in one user message, and so on until the model ends the turn, the round limit stops it or the loop
+## guard does.
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
@@ -19,6 +19,8 @@ MAX_ROUNDS = 500
 ## The loop guard stops a turn when the same 1 to `MAX_CYCLE` rounds come `CYCLE_REPEATS` times in a row.
 MAX_CYCLE = 3
 CYCLE_REPEATS = 3
+## The rounds the guard keeps, as digests.
+WINDOW = MAX_CYCLE * CYCLE_REPEATS
 LATEST = "todos"
 DENIED_BY_RULE = "denied by a rule of the config"
 DENIED_BY_USER = "the user denied this call"
@@ -158,7 +160,8 @@ def run(started: Turn) -> Outcome
   messages = folded.messages
   stripped = turn.stripped and not folded.just
   rounds: List[String] = []
-  for _round in 1..turn.max_rounds
+  tool_rounds = 0
+  while tool_rounds < turn.max_rounds
     more = turn.link.take.call(read.size)
     messages = messages + more.map { |q| LLM.Message(role: LLM.Role.User, content: [text_block(q.text)]) }
     read = read + more
@@ -226,8 +229,12 @@ def run(started: Turn) -> Outcome
     end
 
     this_round = JSON.encode(JSON.from([calls.map { |c| "#{c.name} #{c.arguments}" }, results.map { |r| text_of(r) }]))
-    rounds = rounds.push(this_round)
-    rounds = rounds.drop(rounds.size - [rounds.size, MAX_CYCLE * CYCLE_REPEATS].min.unwrap!)
+    tool_rounds = tool_rounds + 1
+    rounds = rounds.push(OpenSSL.Digest.sha256_hexdigest(this_round.bytes))
+    if rounds.size > WINDOW
+      rounds = rounds.drop(rounds.size - WINDOW)
+    end
+
     return Outcome(history: messages, reason: Protocol.StopReason.LoopGuard) if cycling?(rounds)
   end
 
@@ -266,6 +273,19 @@ def folded_todos(staying: List[LLM.Message], list: List[Todos.Todo]) -> String
   return "" if list.empty? or last_todo_call(staying).map { |call| call.todos } == some(list)
 
   "\n\nYour todo list (`todo_write`) when the history was summarized:\n#{Todos.shown(list)}"
+end
+
+## Whether the last rounds are the same 1 to `MAX_CYCLE` rounds, `CYCLE_REPEATS` times in a row (A A A, A B A B A B).
+def cycling?(rounds: List[String]) -> Bool
+  for length in 1..MAX_CYCLE
+    next if rounds.size < length * CYCLE_REPEATS
+
+    tail = rounds.drop(rounds.size - length * CYCLE_REPEATS)
+    cycle = tail.take(length)
+    return true if (0...CYCLE_REPEATS).all? { |at| tail.drop(at * length).take(length) == cycle }
+  end
+
+  false
 end
 
 private
@@ -746,19 +766,6 @@ def stop_reason(reason: LLM.StopReason) -> Protocol.StopReason
     LLM.StopReason.PauseTurn -> Protocol.StopReason.Other("pause_turn")
     LLM.StopReason.Other(name) -> Protocol.parse_stop_reason(name)
   end
-end
-
-## Whether the last rounds are the same 1 to `MAX_CYCLE` rounds, `CYCLE_REPEATS` times in a row (A A A, A B A B A B).
-def cycling?(rounds: List[String]) -> Bool
-  for length in 1..MAX_CYCLE
-    next if rounds.size < length * CYCLE_REPEATS
-
-    tail = rounds.drop(rounds.size - length * CYCLE_REPEATS)
-    cycle = tail.take(length)
-    return true if (0...CYCLE_REPEATS).all? { |at| tail.drop(at * length).take(length) == cycle }
-  end
-
-  false
 end
 
 def text_of(block: LLM.Block) -> String

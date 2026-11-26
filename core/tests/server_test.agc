@@ -1,5 +1,6 @@
 import Protocol from "pkg/protocol/protocol"
 import Folder from "../src/session/folder"
+import Agent from "../src/agent/agent"
 import Config from "../src/config/config"
 import Server from "../src/http/server"
 import H from "support/harness"
@@ -407,6 +408,14 @@ def test_a_long_turn_that_does_not_repeat_is_not_stopped() -> Result[Void]
   end
 end
 
+# The guard finds the same one to three rounds three times in a row at the end, and nothing near it.
+def test_the_loop_guard_finds_cycles_of_up_to_three_rounds() -> Result[Void]
+  stops = ["AAA", "ABABAB", "ABCABCABC", "XAAA", "XYABABAB", "BABCABCABC"]
+  goes_on = ["", "AA", "ABAB", "AABB", "ABCABC", "AAB", "ABABA", "AABBCCAABBCC", "AAABAAAB", "ABCABCABD"]
+  try Test.eq(stops.select { |s| not Agent.cycling?(s.split("")) }, [])
+  Test.eq(goes_on.select { |s| Agent.cycling?(s.split("")) }, [])
+end
+
 # The same two rounds three times in a row stop the turn with the loop guard.
 def test_a_cycle_of_two_rounds_stops_the_turn() -> Result[Void]
   replies = (1..3).to_a.flat_map { |_| ["read_file.sse", "read_outside.sse"] }
@@ -424,7 +433,7 @@ end
 # A turn that reaches its limit of tool rounds ends with `max_rounds`.
 def test_a_turn_stops_at_the_round_limit() -> Result[Void]
   replies = ["read_file.sse", "read_outside.sse", "read_relative.sse", "text.sse"]
-  H.using(H.Setup(replies: replies, approvals: false, max_rounds: 3)) do |h|
+  H.using(H.Setup(replies: replies, approvals: false, max_rounds: some(3))) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Read the files.")
