@@ -35,8 +35,7 @@ end
 struct Options
   ## The longest wait for the start and the `initialize` answer.
   start_ms: Int = 30_000
-  ## The longest wait for the answer to one request (all the pages of `tools/list` share it), counted from when the
-  ## server is up. The initial start has `start_ms` of its own; reopening an expired HTTP session uses both limits.
+  ## The longest wait for the answer to one request (all the pages of `tools/list` share it); the start has its own.
   timeout_ms: Int = 60_000
   ## The largest JSON answer or SSE event over HTTP.
   max_message_bytes: Int = 4_194_304
@@ -97,11 +96,8 @@ end
 struct Done[T]
   state: State
   result: Result[T]
-  ## The original request deadline when an HTTP session has to be reopened.
-  deadline: Optional[Int] = none
 end
 
-# Allows one start plus the request budget and a margin.
 def wait_ms(client: Client) -> Int = client.options.start_ms + client.options.timeout_ms + CALL_MARGIN_MS
 
 def flat[T](result: Result[Result[T]]) -> Result[T]
@@ -147,7 +143,6 @@ def list_tools(state: State) -> Done[List[Rpc.Tool]]
   end
 end
 
-# The pages of `tools/list` inside one deadline, so a slow start does not eat the pages' budget (`started` ran first).
 def pages(state: State, deadline: Int) -> Done[List[Rpc.Tool]]
   tools: List[Rpc.Tool] = []
   cursor = ""
@@ -170,7 +165,6 @@ def pages(state: State, deadline: Int) -> Done[List[Rpc.Tool]]
   Done(state: current, result: ok(tools))
 end
 
-# A `tools/call` sets its deadline after the server is ready.
 def call_tool(state: State, name: String, arguments: JSON.Value) -> Done[Rpc.Output]
   done = request(state, "tools/call", Rpc.call_params(name, arguments), none)
   case done.result
@@ -179,33 +173,38 @@ def call_tool(state: State, name: String, arguments: JSON.Value) -> Done[Rpc.Out
   end
 end
 
-# A request on a started server. A failure that leaves the server in doubt stops it; a session that the server ended
-# starts again once; the retried request keeps its original deadline.
+# A request: the server starts first, then the request has `deadline` (or `timeout_ms` from now). A failure that leaves
+# the server in doubt stops it; a session that the server ended starts again once, inside the same deadline.
 def request(state: State, method: String, params: JSON.Value, deadline: Optional[Int]) -> Done[JSON.Value]
-  done = attempt(state, method, params, deadline)
-  case done.result
-    error(e) if e.kind == Http.EXPIRED ->
-      again = attempt(done.state, method, params, done.deadline)
-      case again.result
-        error(e2) if e2.kind == Http.EXPIRED -> Done(state: again.state, result: error(e2.message, kind: UNAVAILABLE))
-        _ -> again
-      end
+  case started(state)
+    error(e) -> Done(state: closed(state), result: error(e))
+    ok(ready) ->
+      due = deadline.unwrap_or(deadline_after_start(ready))
+      done = attempt(ready, method, params, due)
+      case done.result
+        error(e) if e.kind == Http.EXPIRED ->
+          again = attempt(done.state, method, params, due)
+          case again.result
+            error(e2) if e2.kind == Http.EXPIRED ->
+              Done(state: again.state, result: error(e2.message, kind: UNAVAILABLE))
+            _ -> again
+          end
 
-    _ -> done
+        _ -> done
+      end
   end
 end
 
-# Start failures return before a request is sent and cannot trigger a retry.
-def attempt(state: State, method: String, params: JSON.Value, deadline: Optional[Int]) -> Done[JSON.Value]
-  case started(state, deadline)
+# A start failure (the reopen) returns before a request is sent, so it cannot trigger another retry.
+def attempt(state: State, method: String, params: JSON.Value, due: Int) -> Done[JSON.Value]
+  case started(state, some(due))
     ok(ready) ->
       id = ready.next_id
       next = ready.with(next_id: id + 1)
-      due = deadline.unwrap_or(deadline_after_start(ready))
       result = send(next, id, method, params, due)
       case result
         error(e) if e.kind == UNAVAILABLE -> Done(state: closed(next), result: result)
-        error(e) if e.kind == Http.EXPIRED -> Done(state: next.with(link: none), result: result, deadline: some(due))
+        error(e) if e.kind == Http.EXPIRED -> Done(state: next.with(link: none), result: result)
         _ -> Done(state: next, result: result)
       end
 
@@ -213,8 +212,6 @@ def attempt(state: State, method: String, params: JSON.Value, deadline: Optional
   end
 end
 
-# The deadline of a request on a state whose start already ran: `start_ms` covered it, so the request gets its whole
-# `timeout_ms` from now.
 def deadline_after_start(state: State) -> Int = Time.monotonic_ms() + state.options.timeout_ms
 
 def send(state: State, id: Int, method: String, params: JSON.Value, deadline: Int) -> Result[JSON.Value]
@@ -241,10 +238,7 @@ def started(state: State, request_deadline: Optional[Int] = none) -> Result[Stat
   params = Rpc.initialize_params(CLIENT_NAME, state.version)
   case exchange(process, ready.next_id, "initialize", params, deadline)
     ok(_) ->
-      try unavailable(
-        server,
-        Process.send(process, Rpc.notification("notifications/initialized"), state.options.start_ms),
-      )
+      try unavailable(server, Process.send(process, Rpc.notification("notifications/initialized"), wait(deadline)))
 
       ok(ready.with(next_id: ready.next_id + 1))
     error(e) ->
@@ -256,7 +250,7 @@ end
 def connected(state: State, request_deadline: Optional[Int]) -> Result[State]
   server = state.server
   start_deadline = Time.monotonic_ms() + state.options.start_ms
-  # A reopen has only the time left on the original request. Http.open checks before sending initialize.
+  # A reopen gets at most the time left on its request.
   deadline = [start_deadline, request_deadline.unwrap_or(start_deadline)].min.unwrap!
   params = Rpc.initialize_params(CLIENT_NAME, state.version)
   opened = Http.open(server.url, server.headers, state.options.max_message_bytes, state.next_id, params, deadline)

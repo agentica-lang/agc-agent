@@ -68,7 +68,7 @@ A server name is letters, digits, `_` and `-`, with no `__`. A server has either
 
 A tool of server `NAME` is `mcp__NAME__TOOL`. Finn connects to the servers in the background: a slow server (`npx` on its first run) does not hold up the start, and its tools come from the next turn once it lists them.
 
-A start has a budget of its own (`start_ms`, 30 s), so a call that starts the server still gets its whole `timeout_ms` (60 s). If an HTTP session expires during a request, reopening it and retrying use the time left on that request.
+Starting a server has its own time limit (30 seconds), so a call that starts it still gets its full 60 seconds. If an HTTP session expires during a call, Finn reopens it and sends the call again inside the time that call has left.
 
 A server whose tools cannot be listed is left out, and so is a tool whose name another server already has; the server log says so (`finn server logs`).
 
