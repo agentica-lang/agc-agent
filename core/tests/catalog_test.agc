@@ -303,7 +303,7 @@ def test_a_cache_out_of_range_is_checked() -> Result[Void]
     cache = "#{dir}/models.json"
     now = Time.now_ms()
     bad = <<~JSON
-      {"url": "#{served.url}", "fetched_ms": #{now}, "version": 1,
+      {"url": "#{served.url}", "fetched_ms": #{now}, "version": 2,
         "models": [{"provider": "openai", "id": "gpt-5.1", "prices": {"input": -5.0, "output": 1.0, "cache_read": 0.0, "cache_write": 0.0}, "tiers": [],
           "window": 99000000, "reasoning": false, "tools": false}]}
     JSON

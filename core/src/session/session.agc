@@ -767,6 +767,7 @@ def entry(
     observers: options.observers,
     origin: "#{chosen.provider}/#{chosen.api}",
     endpoint: some(->(name: String, now: String) { switched_endpoint(Config.now(options), name, now) }),
+    routed: some(->(name: String, model: String) { routed_endpoint(Config.now(options), name, model) }),
     profiles: some(-> { profiles_of(options, context.root) }),
     reopen: some(-> { reopened(options, context.root) }),
     skills: skill_names(options, context.root, prompt.catalog),
@@ -870,7 +871,7 @@ def provider_info(options: Config.Options, name: String) -> Protocol.ProviderInf
 
   for catalog in option_list(options.catalog)
     if not listed.empty?
-      models = models + Catalog.models(catalog, listed)
+      models = models + Catalog.models(catalog, listed, found.routed)
     end
   end
 
@@ -931,6 +932,28 @@ def endpoint_of(options: Config.Options, provider: String, api: String) -> Resul
       catalog_provider: catalog_of(options, found),
     ),
   )
+end
+
+# The endpoint of the API that the catalog gives `model` on a provider that routes its models (`opencode-go`); none on
+# another provider, and for a model the catalog does not know or gives the API the session is on.
+def routed_endpoint(options: Config.Options, provider: String, model: String) -> Optional[SessionActor.Endpoint]
+  for found in option_list(options.providers.get(provider))
+    next if not found.routed
+
+    for catalog in option_list(options.catalog)
+      _ = Catalog.wait(catalog, options.catalog_wait_ms)
+      for listed in option_list(Catalog.find(catalog, found.catalog, model))
+        next if listed.api.empty? or not found.apis.has_key?(listed.api)
+
+        case endpoint_of(options, provider, listed.api)
+          ok(endpoint) -> return some(endpoint)
+          error(_) -> nil
+        end
+      end
+    end
+  end
+
+  none
 end
 
 # A `PATCH` to `provider` keeps the model API in use when the provider speaks it, else takes the provider's own.

@@ -25,8 +25,13 @@ MAX_WINDOW = 2_000_000
 ## The highest price taken, in USD per million tokens; a model with a price above it, below 0 or not finite has none.
 MAX_PRICE = 10_000.0
 OPENAI_COMPATIBLE = "@ai-sdk/openai-compatible"
+## The SDK of the catalog for each API that Finn speaks (the other SDKs, such as Google's, are left out), and the
+## API's name in `Providers`.
+SDK_APIS = {
+  "@ai-sdk/openai-compatible": "openai", "@ai-sdk/openai": "openai_responses", "@ai-sdk/anthropic": "anthropic",
+}
 ## Raise it when `Model` gains a field that a file of the older format cannot have.
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 
 ## Prices in USD per million tokens.
 struct Prices
@@ -56,6 +61,9 @@ struct Model
   ## An API of its own: the catalog lists the provider as OpenAI-compatible and the model with another SDK (Anthropic,
   ## OpenAI Responses, Google). The provider's chat completions may not serve it.
   other_api: Bool = false
+  ## The API that serves it, as `Providers` names it: from its own SDK, else its provider's. Empty for one that Finn
+  ## does not speak.
+  api: String = ""
 end
 
 struct Options
@@ -110,10 +118,14 @@ def find(catalog: Catalog, provider: String, id: String) -> Optional[Model]
 end
 
 ## The ids of the models of `provider` (a models.dev id) that call tools and are not of another API, from what is
-## loaded now, sorted.
-def models(catalog: Catalog, provider: String) -> List[String]
+## loaded now, sorted. With `routed`, a provider that serves each model with its own API: the models of every API
+## Finn speaks, and not those of an API it does not (Google's).
+def models(catalog: Catalog, provider: String, routed: Bool = false) -> List[String]
   none_found: List[String] = []
-  answer: Result[List[String]] = Actor.call(catalog.actor.address, CALL_MS) do |reply| Msg.Models(provider, reply) end
+  answer: Result[List[String]] = Actor.call(catalog.actor.address, CALL_MS) do |reply|
+    Msg.Models(provider, routed, reply)
+  end
+
   answer.unwrap_or(none_found)
 end
 
@@ -154,7 +166,8 @@ def parse(text: String) -> Result[List[Model]]
     models = fields(JSON.get(listed, "models").unwrap_or(JSON.object({})))
     npm = text(listed, "npm")
     for id in models.keys.sort
-      out = out.push(model(provider, id, models[id]).with(other_api: other_api?(npm, models[id])))
+      entry = model(provider, id, models[id])
+      out = out.push(entry.with(other_api: other_api?(npm, models[id]), api: api_of(npm, models[id])))
     end
   end
 
@@ -171,7 +184,7 @@ end
 
 enum Msg
   Find(Query)
-  Models(String, Channel[List[String]])
+  Models(String, Bool, Channel[List[String]])
   Load
   Loaded(Result[List[Model]])
   ## `loading`, `loaded`, or `none` when a load failed or the catalog is off.
@@ -203,8 +216,15 @@ def handle(state: State, msg: Msg) -> Actor.Step[State]
     Msg.Find(query) ->
       _ = Actor.reply(query.reply, lookup(state.models, query.provider, query.id))
       Actor.continue(load(state))
-    Msg.Models(provider, reply) ->
-      ids = state.models.select { |m| m.provider == provider and m.tools and not m.other_api }.map { |m| m.id }.sort
+    Msg.Models(provider, routed, reply) ->
+      served = state.models.select { |m| m.provider == provider and m.tools }
+      if routed
+        served = served.select { |m| not m.api.empty? }
+      else
+        served = served.select { |m| not m.other_api }
+      end
+
+      ids = served.map { |m| m.id }.sort
       _ = Actor.reply(reply, ids)
       Actor.continue(load(state))
     Msg.Load -> Actor.continue(load(state))
@@ -336,6 +356,17 @@ def other_api?(provider_npm: String, json: JSON.Value) -> Bool
 
   own = text(JSON.get(json, "provider").unwrap_or(JSON.object({})), "npm")
   not own.empty? and own != OPENAI_COMPATIBLE
+end
+
+# The API of a model: the SDK of its own entry, else its provider's; empty for an SDK that Finn does not speak.
+def api_of(provider_npm: String, json: JSON.Value) -> String
+  own = text(JSON.get(json, "provider").unwrap_or(JSON.object({})), "npm")
+  npm = provider_npm
+  if not own.empty?
+    npm = own
+  end
+
+  SDK_APIS.get(npm).unwrap_or("")
 end
 
 def text(json: JSON.Value, key: String) -> String

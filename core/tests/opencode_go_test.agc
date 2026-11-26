@@ -6,6 +6,7 @@
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
 import Config from "../src/config/config"
+import Catalog from "../src/providers/catalog"
 import Providers from "../src/providers/providers"
 import Fake from "support/fake_llm"
 import H from "support/harness"
@@ -54,6 +55,70 @@ def test_a_chat_call_sends_the_key_and_the_model_to_the_preset_url() -> Result[V
     try Test.eq(HTTP.header_values(seen.headers, "authorization"), ["Bearer sk-env"])
     Test.eq(JSON.get(try JSON.parse(seen.body), "model"), ok(JSON.from(MODEL)))
   end
+end
+
+# Each model goes to the API its catalog entry names, at the preset's URL with its key: chat completions, the
+# Responses API, or the Anthropic Messages API. One of an API Finn does not speak (Google's) is not offered.
+def test_each_model_goes_to_the_api_the_catalog_gives_it() -> Result[Void]
+  tmp = System.env("TMPDIR").unwrap_or("/tmp")
+  dir = "#{tmp}/core-opencode-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  json = try Fake.fixture("models_dev/api.json")
+  json_type = HTTP.Header(name: "Content-Type", value: "application/json")
+  http = try HTTP.serve(
+    "127.0.0.1",
+    0,
+    HTTP.app(->(_r: HTTP.Request) { ok(HTTP.Response(status: 200, headers: [json_type], body: json)) }),
+  )
+
+  url = "http://127.0.0.1:#{HTTP.local_port(http)}/api.json"
+  catalog = Catalog.start(Catalog.Options(url: url, cache: "#{dir}/models.json"))
+  loaded = Catalog.wait(catalog, 10_000)
+  setup = H.Setup(
+    replies: ["text.sse", "anthropic/text.sse", "openai_responses/text.sse"],
+    presets: ["opencode-go"],
+    approvals: false,
+    catalog: some(catalog),
+  )
+
+  result = H.using(setup) do |h|
+    try Test.assert(loaded, "the catalog did not load")
+    served: List[String] = []
+    for model in ["deepseek-v4.1-flash", "qwen3.8-max", "gpt-6-luna"]
+      id = try H.new_session_in(h, h.work, provider: some("opencode-go"), model: some(model))
+      _ = try H.send(h, id, "Hello.")
+      _ = try H.idle(h, id)
+      seen = try H.next_request(h)
+      key = (
+        HTTP.header_values(seen.headers, "x-api-key").join("") +
+        HTTP.header_values(seen.headers, "authorization").join("")
+      )
+
+      try Test.eq(HTTP.header_values(seen.headers, "x-opencode-session"), [id])
+      try Test.eq(JSON.get(try JSON.parse(seen.body), "model"), ok(JSON.from(model)))
+      served = served.push("#{seen.path} #{key}")
+    end
+
+    try Test.eq(
+      served,
+      [
+        "/opencode-go/chat/completions Bearer sk-opencode-go",
+        "/opencode-go/messages sk-opencode-go",
+        "/opencode-go/responses Bearer sk-opencode-go",
+      ],
+    )
+
+    Test.eq(
+      Catalog.models(catalog, "opencode-go", true),
+      ["deepseek-v4.1-flash", "gpt-6-luna", "kimi-k3", "qwen3.8-max"],
+    )
+  end
+
+  Catalog.stop(catalog)
+  HTTP.close_server(http)
+  _ = HTTP.wait(http)
+  _ = Path.remove(dir)
+  result
 end
 
 # The session id and the client go in the headers of each call of the preset, and of no other provider.

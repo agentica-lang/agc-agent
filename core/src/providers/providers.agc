@@ -37,6 +37,9 @@ struct Provider
   catalog: String = ""
   ## The models it names in the config file, for a client to offer.
   models: List[String] = []
+  ## It serves each model with the API its catalog entry names (`anthropic`, `openai_responses` or `openai`), all at
+  ## one URL: a model whose API Finn does not speak is not offered.
+  routed: Bool = false
 end
 
 ## A provider of the config file.
@@ -52,6 +55,8 @@ struct Custom
   model: String = ""
   ## HTTP headers of every request; `${session}` in a value is the session's id.
   headers: Map[String, String] = {}
+  ## See `Provider.routed`.
+  routed: Bool = false
 end
 
 ## A provider a login will offer, with no flow yet (a subscription): its name and what it is.
@@ -81,6 +86,7 @@ def presets() -> List[Custom]
       key_env: "OPENCODE_API_KEY",
       model: "deepseek-v4.1-flash",
       headers: {"x-opencode-client": "finn", "x-opencode-session": "${session}"},
+      routed: true,
     ),
   ]
 end
@@ -181,7 +187,12 @@ def custom_of(wire: CustomWire) -> Custom
   )
 
   for preset in presets().select { |p| p.name == custom.name }
-    return custom.with(check_path: preset.check_path, model: preset.model, headers: preset.headers)
+    return custom.with(
+      check_path: preset.check_path,
+      model: preset.model,
+      headers: preset.headers,
+      routed: preset.routed,
+    )
   end
 
   custom
@@ -224,10 +235,22 @@ def provider_of(custom: Custom, key: String, options: LLM.Options) -> Provider
     apis = {"openai_responses": responses, "openai": chat}
   end
 
+  if custom.routed
+    messages = ModelApi(
+      provider: LLM.anthropic(custom.base_url, key, options),
+      cache: true,
+      model: custom.model,
+      headers: custom.headers,
+      local: false,
+    )
+
+    apis = {"openai": chat, "openai_responses": responses, "anthropic": messages}
+  end
+
   catalog = custom.name
   if CATALOG.has_key?(custom.name)
     catalog = CATALOG[custom.name]
   end
 
-  Provider(apis: apis, api: custom.api, catalog: catalog, models: custom.models)
+  Provider(apis: apis, api: custom.api, catalog: catalog, models: custom.models, routed: custom.routed)
 end

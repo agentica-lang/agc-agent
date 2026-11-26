@@ -72,7 +72,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
   turn_id = new_turn_id(state.turns + 1)
   inbox: Channel[Session.Msg] = Actor.inbox
   address = inbox.address
-  setup = state.setup
+  setup = routed(state.setup)
   link = Agent.Link(
     emit: ->(event) { tell(address, Session.Msg.Emit(turn_id, event)) },
     approve: ->(call) { wait_approval(address, turn_id, call, setup.approval_timeout_ms) },
@@ -167,6 +167,24 @@ def take(state: Session.State, turn_id: String, after: Int, reply: Channel[List[
   state
 end
 
+## `setup` on the API that serves its model, when its provider gives each model its own.
+def routed(setup: Session.Setup) -> Session.Setup
+  for route in option_list(setup.routed)
+    for endpoint in option_list(route.call(setup.provider_name, setup.model))
+      return setup.with(
+        api: endpoint.api,
+        provider: endpoint.provider,
+        extra: endpoint.extra,
+        cache: endpoint.cache,
+        headers: endpoint.headers,
+        refresh: endpoint.refresh,
+      )
+    end
+  end
+
+  setup
+end
+
 def gate(approver: Optional[Extensions.Approver]) -> Optional[Fn[Tools.Context, String, JSON.Value, Tools.Verdict]]
   case approver
     some(a) -> a.verdict
@@ -259,7 +277,7 @@ def start_fold(state: Session.State, reply: Channel[Result[Session.Fold]]) -> Se
     return state
   end
 
-  setup = state.setup
+  setup = routed(state.setup)
   settings = Compaction.Settings(
     window: state.window,
     model: compact_model(setup),
