@@ -1,6 +1,5 @@
 ## One turn of the agent: the model answers, the tools it calls run (after the `gate` when there is one), their
-## results go back in one user message, and so on until the model ends the turn, a limit stops it or the loop guard
-## does.
+## results go back in one user message, and so on until the model ends the turn or the loop guard stops it.
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
@@ -12,7 +11,6 @@ import Todos from "../tools/todos"
 import Tools from "../tools/tools"
 import Logger from "std/logger"
 
-MAX_ROUNDS = 50
 ## The provider whose models are offered `apply_patch`, as a custom tool.
 RESPONSES = "openai_responses"
 SAME_ROUNDS = 3
@@ -91,7 +89,6 @@ struct Turn
   compaction: Compaction.Settings
   ## The context of the session's last call.
   last_context: Int = 0
-  max_rounds: Int = MAX_ROUNDS
   ## Adds `run_script`, which calls the tools from a Python script.
   code_mode: Optional[CodeMode.Settings] = none
   ## The output limit of each call; none takes the model's from the catalog, else sends none (the API's default).
@@ -156,7 +153,7 @@ def run(started: Turn) -> Outcome
   stripped = turn.stripped and not folded.just
   last_round = ""
   same = 0
-  for _round in 1..turn.max_rounds
+  while true
     more = turn.link.take.call(read.size)
     messages = messages + more.map { |q| LLM.Message(role: LLM.Role.User, content: [text_block(q.text)]) }
     read = read + more
@@ -229,6 +226,7 @@ def run(started: Turn) -> Outcome
     return Outcome(history: messages, reason: Protocol.StopReason.LoopGuard) if same >= SAME_ROUNDS
   end
 
+  # The checker requires a return after the loop.
   Outcome(history: messages, reason: Protocol.StopReason.LoopGuard)
 end
 
