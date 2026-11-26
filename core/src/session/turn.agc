@@ -532,7 +532,9 @@ def next_turn(state: Session.State) -> Session.State
   started = start_turn(state.with(queued: []), texts(state.queued).join("\n\n"), ignored)
   return Stream.unsent(started.with(queued: state.queued)) if started.turn.none?
 
-  # The turn starts with all of them, as one message: each is delivered now.
+  # The turn starts with all of them, as one message: each is delivered now. A client that attaches meanwhile gets the
+  # history without it, and draws them from the events.
+  started = started.with(turn: started.turn.map { |t| t.with(shown: t.shown - 1) })
   for waiting in state.queued
     started = delivered(started, waiting.id, waiting.text)
   end

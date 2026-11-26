@@ -445,6 +445,33 @@ def test_the_queue_is_read_after_a_final_answer_and_has_a_limit() -> Result[Void
   end
 end
 
+# A client that attaches to a turn that the queue started draws each message once: the history it reads lacks them (the
+# session keeps them as one message), and the replayed `message_delivered` events give them.
+def test_attaching_to_a_turn_that_the_queue_started_draws_each_message_once() -> Result[Void]
+  setup = H.Setup(replies: ["write_file.sse", "text.sse", "text.sse@hold"], take_ms: 0)
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.send(h, id, "Also say hi.")
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    a = try H.until(a.with(seen: []), Protocol.EventKind.TurnStarted)
+    running = try H.session(h, id)
+    b = try H.subscribe(h, id, some(running.turn_from_event_id.unwrap_or(0)))
+    b = try H.until(b, Protocol.EventKind.MessageDelivered)
+    shown = running.history.select { |m| m.text == "Also say hi." }.size
+    drawn = b.seen.select { |s| H.kinds([s]) == ["message_delivered"] }.size
+    H.close(a)
+    H.close(b)
+    H.release(h)
+    _ = try H.idle(h, id)
+    try Test.eq([shown, drawn], [0, 1])
+    Test.eq((try H.session(h, id)).history.select { |m| m.text == "Also say hi." }.size, 1)
+  end
+end
+
 # A turn that does not get its queue in time goes on without it: the messages stay queued and start the next turn,
 # and the file agrees with the history, so a restart gives every tool call its result.
 def test_a_late_read_leaves_the_queue_whole() -> Result[Void]
