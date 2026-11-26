@@ -23,6 +23,7 @@ import Sandbox from "../tools/sandbox"
 import Patch from "../tools/patch"
 import Spec from "../tools/spec"
 import Tools from "../tools/tools"
+import WebFetch from "../tools/web_fetch"
 
 ## OpenCode's defaults for reads, before the rules of the config: a `.env` file asks, `.env.example` does not. The files
 ## of Finn's own folders that hold keys, tokens and the server's address are denied to every tool by `finn_denies`
@@ -133,8 +134,10 @@ def decide(rules: Rules, root: String, tool: String, target: String, asks: Bool)
 end
 
 ## The action of the last rule that matches.
-def evaluate(rules: Rules, tool: String, target: String) -> Optional[Spec.Verdict]
+def evaluate(rules: Rules, tool: String, called: String) -> Optional[Spec.Verdict]
   found: Optional[Spec.Verdict] = none
+  # A rule of `web_fetch` sees the URL only: the method and the hash that tell two calls apart are not part of it.
+  target = WebFetch.rule_view(tool, called)
   chars = target.replace("\\", "/").split("")
   # A path in the session folder is named relative to it: a rule of an absolute path sees it in full. Only the tools
   # that take a path: a command or the input of an MCP tool is no path.

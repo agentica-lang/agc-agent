@@ -1,10 +1,11 @@
 # `web_fetch` end to end through `Tools.run`, against a peer on 127.0.0.1 that records the paths it is asked for.
-# The real
-# tool reaches public addresses only, so the peer is never contacted. The tests that fetch from the peer change the
+# The real tool reaches public addresses only, so a listener on 127.0.0.1 never gets a connection. The tests that fetch
+# from the peer change the
 # tool's `Settings` in the code of the test (`public_only: false`); no config or input does.
 
 import HTTP from "std/http"
 import Approval from "../src/approval/approval"
+import Permissions from "../src/approval/permissions"
 import Tools from "../src/tools/tools"
 import WebFetch from "../src/tools/web_fetch"
 
@@ -91,6 +92,19 @@ def untouched(peer: Peer) -> Result[Void]
   end
 end
 
+## A listener that nobody serves: a connection to it, even one that sends nothing, waits in its queue to be accepted.
+def silent() -> Result[TCP.Listener] = TCP.listen("127.0.0.1", 0)
+
+def connected(listener: TCP.Listener) -> Result[Void]
+  # A connect that has completed is in the queue at once; the wait only lets the loopback finish a late one.
+  case TCP.accept(listener, 100)
+    ok(socket) ->
+      TCP.close(socket)
+      error("something connected")
+    error(_) -> ok()
+  end
+end
+
 def fake_env(_name: String) -> Result[String] = error("not set")
 
 def context(settings: Optional[WebFetch.Settings]) -> Result[Tools.Context]
@@ -124,9 +138,9 @@ def local() -> WebFetch.Settings = WebFetch.Settings(public_only: false, timeout
 # The tool as a session has it: the peer on 127.0.0.1 is refused however the URL spells it, user info is a bad URL, and
 # the peer never hears of any of it.
 def test_the_tool_never_reaches_a_local_peer() -> Result[Void]
-  peer = try start_peer()
+  listener = try silent()
   ctx = try context(none)
-  port = peer.port
+  port = TCP.local_port(listener)
   private = "web_fetch_private_address"
   table = [
     ["http://127.0.0.1:#{port}/text", private],
@@ -147,14 +161,36 @@ def test_the_tool_never_reaches_a_local_peer() -> Result[Void]
     try Test.assert(not failed.error.empty?, "an empty reason for #{row[0]}")
   end
 
-  try untouched(peer)
-  stop_peer(peer)
+  for method in ["HEAD", "POST", "OPTIONS"]
+    sent = fetch(
+      ctx,
+      {"url": JSON.from("http://127.0.0.1:#{port}/x"), "method": JSON.from(method), "body": JSON.from("b")},
+    )
+
+    refused = try failure(sent)
+    try Test.eq(refused.error_code, "web_fetch_private_address")
+  end
+
+  try connected(listener)
+  TCP.close_listener(listener)
+  ok()
+end
+
+# The instrument of the tests above: a bare connect is seen.
+def test_a_bare_connect_is_seen_by_the_listener() -> Result[Void]
+  listener = try silent()
+  try connected(listener)
+  socket = try TCP.connect("127.0.0.1", TCP.local_port(listener), 1000)
+  try Test.assert(not connected(listener).ok?, "a connect was not seen")
+  TCP.close(socket)
+  TCP.close_listener(listener)
+  ok()
 end
 
 # A name whose answer holds a private address never gets a connection, whatever the address (the peer listens on
 # 127.0.0.1 and would be reached if the answer were taken as it is).
 def test_a_host_that_resolves_to_a_private_address_is_refused() -> Result[Void]
-  peer = try start_peer()
+  listener = try silent()
   answers = [
     ["10.0.0.1"],
     ["169.254.169.254"],
@@ -169,12 +205,13 @@ def test_a_host_that_resolves_to_a_private_address_is_refused() -> Result[Void]
   for answer in answers
     settings = WebFetch.Settings(resolver: some(->(_host: String) { ok(answer) }), timeout_ms: 2000)
     ctx = try context(some(settings))
-    failed = try failure(get(ctx, "http://pinned.example:#{peer.port}/text"))
+    failed = try failure(get(ctx, "http://pinned.example:#{TCP.local_port(listener)}/text"))
     try Test.eq("#{answer} #{failed.error_code}", "#{answer} web_fetch_private_address")
   end
 
-  try untouched(peer)
-  stop_peer(peer)
+  try connected(listener)
+  TCP.close_listener(listener)
+  ok()
 end
 
 # With the address rule off in the test only: HTML and text and JSON, the headers (the first ten) and the content type.
@@ -260,24 +297,34 @@ end
 
 # A call that is wrong never gets to the network.
 def test_a_bad_call_is_refused_before_any_request() -> Result[Void]
-  peer = try start_peer()
+  listener = try silent()
   ctx = try context(some(local()))
-  url = JSON.from("http://127.0.0.1:#{peer.port}/text")
+  base = "http://127.0.0.1:#{TCP.local_port(listener)}"
+  url = JSON.from("#{base}/text")
   bad = [
     {"method": JSON.from("GET")},
     {"url": url, "method": JSON.from("TRACE")},
     {"url": url, "body": JSON.from("a"), "json": JSON.from("{}")},
     {"url": url, "json": JSON.from("{not json")},
     {"url": url, "headers": JSON.object({"bad name": JSON.from("x")})},
+    {"url": url, "headers": JSON.object({"x-a": JSON.from("v\r\nInjected: 1")})},
+    {"url": url, "headers": JSON.object({"Host": JSON.from("other.example")})},
+    {"url": JSON.from("#{base}/a\r\nHost: other")},
+    {"url": JSON.from("#{base}/a#{String.from_code(0)}b")},
     {"url": url, "extra": JSON.from(1)},
   ]
 
   for fields in bad
     try Test.assert(fetch(ctx, fields).is_error, "#{fields} was not refused")
+    case connected(listener)
+      ok(_) -> nil
+      error(_) -> try Test.assert(false, "connected for #{fields}")
+    end
   end
 
-  try untouched(peer)
-  stop_peer(peer)
+  try connected(listener)
+  TCP.close_listener(listener)
+  ok()
 end
 
 # `web_fetch` is one of the base tools and asks, as every tool that reaches out; a rule decides on its URL.
@@ -289,5 +336,101 @@ def test_web_fetch_asks_and_the_rules_decide_on_its_url() -> Result[Void]
   try Test.eq(verdict.call("https://docs.example.com/a"), Tools.Verdict.Allow)
   try Test.eq(verdict.call("https://other.example.com/a"), Tools.Verdict.Ask)
   try Test.eq(verdict.call("https://docs.example.com/private"), Tools.Verdict.Deny)
+  ok()
+end
+
+def call_input(fields: Map[String, JSON.Value]) -> JSON.Value = JSON.object(fields)
+
+# The prompt shows what would be sent, and an answer for one call is never an answer for another: allowing a GET
+# for the
+# session does not allow a POST to the same URL, nor the same POST with another body.
+def test_the_prompt_shows_the_request_and_a_session_allow_covers_that_call_only() -> Result[Void]
+  ctx = try context(none)
+  url = JSON.from("https://api.example.com/items")
+  get_call = call_input({"url": url})
+  post = call_input({
+    "url": url,
+    "method": JSON.from("post"),
+    "body": JSON.from("hello"),
+    "headers": JSON.object({"x-key": JSON.from("v")}),
+  })
+
+  other = call_input({
+    "url": url,
+    "method": JSON.from("post"),
+    "body": JSON.from("bye"),
+    "headers": JSON.object({"x-key": JSON.from("v")}),
+  })
+
+  try Test.eq(Tools.detail("web_fetch", post), "POST https://api.example.com/items\nx-key: v\n\nhello")
+  try Test.eq(Tools.detail("web_fetch", get_call), "GET https://api.example.com/items")
+  try Test.eq(try Tools.target(ctx, "web_fetch", get_call), "https://api.example.com/items")
+  posted = try Tools.target(ctx, "web_fetch", post)
+  try Test.assert(posted.start_with?("https://api.example.com/items\tPOST "), posted)
+  try Test.assert(posted != try Tools.target(ctx, "web_fetch", other), "two bodies, one target")
+
+  rules = try Approval.parse_rules([])
+  allows = Permissions.answered(
+    Permissions.Allows(),
+    "allow_session",
+    "/w",
+    "web_fetch",
+    try Tools.target(ctx, "web_fetch", get_call),
+  )
+
+  allowed = ->(input: JSON.Value) {
+    Permissions.allows?(allows, rules, "/w", "web_fetch", Tools.target(ctx, "web_fetch", input).unwrap_or(""))
+  }
+
+  try Test.eq(allowed.call(get_call), true)
+  try Test.eq(allowed.call(post), false)
+  try Test.eq(allowed.call(call_input({"url": url, "method": JSON.from("HEAD")})), true)
+  try Test.eq(
+    allowed.call(call_input({"url": url, "headers": JSON.object({"authorization": JSON.from("Bearer x")})})),
+    false,
+  )
+
+  ok()
+end
+
+# A rule matches the URL however it is spelled and whatever the call does: a deny rule of a host also denies its POST.
+def test_a_rule_matches_the_canonical_url_of_every_kind_of_call() -> Result[Void]
+  ctx = try context(none)
+  rules = try Approval.parse_rules([
+    "allow web_fetch(https://docs.example.com/*)", "deny web_fetch(https://evil.example/*)",
+  ])
+
+  verdict = ->(fields: Map[String, JSON.Value]) { Approval.verdict(rules, ctx, "web_fetch", call_input(fields)) }
+  for spelled in ["https://evil.example/x", "HTTPS://Evil.Example.:443/x", "https://EVIL.example"]
+    try Test.eq(verdict.call({"url": JSON.from(spelled)}), Tools.Verdict.Deny)
+    posted = verdict.call({"url": JSON.from(spelled), "method": JSON.from("POST"), "body": JSON.from("x")})
+    try Test.eq(posted, Tools.Verdict.Deny)
+  end
+
+  try Test.eq(verdict.call({"url": JSON.from("HTTPS://Docs.Example.com:443/a")}), Tools.Verdict.Allow)
+  ok()
+end
+
+# A cancelled call closes its connection: the turn that is stopped does not leave a client open on the peer.
+def test_a_cancelled_call_closes_its_connection() -> Result[Void]
+  listener = try silent()
+  ctx = try context(some(local().with(timeout_ms: 5000)))
+  url = "http://127.0.0.1:#{TCP.local_port(listener)}/slow"
+  call = Task.spawn do get(ctx, url) end
+  socket = try TCP.accept(listener, 5000)
+  try Test.assert((try TCP.read_line(socket, 5000)).start_with?("GET /slow"), "no request")
+  Task.cancel(call)
+  # The rest of the request, then the end of the input: the client closed, it did not just stop talking.
+  ended = "open"
+  while ended == "open"
+    case TCP.read_line(socket, 3000)
+      ok(_) -> nil
+      error(e) -> ended = e.kind
+    end
+  end
+
+  try Test.eq(ended, "net.eof")
+  TCP.close(socket)
+  TCP.close_listener(listener)
   ok()
 end

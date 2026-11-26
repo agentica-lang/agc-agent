@@ -12,22 +12,91 @@ PRIVATE_ADDRESS = "web_fetch.private_address"
 BAD_URL = "web_fetch.url"
 MAX_LABEL = 63
 MAX_PORT = 65535
+MAX_URL = 8192
 
 ## The URL stripped, when it is an `http` or `https` URL that this module accepts; else an error of kind
 ## `web_fetch.url` (a bad URL) or `web_fetch.private_address` (a host that is, or may be read as, this machine or an
 ## address that the URL does not spell out strictly).
 def check(url: String) -> Result[String]
   text = url.strip
+  try parts(text)
+  ok(text)
+end
+
+## The URL as the rules of approval match it: the scheme and the host in lower case, the host without its trailing dot,
+## no default port, and the path kept (`/` when there is none). The request is made with the URL as given.
+def canonical(url: String) -> Result[String]
+  text = url.strip
+  found = try parts(text)
+  port = found.port
+  if port != ""
+    port = "#{port.to_i.unwrap_or(0)}"
+  end
+
+  if (port == "80" and found.scheme == "http") or (port == "443" and found.scheme == "https")
+    port = ""
+  end
+
+  if port != ""
+    port = ":#{port}"
+  end
+
+  rest = found.rest
+  if rest == "" or not rest.start_with?("/")
+    rest = "/#{rest}"
+  end
+
+  ok("#{found.scheme}://#{found.host}#{port}#{rest}")
+end
+
+private
+
+struct Parts
+  scheme: String
+  host: String
+  port: String
+  rest: String
+end
+
+struct Host
+  name: String
+  port: String
+end
+
+def parts(text: String) -> Result[Parts]
+  return bad("the URL is over #{MAX_URL} characters") if text.length > MAX_URL
+  return bad("the URL has a control character") if text.split("").any? { |char| control?(char) }
+
   rest = try after_scheme(text)
   authority = rest.slice(0, authority_length(rest))
   return bad("the URL has user info") if authority.include?("@")
 
   host = try host_of(authority)
-  try host_allowed(host)
-  ok(text)
+  try host_allowed(host.name)
+  name = host.name.downcase
+  if name.end_with?(".")
+    name = name.slice(0, name.length - 1)
+  end
+
+  scheme = "http"
+  if text.downcase.start_with?("https")
+    scheme = "https"
+  end
+
+  ok(
+    Parts(
+      scheme: scheme,
+      host: name,
+      port: host.port,
+      rest: rest.slice(authority.length, rest.length - authority.length),
+    ),
+  )
 end
 
-private
+def control?(char: String) -> Bool
+  code = char.code
+  code < 32 or code == 127
+end
 
 def after_scheme(text: String) -> Result[String]
   lower = text.downcase
@@ -55,7 +124,7 @@ def authority_length(rest: String) -> Int
 end
 
 ## The host of an authority (`host`, `host:port`, `[v6]`, `[v6]:port`), with its port checked.
-def host_of(authority: String) -> Result[String]
+def host_of(authority: String) -> Result[Host]
   if authority.start_with?("[")
     close = authority.index_of("]")
     return bad("the IPv6 address has no closing bracket") if not close.some?
@@ -65,7 +134,12 @@ def host_of(authority: String) -> Result[String]
     return bad("not an IPv6 address: #{inner}") if not v6?(inner)
 
     try port_ok(tail)
-    return ok("[#{inner}]")
+    port = ""
+    if tail != ""
+      port = tail.slice(1, tail.length - 1)
+    end
+
+    return ok(Host(name: "[#{inner}]", port: port))
   end
 
   parts = authority.split(":")
@@ -77,7 +151,11 @@ def host_of(authority: String) -> Result[String]
 
   return bad("the URL has no host") if parts[0] == ""
 
-  ok(parts[0])
+  if parts.size == 2
+    ok(Host(name: parts[0], port: parts[1]))
+  else
+    ok(Host(name: parts[0], port: ""))
+  end
 end
 
 ## `tail` is the text after the host: empty, or a colon and a port of 1 to 5 digits up to 65535.

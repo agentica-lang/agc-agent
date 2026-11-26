@@ -86,6 +86,30 @@ def tool_with(settings: Settings) -> Spec.Tool
   )
 end
 
+## What a rule sees of the target of a call of `tool`: for `web_fetch` the URL, up to the tab that starts what tells two
+## calls to one URL apart; the target of another tool as it is.
+def rule_view(tool: String, target: String) -> String
+  return target if tool != NAME
+
+  target.split("\t").take(1).join("")
+end
+
+## What a call would send, for the approval: the method and the URL, the headers, and the body or the JSON.
+def detail(input: JSON.Value) -> String
+  case Spec.args(input, FetchArgs.codec)
+    ok(args) ->
+      given = args.headers.unwrap_or({})
+      lines = ["#{method_of(args)} #{args.url.strip}"] + given.keys.map { |name| "#{name}: #{given[name]}" }
+      body = args.body.unwrap_or(args.json.unwrap_or(""))
+      if body != ""
+        lines = lines + ["", body]
+      end
+
+      lines.join("\n")
+    error(_) -> ""
+  end
+end
+
 private
 
 struct RequestBody
@@ -98,11 +122,23 @@ struct Processed
   name: String
 end
 
-## The URL of the call, which the rules of approval match.
+## The target of a call, which the rules and the answers of approval see. It is the URL as a rule matches it (see
+## `WebUrl.canonical`); a call that does more than read (a method other than GET or HEAD, headers or a body) adds, after
+## a tab, its method and a hash of what it sends, so that allowing one call never allows another.
 def target(_ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, FetchArgs.codec)
-  ok(args.url.strip)
+  url = WebUrl.canonical(args.url).unwrap_or(args.url.strip)
+  method = method_of(args)
+  given = args.headers.unwrap_or({})
+  reads = (method == "GET" or method == "HEAD") and given.empty? and not args.body.some? and not args.json.some?
+  return ok(url) if reads
+
+  sent = given.keys.sort.map { |name| "#{name.downcase}:#{given[name]}" }.join("\n")
+  digest = "#{method}\n#{sent}\n#{args.body.unwrap_or("")}\n#{args.json.unwrap_or("")}"
+  ok("#{url}\t#{method} #{OpenSSL.Digest.sha256_hexdigest(digest.bytes).slice(0, 12)}")
 end
+
+def method_of(args: FetchArgs) -> String = args.method.unwrap_or("GET").upcase
 
 def run(settings: Settings, _ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, FetchArgs.codec)
@@ -114,7 +150,7 @@ def run(settings: Settings, _ctx: Spec.Context, input: JSON.Value) -> Result[Str
 end
 
 def failure(args: FetchArgs, url: String, e: Error) -> Failure
-  method = args.method.unwrap_or("GET").upcase
+  method = method_of(args)
   detail = e.message.strip
   if detail.empty?
     detail = e.kind
@@ -139,10 +175,14 @@ end
 
 def fetch(settings: Settings, url: String, args: FetchArgs) -> Result[Page]
   checked = try WebUrl.check(url)
-  method = args.method.unwrap_or("GET").upcase
+  method = method_of(args)
   return error("unsupported method #{method}", kind: "web_fetch.request") if not METHODS.include?(method)
 
   given = args.headers.unwrap_or({})
+  for name in given.keys
+    try header_ok(name, given[name])
+  end
+
   headers = given.keys.map { |name| HTTP.Header(name: name, value: given[name]) }
   body = try request_body(args)
   client = try HttpClient.new(
@@ -151,6 +191,7 @@ def fetch(settings: Settings, url: String, args: FetchArgs) -> Result[Page]
     timeout_ms: settings.timeout_ms,
     max_retries: 1,
     max_redirects: redirects(settings),
+    max_body_bytes: settings.max_parse_bytes,
     dns_cache_ms: 0,
     resolver: settings.resolver,
     public_only: settings.public_only,
@@ -159,6 +200,25 @@ def fetch(settings: Settings, url: String, args: FetchArgs) -> Result[Page]
   result = exchange(settings, client, method, checked, headers, body)
   HttpClient.close(client, 0)
   result
+end
+
+## A header the client would refuse after it connected is refused here, so a bad call never opens a connection: a name
+## that is no HTTP token, a value with a control character (a line break would add a header), and the headers that the
+## client sets itself.
+def header_ok(name: String, value: String) -> Result[Void]
+  if not Regex.match?(name, /\A[!#$%&'*+.^_`|~0-9A-Za-z-]+\z/)
+    return error("bad header name: #{name}", kind: "web_fetch.request")
+  end
+
+  if value.split("").any? { |char| (char.code < 32 and char != "\t") or char.code == 127 }
+    return error("the header #{name} has a control character", kind: "web_fetch.request")
+  end
+
+  if ["host", "content-length", "transfer-encoding", "connection"].include?(name.downcase)
+    return error("the header #{name} is set by the client", kind: "web_fetch.request")
+  end
+
+  ok()
 end
 
 def redirects(settings: Settings) -> Int
@@ -195,11 +255,23 @@ def exchange(
 ) -> Result[Page]
   deadline = Time.monotonic_ms() + settings.timeout_ms * TOTAL_TIMEOUT_FACTOR
   stream = try HttpClient.stream(client, method, url, body: body.bytes, json: body.json, headers: headers)
-  limit = [settings.max_bytes, settings.max_parse_bytes].max.unwrap! + 1
+  limit = read_limit(settings, content_type(stream.headers))
   content = read(stream, limit, deadline)
   HttpClient.cancel(stream)
   ok(shaped(settings, stream, try content))
 end
+
+## HTML is read up to `max_parse_bytes`, which the compaction needs to see a whole page; any other type up to `max_bytes`
+## (one byte more, which says that the body was cut).
+def read_limit(settings: Settings, type: String) -> Int
+  if html?(type)
+    settings.max_parse_bytes + 1
+  else
+    settings.max_bytes + 1
+  end
+end
+
+def html?(type: String) -> Bool = type == "text/html" or type == "application/xhtml+xml"
 
 def read(stream: HttpClient.Stream, limit: Int, deadline: Int) -> Result[Bytes]
   pieces: List[Bytes] = []
@@ -223,13 +295,7 @@ end
 
 def shaped(settings: Settings, stream: HttpClient.Stream, content: Bytes) -> Page
   type = content_type(stream.headers)
-  html = type == "text/html" or type == "application/xhtml+xml"
-  budget = settings.max_bytes
-  if html
-    budget = settings.max_parse_bytes
-  end
-
-  processed = process(content.take(budget).scrub, type, html)
+  processed = process(content.take(read_limit(settings, type) - 1).scrub, type, html?(type))
   cap = settings.max_chars.unwrap_or(settings.max_bytes)
   cut = processed.text.length > cap
   text = processed.text
