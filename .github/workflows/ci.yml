@@ -16,8 +16,8 @@ concurrency:
 env:
   # Each job has a GitHub-hosted runner of its own with 4 vCPUs, so each runs four things at once.
   JOBS: 4
-  AGENTICA_VERSION: 0.39.0
-  AGENTICA_SHA256: 2ce92a90d2ffe9b9404c57d722a7f6a6e6d7b2376d09cfc3548a773b84f9bc0f
+  AGENTICA_VERSION: 0.39.1
+  AGENTICA_SHA256: c2ce2354068b82858917f049a38d3831f64a71d495b5237785aaf622d6d52725
 
 jobs:
   # What a pull request changed decides which jobs run: `code` is every file but the user guide and the top-level .md
