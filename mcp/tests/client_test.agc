@@ -123,6 +123,50 @@ def test_a_hung_server_is_stopped_and_starts_again() -> Result[Void]
   end
 end
 
+# Slow on purpose: the server takes 600 ms to start, longer than the 300 ms budget for the call itself.
+def test_a_slow_start_does_not_eat_the_calls_timeout() -> Result[Void]
+  within_dir do |dir|
+    slow = sh("sleep 0.6; exec \"$@\"", try fake(dir, {}))
+    client = Mcp.start(slow, Mcp.Options(timeout_ms: 300))
+    called = Mcp.call(client, "echo", JSON.object({"text": JSON.from("hello")}))
+    Mcp.stop(client)
+    try Test.eq(called, ok(Mcp.Output(text: "hello", is_error: false)))
+    Test.eq(starts(dir), 1)
+  end
+end
+
+# Slow on purpose: listing must also get its own budget when it is the first request (600 ms start, 300 ms budget).
+def test_a_slow_start_does_not_eat_the_lists_timeout() -> Result[Void]
+  within_dir do |dir|
+    slow = sh("sleep 0.6; exec \"$@\"", try fake(dir, {}))
+    client = Mcp.start(slow, Mcp.Options(timeout_ms: 300))
+    listed = Mcp.tools(client)
+    Mcp.stop(client)
+    try Test.eq((try listed).size, 10)
+    Test.eq(starts(dir), 1)
+  end
+end
+
+# The first start sleeps 1 s, longer than the 300 ms of `start_ms`: it is stopped, and the next start is not slow.
+def test_a_start_past_start_ms_is_unavailable_and_leaves_no_process() -> Result[Void]
+  within_dir do |dir|
+    script = "if [ ! -e #{dir}/slow ]; then echo $$ > #{dir}/slow; sleep 1.0; fi; exec \"$@\""
+    client = Mcp.start(sh(script, try fake(dir, {})), Mcp.Options(start_ms: 300, timeout_ms: 5000))
+    began = Time.monotonic_ms()
+    slow = Mcp.call(client, "echo", JSON.object({"text": JSON.from("late")}))
+    took = Time.monotonic_ms() - began
+    pid = (try File.read_text("#{dir}/slow")).strip
+    gone = not alive?(pid)
+    again = Mcp.call(client, "echo", JSON.object({"text": JSON.from("back")}))
+    Mcp.stop(client)
+    try Test.eq(error_of(slow)[0], "mcp.unavailable")
+    try Test.assert(took < 1000, "the slow start took #{took} ms to fail")
+    try Test.assert(gone, "the process #{pid} of the slow start still runs")
+    try Test.eq(again, ok(Mcp.Output(text: "back", is_error: false)))
+    Test.eq(starts(dir), 1)
+  end
+end
+
 def test_a_server_that_cannot_start_is_unavailable() -> Result[Void]
   client = Mcp.start(Mcp.Server(name: "none", command: "/nonexistent/mcp-server"))
   result = Mcp.tools(client)
@@ -143,6 +187,12 @@ def fake(dir: String, env: Map[String, String]) -> Result[Mcp.Server]
       log: "#{dir}/stderr.log",
     ),
   )
+end
+
+# The same server, started by a shell that waits first. `sh -c SCRIPT NAME ARGS...` puts NAME in `$0`, so a word of
+# our own stands there and `$@` is the command with every one of its args.
+def sh(script: String, server: Mcp.Server) -> Mcp.Server
+  server.with(command: "/bin/sh", args: ["-c", script, "sh", server.command] + server.args)
 end
 
 # A process that exited but was not reaped yet is a zombie: it counts as gone.

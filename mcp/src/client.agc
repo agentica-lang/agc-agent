@@ -35,7 +35,7 @@ end
 struct Options
   ## The longest wait for the start and the `initialize` answer.
   start_ms: Int = 30_000
-  ## The longest wait for the answer to one request (all the pages of `tools/list`).
+  ## The longest wait for the answer to one request (all the pages of `tools/list` share it); the start has its own.
   timeout_ms: Int = 60_000
   ## The largest JSON answer or SSE event over HTTP.
   max_message_bytes: Int = 4_194_304
@@ -137,13 +137,19 @@ def closed(state: State) -> State
 end
 
 def list_tools(state: State) -> Done[List[Rpc.Tool]]
-  deadline = Time.monotonic_ms() + state.options.timeout_ms
+  case started(state)
+    error(e) -> Done(state: closed(state), result: error(e))
+    ok(ready) -> pages(ready, deadline_after_start(ready))
+  end
+end
+
+def pages(state: State, deadline: Int) -> Done[List[Rpc.Tool]]
   tools: List[Rpc.Tool] = []
   cursor = ""
   seen: Set[String] = Set.new([])
   current = state
   for _page in 1..MAX_PAGES
-    done = request(current, "tools/list", Rpc.list_params(cursor), deadline)
+    done = request(current, "tools/list", Rpc.list_params(cursor), some(deadline))
     current = done.state
     case done.result
       ok(result) ->
@@ -160,35 +166,42 @@ def list_tools(state: State) -> Done[List[Rpc.Tool]]
 end
 
 def call_tool(state: State, name: String, arguments: JSON.Value) -> Done[Rpc.Output]
-  done = request(state, "tools/call", Rpc.call_params(name, arguments), Time.monotonic_ms() + state.options.timeout_ms)
+  done = request(state, "tools/call", Rpc.call_params(name, arguments), none)
   case done.result
     ok(result) -> Done(state: done.state, result: ok(Rpc.output(result)))
     error(e) -> Done(state: done.state, result: error(e))
   end
 end
 
-# A request on a started server. A failure that leaves the server in doubt stops it; a session that the server ended
-# starts again, once.
-def request(state: State, method: String, params: JSON.Value, deadline: Int) -> Done[JSON.Value]
-  done = attempt(state, method, params, deadline)
-  case done.result
-    error(e) if e.kind == Http.EXPIRED ->
-      again = attempt(done.state, method, params, deadline)
-      case again.result
-        error(e2) if e2.kind == Http.EXPIRED -> Done(state: again.state, result: error(e2.message, kind: UNAVAILABLE))
-        _ -> again
-      end
+# A request: the server starts first, then the request has `deadline` (or `timeout_ms` from now). A failure that leaves
+# the server in doubt stops it; a session that the server ended starts again once, inside the same deadline.
+def request(state: State, method: String, params: JSON.Value, deadline: Optional[Int]) -> Done[JSON.Value]
+  case started(state)
+    error(e) -> Done(state: closed(state), result: error(e))
+    ok(ready) ->
+      due = deadline.unwrap_or(deadline_after_start(ready))
+      done = attempt(ready, method, params, due)
+      case done.result
+        error(e) if e.kind == Http.EXPIRED ->
+          again = attempt(done.state, method, params, due)
+          case again.result
+            error(e2) if e2.kind == Http.EXPIRED ->
+              Done(state: again.state, result: error(e2.message, kind: UNAVAILABLE))
+            _ -> again
+          end
 
-    _ -> done
+        _ -> done
+      end
   end
 end
 
-def attempt(state: State, method: String, params: JSON.Value, deadline: Int) -> Done[JSON.Value]
-  case started(state)
+# A start failure (the reopen) returns before a request is sent, so it cannot trigger another retry.
+def attempt(state: State, method: String, params: JSON.Value, due: Int) -> Done[JSON.Value]
+  case started(state, some(due))
     ok(ready) ->
       id = ready.next_id
       next = ready.with(next_id: id + 1)
-      result = send(next, id, method, params, deadline)
+      result = send(next, id, method, params, due)
       case result
         error(e) if e.kind == UNAVAILABLE -> Done(state: closed(next), result: result)
         error(e) if e.kind == Http.EXPIRED -> Done(state: next.with(link: none), result: result)
@@ -199,6 +212,8 @@ def attempt(state: State, method: String, params: JSON.Value, deadline: Int) -> 
   end
 end
 
+def deadline_after_start(state: State) -> Int = Time.monotonic_ms() + state.options.timeout_ms
+
 def send(state: State, id: Int, method: String, params: JSON.Value, deadline: Int) -> Result[JSON.Value]
   case state.link
     some(link) -> Http.exchange(link, id, method, params, deadline)
@@ -206,9 +221,9 @@ def send(state: State, id: Int, method: String, params: JSON.Value, deadline: In
   end
 end
 
-def started(state: State) -> Result[State]
+def started(state: State, request_deadline: Optional[Int] = none) -> Result[State]
   return ok(state) if state.process.some? or state.link.some?
-  return connected(state) if not state.server.url.empty?
+  return connected(state, request_deadline) if not state.server.url.empty?
 
   server = state.server
   spawned = Process.spawn(
@@ -223,10 +238,7 @@ def started(state: State) -> Result[State]
   params = Rpc.initialize_params(CLIENT_NAME, state.version)
   case exchange(process, ready.next_id, "initialize", params, deadline)
     ok(_) ->
-      try unavailable(
-        server,
-        Process.send(process, Rpc.notification("notifications/initialized"), state.options.start_ms),
-      )
+      try unavailable(server, Process.send(process, Rpc.notification("notifications/initialized"), wait(deadline)))
 
       ok(ready.with(next_id: ready.next_id + 1))
     error(e) ->
@@ -235,9 +247,11 @@ def started(state: State) -> Result[State]
   end
 end
 
-def connected(state: State) -> Result[State]
+def connected(state: State, request_deadline: Optional[Int]) -> Result[State]
   server = state.server
-  deadline = Time.monotonic_ms() + state.options.start_ms
+  start_deadline = Time.monotonic_ms() + state.options.start_ms
+  # A reopen gets at most the time left on its request.
+  deadline = [start_deadline, request_deadline.unwrap_or(start_deadline)].min.unwrap!
   params = Rpc.initialize_params(CLIENT_NAME, state.version)
   opened = Http.open(server.url, server.headers, state.options.max_message_bytes, state.next_id, params, deadline)
   link = try unavailable(server, opened)
