@@ -47,6 +47,92 @@ def test_lists_and_calls_tools_over_http() -> Result[Void]
   end
 end
 
+# The expired session is opened again and the same call goes out once more, with the new session id.
+def test_http_reopen_sends_the_call_again_on_the_new_session() -> Result[Void]
+  within_peer do |peer|
+    web = server(peer, TOKEN)
+    # Slow on purpose: a 300 ms re-initialize still fits the 2 s of the call.
+    client = Mcp.start(web.with(headers: web.headers.put("X-Peer-Init-Delay", "2:0.3")), Mcp.Options(timeout_ms: 2000))
+    expired = Mcp.call(client, "expire", JSON.object({}))
+    again = Mcp.call(client, "echo", JSON.object({"text": JSON.from("again")}))
+    Mcp.stop(client)
+    try Test.eq(expired, ok(Mcp.Output(text: "expired", is_error: false)))
+    try Test.eq(again, ok(Mcp.Output(text: "again", is_error: false)))
+    seen = try requests(peer)
+    Test.eq(
+      seen.select { |r| r.method == "tools/call" }.map { |r| r.session },
+      ["session-1", "session-1", "session-2"],
+    )
+  end
+end
+
+# Slow on purpose: a 1.4 s re-initialize fits the start budget but not the 400 ms left at most on the call.
+def test_http_reopen_uses_the_remaining_request_budget() -> Result[Void]
+  within_peer do |peer|
+    web = server(peer, TOKEN)
+    client = Mcp.start(
+      web.with(headers: web.headers.put("X-Peer-Init-Delay", "2:1.4")),
+      Mcp.Options(start_ms: 2500, timeout_ms: 400),
+    )
+
+    expired = Mcp.call(client, "expire", JSON.object({}))
+    began = Time.monotonic_ms()
+    timed_out = Mcp.call(client, "echo", JSON.object({"text": JSON.from("late")}))
+    took = Time.monotonic_ms() - began
+    again = Mcp.call(client, "echo", JSON.object({"text": JSON.from("back")}))
+    Mcp.stop(client)
+    try Test.eq(expired, ok(Mcp.Output(text: "expired", is_error: false)))
+    try Test.eq(kind_of(timed_out), "mcp.unavailable")
+    try Test.assert(took < 1400, "the expired session took #{took} ms to fail")
+    try Test.eq(again, ok(Mcp.Output(text: "back", is_error: false)))
+    seen = try requests(peer)
+    Test.eq(
+      seen.select { |r| r.method == "tools/call" }.map { |r| r.session },
+      ["session-1", "session-1", "session-3"],
+    )
+  end
+end
+
+# Slow on purpose: a 1.4 s re-initialize is cut at `start_ms` (300 ms) when the call has 5 s left.
+def test_http_reopen_is_cut_at_start_ms_when_the_call_has_more() -> Result[Void]
+  within_peer do |peer|
+    web = server(peer, TOKEN)
+    client = Mcp.start(
+      web.with(headers: web.headers.put("X-Peer-Init-Delay", "2:1.4")),
+      Mcp.Options(start_ms: 300, timeout_ms: 5000),
+    )
+
+    expired = Mcp.call(client, "expire", JSON.object({}))
+    began = Time.monotonic_ms()
+    timed_out = Mcp.call(client, "echo", JSON.object({"text": JSON.from("late")}))
+    took = Time.monotonic_ms() - began
+    Mcp.stop(client)
+    try Test.eq(expired, ok(Mcp.Output(text: "expired", is_error: false)))
+    try Test.eq(kind_of(timed_out), "mcp.unavailable")
+    Test.assert(took < 1400, "the reopen took #{took} ms to fail")
+  end
+end
+
+# Slow on purpose: the first initialize takes 1.4 s, past the 300 ms of `start_ms`; the next start is fast.
+def test_an_http_start_past_start_ms_is_unavailable() -> Result[Void]
+  within_peer do |peer|
+    web = server(peer, TOKEN)
+    client = Mcp.start(
+      web.with(headers: web.headers.put("X-Peer-Init-Delay", "1:1.4")),
+      Mcp.Options(start_ms: 300, timeout_ms: 5000),
+    )
+
+    began = Time.monotonic_ms()
+    slow = Mcp.call(client, "echo", JSON.object({"text": JSON.from("late")}))
+    took = Time.monotonic_ms() - began
+    again = Mcp.call(client, "echo", JSON.object({"text": JSON.from("back")}))
+    Mcp.stop(client)
+    try Test.eq(kind_of(slow), "mcp.unavailable")
+    try Test.assert(took < 1400, "the slow start took #{took} ms to fail")
+    Test.eq(again, ok(Mcp.Output(text: "back", is_error: false)))
+  end
+end
+
 # An answer over the size limit, a server that answers nothing in time, and a refused token are each
 # `mcp.unavailable`; the token is in no error, and the next use starts a new session.
 def test_limits_and_refusals_over_http() -> Result[Void]

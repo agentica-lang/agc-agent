@@ -3,10 +3,14 @@ event: message_queued
 data: {"turn_id":"t1","text":"also the docs","message_id":"t1.1"}
 
 id: 4
+event: message_delivered
+data: {"turn_id":"t1","text":"also the docs","message_id":"t1.1"}
+
+id: 5
 event: text_delta
 data: {"text":"Docs too.\n"}
 
-id: 5
+id: 6
 event: turn_finished
 data: {"turn_id":"t1","stop_reason":"end_turn"}
 

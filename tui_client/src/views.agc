@@ -50,7 +50,10 @@ def laid_out(app: State.Model, counted: Bool) -> Screen.Frame
     level: app.effort,
     status: status(app, app.width),
     place: Footer.place(app.cwd, app.home, app.branch, session_name(app), app.width),
-    queued: app.follow_ups.map { |text| "follow-up: #{Client.printable(text)}" },
+    queued: (
+      app.waiting.map { |w| "queued: #{Client.printable(w.text)}" } +
+      app.follow_ups.map { |text| "follow-up: #{Client.printable(text)}" }
+    ),
     banner: app.banner,
     cover: covering(app),
     keys: some(app.keys),

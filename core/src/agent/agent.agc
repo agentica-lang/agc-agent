@@ -30,9 +30,9 @@ struct Link
   emit: Fn[Protocol.Event, Void]
   approve: Fn[Ask, Protocol.Decision]
   commit: Fn[List[LLM.Message], List[String], List[Queued], Void]
-  ## The messages sent while the turn runs that come after the first `Int` the turn read and did not commit yet. The
-  ## turn adds them to its messages before its next model call, and its next commit carries them, which takes them
-  ## out of the queue. Pure on the session's side: an answer that comes too late leaves them for the next read.
+  ## The messages sent while the turn runs that come after the first `Int` it read. The turn adds them to its
+  ## messages before its next model call and commits them at once, which takes them out of the queue and tells the
+  ## clients. Pure on the session's side: an answer that comes too late leaves them for the next read.
   take: Fn[Int, List[Queued]]
   compacted: Fn[Compaction.Compaction, Void]
   window: Fn[Int, Void]
@@ -45,6 +45,8 @@ end
 ## A message sent during the turn, as the turn reads it: what the user typed, the text for the model (the content of
 ## the skills it names first), and the names of those skills.
 struct Queued
+  ## The `message_id` its sender got.
+  id: String
   typed: String
   text: String
   names: List[String]
@@ -148,7 +150,6 @@ def run(started: Turn) -> Outcome
   messages = turn.history.push(LLM.Message(role: LLM.Role.User, content: [text_block(turn.text)]))
   turn.link.commit.call(messages, [], [])
   marks = turn.marks
-  read: List[Queued] = []
   folded = compacted(turn, turn.last_context, Folded(messages: messages, on: true), marks)
   turn = renewed(turn, folded.fresh)
   folded = folded.with(fresh: none)
@@ -157,10 +158,14 @@ def run(started: Turn) -> Outcome
   last_round = ""
   same = 0
   for _round in 1..turn.max_rounds
-    more = turn.link.take.call(read.size)
-    messages = messages + more.map { |q| LLM.Message(role: LLM.Role.User, content: [text_block(q.text)]) }
-    read = read + more
-    marks = marks + more.flat_map { |q| q.names }
+    more = turn.link.take.call(0)
+    if not more.empty?
+      messages = messages + more.map { |q| LLM.Message(role: LLM.Role.User, content: [text_block(q.text)]) }
+      names = more.flat_map { |q| q.names }
+      marks = marks + names
+      turn.link.commit.call(messages, names, more)
+    end
+
     asked = Compaction.own_thinking(messages, turn.source, turn.origin)
     if stripped
       asked = Compaction.without_thinking(messages)
@@ -187,8 +192,7 @@ def run(started: Turn) -> Outcome
 
     if response.stop_reason != LLM.StopReason.ToolUse
       messages = messages.push(without_calls(response.message))
-      turn.link.commit.call(messages, read.flat_map { |q| q.names }, read)
-      read = []
+      turn.link.commit.call(messages, [], [])
       # A cut or refused answer ends the turn: the messages sent meanwhile start the next one.
       ended = Outcome(history: messages, reason: stop_reason(response.stop_reason), max_tokens: output_limit(turn))
       cut = [LLM.StopReason.MaxTokens, LLM.StopReason.Refusal].include?(response.stop_reason)
@@ -208,8 +212,7 @@ def run(started: Turn) -> Outcome
 
     marks = marks + made
     messages = messages + [response.message, LLM.Message(role: LLM.Role.User, content: results)]
-    turn.link.commit.call(messages, made + read.flat_map { |q| q.names }, read)
-    read = []
+    turn.link.commit.call(messages, made, [])
     context = response.usage.input + response.usage.cache_read + response.usage.cache_write
     if turn.provider.name == Compaction.ANTHROPIC
       if not stripped and past_limit(turn, context)

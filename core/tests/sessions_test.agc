@@ -301,6 +301,16 @@ def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Re
     try Test.eq(a.seen.last.event, Protocol.Event.MessageQueued(event))
     _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
+    # Delivered before the model call that carries it: after the tool result, before the reply it makes.
+    around = H.kinds(a.seen).select { |k| ["tool_finished", "message_delivered", "text_delta"].include?(k) }
+    try Test.eq(around.drop(1).take(3), ["tool_finished", "message_delivered", "text_delta"])
+    delivered = Protocol.MessageDelivered(
+      turn_id: accepted.turn_id,
+      text: "Also say hi.",
+      message_id: some(message_id),
+    )
+
+    try Test.eq(a.seen.select { |s| s.event == Protocol.Event.MessageDelivered(delivered) }.size, 1)
     second = try H.request_messages(h, 2)
     try Test.eq(JSON.get(second.last, "role"), ok(JSON.from("user")))
     try Test.eq(JSON.get(second.last, "content"), ok(JSON.from("Also say hi.")))
@@ -328,9 +338,66 @@ def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Re
     end
 
     try Test.eq(dropped.size, 1)
+    try Test.eq(H.kinds(a.seen).include?("message_delivered"), false)
     after_stop = try H.session(h, id)
     try Test.eq(after_stop.history.map { |m| m.text }.include?("Never read."), false)
     H.restarted(h, setup, "") do |r| Test.eq((try H.session(r, id)).history, after_stop.history) end
+  end
+end
+
+# Two messages queued into one round are delivered in order, once each, before the model call that carries them, and
+# the model gets them as two user messages after the tool result.
+def test_messages_queued_in_one_round_are_delivered_in_order_once() -> Result[Void]
+  setup = H.Setup(replies: ["write_file.sse", "text.sse"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.send(h, id, "First.")
+    _ = try H.send(h, id, "Second.")
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    ids: List[String] = []
+    for seen in a.seen
+      case seen.event
+        Protocol.Event.MessageDelivered(sent) ->
+          ids = ids.push("#{sent.message_id.unwrap_or("").split(".")[1]}=#{sent.text}")
+        _ -> nil
+      end
+    end
+
+    try Test.eq(ids, ["1=First.", "2=Second."])
+    try Test.eq(H.kinds(a.seen).select { |k| k == "message_delivered" }.size, 2)
+    second = try H.request_messages(h, 2)
+    Test.eq(
+      second.drop(second.size - 2).map { |m| JSON.get(m, "content") },
+      [ok(JSON.from("First.")), ok(JSON.from("Second."))],
+    )
+  end
+end
+
+# A message the turn read is committed once: when the model call that carries it fails, it is not queued again and
+# starts no second turn.
+def test_a_message_read_by_a_failed_call_is_not_queued_again() -> Result[Void]
+  H.using(H.Setup(replies: ["write_file.sse", "400:bad_request.json"])) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.send(h, id, "Once.")
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    kinds = H.kinds(a.seen)
+    try Test.eq(
+      [kinds.select { |k| k == "message_delivered" }.size, kinds.select { |k| k == "turn_started" }.size],
+      [1, 1],
+    )
+
+    after = try H.idle(h, id)
+    Test.eq(after.history.select { |m| m.text == "Once." }.size, 1)
   end
 end
 
@@ -343,13 +410,14 @@ def test_the_queue_is_read_after_a_final_answer_and_has_a_limit() -> Result[Void
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Hi.")
     a = try H.until(a, Protocol.EventKind.TurnStarted)
+    # The first call is held at the fake: the message is queued after the turn read its queue for it.
+    _ = try H.next_request(h)
     _ = try H.send(h, id, "More.")
     H.release(h)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     try Test.eq(H.kinds(a.seen).select { |k| k == "turn_started" }.size, 1)
     after = try H.session(h, id)
     try Test.eq([after.turn_id.some?.to_s, after.history.size.to_s], ["false", "4"])
-    _ = try H.next_request(h)
     second = try H.request_messages(h, 1)
     try Test.eq(JSON.get(second.last, "content"), ok(JSON.from("More.")))
     try Test.eq(JSON.get(second[second.size - 2], "role"), ok(JSON.from("assistant")))
@@ -377,6 +445,33 @@ def test_the_queue_is_read_after_a_final_answer_and_has_a_limit() -> Result[Void
   end
 end
 
+# A client that attaches to a turn that the queue started draws each message once: the history it reads lacks them (the
+# session keeps them as one message), and the replayed `message_delivered` events give them.
+def test_attaching_to_a_turn_that_the_queue_started_draws_each_message_once() -> Result[Void]
+  setup = H.Setup(replies: ["write_file.sse", "text.sse", "text.sse@hold"], take_ms: 0)
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Write hello.txt.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.send(h, id, "Also say hi.")
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    a = try H.until(a.with(seen: []), Protocol.EventKind.TurnStarted)
+    running = try H.session(h, id)
+    b = try H.subscribe(h, id, some(running.turn_from_event_id.unwrap_or(0)))
+    b = try H.until(b, Protocol.EventKind.MessageDelivered)
+    shown = running.history.select { |m| m.text == "Also say hi." }.size
+    drawn = b.seen.select { |s| H.kinds([s]) == ["message_delivered"] }.size
+    H.close(a)
+    H.close(b)
+    H.release(h)
+    _ = try H.idle(h, id)
+    try Test.eq([shown, drawn], [0, 1])
+    Test.eq((try H.session(h, id)).history.select { |m| m.text == "Also say hi." }.size, 1)
+  end
+end
+
 # A turn that does not get its queue in time goes on without it: the messages stay queued and start the next turn,
 # and the file agrees with the history, so a restart gives every tool call its result.
 def test_a_late_read_leaves_the_queue_whole() -> Result[Void]
@@ -399,6 +494,17 @@ def test_a_late_read_leaves_the_queue_whole() -> Result[Void]
     end
 
     try Test.eq(turns.map { |t| number(t) }, ["turn-2"])
+    # The turn that starts with the message delivers it, under the id it was queued with.
+    sent = a.seen.flat_map do |s|
+      case s.event
+        Protocol.Event.MessageDelivered(delivered) -> [[number(delivered.turn_id), delivered.message_id.unwrap_or("")]]
+        _ -> []
+      end
+    end
+
+    try Test.eq(sent.size, 1)
+    try Test.eq(sent[0][0], "turn-2")
+    try Test.assert(sent[0][1].start_with?("turn-1-"), sent[0][1])
     _ = try H.next_request(h)
     _ = try H.next_request(h)
     third = try H.request_messages(h, 1)

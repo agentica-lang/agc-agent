@@ -11,6 +11,8 @@
 - The `/mcp` tools view, `/help` and `/shortcuts` list one entry per line with air between them and the names in bold (CSS `.panel-text` and `.panel-head` style them).
 - Model provider calls to an `https://` API use HTTP/2 (negotiated with ALPN) on http-client 0.5.0, whose streams a session reads piece by piece; one whose peer does not negotiate `h2` falls back to HTTP/1.1 and stays there, a plain `http://` provider keeps HTTP/1.1, and `FINN_HTTP2=0` keeps HTTP/1.1 to every provider.
 - `/reload` applies updated approval rules even if saving the updated session prompt fails.
+- An MCP server that a request starts (a call, or a `/mcp` listing) is charged to `start_ms`, so the request still gets its whole `timeout_ms`; before, the start ate the request's budget and a slow server failed every call (and made the restart of a hung server flaky).
+- Reopening an expired MCP HTTP session no longer waits past the original request deadline.
 - Skills now default to `.finn/skills` only. Configure extra user and trusted-project paths with `skills` in `config.json`. Existing sessions pick up path changes on reload or resume.
 - The full-screen status row shows the remaining ChatGPT five-hour and seven-day quota (`5h 62% · 7d 80%`) in ChatGPT sessions, and drops it first on a narrow row.
 - `status_line` in the config file chooses and orders the segments of the full-screen status row; `/reload` applies it.
@@ -20,6 +22,7 @@
 - `.footer-status-<segment>` in the theme file styles one named segment of the full-screen status row (`state`, `usage`, `rate`, `hints`, `model`, `chatgpt.quota` or an extension's name, lowercased with its dots kept); `.footer-status` stays the base for the filler, the separators and any segment no rule names, so a file without segment rules looks as before.
 - The full screen runs on agentica-tui 0.1.0, written in Agentica alone: no native termbox library is loaded, so there is no C code under the TUI. It draws on standard input and output, which must both be terminals, and reads SGR mouse reports only; a terminal that does not answer the status request of `ESC [ 5 n` delays the exit or the editor by half a second.
 - `opencode-go` sends each model to the API that models.dev gives it (chat completions, OpenAI Responses or Anthropic Messages), so `/model` lists the Claude and GPT models of OpenCode Go too; models with another API (Google) stay hidden.
+- A message sent while a turn runs shows above the prompt until the turn reads it, then moves into the transcript as a user message; the server sends a new `message_delivered` event when it does, and `finn chat` prints `[delivered]`.
 ### Changed
 
 - The ChatGPT provider asks for the model catalog of Codex 0.171.0, which lists GPT-6.2 Sol and the other new models of your plan.

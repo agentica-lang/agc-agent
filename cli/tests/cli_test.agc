@@ -371,7 +371,7 @@ def queued(rig: Driver.Rig) -> Result[Void]
   rest = try Driver.read_until(cli, "[turn finished]")
   done = try Driver.finish(cli)
   try Test.eq(Fake.unread(rig.fake, "POST", Protocol.messages_path("s1")), 2)
-  try Test.eq(rest, ["[queued] also the docs", "Docs too.", "[turn finished] end_turn"])
+  try Test.eq(rest, ["[queued] also the docs", "[delivered] also the docs", "Docs too.", "[turn finished] end_turn"])
   Test.eq(done.code, 0)
 end
 
