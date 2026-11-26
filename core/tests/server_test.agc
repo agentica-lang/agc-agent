@@ -387,17 +387,51 @@ def test_a_mid_turn_attach_replays_the_whole_turn() -> Result[Void]
   end
 end
 
-def test_a_turn_can_run_more_than_fifty_tool_rounds() -> Result[Void]
-  replies = (1..25).to_a.flat_map { |_| ["read_file.sse", "read_outside.sse"] }
-  replies = replies + ["read_file.sse", "text.sse"]
-  H.using(H.Setup(replies: replies, approvals: false)) do |h|
+# A long turn whose rounds do not repeat three times in a row (pairs of the same round are fine) is not stopped.
+def test_a_long_turn_that_does_not_repeat_is_not_stopped() -> Result[Void]
+  replies = (1..9).to_a.flat_map { |_|
+    [
+      "read_file.sse", "read_file.sse", "read_outside.sse", "read_outside.sse", "read_relative.sse",
+      "read_relative.sse",
+    ]
+  }
+
+  H.using(H.Setup(replies: replies + ["text.sse"], approvals: false)) do |h|
     id = try H.new_session(h)
     a = try H.subscribe(h, id)
     _ = try H.send(h, id, "Read the files.")
     a = try H.until(a, Protocol.EventKind.TurnFinished)
     H.close(a)
     try Test.eq(H.stop_reason(a), "end_turn")
-    Test.eq(H.kinds(a.seen).select { |k| k == "tool_finished" }.size, 51)
+    Test.eq(H.kinds(a.seen).select { |k| k == "tool_finished" }.size, 54)
+  end
+end
+
+# The same two rounds three times in a row stop the turn with the loop guard.
+def test_a_cycle_of_two_rounds_stops_the_turn() -> Result[Void]
+  replies = (1..3).to_a.flat_map { |_| ["read_file.sse", "read_outside.sse"] }
+  H.using(H.Setup(replies: replies + ["text.sse"], approvals: false)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Read the files.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.stop_reason(a), "loop_guard")
+    Test.eq(H.kinds(a.seen).select { |k| k == "tool_finished" }.size, 6)
+  end
+end
+
+# A turn that reaches its limit of tool rounds ends with `max_rounds`.
+def test_a_turn_stops_at_the_round_limit() -> Result[Void]
+  replies = ["read_file.sse", "read_outside.sse", "read_relative.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, approvals: false, max_rounds: 3)) do |h|
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Read the files.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(H.stop_reason(a), "max_rounds")
+    Test.eq(H.kinds(a.seen).select { |k| k == "tool_finished" }.size, 3)
   end
 end
 

@@ -761,6 +761,7 @@ def entry(
     max_tokens: options.max_tokens,
     catalog: options.catalog,
     take_ms: options.take_ms,
+    max_rounds: options.max_rounds,
     catalog_wait_ms: options.catalog_wait_ms,
     approver: opened.approver,
     registry: options.registry.map { |served| served.registry },

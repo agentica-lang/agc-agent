@@ -1,5 +1,6 @@
 ## One turn of the agent: the model answers, the tools it calls run (after the `gate` when there is one), their
-## results go back in one user message, and so on until the model ends the turn or the loop guard stops it.
+## results go back in one user message, and so on until the model ends the turn, the round limit stops it or the loop guard
+## does.
 
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
@@ -13,7 +14,11 @@ import Logger from "std/logger"
 
 ## The provider whose models are offered `apply_patch`, as a custom tool.
 RESPONSES = "openai_responses"
-SAME_ROUNDS = 3
+## The most tool rounds of a turn: high, so only a runaway turn reaches it.
+MAX_ROUNDS = 500
+## The loop guard stops a turn when the same 1 to `MAX_CYCLE` rounds come `CYCLE_REPEATS` times in a row.
+MAX_CYCLE = 3
+CYCLE_REPEATS = 3
 LATEST = "todos"
 DENIED_BY_RULE = "denied by a rule of the config"
 DENIED_BY_USER = "the user denied this call"
@@ -89,6 +94,7 @@ struct Turn
   compaction: Compaction.Settings
   ## The context of the session's last call.
   last_context: Int = 0
+  max_rounds: Int = MAX_ROUNDS
   ## Adds `run_script`, which calls the tools from a Python script.
   code_mode: Optional[CodeMode.Settings] = none
   ## The output limit of each call; none takes the model's from the catalog, else sends none (the API's default).
@@ -151,9 +157,8 @@ def run(started: Turn) -> Outcome
   folded = folded.with(fresh: none)
   messages = folded.messages
   stripped = turn.stripped and not folded.just
-  last_round = ""
-  same = 0
-  while true
+  rounds: List[String] = []
+  for _round in 1..turn.max_rounds
     more = turn.link.take.call(read.size)
     messages = messages + more.map { |q| LLM.Message(role: LLM.Role.User, content: [text_block(q.text)]) }
     read = read + more
@@ -221,13 +226,12 @@ def run(started: Turn) -> Outcome
     end
 
     this_round = JSON.encode(JSON.from([calls.map { |c| "#{c.name} #{c.arguments}" }, results.map { |r| text_of(r) }]))
-    same = same_count(this_round, last_round, same)
-    last_round = this_round
-    return Outcome(history: messages, reason: Protocol.StopReason.LoopGuard) if same >= SAME_ROUNDS
+    rounds = rounds.push(this_round)
+    rounds = rounds.drop(rounds.size - [rounds.size, MAX_CYCLE * CYCLE_REPEATS].min.unwrap!)
+    return Outcome(history: messages, reason: Protocol.StopReason.LoopGuard) if cycling?(rounds)
   end
 
-  # The checker requires a return after the loop.
-  Outcome(history: messages, reason: Protocol.StopReason.LoopGuard)
+  Outcome(history: messages, reason: Protocol.StopReason.MaxRounds)
 end
 
 def text_block(text: String) -> LLM.Block = LLM.Block.Text(LLM.TextPart(text: text))
@@ -744,10 +748,17 @@ def stop_reason(reason: LLM.StopReason) -> Protocol.StopReason
   end
 end
 
-def same_count(this_round: String, last_round: String, same: Int) -> Int
-  return same + 1 if this_round == last_round
+## Whether the last rounds are the same 1 to `MAX_CYCLE` rounds, `CYCLE_REPEATS` times in a row (A A A, A B A B A B).
+def cycling?(rounds: List[String]) -> Bool
+  for length in 1..MAX_CYCLE
+    next if rounds.size < length * CYCLE_REPEATS
 
-  1
+    tail = rounds.drop(rounds.size - length * CYCLE_REPEATS)
+    cycle = tail.take(length)
+    return true if (0...CYCLE_REPEATS).all? { |at| tail.drop(at * length).take(length) == cycle }
+  end
+
+  false
 end
 
 def text_of(block: LLM.Block) -> String

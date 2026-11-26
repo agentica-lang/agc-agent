@@ -97,6 +97,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
     cache: setup.cache,
     headers: headers_of(setup),
     refresh: setup.refresh,
+    max_rounds: setup.max_rounds,
     stripped: state.stripped,
     source: "#{setup.provider_name}/#{setup.api}",
     origin: setup.origin,

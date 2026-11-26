@@ -55,6 +55,7 @@ struct Setup
   catalog_wait_ms: Int = 1500
   ## How long a turn waits for the queued messages before it goes on without them.
   take_ms: Int = 5000
+  max_rounds: Int = 500
   ## Ask the provider for its prompt cache.
   cache: Bool = false
   ## HTTP headers of every call; `${session}` in a value is the session's id.

@@ -125,6 +125,8 @@ struct Setup
   fresh_token: String = ""
   ## How long a turn waits for its queued messages.
   take_ms: Int = 5000
+  ## `max_rounds` of a turn.
+  max_rounds: Int = 500
   ## Variables of the server's environment, over the fake one.
   env: Map[String, String] = {}
   ## How long a turn waits for a catalog that still loads.
@@ -364,6 +366,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     catalog: setup.catalog,
     max_tokens: setup.max_tokens,
     take_ms: setup.take_ms,
+    max_rounds: setup.max_rounds,
     catalog_wait_ms: setup.catalog_wait_ms,
     home: skills_home(setup, base),
     skill_user: [".agents/skills", ".claude/skills"],

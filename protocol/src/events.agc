@@ -54,6 +54,8 @@ enum StopReason
   Cancelled
   ## The loop guard ended the turn.
   LoopGuard
+  ## The turn reached its limit of tool rounds.
+  MaxRounds
   Other(String)
 end
 
@@ -285,6 +287,7 @@ def stop_reason_name(reason: StopReason) -> String
     StopReason.Refusal -> "refusal"
     StopReason.Cancelled -> "cancelled"
     StopReason.LoopGuard -> "loop_guard"
+    StopReason.MaxRounds -> "max_rounds"
     StopReason.Other(name) -> name
   end
 end
@@ -516,7 +519,8 @@ def following_reason(reason: StopReason) -> Optional[StopReason]
     StopReason.MaxTokens -> some(StopReason.Refusal)
     StopReason.Refusal -> some(StopReason.Cancelled)
     StopReason.Cancelled -> some(StopReason.LoopGuard)
-    StopReason.LoopGuard -> none
+    StopReason.LoopGuard -> some(StopReason.MaxRounds)
+    StopReason.MaxRounds -> none
     StopReason.Other(_) -> none
   end
 end
