@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- `web_fetch` fetches an `http://` or `https://` URL for the model, as minibot's `http_request` does, but for public addresses only: the host is resolved, every address that is not public is refused (`web_fetch_private_address`), and the connection goes to the address that was checked. It asks for approval, follows no redirect and cuts the body at 16384 bytes.
+
 ## [finn-20261126095207] - 2026-11-26
 
 - A turn stops after 500 tool rounds (stop reason `max_rounds`, 50 before), and the loop guard also catches a cycle of two or three tool rounds that repeats three times in a row, not only three identical rounds.

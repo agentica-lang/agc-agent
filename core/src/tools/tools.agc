@@ -22,6 +22,7 @@ import Search from "search"
 import Shell from "shell"
 import Spec from "spec"
 import Todos from "todos"
+import WebFetch from "web_fetch"
 
 export Spec.Context
 export Spec.Output
@@ -110,6 +111,7 @@ def all() -> List[Spec.Tool]
       run: &Shell.bash,
       target: &command_target,
     ),
+    WebFetch.tool(),
     Todos.tool(),
   ]
 end

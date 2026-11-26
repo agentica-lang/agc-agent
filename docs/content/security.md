@@ -29,7 +29,7 @@ Any of these:
 
 ## What asks
 
-With the approvals on, a call of these tools waits for your answer unless a rule or an earlier answer allows it: `write_file`, `edit_file`, `apply_patch`, `bash`, the MCP tools, and the tools of an [extension](extensions.md) that has `asks: true`.
+With the approvals on, a call of these tools waits for your answer unless a rule or an earlier answer allows it: `write_file`, `edit_file`, `apply_patch`, `bash`, `web_fetch`, the MCP tools, and the tools of an [extension](extensions.md) that has `asks: true`.
 
 `read_file`, `glob`, `grep`, `todo_write`, `activate_skill` and `run_script` never ask, except for a path outside the session folder: a file tool that reaches there asks like `bash` does, with the approvals on and no rule for the folder (unlike a `bash` command, which runs): an allow rule of `external_directory(FOLDER/*)` covers the folder, and a deny rule refuses it. The folders of the skills the session can load are read without asking, and never written. The calls that a `run_script` script makes are checked one by one, as direct calls.
 
@@ -55,7 +55,7 @@ Answers and the accept-edits mode last until the server restarts. With the appro
 
 ## Rules
 
-Finn's rules are [OpenCode's](https://opencode.ai/docs/permissions/), with Finn's tool names. A rule is `ACTION TOOL(PATTERN)`: the action `allow`, `ask` or `deny`, and `TOOL` alone means `TOOL(*)`. In the pattern and the tool, `*` matches any text and `?` one character; a pattern that ends in ` *` also matches without it, so `git *` matches `git`. `~` or `$HOME` at the start of a pattern is your home folder. For the file tools the pattern matches the path, for `bash` each command, and for an MCP tool its JSON input.
+Finn's rules are [OpenCode's](https://opencode.ai/docs/permissions/), with Finn's tool names. A rule is `ACTION TOOL(PATTERN)`: the action `allow`, `ask` or `deny`, and `TOOL` alone means `TOOL(*)`. In the pattern and the tool, `*` matches any text and `?` one character; a pattern that ends in ` *` also matches without it, so `git *` matches `git`. `~` or `$HOME` at the start of a pattern is your home folder. For the file tools the pattern matches the path, for `bash` each command, for `web_fetch` the URL, and for an MCP tool its JSON input.
 
 A rule matches the real path of a file, links followed: `~` or `$HOME` at the start of a pattern is the home folder (and its real path when that is a link). By default no tool reads or writes `auth.json`, `server.json`, `config.json` and `chatgpt.json` in Finn's own folders (the config folder, the state folder and the data folder, and the file of `FINN_CONFIG`; the key and token files, the server's address and its token), whatever the session folder: a session in `~/.config` is denied `finn/auth.json` too. A pattern of an absolute path also matches the files inside the session folder, which the tools name relative to it (`deny write_file(/*)` denies the writes there too; a `bash` or MCP rule never does). The last rule that matches wins, so an `allow` rule in your config file, which comes after, lets one through (`allow read_file(*)` lifts them all).
 
