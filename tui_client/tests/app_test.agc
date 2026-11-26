@@ -114,25 +114,73 @@ def test_the_quota_is_polled_only_in_a_chatgpt_session() -> Result[Void]
 end
 
 # A message queued into a running turn waits above the prompt; the turn's `message_delivered` moves it into the
-# transcript as a user message, after what the turn showed so far. One the turn never read stays as a note.
+# transcript as a user message, at the place of the event: after the answer or the tool call so far. It is matched by
+# its message id.
 def test_a_queued_message_becomes_a_user_message_once_delivered() -> Result[Void]
   model = model_of(60, 12).with(generation: 1, id: "s1", serving: "local/m", turn: true)
   event = ->(n: Int, e: Protocol.Event) { App.Msg.Stream(1, [Client.Item.Event(some(n), e)]) }
-  queued = Protocol.MessageQueued(turn_id: "t1", text: "commit and push", message_id: some("t1.1"))
-  waiting = App.update(model, event.call(1, Protocol.Event.MessageQueued(queued))).model
+  queue = ->(id: String, text: String) {
+    Protocol.Event.MessageQueued(Protocol.MessageQueued(turn_id: "t1", text: text, message_id: some(id)))
+  }
+
+  deliver = ->(id: String, text: String) {
+    Protocol.Event.MessageDelivered(Protocol.MessageDelivered(turn_id: "t1", text: text, message_id: some(id)))
+  }
+
+  said = Protocol.Event.TextDelta(Protocol.TextDelta(text: "Working."))
+  call = Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "ls")
+  ran = Protocol.ToolFinished(call_id: "c1", ok: true, summary: "ok", duration_ms: 1)
+  step = ->(m: App.Model, n: Int, e: Protocol.Event) { App.update(m, event.call(n, e)).model }
+  kinds = ->(m: App.Model) { m.entries.map { |e| e.kind } }
+  start = step.call(step.call(model, 1, said), 2, queue.call("t1.1", "commit and push"))
+  waiting = step.call(start, 3, queue.call("t1.2", "and tag"))
   try Test.assert(rows(waiting).any? { |row| row.include?("queued: commit and push") }, rows(waiting).join("\n"))
   try Test.eq(waiting.entries.select { |e| e.kind == Transcript.Kind.User }.size, 0)
-  delivered = Protocol.MessageDelivered(turn_id: "t1", text: "commit and push", message_id: some("t1.1"))
-  read = App.update(waiting, event.call(2, Protocol.Event.MessageDelivered(delivered))).model
-  users = read.entries.select { |e| e.kind == Transcript.Kind.User }
-  try Test.eq([read.waiting, users.map { |e| e.text }], [[], ["commit and push"]])
-  try Test.assert(not rows(read).any? { |row| row.include?("queued: commit and push") }, rows(read).join("\n"))
-  late = Protocol.MessageQueued(turn_id: "t1", text: "too late", message_id: some("t1.2"))
-  again = App.update(read, event.call(3, Protocol.Event.MessageQueued(late))).model
+  # The second is delivered first: it leaves by its id, not as the oldest.
+  second = step.call(waiting, 4, deliver.call("t1.2", "and tag"))
+  try Test.eq(second.waiting.map { |w| w.text }, ["commit and push"])
+  try Test.eq(kinds.call(second), [Transcript.Kind.Assistant, Transcript.Kind.User])
+  both = step.call(
+    step.call(step.call(second, 5, Protocol.Event.ToolStarted(call)), 6, Protocol.Event.ToolFinished(ran)),
+    7,
+    deliver.call("t1.1", "commit and push"),
+  )
+
+  try Test.eq(both.waiting, [])
+  try Test.eq(
+    kinds.call(both),
+    [Transcript.Kind.Assistant, Transcript.Kind.User, Transcript.Kind.Tool, Transcript.Kind.User],
+  )
+
+  try Test.assert(not rows(both).any? { |row| row.include?("queued:") }, rows(both).join("\n"))
+  try Test.eq(both.entries.last.text, "commit and push")
+
+  # One a turn did not read before it ended starts the next turn: it stays queued until that turn delivers it.
+  late = step.call(both, 8, queue.call("t1.3", "too late"))
   done = Protocol.TurnFinished(turn_id: "t1", stop_reason: Protocol.StopReason.EndTurn)
-  ended = App.update(again, event.call(4, Protocol.Event.TurnFinished(done))).model
-  try Test.eq(ended.waiting, [])
-  Test.eq(ended.entries.last.text, "queued: too late")
+  ended = step.call(late, 9, Protocol.Event.TurnFinished(done))
+  try Test.eq(ended.waiting.map { |w| w.text }, ["too late"])
+  next_turn = step.call(ended, 10, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: "t2")))
+  delivered = step.call(next_turn, 11, deliver.call("t1.3", "too late"))
+  try Test.eq(delivered.waiting, [])
+  Test.eq(delivered.entries.last.text, "too late")
+end
+
+# A turn that stopped before it read the queue drops it: the `queue_dropped` error clears what waited above the prompt.
+def test_a_dropped_queue_leaves_the_prompt_area() -> Result[Void]
+  model = model_of(60, 12).with(generation: 1, id: "s1", serving: "local/m", turn: true)
+  queued = Protocol.MessageQueued(turn_id: "t1", text: "never read", message_id: some("t1.1"))
+  waiting = App.update(
+    model,
+    App.Msg.Stream(1, [Client.Item.Event(some(1), Protocol.Event.MessageQueued(queued))]),
+  ).model
+
+  try Test.eq(waiting.waiting.size, 1)
+  failure = Protocol.Failure(kind: Protocol.KIND_QUEUE_DROPPED, message: "1 queued message(s) were not sent")
+  dropped = App.update(waiting, App.Msg.Stream(1, [Client.Item.Event(some(2), Protocol.Event.Error(failure))])).model
+  try Test.eq(dropped.waiting, [])
+  try Test.assert(not rows(dropped).any? { |row| row.include?("queued: never read") }, rows(dropped).join("\n"))
+  Test.assert(rows(dropped).any? { |row| row.include?("queue_dropped") }, rows(dropped).join("\n"))
 end
 
 # The footer shows the model's output speed: estimated while a reply streams, exact from the call's usage, and kept

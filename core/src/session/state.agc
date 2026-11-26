@@ -187,6 +187,12 @@ struct Waiting
   asked_ms: Int
 end
 
+## A message sent while a turn runs, until the turn reads it: the `message_id` its sender got, and its text.
+struct Unread
+  id: String
+  text: String
+end
+
 struct Running
   id: String
   task: Task[Void]
@@ -237,7 +243,7 @@ struct State
   turn_cost: Float = 0.0
   ## Messages sent while the turn runs, which it has not read yet. They live only here: a crash of the server loses
   ## them with no `queue_dropped`.
-  queued: List[String] = []
+  queued: List[Unread] = []
   ## The names the extensions noted: the skills the session loaded.
   marks: List[String] = []
   ## The model's window: 0 until it is known, -1 when the provider does not say.

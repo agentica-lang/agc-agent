@@ -21,6 +21,12 @@ WAIT_MS = 3_600_000
 SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 SPIN_MS = 80
 
+## A queued message: the `message_id` of its `message_queued` and its text.
+struct Waiting
+  id: Optional[String]
+  text: String
+end
+
 struct Model
   ## The calls on the server (`Client.http_backend`; a test gives its own).
   backend: Client.Backend
@@ -67,8 +73,8 @@ struct Model
   ## Messages for after the turn (Alt+Enter), sent together when it ends.
   follow_ups: List[String] = []
   ## The messages queued into the running turn that it has not read yet, oldest first; its `message_delivered` moves
-  ## one into the transcript.
-  waiting: List[String] = []
+  ## one into the transcript. A turn that ends first starts the next one with them, or drops them (`queue_dropped`).
+  waiting: List[Waiting] = []
   ## The prompts sent, oldest first, and the one Up shows (none: the prompt being typed).
   history: List[String] = []
   recall: Optional[Int] = none

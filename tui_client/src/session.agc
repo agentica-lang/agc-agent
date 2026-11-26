@@ -300,7 +300,7 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
       shown.with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)), streamed: none)
     Protocol.Event.TurnFinished(done) ->
       ended = shown.with(turn: false, stopping: false, new_model: none, yolo: Yolo.running(shown.yolo, none))
-      read_branch(Turn.after_turn(unread(finished(ended, done)), done.stop_reason))
+      read_branch(Turn.after_turn(finished(ended, done), done.stop_reason))
     Protocol.Event.Usage(usage) ->
       shown.with(usage: some(usage), streamed: none, rate: Rate.exact(usage).map { |r| some(r) }.unwrap_or(shown.rate))
     Protocol.Event.ApprovalRequested(request) if Yolo.allows?(shown.yolo) -> Answering.allowed(shown, request)
@@ -349,9 +349,9 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
 
     Protocol.Event.MessageQueued(queued) ->
       steered = shown.with(yolo: Yolo.steered(shown.yolo, queued))
-      steered.with(waiting: steered.waiting.push(queued.text))
+      steered.with(waiting: steered.waiting.push(State.Waiting(id: queued.message_id, text: queued.text)))
     Protocol.Event.MessageDelivered(delivered) ->
-      read = shown.with(waiting: shown.waiting.drop(1))
+      read = shown.with(waiting: delivered_from(shown.waiting, delivered.message_id))
       read.with(entries: Transcript.add(read.entries, Transcript.Kind.User, delivered.text))
     Protocol.Event.Todos(list) -> State.noted(shown, todos(list.todos))
     _ -> shown
@@ -371,14 +371,11 @@ def todos(list: List[Protocol.Todo]) -> String
   (["todos:"] + Client.todo_lines(list)).join("\n")
 end
 
-## Messages queued into a turn that ended before it read them start the next turn, or are dropped; they show as notes.
-def unread(app: State.Model) -> State.Model
-  noted = app
-  for text in app.waiting
-    noted = State.noted(noted, "queued: #{Client.printable(text)}")
-  end
+## What waits once the message `id` was delivered: the queue without it, or without its oldest when none has that id.
+def delivered_from(waiting: List[State.Waiting], id: Optional[String]) -> List[State.Waiting]
+  return waiting.drop(1) if id.none? or not waiting.any? { |w| w.id == id }
 
-  noted.with(waiting: [])
+  waiting.select { |w| w.id != id }
 end
 
 def finished(app: State.Model, done: Protocol.TurnFinished) -> State.Model

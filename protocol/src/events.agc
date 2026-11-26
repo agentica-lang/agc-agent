@@ -157,8 +157,9 @@ struct MessageQueued
   message_id: Optional[String] = none
 end
 
-## The turn `turn_id` read the queued message `message_id` and sends it to the model with its next call, after the
-## answer and the tool results so far: a client shows it as a user message from here.
+## The turn `turn_id` read the queued message `message_id` and sent it with the call it is making, after the answer and
+## the tool results so far: a client shows it as a user message from here. A turn that ended before it read the message
+## starts the next one with it, and this event comes after that turn's `turn_started`.
 struct MessageDelivered
   turn_id: String
   text: String
