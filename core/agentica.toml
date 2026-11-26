@@ -8,6 +8,7 @@ blank_line_after_end = true
 [dependencies]
 bash = { git = "https://github.com/agentica-lang/agc-agent", subdir = "bash", tag = "finn-20261118093950" }
 bond = { git = "https://github.com/agentica-lang/bond", tag = "0.14.0" }
+http-client = { git = "https://github.com/agentica-lang/packages", subdir = "http-client", tag = "http-client-0.5.0" }
 llm = { git = "https://github.com/agentica-lang/agc-agent", subdir = "llm", tag = "finn-20261118093950" }
 mcp = { git = "https://github.com/agentica-lang/agc-agent", subdir = "mcp", tag = "finn-20261118093950" }
 monty = { git = "https://github.com/agentica-lang/agc-agent", subdir = "monty", tag = "finn-20261118093950" }
