@@ -37,6 +37,8 @@ Every `bash` call asks unless an allow rule or an earlier answer allows each of 
 
 When no client is attached for 90 seconds, a call that waits is denied. `finn -p` denies such calls unless you add `--yolo`, which allows the calls of its own turns.
 
+`web_fetch` reaches public addresses only, whatever the approvals say: it refuses a private, loopback, link-local or reserved address (a metadata endpoint such as 169.254.169.254 included), an IP written in any short or numeric form, `localhost` and user info in the URL, and it connects to the address it checked, so a DNS answer that changes cannot lead elsewhere ([how](tools.md#web_fetch)). When a name resolves to public and private addresses at once, Finn connects to the public ones only and never dials the private one. There is no setting that allows a private address.
+
 ## Answer
 
 Both clients show the call: the tool, its path or command, and what it would write.
