@@ -70,3 +70,48 @@ def test_the_url_is_stripped() -> Result[Void]
   try Test.eq(WebUrl.check("\nhttp://example.com\n"), ok("http://example.com"))
   ok()
 end
+
+# A control character anywhere (it would split a request line or a header) and a URL over 8 KiB are refused.
+def test_control_characters_and_a_huge_url_are_refused() -> Result[Void]
+  nul = String.from_code(0)
+  urls = [
+    "http://example.com/a\r\nHost: evil",
+    "http://example.com/a\nb",
+    "http://example.com/#{nul}",
+    "http://example.com/\tx",
+    "http://example.com/?q=a#{String.from_code(127)}",
+    "http://example.com\r/",
+    "http://exam#{nul}ple.com/",
+  ]
+
+  for url in urls
+    try Test.eq("#{url.length} #{kind_of(url)}", "#{url.length} #{BAD_URL}")
+  end
+
+  try Test.eq(kind_of("http://example.com/" + "a" * (8192 - 19)), "ok")
+  try Test.eq(kind_of("http://example.com/" + "a" * (8192 - 18)), BAD_URL)
+  ok()
+end
+
+# What a rule matches: scheme and host in lower case, no trailing dot, no default port, a path always; the rest as
+# it is.
+def test_the_url_a_rule_matches_is_canonical() -> Result[Void]
+  table = [
+    ["HTTP://Example.COM:80/A?b#c", "http://example.com/A?b#c"],
+    ["https://EXAMPLE.com.:443", "https://example.com/"],
+    ["https://example.com:8443/x", "https://example.com:8443/x"],
+    ["http://example.com:443/", "http://example.com:443/"],
+    ["http://[2001:DB8::1]:80/p", "http://[2001:db8::1]/p"],
+    ["http://[2001:db8::1]:8080", "http://[2001:db8::1]:8080/"],
+    ["http://example.com?q=1", "http://example.com/?q=1"],
+    ["http://example.com:0080/", "http://example.com/"],
+    ["  https://a.example/Path%20X  ", "https://a.example/Path%20X"],
+  ]
+
+  for row in table
+    try Test.eq(WebUrl.canonical(row[0]), ok(row[1]))
+  end
+
+  try Test.eq(WebUrl.canonical("http://127.1/").unwrap_or("refused"), "refused")
+  ok()
+end

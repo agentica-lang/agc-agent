@@ -29,13 +29,17 @@ Any of these:
 
 ## What asks
 
-With the approvals on, a call of these tools waits for your answer unless a rule or an earlier answer allows it: `write_file`, `edit_file`, `apply_patch`, `bash`, the MCP tools, and the tools of an [extension](extensions.md) that has `asks: true`.
+With the approvals on, a call of these tools waits for your answer unless a rule or an earlier answer allows it: `write_file`, `edit_file`, `apply_patch`, `bash`, `web_fetch`, the MCP tools, and the tools of an [extension](extensions.md) that has `asks: true`.
 
 `read_file`, `glob`, `grep`, `todo_write`, `activate_skill` and `run_script` never ask, except for a path outside the session folder: a file tool that reaches there asks like `bash` does, with the approvals on and no rule for the folder (unlike a `bash` command, which runs): an allow rule of `external_directory(FOLDER/*)` covers the folder, and a deny rule refuses it. The folders of the skills the session can load are read without asking, and never written. The calls that a `run_script` script makes are checked one by one, as direct calls.
 
 Every `bash` call asks unless an allow rule or an earlier answer allows each of its commands, even one that only reads. A read of a `.env` or `.env.*` file asks too, but `.env.example`, with the `read_file` tool or, best effort, with `cat .env` and the like; an `allow read_file(*)` rule turns that off.
 
 When no client is attached for 90 seconds, a call that waits is denied. `finn -p` denies such calls unless you add `--yolo`, which allows the calls of its own turns.
+
+`web_fetch` can send data out: its URL, headers and body go to any public host the model names, and what it fetches is untrusted text that may hold instructions aimed at the model (prompt injection). Only an approval or an operating system sandbox (planned, [#213](https://github.com/agentica-lang/agc-agent/issues/213)) keeps your data in: with the approvals off it runs without asking. With them on, the prompt shows the method, the URL, the headers and the body, an answer for the session covers that call only (the same method, URL, headers and body, so allowing a GET never allows a later POST), and a rule matches the URL whatever the method: `deny web_fetch(https://evil.example/*)` also denies a POST, and `allow web_fetch(https://docs.example.com/*)` allows every kind of call to that host. A rule sees the URL with the scheme and host in lower case, no trailing dot and no default port.
+
+`web_fetch` reaches public addresses only, whatever the approvals say: it refuses a private, loopback, link-local or reserved address (a metadata endpoint such as 169.254.169.254 included), an IP written in any short or numeric form, `localhost`, user info and control characters in the URL, and it connects to the address it checked, so a DNS answer that changes cannot lead elsewhere ([how](tools.md#web_fetch)). When a name resolves to public and private addresses at once, Finn connects to the public ones only and never dials the private one. There is no setting that allows a private address.
 
 ## Answer
 
@@ -55,7 +59,7 @@ Answers and the accept-edits mode last until the server restarts. With the appro
 
 ## Rules
 
-Finn's rules are [OpenCode's](https://opencode.ai/docs/permissions/), with Finn's tool names. A rule is `ACTION TOOL(PATTERN)`: the action `allow`, `ask` or `deny`, and `TOOL` alone means `TOOL(*)`. In the pattern and the tool, `*` matches any text and `?` one character; a pattern that ends in ` *` also matches without it, so `git *` matches `git`. `~` or `$HOME` at the start of a pattern is your home folder. For the file tools the pattern matches the path, for `bash` each command, and for an MCP tool its JSON input.
+Finn's rules are [OpenCode's](https://opencode.ai/docs/permissions/), with Finn's tool names. A rule is `ACTION TOOL(PATTERN)`: the action `allow`, `ask` or `deny`, and `TOOL` alone means `TOOL(*)`. In the pattern and the tool, `*` matches any text and `?` one character; a pattern that ends in ` *` also matches without it, so `git *` matches `git`. `~` or `$HOME` at the start of a pattern is your home folder. For the file tools the pattern matches the path, for `bash` each command, for `web_fetch` the URL, and for an MCP tool its JSON input.
 
 A rule matches the real path of a file, links followed: `~` or `$HOME` at the start of a pattern is the home folder (and its real path when that is a link). By default no tool reads or writes `auth.json`, `server.json`, `config.json` and `chatgpt.json` in Finn's own folders (the config folder, the state folder and the data folder, and the file of `FINN_CONFIG`; the key and token files, the server's address and its token), whatever the session folder: a session in `~/.config` is denied `finn/auth.json` too. A pattern of an absolute path also matches the files inside the session folder, which the tools name relative to it (`deny write_file(/*)` denies the writes there too; a `bash` or MCP rule never does). The last rule that matches wins, so an `allow` rule in your config file, which comes after, lets one through (`allow read_file(*)` lifts them all).
 

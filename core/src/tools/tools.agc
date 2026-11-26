@@ -22,6 +22,7 @@ import Search from "search"
 import Shell from "shell"
 import Spec from "spec"
 import Todos from "todos"
+import WebFetch from "web_fetch"
 
 export Spec.Context
 export Spec.Output
@@ -110,6 +111,7 @@ def all() -> List[Spec.Tool]
       run: &Shell.bash,
       target: &command_target,
     ),
+    WebFetch.tool(),
     Todos.tool(),
   ]
 end
@@ -158,9 +160,9 @@ def target(ctx: Spec.Context, name: String, input: JSON.Value) -> Result[String]
   tool.target(ctx, input)
 end
 
-## What a call would write, for the approval: the content of `write_file`, the old text of `edit_file` with each line
-## marked `-` and the new text marked `+`, or the patch of `apply_patch`, cut to `DETAIL_CHARS`; empty for the other
-## tools.
+## What a call would write or send, for the approval: the content of `write_file`, the old text of `edit_file` with
+## each line marked `-` and the new text marked `+`, the patch of `apply_patch`, or the request of `web_fetch` (method,
+## URL, headers and body), cut to `DETAIL_CHARS`; empty for the other tools.
 def detail(name: String, input: JSON.Value) -> String
   case name
     "write_file" ->
@@ -176,6 +178,7 @@ def detail(name: String, input: JSON.Value) -> String
       end
 
     "apply_patch" -> cut(Patch.args(input).unwrap_or(""))
+    "web_fetch" -> cut(WebFetch.detail(input))
     _ -> ""
   end
 end

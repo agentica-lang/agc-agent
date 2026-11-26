@@ -18,12 +18,26 @@ The model works through tools. Each call shows in the client: the file it reads 
 | `glob` | list the files whose path matches a pattern such as `**/*.py` |
 | `grep` | find the lines that match a regex, in the files a `glob` picks |
 | `bash` | run a command with bash in the session folder |
+| `web_fetch` | fetch an `http://` or `https://` URL on the public internet, see [web_fetch](#web_fetch) |
 | `todo_write` | keep a todo list for a task of several steps: each call gives the whole list, at most 100 items of at most 500 characters, each `pending`, `in_progress` or `completed` and one in progress at most; the clients show it, the session keeps it, and a compaction gives it back to the model |
 | `apply_patch` | add, delete and change files with one patch, in the format of Codex; offered on the OpenAI Responses API only |
 
 Skills add `activate_skill` ([Skills](skills.md)), MCP servers add their own tools ([MCP](mcp.md)), and an [extension](extensions.md) can add more. Which calls ask before they run is on [Approvals and security](security.md#what-asks).
 
 The model sees at most 30000 characters of a tool's output; the rest is cut, with a note that says how long it was.
+
+## web_fetch
+
+`web_fetch` takes a `url` and, optionally, a `method` (`GET` by default, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD` or `OPTIONS`), `headers`, and a `body` or a `json` (a string that holds JSON), not both. It gives `status`, the first 10 `headers`, `body`, `content_type`, `truncated`, `truncated_chars` and `processor_used`.
+
+- It reaches public addresses only. Finn resolves the host, drops every address that is not public (loopback, private, link-local, carrier-grade NAT, documentation and reserved ranges, multicast, and the IPv4 forms that IPv6 carries), and connects to an address it checked, so a second DNS answer cannot lead elsewhere. A call with no public address fails with `web_fetch_private_address`. There is no setting that allows a private address: use `bash` (`curl`) for a local target, which has its own approval.
+- The URL is checked before any lookup. Control characters anywhere in it, a length over 8192 characters, user info (`user@host`), `localhost` and `*.localhost`, and a host that is a number but not four decimal numbers (`127.1`, `2130706433`, `0x7f.0.0.1`, `0177.0.0.1`) are refused. A host name has ASCII letters, digits and `-` only: an internationalized name must be given as punycode (`xn--...`), and a name with `_` is refused.
+- Redirects are not followed: the answer is the `3xx` response, with its `location` header.
+- A call fails with `ok: false`, an `error_code` and the reason, never an empty one: `web_fetch_invalid_url`, `web_fetch_private_address`, `web_fetch_timeout`, `web_fetch_invalid_request` or `web_fetch_failed`.
+- The limits: 10 seconds for the connect and the head (3 times that for the whole call), 16384 bytes of body (`truncated` is true when there was more; a page of HTML is read up to 2 MB, any other type up to 16384 bytes), and 16384 characters of text (`truncated_chars`). The cut part is not kept anywhere.
+- Plain text has its whitespace normalized (`processor_used` is `plain`); JSON and HTML come as they are (`none`).
+- A header name must be an HTTP token and a value has no control character; `Host`, `Content-Length`, `Transfer-Encoding` and `Connection` are the client's.
+- With the approvals on it asks, showing the method, the URL, the headers and the body, and a rule matches its URL whatever the method: `allow web_fetch(https://docs.example.com/*)`. An answer for the session covers that call only. The `plan` profile does not show it. See [Approvals and security](security.md#what-asks).
 
 ## Profiles
 
