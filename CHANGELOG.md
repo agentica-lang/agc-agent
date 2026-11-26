@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [finn-20261126095207] - 2026-11-26
+
 - A turn stops after 500 tool rounds (stop reason `max_rounds`, 50 before), and the loop guard also catches a cycle of two or three tool rounds that repeats three times in a row, not only three identical rounds.
 - Finn needs Agentica 0.39.0: the pinned release, the `agentica` versions of the packages and the CI are updated, `monty` reads and writes frames and floats with the sized types of 0.38, `tui_client` builds on agentica-tui at the commit that renames its `Term`, and the `Terminal` import alias is `Tty`.
 - `/mcp` opens a centered dialog that keeps the session visible around it and owns the keyboard until dismissed.
