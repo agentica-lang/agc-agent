@@ -123,11 +123,11 @@ def test_a_hung_server_is_stopped_and_starts_again() -> Result[Void]
   end
 end
 
-# The server takes 1.5 s to start, longer than the 1 s budget for the call itself.
+# The server takes at least 600 ms to start, longer than the 300 ms budget for the call itself.
 def test_a_slow_start_does_not_eat_the_calls_timeout() -> Result[Void]
   within_dir do |dir|
-    slow = sh("sleep 1.5; exec \"$@\"", try fake(dir, {}))
-    client = Mcp.start(slow, Mcp.Options(start_ms: 30_000, timeout_ms: 1000))
+    slow = sh("sleep 0.6; exec \"$@\"", try fake(dir, {}))
+    client = Mcp.start(slow, Mcp.Options(timeout_ms: 300))
     called = Mcp.call(client, "echo", JSON.object({"text": JSON.from("hello")}))
     Mcp.stop(client)
     try Test.eq(called, ok(Mcp.Output(text: "hello", is_error: false)))
@@ -138,8 +138,8 @@ end
 # Listing must also get its own budget when it is the first request.
 def test_a_slow_start_does_not_eat_the_lists_timeout() -> Result[Void]
   within_dir do |dir|
-    slow = sh("sleep 1.5; exec \"$@\"", try fake(dir, {}))
-    client = Mcp.start(slow, Mcp.Options(timeout_ms: 1000))
+    slow = sh("sleep 0.6; exec \"$@\"", try fake(dir, {}))
+    client = Mcp.start(slow, Mcp.Options(timeout_ms: 300))
     listed = Mcp.tools(client)
     Mcp.stop(client)
     try Test.eq((try listed).size, 10)

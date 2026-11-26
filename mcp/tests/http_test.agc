@@ -47,6 +47,33 @@ def test_lists_and_calls_tools_over_http() -> Result[Void]
   end
 end
 
+# A 1.4 s re-initialize fits the startup budget but not the 400 ms left at most on the call.
+def test_http_reopen_uses_the_remaining_request_budget() -> Result[Void]
+  within_peer do |peer|
+    web = server(peer, TOKEN)
+    client = Mcp.start(
+      web.with(headers: web.headers.put("X-Peer-Reopen-Delay", "1.4")),
+      Mcp.Options(start_ms: 2500, timeout_ms: 400),
+    )
+
+    expired = Mcp.call(client, "expire", JSON.object({}))
+    began = Time.monotonic_ms()
+    timed_out = Mcp.call(client, "echo", JSON.object({"text": JSON.from("late")}))
+    took = Time.monotonic_ms() - began
+    again = Mcp.call(client, "echo", JSON.object({"text": JSON.from("back")}))
+    Mcp.stop(client)
+    try Test.eq(expired, ok(Mcp.Output(text: "expired", is_error: false)))
+    try Test.eq(kind_of(timed_out), "mcp.unavailable")
+    try Test.assert(took < 1000, "the expired session took #{took} ms to fail")
+    try Test.eq(again, ok(Mcp.Output(text: "back", is_error: false)))
+    seen = try requests(peer)
+    Test.eq(
+      seen.select { |r| r.method == "tools/call" }.map { |r| r.session },
+      ["session-1", "session-1", "session-3"],
+    )
+  end
+end
+
 # An answer over the size limit, a server that answers nothing in time, and a refused token are each
 # `mcp.unavailable`; the token is in no error, and the next use starts a new session.
 def test_limits_and_refusals_over_http() -> Result[Void]

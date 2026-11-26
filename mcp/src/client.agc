@@ -36,7 +36,7 @@ struct Options
   ## The longest wait for the start and the `initialize` answer.
   start_ms: Int = 30_000
   ## The longest wait for the answer to one request (all the pages of `tools/list` share it), counted from when the
-  ## server is up: a start has `start_ms` of its own.
+  ## server is up. The initial start has `start_ms` of its own; reopening an expired HTTP session uses both limits.
   timeout_ms: Int = 60_000
   ## The largest JSON answer or SSE event over HTTP.
   max_message_bytes: Int = 4_194_304
@@ -101,7 +101,7 @@ struct Done[T]
   deadline: Optional[Int] = none
 end
 
-# Allows one start plus the request budget and a margin. An HTTP re-open can outlast this caller wait.
+# Allows one start plus the request budget and a margin.
 def wait_ms(client: Client) -> Int = client.options.start_ms + client.options.timeout_ms + CALL_MARGIN_MS
 
 def flat[T](result: Result[Result[T]]) -> Result[T]
@@ -197,7 +197,7 @@ end
 
 # Start failures return before a request is sent and cannot trigger a retry.
 def attempt(state: State, method: String, params: JSON.Value, deadline: Optional[Int]) -> Done[JSON.Value]
-  case started(state)
+  case started(state, deadline)
     ok(ready) ->
       id = ready.next_id
       next = ready.with(next_id: id + 1)
@@ -224,9 +224,9 @@ def send(state: State, id: Int, method: String, params: JSON.Value, deadline: In
   end
 end
 
-def started(state: State) -> Result[State]
+def started(state: State, request_deadline: Optional[Int] = none) -> Result[State]
   return ok(state) if state.process.some? or state.link.some?
-  return connected(state) if not state.server.url.empty?
+  return connected(state, request_deadline) if not state.server.url.empty?
 
   server = state.server
   spawned = Process.spawn(
@@ -253,9 +253,11 @@ def started(state: State) -> Result[State]
   end
 end
 
-def connected(state: State) -> Result[State]
+def connected(state: State, request_deadline: Optional[Int]) -> Result[State]
   server = state.server
-  deadline = Time.monotonic_ms() + state.options.start_ms
+  start_deadline = Time.monotonic_ms() + state.options.start_ms
+  # A reopen has only the time left on the original request. Http.open checks before sending initialize.
+  deadline = [start_deadline, request_deadline.unwrap_or(start_deadline)].min.unwrap!
   params = Rpc.initialize_params(CLIENT_NAME, state.version)
   opened = Http.open(server.url, server.headers, state.options.max_message_bytes, state.next_id, params, deadline)
   link = try unavailable(server, opened)
