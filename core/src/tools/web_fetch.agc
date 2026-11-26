@@ -6,13 +6,17 @@
 ## client; `WebUrl` refuses beforehand what the system would read as this machine. A call that reaches no public
 ## address fails with `web_fetch_private_address`. There is no setting that allows private addresses: a local target
 ## goes through `bash` (`curl`), which has its own approval. `Settings.public_only` and `resolver` exist so that a test
-## can reach its peer on 127.0.0.1 or choose what a name resolves to.
+## can reach its peer on 127.0.0.1 or choose what a name resolves to; `compactor` lets it replace the compaction.
 ##
 ## A body is read up to `max(max_bytes, max_parse_bytes)` bytes and cut at `max_bytes` (a page of HTML is read up to
-## `max_parse_bytes`); there is no file for the rest.
+## `max_parse_bytes`); there is no file for the rest. HTML is given as compact text (`HtmlCompact`), plain text with its
+## whitespace normalized, JSON as it is. The compaction runs in a task of its own with a time limit and
+## a cap on its input; a page that is cut by the cap, takes too long, fails or gives nothing is given as plain text
+## (`processor_used` is `plain`), so one hostile page cannot hold the turn. The text is the page's, whatever it says.
 
 import HttpClient from "pkg/http-client/http_client"
 import HTTP from "std/http"
+import HtmlCompact from "html_compact"
 import Regex from "std/regex"
 import Spec from "spec"
 import WebUrl from "web_url"
@@ -35,11 +39,16 @@ struct Settings
   max_redirects: Int = 5
   max_bytes: Int = 16_384
   max_parse_bytes: Int = 2_000_000
+  ## The compaction reads the first `compact_chars` characters of a page and runs for at most `compact_timeout_ms`; past
+  ## either, the page is given as plain text.
+  compact_chars: Int = 512_000
+  compact_timeout_ms: Int = 5_000
   ## The longest text given back; none is `max_bytes`.
   max_chars: Optional[Int] = none
   ## A seam for tests, never read from a config or the model's input: off, any address is reached.
   public_only: Bool = true
   resolver: Optional[Fn[String, Result[List[String]]]] = none
+  compactor: Optional[Fn[String, String]] = none
 end
 
 struct FetchArgs
@@ -135,7 +144,7 @@ def target(_ctx: Spec.Context, input: JSON.Value) -> Result[String]
 
   sent = given.keys.sort.map { |name| "#{name.downcase}:#{given[name]}" }.join("\n")
   digest = "#{method}\n#{sent}\n#{args.body.unwrap_or("")}\n#{args.json.unwrap_or("")}"
-  ok("#{url}\t#{method} #{OpenSSL.Digest.sha256_hexdigest(digest.bytes).slice(0, 12)}")
+  ok("#{url}\t#{method} #{OpenSSL.Digest.sha256_hexdigest(digest.bytes)}")
 end
 
 def method_of(args: FetchArgs) -> String = args.method.unwrap_or("GET").upcase
@@ -295,7 +304,7 @@ end
 
 def shaped(settings: Settings, stream: HttpClient.Stream, content: Bytes) -> Page
   type = content_type(stream.headers)
-  processed = process(content.take(read_limit(settings, type) - 1).scrub, type, html?(type))
+  processed = process(settings, content.take(read_limit(settings, type) - 1).scrub, type, html?(type))
   cap = settings.max_chars.unwrap_or(settings.max_bytes)
   cut = processed.text.length > cap
   text = processed.text
@@ -314,11 +323,36 @@ def shaped(settings: Settings, stream: HttpClient.Stream, content: Bytes) -> Pag
   )
 end
 
-def process(text: String, type: String, html: Bool) -> Processed
-  return Processed(text: text, name: "none") if html or type == "application/json" or type.end_with?("+json")
+def process(settings: Settings, text: String, type: String, html: Bool) -> Processed
+  if html
+    case compacted(settings, text)
+      some(compact) -> return Processed(text: compact, name: "html_compact")
+      none -> nil
+    end
+  end
 
-  words = Regex.split(text, /\s+/).select { |word| not word.empty? }
-  Processed(text: words.join(" "), name: "plain")
+  return Processed(text: text, name: "none") if type == "application/json" or type.end_with?("+json")
+
+  Processed(text: plain(text), name: "plain")
+end
+
+def plain(text: String) -> String = Regex.split(text, /\s+/).select { |word| not word.empty? }.join(" ")
+
+## The compact text of a page, or none when the page is over `compact_chars`, the compaction took more than
+## `compact_timeout_ms` or failed, or it found no text.
+def compacted(settings: Settings, text: String) -> Optional[String]
+  return none if text.length > settings.compact_chars
+
+  compact = settings.compactor.unwrap_or(->(html: String) { HtmlCompact.compact(html) })
+  work = Task.spawn(-> { ok(compact.call(text)) })
+  answered = Task.await(work, settings.compact_timeout_ms)
+  Task.cancel(work)
+  case answered
+    Await.Done(ok(compact_text)) -> return some(compact_text) if compact_text != ""
+    _ -> nil
+  end
+
+  none
 end
 
 def content_type(headers: List[HTTP.Header]) -> String

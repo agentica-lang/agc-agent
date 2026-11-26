@@ -42,7 +42,11 @@ end
 
 def route(request: HTTP.Request, gate: Channel[Bool]) -> HTTP.Response
   case request.path
-    "/html" -> text_reply("text/html; charset=utf-8", "<html><body><p>hello   world</p></body></html>")
+    "/html" ->
+      text_reply(
+        "text/html; charset=utf-8",
+        "<html><head><style>p{}</style></head><body class=\"x\"><p>hello   world</p><a href=\"/next\">Next</a></body></html>",
+      )
     "/text" -> text_reply("text/plain", "  one   two\n\n three  ")
     "/json" -> text_reply("application/json", "{\"a\":   1}")
     "/big" -> text_reply("text/plain", "x" * 40000)
@@ -222,7 +226,7 @@ def test_a_response_is_shaped_for_the_model() -> Result[Void]
   html = try page(get(ctx, "#{base}/html"))
   try Test.eq(html.status, 200)
   try Test.eq([html.content_type, "#{html.truncated}"], ["text/html", "false"])
-  try Test.assert(html.body.include?("hello   world"), html.body)
+  try Test.eq([html.body, html.processor_used], ["p \"hello world\"\na \"Next\" /next", "html_compact"])
   plain = try page(get(ctx, "#{base}/text"))
   try Test.eq([plain.body, plain.processor_used, plain.content_type], ["one two three", "plain", "text/plain"])
   json = try page(get(ctx, "#{base}/json"))
@@ -231,6 +235,41 @@ def test_a_response_is_shaped_for_the_model() -> Result[Void]
   try Test.eq(headers.headers.size, 10)
   missing = try page(get(ctx, "#{base}/missing"))
   try Test.eq(missing.status, 404)
+  stop_peer(peer)
+end
+
+def hanging(_html: String) -> String
+  Task.sleep(60_000)
+  "late"
+end
+
+def crashing(html: String) -> String = html.slice(0, html.length + 1)
+
+# When the compaction fails, takes too long, finds nothing or is given too large a page, the page is its plain text.
+def test_a_page_is_plain_text_when_the_compaction_cannot_be_used() -> Result[Void]
+  peer = try start_peer()
+  url = "http://127.0.0.1:#{peer.port}/html"
+  hang = &hanging
+  crash = &crashing
+  empty = ->(_html: String) { "" }
+  settings = local().with(compact_timeout_ms: 200)
+  cases = [
+    settings.with(compactor: some(hang)),
+    settings.with(compactor: some(crash)),
+    settings.with(compactor: some(empty)),
+    settings.with(compact_chars: 20),
+  ]
+
+  for variant in cases
+    started = Time.monotonic_ms()
+    plain = try page(get(try context(some(variant)), url))
+    try Test.assert(Time.monotonic_ms() - started < 3000, "the compaction held the call")
+    try Test.eq(plain.processor_used, "plain")
+    try Test.assert(plain.body.include?("hello world"), plain.body)
+  end
+
+  good = try page(get(try context(some(settings)), url))
+  try Test.eq(good.processor_used, "html_compact")
   stop_peer(peer)
 end
 
@@ -367,6 +406,7 @@ def test_the_prompt_shows_the_request_and_a_session_allow_covers_that_call_only(
   try Test.eq(try Tools.target(ctx, "web_fetch", get_call), "https://api.example.com/items")
   posted = try Tools.target(ctx, "web_fetch", post)
   try Test.assert(posted.start_with?("https://api.example.com/items\tPOST "), posted)
+  try Test.eq(posted.length, "https://api.example.com/items\tPOST ".length + 64)
   try Test.assert(posted != try Tools.target(ctx, "web_fetch", other), "two bodies, one target")
 
   rules = try Approval.parse_rules([])
