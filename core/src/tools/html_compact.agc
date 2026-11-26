@@ -55,28 +55,63 @@ end
 
 private
 
-# One piece of the page: a comment, a declaration, an end tag, a start tag (its quoted attribute values may hold `>`),
-# text, or a `<` that opens none of them.
-TOKEN = /<!--[\s\S]*?-->|<![^>]*>|<\?[^>]*>|<\/[a-zA-Z][^>]*>|<[a-zA-Z](?:"[^"]*"|'[^']*'|[^>"'])*>|[^<]+|</
 TAG_NAME = /\A[^\s\/]+/
+VALID_NAME = /\A[a-z][a-z0-9:_.\-]*\z/
 ATTRIBUTE = /([^\s"'<>\/=]+)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>]+)))?/
-SPACES = /[\s\x{A0}]+/
+# The end of an attribute value or of a tag: a quote or a `>`.
+MARKS = /["'>]/
+# Whitespace and every control character: a run of them is one space, so that no line break of the page reaches
+# the text.
+SPACES = /[\x{0}-\x{20}\x{7F}\x{85}\x{A0}\x{2028}\x{2029}]+/
+# A control character of a line of `pre` that is not a tab.
+CONTROLS = /[\x{0}-\x{8}\x{B}-\x{1F}\x{7F}\x{85}\x{2028}\x{2029}]/
+## How much of a tag is read for its attributes, and how much of a tag is looked at in one piece.
+MAX_ATTRIBUTES = 16384
+WINDOW = 4096
 
-## What the reader holds while it goes through the tokens: the open elements (the root first), and the raw-text element
-## whose end it waits for (`script` and `style` are dropped, a `textarea` keeps its text).
+## What the reader holds while it goes through the page: the open elements (the root first), and the text since the last
+## tag, in pieces that are joined once.
 struct Reader
   open: List[Node]
-  raw: String = ""
-  raw_text: String = ""
+  text: List[String]
 end
 
+## The reader after a piece of the page, and the piece to go on at.
+struct Step
+  reader: Reader
+  next: Int
+end
+
+## A tag found: its text between `<` and `>` (a `>` inside quotes does not end it), the piece that held its `>`, and the
+## text after it in that piece.
+struct Scanned
+  inner: String
+  last: Int
+  after: String
+end
+
+## Where a text was found: in which piece, and at which character.
+struct Found
+  piece: Int
+  at: Int
+end
+
+# The page is cut at each `<`: a piece is what follows one, and holds a tag, a comment, a declaration or text.
+# The reader
+# never goes back: what a piece takes (a comment, a tag, a script) is skipped, and one that cannot end (a comment or
+# a tag
+# with no end) is the end of the page, as in a browser, so the time is in proportion to the size of the page.
 def parse(html: String) -> Node
-  reader = Reader(open: [Node(tag: "#root")])
-  for found in Regex.find_all(html, TOKEN)
-    reader = take(reader, found.text)
+  pieces = html.split("<")
+  reader = Reader(open: [Node(tag: "#root")], text: [decode(pieces[0])])
+  at = 1
+  while at < pieces.size
+    stepped = step(reader, pieces, at)
+    reader = stepped.reader
+    at = stepped.next
   end
 
-  reader = end_raw(reader)
+  reader = flush(reader)
   while reader.open.size > 1
     reader = reader.with(open: pop(reader.open))
   end
@@ -84,66 +119,207 @@ def parse(html: String) -> Node
   reader.open[0]
 end
 
-def take(reader: Reader, token: String) -> Reader
-  if reader.raw != ""
-    return reader.with(raw_text: reader.raw_text + token) if end_name(token) != reader.raw
-
-    return end_tag(end_raw(reader), reader.raw)
+def step(reader: Reader, pieces: List[String], at: Int) -> Step
+  piece = pieces[at]
+  return comment(reader, pieces, at) if piece.start_with?("!--")
+  return declaration(reader, pieces, at) if piece.start_with?("!") or piece.start_with?("?")
+  if (
+    piece != "" and
+    (letter?(piece.slice(0, 1)) or (piece.start_with?("/") and piece.length > 1 and letter?(piece.slice(1, 1))))
+  )
+    return tag(reader, pieces, at)
   end
 
-  return reader if token.start_with?("<!") or token.start_with?("<?")
-  return end_tag(reader, end_name(token)) if token.start_with?("</") and token.length > 2
-  return start_tag(reader, token) if token.length > 2 and token.start_with?("<") and letter?(token.slice(1, 1))
-
-  reader.with(open: add_text(reader.open, decode(token)))
+  Step(reader: reader.with(text: reader.text.push("<" + decode(piece))), next: at + 1)
 end
 
 def letter?(char: String) -> Bool
+  return false if char == ""
+
   code = char.code
   (code >= 65 and code <= 90) or (code >= 97 and code <= 122)
 end
 
-## The name an end tag closes, in lower case; empty for a token that is no end tag.
-def end_name(token: String) -> String
-  return "" if not token.start_with?("</")
+## The text before a tag or a comment is a node of its own.
+def flush(reader: Reader) -> Reader
+  text = reader.text.join("")
+  return reader.with(text: []) if text == ""
 
-  inner = token.slice(2, token.length - 2)
-  case Regex.match(inner, /\A[^\s\/>]+/)
-    ok(found) -> found.text.downcase
+  reader.with(open: add_child(reader.open, Node(tag: "-text", text: text)), text: [])
+end
+
+## The first `needle` from the character `offset` of the piece `at`, then in the pieces after it.
+def find(pieces: List[String], at: Int, offset: Int, needle: String) -> Optional[Found]
+  first = pieces[at]
+  case first.slice(offset, first.length - offset).index_of(needle)
+    some(found) -> return some(Found(piece: at, at: offset + found))
+    none -> nil
+  end
+
+  next = at + 1
+  while next < pieces.size
+    case pieces[next].index_of(needle)
+      some(found) -> return some(Found(piece: next, at: found))
+      none -> nil
+    end
+
+    next += 1
+  end
+
+  none
+end
+
+## What comes after `needle` where `found` says, as text, and the piece to go on at; none when there was no end, which
+## is the end of the page.
+def after_end(reader: Reader, pieces: List[String], found: Optional[Found], length: Int) -> Step
+  case found
+    some(at) ->
+      piece = pieces[at.piece]
+      after = piece.slice(at.at + length, piece.length - at.at - length)
+      Step(reader: reader.with(text: [decode(after)]), next: at.piece + 1)
+    none -> Step(reader: reader, next: pieces.size)
+  end
+end
+
+## A comment ends at `-->` (`<!-->` and `<!--->` end at once); one that is not closed takes the rest of the page.
+def comment(reader: Reader, pieces: List[String], at: Int) -> Step
+  flushed = flush(reader)
+  rest = pieces[at].slice(3, pieces[at].length - 3)
+  if rest.start_with?(">") or rest.start_with?("->")
+    skip = 1
+    if rest.start_with?("->")
+      skip = 2
+    end
+
+    return Step(reader: flushed.with(text: [decode(rest.slice(skip, rest.length - skip))]), next: at + 1)
+  end
+
+  after_end(flushed, pieces, find(pieces, at, 3, "-->"), 3)
+end
+
+## `<!DOCTYPE ...>` and `<?...>` end at the first `>`.
+def declaration(reader: Reader, pieces: List[String], at: Int) -> Step
+  after_end(flush(reader), pieces, find(pieces, at, 1, ">"), 1)
+end
+
+## A start tag or an end tag.
+def tag(reader: Reader, pieces: List[String], at: Int) -> Step
+  case scan_tag(pieces, at)
+    none -> Step(reader: reader, next: pieces.size)
+    some(scanned) ->
+      flushed = flush(reader)
+      if pieces[at].start_with?("/")
+        ended = end_tag(flushed, end_name(scanned.inner))
+        return Step(reader: ended.with(text: [decode(scanned.after)]), next: scanned.last + 1)
+      end
+
+      opened = start_tag(flushed, scanned.inner)
+      name = tag_name(scanned.inner)
+      if name == "script" or name == "style" or name == "textarea" or name == "title"
+        return raw_text(opened, pieces, scanned, name)
+      end
+
+      Step(reader: opened.with(text: [decode(scanned.after)]), next: scanned.last + 1)
+  end
+end
+
+## The tag that starts at the piece `at`, up to the first `>` that is not in quotes. A tag that has none before the end of
+## the page is dropped, as a browser does.
+def scan_tag(pieces: List[String], at: Int) -> Optional[Scanned]
+  quote = ""
+  held: List[String] = []
+  piece = at
+  while piece < pieces.size
+    seg = pieces[piece]
+    start = 0
+    while start < seg.length
+      size = [WINDOW, seg.length - start].min.unwrap!
+      for found in Regex.find_all(seg.slice(start, size), MARKS)
+        mark = found.text
+        if quote == ""
+          if mark == ">"
+            stop = start + found.start
+            inner = seg.slice(0, stop)
+            if not held.empty?
+              inner = held.join("<") + "<" + inner
+            end
+
+            return some(Scanned(inner: inner, last: piece, after: seg.slice(stop + 1, seg.length - stop - 1)))
+          end
+
+          quote = mark
+        elsif mark == quote
+          quote = ""
+        end
+      end
+
+      start += size
+    end
+
+    held = held.push(seg)
+    piece += 1
+  end
+
+  none
+end
+
+## The name of a start tag in lower case, or none when it is not a name that a page uses.
+def tag_name(inner: String) -> String
+  case Regex.match(inner, TAG_NAME)
+    ok(found) ->
+      name = found.text.downcase
+      if Regex.match?(name, VALID_NAME)
+        name
+      else
+        ""
+      end
+
     error(_) -> ""
   end
 end
 
-## The text a `textarea` collected goes in as its text.
-def end_raw(reader: Reader) -> Reader
-  return reader.with(raw: "", raw_text: "") if reader.raw_text == "" or reader.raw == "script" or reader.raw == "style"
+## The name an end tag closes, in lower case; empty when it is not a name that a page uses.
+def end_name(inner: String) -> String = tag_name(inner.slice(1, inner.length - 1).replace(">", " "))
 
-  reader.with(open: add_text(reader.open, decode(reader.raw_text)), raw: "", raw_text: "")
-end
+## `script` and `style` hold text that is not markup, up to their end tag, and are dropped; a `textarea` and a `title` hold
+## text that is. The page goes on at the end tag; with none, the text takes the rest of the page.
+def raw_text(reader: Reader, pieces: List[String], scanned: Scanned, name: String) -> Step
+  keep = name == "textarea" or name == "title"
+  held = [scanned.after]
+  stop = scanned.last + 1
+  while stop < pieces.size and not closes?(pieces[stop], name)
+    if keep
+      held = held.push(pieces[stop])
+    end
 
-def start_tag(reader: Reader, token: String) -> Reader
-  inner = token.slice(1, token.length - 2)
-  name = ""
-  case Regex.match(inner, TAG_NAME)
-    ok(found) -> name = found.text.downcase
-    error(_) -> return reader
+    stop += 1
   end
 
-  return reader.with(raw: name) if name == "script" or name == "style"
+  return Step(reader: reader, next: stop) if not keep
+
+  Step(reader: reader.with(text: [decode(held.join("<"))]), next: stop)
+end
+
+def closes?(piece: String, name: String) -> Bool
+  return false if piece.length < name.length + 1 or piece.slice(0, name.length + 1).downcase != "/#{name}"
+  return true if piece.length == name.length + 1
+
+  rest = piece.slice(name.length + 1, 1)
+  rest == ">" or rest == "/" or rest.strip == ""
+end
+
+def start_tag(reader: Reader, inner: String) -> Reader
+  name = tag_name(inner)
+  return reader if name == ""
 
   open = implied(reader.open, name)
-  node = Node(tag: name, attrs: attributes(inner.slice(name.length, inner.length - name.length)))
+  attrs = attributes(inner.slice(name.length, [inner.length, MAX_ATTRIBUTES].min.unwrap! - name.length))
+  node = Node(tag: name, attrs: attrs)
   return reader.with(open: add_child(open, node)) if VOID.include?(name)
 
   return reader.with(open: open) if open.size >= MAX_DEPTH
 
-  reader.with(open: open.push(node), raw: raw_of(name))
-end
-
-def raw_of(name: String) -> String
-  return "textarea" if name == "textarea"
-
-  ""
+  reader.with(open: open.push(node))
 end
 
 def attributes(text: String) -> Map[String, String]
@@ -248,19 +424,6 @@ def add_child(open: List[Node], child: Node) -> List[Node]
   open.take(last).push(top.with(children: top.children.push(child)))
 end
 
-## Text next to text is one node.
-def add_text(open: List[Node], text: String) -> List[Node]
-  last = open.size - 1
-  top = open[last]
-  size = top.children.size
-  if size > 0 and top.children[size - 1].tag == "-text"
-    joined = top.children[size - 1].with(text: top.children[size - 1].text + text)
-    return open.take(last).push(top.with(children: top.children.take(size - 1).push(joined)))
-  end
-
-  add_child(open, Node(tag: "-text", text: text))
-end
-
 def render(node: Node, depth: Int, out: List[String]) -> List[String]
   tag = node.tag
   return out if DROP.include?(tag) or hidden?(node)
@@ -330,16 +493,18 @@ def render_table(node: Node, depth: Int, out: List[String]) -> List[String]
 
   rows: List[String] = []
   for cells in grid
-    texts = cells.map { |cell| collapse(render_children(cell, 0, [])) }
+    # A cell is rendered once, at depth 0; each way to show it is that text moved to its depth.
+    bodies = cells.map { |cell| render_children(cell, 0, []) }
+    texts = bodies.map { |body| collapse(body) }
     if texts.all? { |text| text.some? }
       values = texts.map { |text| text.unwrap_or("") }.join(" | ")
       rows = rows.push("#{indent(depth + 1)}| #{values} |")
     elsif cells.size == 1
-      rows = render_children(cells[0], depth + 1, rows)
+      rows = append(rows, moved(bodies[0], depth + 1))
     else
       rows = rows.push("#{indent(depth + 1)}tr")
-      for cell in cells
-        rows = nested_cell(cell, depth + 2, rows)
+      for at in 0..(cells.size - 1)
+        rows = nested_cell(cells[at], bodies[at], depth + 2, rows)
       end
     end
   end
@@ -349,12 +514,35 @@ def render_table(node: Node, depth: Int, out: List[String]) -> List[String]
   append(out.push("#{indent(depth)}table"), rows)
 end
 
-## A cell that holds one element adds a level of nesting and no information.
-def nested_cell(cell: Node, depth: Int, out: List[String]) -> List[String]
-  sub = render_children(cell, depth, [])
-  return append(out, sub) if sub.size == 1
+## `lines`, rendered at depth 0, at `depth`.
+def moved(lines: List[String], depth: Int) -> List[String]
+  prefix = indent(depth)
+  lines.map { |line| prefix + line }
+end
 
-  render(cell, depth, out)
+## A cell that holds one line adds a level of nesting and no information; any other is shown as an element, which is its
+## text when that is plain and else its own line over its lines. `body` is what the cell holds, rendered at depth 0.
+def nested_cell(cell: Node, body: List[String], depth: Int, out: List[String]) -> List[String]
+  return append(out, moved(body, depth)) if body.size == 1
+  return out if hidden?(cell)
+
+  case collapse(body)
+    some(text) ->
+      line = leaf_line(cell.tag, cell.attrs, text)
+      if line == ""
+        out
+      else
+        out.push(indent(depth) + line)
+      end
+
+    none ->
+      header = leaf_line(cell.tag, cell.attrs, "")
+      if header == ""
+        header = cell.tag
+      end
+
+      append(out.push(indent(depth) + header), moved(body, depth + 1))
+  end
 end
 
 ## The rows of this table, not those of a table inside it.
@@ -382,10 +570,16 @@ def render_pre(node: Node, depth: Int, out: List[String]) -> List[String]
   prefix = indent(depth + 1)
   rendered = out.push("#{indent(depth)}pre")
   for line in lines
-    rendered = rendered.push(prefix + Regex.replace(line, /\s+\z/, "").unwrap_or(line))
+    rendered = rendered.push(prefix + pre_line(line))
   end
 
   rendered
+end
+
+## A line of `pre` with no control character but the tab, and no space at its end.
+def pre_line(line: String) -> String
+  plain = Regex.replace(line, CONTROLS, " ").unwrap_or(line)
+  Regex.replace(plain, /\s+\z/, "").unwrap_or(plain)
 end
 
 def text_of(node: Node) -> String
@@ -396,16 +590,14 @@ end
 
 def leaf_line(tag: String, attrs: Map[String, String], text: String) -> String
   case tag
-    "a" -> join(["a", quote(text), attrs.get("href").unwrap_or("")])
+    "a" -> join(["a", quote(text), attr(attrs, "href")])
     "button" -> join(["button", quote(either(text, attrs.get("value").unwrap_or("")))])
-    "form" ->
-      join(["form", either(attrs.get("method").unwrap_or(""), "GET").upcase, attrs.get("action").unwrap_or("")])
-    "select" -> join(["select", attrs.get("name").unwrap_or("")] + flags(attrs))
+    "form" -> join(["form", either(attr(attrs, "method"), "GET").upcase, attr(attrs, "action")])
+    "select" -> join(["select", attr(attrs, "name")] + flags(attrs))
     "option" -> join(["option", quote(text), value(attrs.get("value").unwrap_or(""))] + flags(attrs))
-    "textarea" ->
-      join(["textarea", attrs.get("name").unwrap_or(""), quote(either(attrs.get("placeholder").unwrap_or(""), text))])
-    "video" -> join([tag, attrs.get("src").unwrap_or("")])
-    "audio" -> join([tag, attrs.get("src").unwrap_or("")])
+    "textarea" -> join(["textarea", attr(attrs, "name"), quote(either(attrs.get("placeholder").unwrap_or(""), text))])
+    "video" -> join([tag, attr(attrs, "src")])
+    "audio" -> join([tag, attr(attrs, "src")])
     _ ->
       label = quote(either(text, either(attrs.get("aria-label").unwrap_or(""), attrs.get("title").unwrap_or(""))))
       if label == ""
@@ -420,8 +612,8 @@ def input_line(attrs: Map[String, String]) -> String
   join(
     [
       "input",
-      either(attrs.get("type").unwrap_or(""), "text"),
-      attrs.get("name").unwrap_or(""),
+      either(attr(attrs, "type"), "text"),
+      attr(attrs, "name"),
       quote(either(attrs.get("placeholder").unwrap_or(""), attrs.get("aria-label").unwrap_or(""))),
       value(attrs.get("value").unwrap_or("")),
     ] +
@@ -431,7 +623,7 @@ end
 
 def img_line(attrs: Map[String, String]) -> String
   alt = quote(attrs.get("alt").unwrap_or(""))
-  src = attrs.get("src").unwrap_or("")
+  src = attr(attrs, "src")
   return "" if alt == "" and src == ""
 
   join(["img", alt, src])
@@ -491,7 +683,12 @@ end
 
 def join(parts: List[String]) -> String = parts.select { |part| part != "" }.join(" ")
 
-## Whitespace runs are one space, and a double quote is a single quote: the quotes of a line are its own.
-def norm(text: String) -> String = Regex.split(text.replace("\"", "'"), SPACES).select { |word| word != "" }.join(" ")
+## An attribute as the text of a line: whitespace and control characters, line breaks among them, are one space.
+def attr(attrs: Map[String, String], name: String) -> String = clean(attrs.get(name).unwrap_or(""))
+
+def clean(text: String) -> String = Regex.split(text, SPACES).select { |word| word != "" }.join(" ")
+
+## The same, and a double quote is a single quote: the quotes of a line are its own.
+def norm(text: String) -> String = clean(text.replace("\"", "'"))
 
 def indent(depth: Int) -> String = " " * depth

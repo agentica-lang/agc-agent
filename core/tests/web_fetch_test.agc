@@ -238,6 +238,41 @@ def test_a_response_is_shaped_for_the_model() -> Result[Void]
   stop_peer(peer)
 end
 
+def hanging(_html: String) -> String
+  Task.sleep(60_000)
+  "late"
+end
+
+def crashing(html: String) -> String = html.slice(0, html.length + 1)
+
+# When the compaction fails, takes too long, finds nothing or is given too large a page, the page is its plain text.
+def test_a_page_is_plain_text_when_the_compaction_cannot_be_used() -> Result[Void]
+  peer = try start_peer()
+  url = "http://127.0.0.1:#{peer.port}/html"
+  hang = &hanging
+  crash = &crashing
+  empty = ->(_html: String) { "" }
+  settings = local().with(compact_timeout_ms: 200)
+  cases = [
+    settings.with(compactor: some(hang)),
+    settings.with(compactor: some(crash)),
+    settings.with(compactor: some(empty)),
+    settings.with(compact_chars: 20),
+  ]
+
+  for variant in cases
+    started = Time.monotonic_ms()
+    plain = try page(get(try context(some(variant)), url))
+    try Test.assert(Time.monotonic_ms() - started < 3000, "the compaction held the call")
+    try Test.eq(plain.processor_used, "plain")
+    try Test.assert(plain.body.include?("hello world"), plain.body)
+  end
+
+  good = try page(get(try context(some(settings)), url))
+  try Test.eq(good.processor_used, "html_compact")
+  stop_peer(peer)
+end
+
 # A body over `max_bytes` is cut and says so; with no place to keep it, nothing else is done. `max_chars` cuts
 # the text.
 def test_a_large_body_is_cut_and_says_so() -> Result[Void]

@@ -159,3 +159,102 @@ def test_a_long_page_keeps_every_row() -> Result[Void]
   try Test.eq(rows.size, 200)
   ok()
 end
+
+# The time of one call, in milliseconds, and its text: hostile pages must not take time that grows with the square of
+# their size (a test that does is stopped by its step budget or by the bound it names).
+def timed(html: String) -> List[String]
+  started = Time.monotonic_ms()
+  text = HtmlCompact.compact(html)
+  ["#{Time.monotonic_ms() - started}", text]
+end
+
+def within(html: String, limit_ms: Int) -> Result[String]
+  result = timed(html)
+  try Test.assert(result[0].to_i.unwrap_or(0) < limit_ms, "took #{result[0]} ms for #{html.length} characters")
+  ok(result[1])
+end
+
+# A comment that is not closed swallows the rest of the page, and `<!--` floods and `-->` after them cost their size.
+def test_unclosed_comments_take_time_in_proportion_to_their_size() -> Result[Void]
+  try Test.eq(try within("<p>a</p><!-- " + "x<y " * 2000, 3000), "p \"a\"")
+  try Test.eq(try within("<p>a</p>" + "<!--" * 2000, 3000), "p \"a\"")
+  try Test.eq(try within("<p>a</p>" + "<!--" * 2000 + "-->b", 3000), "p \"a\"\n\"b\"")
+  ok()
+end
+
+# A tag that is not closed is dropped (as a browser does) in time in proportion to the page, however many `<a ` or
+# quotes follow it.
+def test_unclosed_tags_take_time_in_proportion_to_their_size() -> Result[Void]
+  try Test.eq(try within("<p>a</p>" + "<a " * 2000, 3000), "p \"a\"")
+  try Test.eq(try within("<p>a</p><a \"" + "<a \"" * 2000, 3000), "p \"a\"")
+  try Test.eq(try within("<p>a</p>" + "<a \"" * 1999 + ">", 3000), "p \"a\"")
+  try Test.eq(try within("<p>a</p><x " + "<a " * 2000 + ">b", 3000), "p \"a\"\nx \"b\"")
+  ok()
+end
+
+# A `<` that opens nothing is text; a script that is not closed holds the rest of the page.
+def test_stray_and_raw_text_take_time_in_proportion_to_their_size() -> Result[Void]
+  try Test.eq(try within("<" * 5000 + " ok", 3000), "\"" + "<" * 5000 + " ok\"")
+  try Test.eq(try within("<script>" + "a<b '\"" * 2000, 3000), "")
+  try Test.eq(try within("<style>p{}</style><p>a</p><script>" + "</scrip" * 2000, 3000), "p \"a\"")
+  ok()
+end
+
+# An attribute of a megabyte, closed or not, is read once.
+def test_a_huge_attribute_is_read_once() -> Result[Void]
+  big = "a" * 200_000
+  closed = try within("<a href=\"#{big}\">x</a><p>b</p>", 3000)
+  try Test.assert(closed.include?("p \"b\""), "the page after the attribute was lost")
+  try Test.eq(try within("<p>a</p><a href=\"#{big}", 3000), "p \"a\"")
+  try Test.eq(try within("<p>a</p><a href='#{big}\"x>", 3000), "p \"a\"")
+  ok()
+end
+
+# A table in a cell of a table, to the depth the reader keeps: each cell is rendered once, not once for each way it can
+# be shown.
+def test_nested_tables_are_rendered_in_linear_time() -> Result[Void]
+  levels = 40
+  html = "<table><tr><td>a</td><td>" * levels + "x" + "</td></tr></table>" * levels
+  text = try within(html, 3000)
+  try Test.assert(text.include?("| a | x |"), "the innermost row was lost")
+  try Test.eq(text.split("\n").size, 4 * levels - 2)
+  mixed = "<table><tr><td><a href=\"/l\">a</a></td><td><b>t</b> u</td><td>" * 20 + "x" + "</td></tr></table>" * 20
+  try Test.assert((try within(mixed, 3000)).include?("\"x\""), "the innermost cell was lost")
+  ok()
+end
+
+# A page cannot write a line of its own into the text: a line break or a control character of an attribute, of a name
+# or of a `pre` is a space, so every line of the output is one element.
+def test_markup_cannot_forge_lines() -> Result[Void]
+  evil = [
+    "<a href=\"/x&#10;form POST /evil\">t</a>",
+    "<a href=\"/x\nform POST /evil\">t</a>",
+    "<a href=\"/x\r\ninput hidden secret =1\">t</a>",
+    "<form action=\"/a&#13;&#10;a &quot;fake&quot; /b\" method=\"get&#10;x\"><input type=\"te&#10;xt\" name=\"n&#10;m\" value=\"v&#10;w\"></form>",
+    "<img src=\"/i&#10;a &quot;x&quot;\" alt=\"c\"><video src=\"/v&#11;u\"></video>",
+    "<select name=\"s&#10;t\"><option value=\"o&#10;p\">O</option></select>",
+    "<a href=\"/x#{String.from_code(0x2028)}b\">t</a><a href=\"/y#{String.from_code(0x85)}c\">t</a>",
+    "<pre>one#{String.from_code(0x2028)}two#{String.from_code(11)}three</pre>",
+    "<x#{String.from_code(11)}y>text</x#{String.from_code(11)}y>",
+  ]
+
+  for html in evil
+    text = HtmlCompact.compact(html)
+    for char in text.split("")
+      try Test.assert(
+        char == "\n" or
+        (char.code >= 32 and char.code != 127 and char.code != 0x85 and char.code != 0x2028 and char.code != 0x2029),
+        "#{html} => #{text.inspect}",
+      )
+    end
+
+    try Test.assert(
+      not text.split("\n")
+        .any? { |line| line.strip.start_with?("form POST /evil") or line.strip.start_with?("input hidden secret") },
+      "#{html} => #{text.inspect}",
+    )
+  end
+
+  try Test.eq(HtmlCompact.compact("<a href=\"/x&#10;form POST /evil\">t</a>"), "a \"t\" /x form POST /evil")
+  ok()
+end
