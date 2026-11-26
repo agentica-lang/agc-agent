@@ -11,6 +11,7 @@ the answer. The tools: `echo` (JSON), `cut` (an SSE stream that closes after one
 session) and `once` (ends the session, then sends one event with an id and closes the stream: its resume gets 404).
 A GET without `Last-Event-ID` gets 405, and DELETE ends the session. `X-Peer-Version` on `initialize` is the
 protocol version it answers.
+`X-Peer-Init-Delay: N:SECONDS` delays the Nth initialize by that many seconds.
 """
 
 import json
@@ -92,14 +93,24 @@ class Handler(BaseHTTPRequestHandler):
     def initialize(self, message):
         with LOCK:
             COUNTER[0] += 1
-            session = f"session-{COUNTER[0]}"
+            number = COUNTER[0]
+            session = f"session-{number}"
             SESSIONS.add(session)
+        delay = self.headers.get("X-Peer-Init-Delay")
+        if delay:
+            nth, seconds = delay.split(":")
+            if number == int(nth):
+                time.sleep(float(seconds))
         result = {
             "protocolVersion": self.headers.get("X-Peer-Version", VERSION),
             "capabilities": {"tools": {}},
             "serverInfo": {"name": "peer", "version": "1"},
         }
-        return self.json(answer(message, result), {"Mcp-Session-Id": session})
+        try:
+            return self.json(answer(message, result), {"Mcp-Session-Id": session})
+        except (BrokenPipeError, ConnectionResetError):
+            # A client with a shorter deadline may already have closed the connection.
+            return None
 
     def call(self, message, session):
         params = message.get("params", {})
