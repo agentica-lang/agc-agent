@@ -230,6 +230,7 @@ def attach(app: State.Model, session: Protocol.Session, skip_replay: Bool) -> St
     usage: session.usage,
     branch: same_folder(app, session.cwd),
     entries: entries,
+    waiting: [],
     history: entries.select { |entry| entry.kind == Transcript.Kind.User }.map { |entry| entry.text },
     files: none,
     reading_files: false,
@@ -336,6 +337,10 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
     # An error (a write of `shell_finished` that failed) also ends a command: no other event of it comes.
     Protocol.Event.Error(failure) ->
       failed = State.noted(shown.with(shell: false, new_model: none), "error: #{failure.kind}: #{failure.message}")
+      if failure.kind == Protocol.KIND_QUEUE_DROPPED
+        failed = failed.with(waiting: [])
+      end
+
       provider = shown.serving.split("/")[0]
       case Client.turn_warning(failure.kind, provider, shown.new_model)
         some(warning) -> State.noted(failed, "warning: #{warning}")
@@ -344,7 +349,10 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
 
     Protocol.Event.MessageQueued(queued) ->
       steered = shown.with(yolo: Yolo.steered(shown.yolo, queued))
-      State.noted(steered, "queued: #{Client.printable(queued.text)}")
+      steered.with(waiting: steered.waiting.push(State.Waiting(id: queued.message_id, text: queued.text)))
+    Protocol.Event.MessageDelivered(delivered) ->
+      read = shown.with(waiting: delivered_from(shown.waiting, delivered.message_id))
+      read.with(entries: Transcript.add(read.entries, Transcript.Kind.User, delivered.text))
     Protocol.Event.Todos(list) -> State.noted(shown, todos(list.todos))
     _ -> shown
   end
@@ -361,6 +369,13 @@ def todos(list: List[Protocol.Todo]) -> String
   return "todos: none" if list.empty?
 
   (["todos:"] + Client.todo_lines(list)).join("\n")
+end
+
+## What waits once the message `id` was delivered: the queue without it, or without its oldest when none has that id.
+def delivered_from(waiting: List[State.Waiting], id: Optional[String]) -> List[State.Waiting]
+  return waiting.drop(1) if id.none? or not waiting.any? { |w| w.id == id }
+
+  waiting.select { |w| w.id != id }
 end
 
 def finished(app: State.Model, done: Protocol.TurnFinished) -> State.Model

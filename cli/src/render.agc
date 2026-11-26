@@ -49,6 +49,7 @@ def event(event: Protocol.Event, style: Style) -> Optional[Out]
     Protocol.Event.ApprovalRequested(_) -> none
     Protocol.Event.Resync -> none
     Protocol.Event.MessageQueued(queued) -> some(line("[queued] #{Client.printable(queued.text)}"))
+    Protocol.Event.MessageDelivered(delivered) -> some(line("[delivered] #{Client.printable(delivered.text)}"))
     Protocol.Event.ShellStarted(started) -> some(line(shell_started(started)))
     Protocol.Event.ShellFinished(finished) -> some(line(shell_finished(finished)))
     Protocol.Event.Todos(list) -> some(line(todos(list.todos)))
