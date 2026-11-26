@@ -47,6 +47,13 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
     return Stream.emit(queued, Protocol.Event.MessageQueued(event))
   end
 
+  case route(state.setup)
+    error(e) ->
+      Actor.reply(reply, error(e.message, kind: Protocol.KIND_INVALID))
+      return state
+    ok(_) -> nil
+  end
+
   handled = on_message(state.setup, typed, state.marks)
   if not handled.ok?
     Logger.warning("session #{state.setup.id}: #{handled.message}")
@@ -100,14 +107,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
     stripped: state.stripped,
     source: "#{setup.provider_name}/#{setup.api}",
     origin: setup.origin,
-    compaction: Compaction.Settings(
-      window: state.window,
-      model: compact_model(setup),
-      props_url: setup.props_url,
-      api_key: setup.api_key,
-      extra: setup.extra,
-      headers: headers_of(setup),
-    ),
+    compaction: compaction_of(state.setup, state.window),
     last_context: state.context,
     code_mode: setup.code_mode,
     max_tokens: setup.max_tokens,
@@ -167,22 +167,65 @@ def take(state: Session.State, turn_id: String, after: Int, reply: Channel[List[
   state
 end
 
-## `setup` on the API that serves its model, when its provider gives each model its own.
+## The endpoint of the API that serves the model of `setup`, when its provider gives each model its own; none for
+## another provider. An error says why the model cannot be used.
+def route(setup: Session.Setup) -> Result[Optional[Session.Endpoint]]
+  for find in option_list(setup.routed)
+    return find.call(setup.provider_name, setup.model)
+  end
+
+  ok(none)
+end
+
+## `setup` on the API that serves its model.
 def routed(setup: Session.Setup) -> Session.Setup
-  for route in option_list(setup.routed)
-    for endpoint in option_list(route.call(setup.provider_name, setup.model))
-      return setup.with(
-        api: endpoint.api,
-        provider: endpoint.provider,
-        extra: endpoint.extra,
-        cache: endpoint.cache,
-        headers: endpoint.headers,
-        refresh: endpoint.refresh,
-      )
-    end
+  case route(setup)
+    ok(found) -> with_endpoint(setup, found)
+    error(_) -> setup
+  end
+end
+
+def with_endpoint(setup: Session.Setup, found: Optional[Session.Endpoint]) -> Session.Setup
+  for endpoint in option_list(found)
+    return setup.with(
+      api: endpoint.api,
+      provider: endpoint.provider,
+      extra: endpoint.extra,
+      cache: endpoint.cache,
+      headers: endpoint.headers,
+      refresh: endpoint.refresh,
+    )
   end
 
   setup
+end
+
+## What writes the summary of a compaction: the compaction model, on the API that serves it.
+def compaction_of(setup: Session.Setup, window: Int) -> Compaction.Settings
+  asked = setup.with(model: compact_model(setup))
+  settings = Compaction.Settings(
+    window: window,
+    model: asked.model,
+    props_url: setup.props_url,
+    api_key: setup.api_key,
+    extra: setup.extra,
+    headers: headers_of(setup),
+  )
+
+  case route(asked)
+    ok(found) ->
+      for endpoint in option_list(found)
+        settings = settings.with(
+          provider: some(endpoint.provider),
+          extra: endpoint.extra,
+          headers: headers_of(asked.with(headers: endpoint.headers)),
+        )
+      end
+
+    error(_) -> nil
+  end
+
+  settings
 end
 
 def gate(approver: Optional[Extensions.Approver]) -> Optional[Fn[Tools.Context, String, JSON.Value, Tools.Verdict]]
@@ -278,14 +321,7 @@ def start_fold(state: Session.State, reply: Channel[Result[Session.Fold]]) -> Se
   end
 
   setup = routed(state.setup)
-  settings = Compaction.Settings(
-    window: state.window,
-    model: compact_model(setup),
-    props_url: setup.props_url,
-    api_key: setup.api_key,
-    extra: setup.extra,
-    headers: headers_of(setup),
-  )
+  settings = compaction_of(state.setup, state.window)
 
   fold = Session.Fold(
     provider: setup.provider,

@@ -63,7 +63,7 @@ finn login opencode-go        # or set OPENCODE_API_KEY
 finn --provider opencode-go   # the model is deepseek-v4.1-flash; --model NAME picks another
 ```
 
-Each model is served with the API that [models.dev](https://models.dev) gives it, all at that URL with your key: OpenAI chat completions, OpenAI Responses (`/responses`) or Anthropic Messages (`/messages`, the key in `x-api-key`). A model that is not yet in the catalog, or that you name with `--model`, uses chat completions. `/model` leaves out the models whose API Finn does not speak, such as Google's. Each call carries `x-opencode-client: finn` and `x-opencode-session` with the session id, which OpenCode requires to route a call.
+Each model is served with the API that [models.dev](https://models.dev) gives it: OpenAI chat completions, OpenAI Responses (`/responses`) or Anthropic Messages (`/messages`, the key in `x-api-key`), at the URL above, or at the URL the model's entry gives when that is on the same scheme, host and port, so your key goes to no other host. A model the catalog does not list uses chat completions. `/model` leaves out the models whose API Finn does not speak, such as Google's, and choosing one is refused. Each call carries `x-opencode-client: finn` and `x-opencode-session` with the session id, which OpenCode requires to route a call.
 
 ## Local: llama.cpp and other servers
 
@@ -129,7 +129,7 @@ The `providers` list of your config file (`~/.config/finn/config.json`) adds an 
 - With `key_env`, the provider is offered only when that variable is set or a login stored its key. Without it, the provider needs no key.
 - `models` are the names a client offers in `/model`.
 
-An entry that replaces a preset keeps what the preset sets besides the URL, the key variable and the models: the default model and the headers of `opencode-go`, and where a login checks a key.
+An entry that replaces a preset keeps what the preset sets besides the URL, the key variable and the models: the default model and the headers of `opencode-go`, that `opencode-go` serves each model with its own API, and where a login checks a key.
 
 The server warns when two providers take the same key variable: that key would go to both URLs.
 

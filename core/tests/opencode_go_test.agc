@@ -5,6 +5,7 @@
 
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
+import Protocol from "pkg/protocol/protocol"
 import Config from "../src/config/config"
 import Catalog from "../src/providers/catalog"
 import Providers from "../src/providers/providers"
@@ -57,68 +58,136 @@ def test_a_chat_call_sends_the_key_and_the_model_to_the_preset_url() -> Result[V
   end
 end
 
-# Each model goes to the API its catalog entry names, at the preset's URL with its key: chat completions, the
-# Responses API, or the Anthropic Messages API. One of an API Finn does not speak (Google's) is not offered.
+# One session moves from model to model: each call goes to the API its catalog entry names, at the preset's URL (the
+# catalog's own URLs are on another host, so they are not used) with its key; a model the catalog does not list
+# stays on
+# chat completions, and one of an API Finn does not speak (Google's) is refused.
 def test_each_model_goes_to_the_api_the_catalog_gives_it() -> Result[Void]
-  tmp = System.env("TMPDIR").unwrap_or("/tmp")
-  dir = "#{tmp}/core-opencode-#{Random.int(0, 999999999)}"
-  try Dir.mkdir_private(dir)
-  json = try Fake.fixture("models_dev/api.json")
-  json_type = HTTP.Header(name: "Content-Type", value: "application/json")
-  http = try HTTP.serve(
-    "127.0.0.1",
-    0,
-    HTTP.app(->(_r: HTTP.Request) { ok(HTTP.Response(status: 200, headers: [json_type], body: json)) }),
-  )
+  within_catalog(false) do |catalog, _dir|
+    replies = ["text.sse", "anthropic/text.sse", "openai_responses/text.sse", "text.sse"]
+    setup = H.Setup(replies: replies, presets: ["opencode-go"], approvals: false, catalog: some(catalog))
+    result = H.using(setup) do |h|
+      id = try H.new_session_in(h, h.work, provider: some("opencode-go"), model: some("deepseek-v4.1-flash"))
+      served: List[String] = []
+      for model in ["deepseek-v4.1-flash", "qwen3.8-max", "gpt-6-luna", "not-in-the-catalog"]
+        change = Protocol.encode_update_session(Protocol.UpdateSession(model: some(model)))
+        try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), change, H.auth(h))).status, 200)
+        _ = try H.send(h, id, "Hello.")
+        _ = try H.idle(h, id)
+        seen = try H.next_request(h)
+        key = ["x-api-key", "authorization", "anthropic-version"].map { |name|
+          HTTP.header_values(seen.headers, name).join("")
+        }
 
-  url = "http://127.0.0.1:#{HTTP.local_port(http)}/api.json"
-  catalog = Catalog.start(Catalog.Options(url: url, cache: "#{dir}/models.json"))
-  loaded = Catalog.wait(catalog, 10_000)
-  setup = H.Setup(
-    replies: ["text.sse", "anthropic/text.sse", "openai_responses/text.sse"],
-    presets: ["opencode-go"],
-    approvals: false,
-    catalog: some(catalog),
-  )
+        try Test.eq(HTTP.header_values(seen.headers, "x-opencode-session"), [id])
+        try Test.eq(JSON.get(try JSON.parse(seen.body), "model"), ok(JSON.from(model)))
+        served = served.push("#{seen.path} #{key.join("|")}")
+      end
 
-  result = H.using(setup) do |h|
-    try Test.assert(loaded, "the catalog did not load")
-    served: List[String] = []
-    for model in ["deepseek-v4.1-flash", "qwen3.8-max", "gpt-6-luna"]
-      id = try H.new_session_in(h, h.work, provider: some("opencode-go"), model: some(model))
-      _ = try H.send(h, id, "Hello.")
-      _ = try H.idle(h, id)
-      seen = try H.next_request(h)
-      key = (
-        HTTP.header_values(seen.headers, "x-api-key").join("") +
-        HTTP.header_values(seen.headers, "authorization").join("")
+      version = "2026-10-21"
+      try Test.eq(
+        served,
+        [
+          "/opencode-go/chat/completions |Bearer sk-opencode-go|",
+          "/opencode-go/messages sk-opencode-go||#{version}",
+          "/opencode-go/responses |Bearer sk-opencode-go|",
+          "/opencode-go/chat/completions |Bearer sk-opencode-go|",
+        ],
       )
 
-      try Test.eq(HTTP.header_values(seen.headers, "x-opencode-session"), [id])
-      try Test.eq(JSON.get(try JSON.parse(seen.body), "model"), ok(JSON.from(model)))
-      served = served.push("#{seen.path} #{key}")
+      google = Protocol.encode_update_session(Protocol.UpdateSession(model: some("gemini-4-argon")))
+      try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), google, H.auth(h))).status, 400)
+      try Test.eq((try H.session(h, id)).model, "not-in-the-catalog")
+      try Test.eq(
+        Catalog.models(catalog, "opencode-go", true),
+        ["deepseek-v4.1-flash", "gpt-6-luna", "kimi-k3", "qwen3.8-max"],
+      )
+
+      ok()
     end
 
-    try Test.eq(
-      served,
-      [
-        "/opencode-go/chat/completions Bearer sk-opencode-go",
-        "/opencode-go/messages sk-opencode-go",
-        "/opencode-go/responses Bearer sk-opencode-go",
-      ],
-    )
-
-    Test.eq(
-      Catalog.models(catalog, "opencode-go", true),
-      ["deepseek-v4.1-flash", "gpt-6-luna", "kimi-k3", "qwen3.8-max"],
-    )
+    result
   end
+end
 
-  Catalog.stop(catalog)
-  HTTP.close_server(http)
-  _ = HTTP.wait(http)
-  _ = Path.remove(dir)
-  result
+# A model whose catalog entry puts its API on the preset's host is called there: the Messages API of the model under
+# its own root, not under the preset's URL.
+def test_a_model_uses_the_url_its_catalog_entry_gives_on_the_same_host() -> Result[Void]
+  within_catalog(true) do |catalog, dir|
+    setup = H.Setup(
+      replies: ["anthropic/text.sse", "openai_responses/text.sse", "text.sse"],
+      presets: ["opencode-go"],
+      approvals: false,
+      catalog: some(catalog),
+    )
+
+    H.using(setup) do |h|
+      try File.write_text("#{dir}/root", H.fake_root(h.fake))
+      try Test.assert(Catalog.wait(catalog, 10_000), "the catalog did not load")
+      paths: List[String] = []
+      for model in ["qwen3.8-max", "gpt-6-luna", "deepseek-v4.1-flash"]
+        id = try H.new_session_in(h, h.work, provider: some("opencode-go"), model: some(model))
+        _ = try H.send(h, id, "Hello.")
+        _ = try H.idle(h, id)
+        paths = paths.push((try H.next_request(h)).path)
+      end
+
+      Test.eq(
+        paths,
+        [
+          "/opencode-go/anthropic/v1/messages",
+          "/opencode-go/openai/v1/responses",
+          "/opencode-go/openai/v1/chat/completions",
+        ],
+      )
+    end
+  end
+end
+
+# The URL of the catalog is used only on the host, port and scheme of the preset's URL, so the key goes nowhere else.
+def test_a_catalog_url_on_another_host_is_ignored() -> Result[Void]
+  base = "https://opencode.ai/inference/go/v1"
+  same = "https://opencode.ai/inference/go/anthropic/v1"
+  try Test.eq(Providers.model_url(base, same), same)
+  try Test.eq(Providers.model_url(base, "HTTPS://OpenCode.ai/x/v1"), "HTTPS://OpenCode.ai/x/v1")
+  others = [
+    "https://opencode.ai.evil.example/v1", "http://opencode.ai/v1", "https://opencode.ai:8443/v1",
+    "https://evil.example/v1", "",
+  ]
+
+  Test.eq(others.map { |u| Providers.model_url(base, u) }.uniq, [base])
+end
+
+# The summary of a fold is written with the API of the compaction model, not of the session's model.
+def test_the_summary_goes_to_the_api_of_the_compaction_model() -> Result[Void]
+  within_catalog(false) do |catalog, _dir|
+    setup = H.Setup(
+      replies: ["text.sse", "text.sse", "anthropic/text.sse"],
+      presets: ["opencode-go"],
+      provider: "opencode-go",
+      model: "deepseek-v4.1-flash",
+      compact_model: "qwen3.8-max",
+      approvals: false,
+      catalog: some(catalog),
+    )
+
+    H.using(setup) do |h|
+      id = try H.new_session_in(h, h.work, provider: some("opencode-go"), model: some("deepseek-v4.1-flash"))
+      for text in ["One.", "Two."]
+        _ = try H.send(h, id, text)
+        _ = try H.idle(h, id)
+      end
+
+      folded = try H.post(h, Protocol.compact_path(id), "")
+      try Test.eq(Protocol.decode_compacted(folded.text), ok(Protocol.Compacted(compacted: true)))
+      _ = try H.next_request(h)
+      _ = try H.next_request(h)
+      summary = try H.next_request(h)
+      try Test.eq(summary.path, "/opencode-go/messages")
+      try Test.eq(JSON.get(try JSON.parse(summary.body), "model"), ok(JSON.from("qwen3.8-max")))
+      Test.eq(HTTP.header_values(summary.headers, "x-opencode-session"), [id])
+    end
+  end
 end
 
 # The session id and the client go in the headers of each call of the preset, and of no other provider.
@@ -196,6 +265,40 @@ def offered(
 ) -> Map[String, Providers.Provider]
   read = ->(name: String) { env.get(name).to_result("not set") }
   Providers.offered(customs, read, LLM.Options(), stored)
+end
+
+# A catalog of the models.dev fixture on a local server. With `rooted`, the server waits for the file `root` in
+# `dir` and
+# answers with the URLs of `opencode-go` moved under it (the fake of the test is known only once it runs).
+def within_catalog(rooted: Bool, body: Fn[Catalog.Catalog, String, Result[Void]]) -> Result[Void]
+  tmp = System.env("TMPDIR").unwrap_or("/tmp")
+  dir = "#{tmp}/core-opencode-#{Random.int(0, 999999999)}"
+  try Dir.mkdir_private(dir)
+  json = String.from_bytes(try Fake.fixture("models_dev/api.json")).unwrap!
+  type = HTTP.Header(name: "Content-Type", value: "application/json")
+  answer = ->(_request: HTTP.Request) {
+    text = json
+    if rooted
+      while not File.stat("#{dir}/root").ok?
+        Task.sleep(10)
+      end
+
+      root = File.read_text("#{dir}/root").unwrap_or("")
+      text = json.replace("https://opencode.ai/inference/go", "#{root}/opencode-go")
+    end
+
+    ok(HTTP.Response(status: 200, headers: [type], body: text.bytes))
+  }
+
+  http = try HTTP.serve("127.0.0.1", 0, HTTP.app(answer))
+  url = "http://127.0.0.1:#{HTTP.local_port(http)}/api.json"
+  catalog = Catalog.start(Catalog.Options(url: url, cache: "#{dir}/models.json"))
+  result = body.call(catalog, dir)
+  Catalog.stop(catalog)
+  HTTP.close_server(http)
+  _ = HTTP.wait(http)
+  _ = Path.remove(dir)
+  result
 end
 
 # The fake is stopped however `body` ends.

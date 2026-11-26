@@ -70,8 +70,9 @@ struct Setup
   api: String = ""
   endpoint: Optional[Fn[String, String, Result[Endpoint]]] = none
   ## The endpoint that serves a model (its provider, the model) on a provider that gives each model its own API; none
-  ## for another provider. A turn and a compaction take the provider, fields and API of it, not of `provider`.
-  routed: Optional[Fn[String, String, Optional[Endpoint]]] = none
+  ## for another provider; an error when the model uses an API Finn does not speak. A turn and a compaction take the
+  ## provider, fields and API of it, not of `provider`.
+  routed: Optional[Fn[String, String, Result[Optional[Endpoint]]]] = none
   ## The provider of the thinking saved before providers, which names none: the session's first, as `provider/api`.
   origin: String = ""
   ## Why a turn cannot start (the provider is not offered now); empty when it can.

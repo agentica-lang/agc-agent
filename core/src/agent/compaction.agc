@@ -50,6 +50,9 @@ struct Settings
   ## Fields of every request, as the turn's.
   extra: Map[String, JSON.Value] = {}
   headers: Map[String, String] = {}
+  ## The provider that writes the summary when it is not the turn's: the API of the summary model on a provider that
+  ## routes its models.
+  provider: Optional[LLM.Provider] = none
 end
 
 def due?(settings: Settings, context: Int) -> Bool

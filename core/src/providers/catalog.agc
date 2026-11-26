@@ -64,6 +64,8 @@ struct Model
   ## The API that serves it, as `Providers` names it: from its own SDK, else its provider's. Empty for one that Finn
   ## does not speak.
   api: String = ""
+  ## Where its entry says its API is (`provider.api`), empty when it names none.
+  api_url: String = ""
 end
 
 struct Options
@@ -167,7 +169,13 @@ def parse(text: String) -> Result[List[Model]]
     npm = text(listed, "npm")
     for id in models.keys.sort
       entry = model(provider, id, models[id])
-      out = out.push(entry.with(other_api: other_api?(npm, models[id]), api: api_of(npm, models[id])))
+      out = out.push(
+        entry.with(
+          other_api: other_api?(npm, models[id]),
+          api: api_of(npm, models[id]),
+          api_url: api_url_of(models[id]),
+        ),
+      )
     end
   end
 
@@ -368,6 +376,8 @@ def api_of(provider_npm: String, json: JSON.Value) -> String
 
   SDK_APIS.get(npm).unwrap_or("")
 end
+
+def api_url_of(json: JSON.Value) -> String = text(JSON.get(json, "provider").unwrap_or(JSON.object({})), "api")
 
 def text(json: JSON.Value, key: String) -> String
   case JSON.get(json, key)
