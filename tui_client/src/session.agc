@@ -230,6 +230,7 @@ def attach(app: State.Model, session: Protocol.Session, skip_replay: Bool) -> St
     usage: session.usage,
     branch: same_folder(app, session.cwd),
     entries: entries,
+    waiting: [],
     history: entries.select { |entry| entry.kind == Transcript.Kind.User }.map { |entry| entry.text },
     files: none,
     reading_files: false,
@@ -299,7 +300,7 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
       shown.with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)), streamed: none)
     Protocol.Event.TurnFinished(done) ->
       ended = shown.with(turn: false, stopping: false, new_model: none, yolo: Yolo.running(shown.yolo, none))
-      read_branch(Turn.after_turn(finished(ended, done), done.stop_reason))
+      read_branch(Turn.after_turn(unread(finished(ended, done)), done.stop_reason))
     Protocol.Event.Usage(usage) ->
       shown.with(usage: some(usage), streamed: none, rate: Rate.exact(usage).map { |r| some(r) }.unwrap_or(shown.rate))
     Protocol.Event.ApprovalRequested(request) if Yolo.allows?(shown.yolo) -> Answering.allowed(shown, request)
@@ -336,6 +337,10 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
     # An error (a write of `shell_finished` that failed) also ends a command: no other event of it comes.
     Protocol.Event.Error(failure) ->
       failed = State.noted(shown.with(shell: false, new_model: none), "error: #{failure.kind}: #{failure.message}")
+      if failure.kind == Protocol.KIND_QUEUE_DROPPED
+        failed = failed.with(waiting: [])
+      end
+
       provider = shown.serving.split("/")[0]
       case Client.turn_warning(failure.kind, provider, shown.new_model)
         some(warning) -> State.noted(failed, "warning: #{warning}")
@@ -344,7 +349,10 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
 
     Protocol.Event.MessageQueued(queued) ->
       steered = shown.with(yolo: Yolo.steered(shown.yolo, queued))
-      State.noted(steered, "queued: #{Client.printable(queued.text)}")
+      steered.with(waiting: steered.waiting.push(queued.text))
+    Protocol.Event.MessageDelivered(delivered) ->
+      read = shown.with(waiting: shown.waiting.drop(1))
+      read.with(entries: Transcript.add(read.entries, Transcript.Kind.User, delivered.text))
     Protocol.Event.Todos(list) -> State.noted(shown, todos(list.todos))
     _ -> shown
   end
@@ -361,6 +369,16 @@ def todos(list: List[Protocol.Todo]) -> String
   return "todos: none" if list.empty?
 
   (["todos:"] + Client.todo_lines(list)).join("\n")
+end
+
+## Messages queued into a turn that ended before it read them start the next turn, or are dropped; they show as notes.
+def unread(app: State.Model) -> State.Model
+  noted = app
+  for text in app.waiting
+    noted = State.noted(noted, "queued: #{Client.printable(text)}")
+  end
+
+  noted.with(waiting: [])
 end
 
 def finished(app: State.Model, done: Protocol.TurnFinished) -> State.Model

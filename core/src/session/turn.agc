@@ -343,6 +343,8 @@ def commit(
       ok(_) ->
         message = Protocol.Message(role: Protocol.Role.User, text: queued.typed)
         shown = shown.with(display: shown.display.push(message), queued: shown.queued.drop(1))
+        shown = delivered(shown, queued.typed)
+        return shown if shown.broken.some?
       error(e) -> return Stream.broke(shown, e)
     end
   end
@@ -354,6 +356,17 @@ def commit(
       shown.with(history: history, turn: turn, broken: none, marks: shown.marks + marks, display: display)
     error(e) -> Stream.broke(shown, e)
   end
+end
+
+## The turn read the oldest message of the queue, which `queued` no longer holds: the ids number the messages in order.
+def delivered(state: Session.State, typed: String) -> Session.State
+  for running in option_list(state.turn)
+    number = running.queued - state.queued.size
+    event = Protocol.MessageDelivered(turn_id: running.id, text: typed, message_id: some("#{running.id}.#{number}"))
+    return Stream.emit(state, Protocol.Event.MessageDelivered(event))
+  end
+
+  state
 end
 
 ## Shows the answer of the turn, its `texts` together, then ends the turn.

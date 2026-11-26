@@ -301,6 +301,16 @@ def test_a_message_sent_during_a_turn_is_read_before_the_next_model_call() -> Re
     try Test.eq(a.seen.last.event, Protocol.Event.MessageQueued(event))
     _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
+    delivered = Protocol.MessageDelivered(
+      turn_id: accepted.turn_id,
+      text: "Also say hi.",
+      message_id: some(message_id),
+    )
+
+    try Test.eq(a.seen.select { |s| s.event == Protocol.Event.MessageDelivered(delivered) }.size, 1)
+
+    kinds = H.kinds(a.seen).select { |k| ["tool_finished", "message_delivered", "turn_finished"].include?(k) }
+    try Test.eq(kinds, ["tool_finished", "message_delivered", "turn_finished"])
     second = try H.request_messages(h, 2)
     try Test.eq(JSON.get(second.last, "role"), ok(JSON.from("user")))
     try Test.eq(JSON.get(second.last, "content"), ok(JSON.from("Also say hi.")))

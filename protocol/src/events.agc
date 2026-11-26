@@ -27,6 +27,7 @@ enum EventKind
   Error
   Resync
   MessageQueued
+  MessageDelivered
   ShellStarted
   ShellFinished
   Todos
@@ -156,6 +157,14 @@ struct MessageQueued
   message_id: Optional[String] = none
 end
 
+## The turn `turn_id` read the queued message `message_id` and sends it to the model with its next call, after the
+## answer and the tool results so far: a client shows it as a user message from here.
+struct MessageDelivered
+  turn_id: String
+  text: String
+  message_id: Optional[String] = none
+end
+
 ## A command a client ran with `POST /v1/sessions/ID/shell`. With `context`, its output goes to the model before the
 ## next message.
 struct ShellStarted
@@ -209,6 +218,7 @@ enum Event
   Error(Errors.Failure)
   Resync
   MessageQueued(MessageQueued)
+  MessageDelivered(MessageDelivered)
   ShellStarted(ShellStarted)
   ShellFinished(ShellFinished)
   Todos(Todos)
@@ -231,6 +241,7 @@ def event_kind(event: Event) -> EventKind
     Event.Error(_) -> EventKind.Error
     Event.Resync -> EventKind.Resync
     Event.MessageQueued(_) -> EventKind.MessageQueued
+    Event.MessageDelivered(_) -> EventKind.MessageDelivered
     Event.ShellStarted(_) -> EventKind.ShellStarted
     Event.ShellFinished(_) -> EventKind.ShellFinished
     Event.Todos(_) -> EventKind.Todos
@@ -251,6 +262,7 @@ def kind_name(kind: EventKind) -> String
     EventKind.Error -> "error"
     EventKind.Resync -> "resync"
     EventKind.MessageQueued -> "message_queued"
+    EventKind.MessageDelivered -> "message_delivered"
     EventKind.ShellStarted -> "shell_started"
     EventKind.ShellFinished -> "shell_finished"
     EventKind.Todos -> "todos"
@@ -331,6 +343,7 @@ def encode_event(event: Event) -> String
     Event.Error(data) -> Errors.encode_failure(data)
     Event.Resync -> "{}"
     Event.MessageQueued(data) -> JSON.encode(data)
+    Event.MessageDelivered(data) -> JSON.encode(data)
     Event.ShellStarted(data) -> JSON.encode(data)
     Event.ShellFinished(data) -> JSON.encode(data)
     Event.Todos(data) -> JSON.encode(data)
@@ -353,6 +366,7 @@ def decode_event(name: String, data: String) -> Result[Event]
     EventKind.Error -> ok(Event.Error(try Errors.decode_failure(data)))
     EventKind.Resync -> decode_resync(data)
     EventKind.MessageQueued -> ok(Event.MessageQueued(try Wire.decode(data, MessageQueued.codec)))
+    EventKind.MessageDelivered -> ok(Event.MessageDelivered(try Wire.decode(data, MessageDelivered.codec)))
     EventKind.ShellStarted -> ok(Event.ShellStarted(try Wire.decode(data, ShellStarted.codec)))
     EventKind.ShellFinished -> decode_shell_finished(data)
     EventKind.Todos -> decode_todos(data)
@@ -383,6 +397,7 @@ def shape() -> List[String]
     Wire.record("Usage", Usage.members),
     Wire.record("UsageWire", UsageWire.members),
     Wire.record("MessageQueued", MessageQueued.members),
+    Wire.record("MessageDelivered", MessageDelivered.members),
     Wire.record("ShellStarted", ShellStarted.members),
     Wire.record("ShellFinished", ShellFinished.members),
     Wire.record("Todo", Todo.members),
@@ -494,7 +509,8 @@ def following_kind(kind: EventKind) -> Optional[EventKind]
     EventKind.TurnFinished -> some(EventKind.Error)
     EventKind.Error -> some(EventKind.Resync)
     EventKind.Resync -> some(EventKind.MessageQueued)
-    EventKind.MessageQueued -> some(EventKind.ShellStarted)
+    EventKind.MessageQueued -> some(EventKind.MessageDelivered)
+    EventKind.MessageDelivered -> some(EventKind.ShellStarted)
     EventKind.ShellStarted -> some(EventKind.ShellFinished)
     EventKind.ShellFinished -> some(EventKind.Todos)
     EventKind.Todos -> none

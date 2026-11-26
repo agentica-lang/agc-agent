@@ -49,7 +49,7 @@ The file is `ID.md` in the folder the client runs in unless you give a path. Wit
 
 ## Send while a turn runs
 
-A message you send while the model works waits in the turn's queue: the turn reads it before its next model call, so you can steer it. The queue holds 20 messages at most.
+A message you send while the model works waits in the turn's queue: the turn reads it before its next model call, so you can steer it. The full screen shows the message above the prompt until then, and draws it as a user message when the turn reads it. The queue holds 20 messages at most.
 
 In `finn`, Alt+Enter sends a message after the turn ends instead.
 

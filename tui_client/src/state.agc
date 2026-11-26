@@ -66,6 +66,9 @@ struct Model
   held: List[Client.Item] = []
   ## Messages for after the turn (Alt+Enter), sent together when it ends.
   follow_ups: List[String] = []
+  ## The messages queued into the running turn that it has not read yet, oldest first; its `message_delivered` moves
+  ## one into the transcript.
+  waiting: List[String] = []
   ## The prompts sent, oldest first, and the one Up shows (none: the prompt being typed).
   history: List[String] = []
   recall: Optional[Int] = none

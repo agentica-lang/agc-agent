@@ -113,6 +113,28 @@ def test_the_quota_is_polled_only_in_a_chatgpt_session() -> Result[Void]
   Test.eq(App.update(local, App.Msg.StatusTick).cmds.size, 0)
 end
 
+# A message queued into a running turn waits above the prompt; the turn's `message_delivered` moves it into the
+# transcript as a user message, after what the turn showed so far. One the turn never read stays as a note.
+def test_a_queued_message_becomes_a_user_message_once_delivered() -> Result[Void]
+  model = model_of(60, 12).with(generation: 1, id: "s1", serving: "local/m", turn: true)
+  event = ->(n: Int, e: Protocol.Event) { App.Msg.Stream(1, [Client.Item.Event(some(n), e)]) }
+  queued = Protocol.MessageQueued(turn_id: "t1", text: "commit and push", message_id: some("t1.1"))
+  waiting = App.update(model, event.call(1, Protocol.Event.MessageQueued(queued))).model
+  try Test.assert(rows(waiting).any? { |row| row.include?("queued: commit and push") }, rows(waiting).join("\n"))
+  try Test.eq(waiting.entries.select { |e| e.kind == Transcript.Kind.User }.size, 0)
+  delivered = Protocol.MessageDelivered(turn_id: "t1", text: "commit and push", message_id: some("t1.1"))
+  read = App.update(waiting, event.call(2, Protocol.Event.MessageDelivered(delivered))).model
+  users = read.entries.select { |e| e.kind == Transcript.Kind.User }
+  try Test.eq([read.waiting, users.map { |e| e.text }], [[], ["commit and push"]])
+  try Test.assert(not rows(read).any? { |row| row.include?("queued: commit and push") }, rows(read).join("\n"))
+  late = Protocol.MessageQueued(turn_id: "t1", text: "too late", message_id: some("t1.2"))
+  again = App.update(read, event.call(3, Protocol.Event.MessageQueued(late))).model
+  done = Protocol.TurnFinished(turn_id: "t1", stop_reason: Protocol.StopReason.EndTurn)
+  ended = App.update(again, event.call(4, Protocol.Event.TurnFinished(done))).model
+  try Test.eq(ended.waiting, [])
+  Test.eq(ended.entries.last.text, "queued: too late")
+end
+
 # The footer shows the model's output speed: estimated while a reply streams, exact from the call's usage, and kept
 # into the next turn.
 def test_the_footer_shows_the_rate_of_the_output() -> Result[Void]
