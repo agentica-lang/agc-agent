@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Turns no longer stop after 50 tool rounds. Three identical rounds in a row still trigger the loop guard.
 - Finn needs Agentica 0.39.0: the pinned release, the `agentica` versions of the packages and the CI are updated, `monty` reads and writes frames and floats with the sized types of 0.38, `tui_client` builds on agentica-tui at the commit that renames its `Term`, and the `Terminal` import alias is `Tty`.
 - `/mcp` opens a centered dialog that keeps the session visible around it and owns the keyboard until dismissed.
 - The full-screen transcript renders Markdown pipe tables with aligned columns, styled headers and wrapping within each cell.
