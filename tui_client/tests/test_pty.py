@@ -36,6 +36,8 @@ AGENTICA = os.environ.get("AGENTICA", "agentica")
 # the whole front end again each time. PTY_BUILD names a folder that `run_pty.py` already filled.
 BUILD = os.environ.get("PTY_BUILD", "")
 TIMEOUT = 20.0
+STATUS_REQUEST = b"\x1b[5n"
+STATUS_REPLY = b"\x1b[0n"
 ROWS, COLS = 24, 80
 ANSWER = "Hello! It's a pleasure to meet you."
 
@@ -443,6 +445,10 @@ class Terminal:
         except OSError:
             return False
         self.output += chunk
+        # A terminal answers the status request (ESC [ 5 n) that the client sends before it gives the terminal to
+        # another program; the answer ends the client's pending read, which would take the editor's first line.
+        for _ in range(chunk.count(STATUS_REQUEST)):
+            os.write(self.master, STATUS_REPLY)
         return bool(chunk)
 
 
