@@ -234,6 +234,7 @@ export Events.ApprovalResolved
 export Events.Usage
 export Events.TurnFinished
 export Events.MessageQueued
+export Events.MessageDelivered
 export Events.ShellStarted
 export Events.ShellFinished
 export Events.Todo

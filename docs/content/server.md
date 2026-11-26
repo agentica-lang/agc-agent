@@ -77,6 +77,7 @@ A failed request answers with `{"kind": "...", "message": "..."}`. Branch on `ki
 | `tool_started`, `tool_finished` | a tool call starts and ends, with its output and the diff of an edit |
 | `approval_requested`, `approval_resolved` | a call waits for an answer, and gets one |
 | `message_queued` | a message sent while the turn runs |
+| `message_delivered` | the turn read a queued message and sent it with the call it is making, after the tool results so far, as a user message; a turn that ended first starts the next one with its queued messages, and each is delivered when it starts (a reload of the session shows them joined as one message) |
 | `shell_started`, `shell_finished` | a command that a client ran in the session folder (`!CMD`) |
 | `usage` | the tokens of a model call: `input`, `cache_read`, `cache_write` and `context` of that call, `output` summed over the session, `cost`, `turn_cost` and `session_cost` when the catalog has prices, `window`, the model's window in tokens, when it is known, `call_output`, the output of that call alone, and `output_ms`, the milliseconds from its first output to its end |
 | `todos` | the model's whole todo list after a `todo_write` call: `{"todos": [{"content", "status"}]}` |

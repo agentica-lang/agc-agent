@@ -34,7 +34,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
   end
 
   for running in option_list(state.turn)
-    if state.queued.size >= MAX_QUEUED or (state.queued + [typed]).join("\n\n").bytesize > MAX_QUEUED_BYTES
+    if state.queued.size >= MAX_QUEUED or (texts(state.queued) + [typed]).join("\n\n").bytesize > MAX_QUEUED_BYTES
       message = "a turn is running and its queue is full (#{MAX_QUEUED} messages, #{MAX_QUEUED_BYTES} bytes)"
       Actor.reply(reply, error(message, kind: Protocol.KIND_SESSION_BUSY))
       return state
@@ -42,7 +42,8 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
 
     message_id = "#{running.id}.#{running.queued + 1}"
     Actor.reply(reply, ok(Protocol.MessageAccepted(turn_id: running.id, message_id: some(message_id))))
-    queued = state.with(turn: some(running.with(queued: running.queued + 1)), queued: state.queued.push(typed))
+    waiting = state.queued.push(Session.Unread(id: message_id, text: typed))
+    queued = state.with(turn: some(running.with(queued: running.queued + 1)), queued: waiting)
     event = Protocol.MessageQueued(turn_id: running.id, text: typed, message_id: some(message_id))
     return Stream.emit(queued, Protocol.Event.MessageQueued(event))
   end
@@ -144,13 +145,14 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
 end
 
 ## The queued messages after the first `after`, each with the content of the skills it names. Nothing changes here: the
-## turn's next commit takes them out of the queue.
+## commit of the turn that read them takes them out of the queue.
 def take(state: Session.State, turn_id: String, after: Int, reply: Channel[List[Agent.Queued]]) -> Session.State
   current = state.turn.map { |t| t.id == turn_id }.unwrap_or(false)
   read: List[Agent.Queued] = []
   if current
     marks = state.marks
-    for typed in state.queued.drop(after)
+    for waiting in state.queued.drop(after)
+      typed = waiting.text
       # Accepted already: a handler that fails leaves it as the skills made it.
       handled = on_message(state.setup, typed, marks)
       if not handled.ok?
@@ -159,7 +161,7 @@ def take(state: Session.State, turn_id: String, after: Int, reply: Channel[List[
 
       expanded = handled.unwrap_or(Extensions.noted(state.setup.builtins, typed, marks))
 
-      read = read.push(Agent.Queued(typed: typed, text: expanded.text, names: expanded.names))
+      read = read.push(Agent.Queued(id: waiting.id, typed: typed, text: expanded.text, names: expanded.names))
       marks = marks + expanded.names
     end
   end
@@ -344,6 +346,8 @@ def commit(
       ok(_) ->
         message = Protocol.Message(role: Protocol.Role.User, text: queued.typed)
         shown = shown.with(display: shown.display.push(message), queued: shown.queued.drop(1))
+        shown = delivered(shown, queued.id, queued.typed)
+        return shown if shown.broken.some?
       error(e) -> return Stream.broke(shown, e)
     end
   end
@@ -356,6 +360,18 @@ def commit(
     error(e) -> Stream.broke(shown, e)
   end
 end
+
+## The running turn sends the queued message `id` with its next call: the clients show it as a user message.
+def delivered(state: Session.State, id: String, typed: String) -> Session.State
+  for running in option_list(state.turn)
+    event = Protocol.MessageDelivered(turn_id: running.id, text: typed, message_id: some(id))
+    return Stream.emit(state, Protocol.Event.MessageDelivered(event))
+  end
+
+  state
+end
+
+def texts(queued: List[Session.Unread]) -> List[String] = queued.map { |w| w.text }
 
 ## Shows the answer of the turn, its `texts` together, then ends the turn.
 def ended(
@@ -514,8 +530,15 @@ def next_turn(state: Session.State) -> Session.State
   return Stream.unsent(state) if state.broken.some?
 
   ignored: Channel[Result[Protocol.MessageAccepted]] = Channel.new(1)
-  started = start_turn(state.with(queued: []), state.queued.join("\n\n"), ignored)
+  started = start_turn(state.with(queued: []), texts(state.queued).join("\n\n"), ignored)
   return Stream.unsent(started.with(queued: state.queued)) if started.turn.none?
+
+  # The turn starts with all of them, as one message: each is delivered now. A client that attaches meanwhile gets the
+  # history without it, and draws them from the events.
+  started = started.with(turn: started.turn.map { |t| t.with(shown: t.shown - 1) })
+  for waiting in state.queued
+    started = delivered(started, waiting.id, waiting.text)
+  end
 
   started
 end
