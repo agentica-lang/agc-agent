@@ -42,7 +42,11 @@ end
 
 def route(request: HTTP.Request, gate: Channel[Bool]) -> HTTP.Response
   case request.path
-    "/html" -> text_reply("text/html; charset=utf-8", "<html><body><p>hello   world</p></body></html>")
+    "/html" ->
+      text_reply(
+        "text/html; charset=utf-8",
+        "<html><head><style>p{}</style></head><body class=\"x\"><p>hello   world</p><a href=\"/next\">Next</a></body></html>",
+      )
     "/text" -> text_reply("text/plain", "  one   two\n\n three  ")
     "/json" -> text_reply("application/json", "{\"a\":   1}")
     "/big" -> text_reply("text/plain", "x" * 40000)
@@ -222,7 +226,7 @@ def test_a_response_is_shaped_for_the_model() -> Result[Void]
   html = try page(get(ctx, "#{base}/html"))
   try Test.eq(html.status, 200)
   try Test.eq([html.content_type, "#{html.truncated}"], ["text/html", "false"])
-  try Test.assert(html.body.include?("hello   world"), html.body)
+  try Test.eq([html.body, html.processor_used], ["p \"hello world\"\na \"Next\" /next", "html_compact"])
   plain = try page(get(ctx, "#{base}/text"))
   try Test.eq([plain.body, plain.processor_used, plain.content_type], ["one two three", "plain", "text/plain"])
   json = try page(get(ctx, "#{base}/json"))
@@ -367,6 +371,7 @@ def test_the_prompt_shows_the_request_and_a_session_allow_covers_that_call_only(
   try Test.eq(try Tools.target(ctx, "web_fetch", get_call), "https://api.example.com/items")
   posted = try Tools.target(ctx, "web_fetch", post)
   try Test.assert(posted.start_with?("https://api.example.com/items\tPOST "), posted)
+  try Test.eq(posted.length, "https://api.example.com/items\tPOST ".length + 64)
   try Test.assert(posted != try Tools.target(ctx, "web_fetch", other), "two bodies, one target")
 
   rules = try Approval.parse_rules([])

@@ -9,10 +9,12 @@
 ## can reach its peer on 127.0.0.1 or choose what a name resolves to.
 ##
 ## A body is read up to `max(max_bytes, max_parse_bytes)` bytes and cut at `max_bytes` (a page of HTML is read up to
-## `max_parse_bytes`); there is no file for the rest.
+## `max_parse_bytes`); there is no file for the rest. HTML is given as compact text (`HtmlCompact`), plain text with its
+## whitespace normalized, JSON as it is.
 
 import HttpClient from "pkg/http-client/http_client"
 import HTTP from "std/http"
+import HtmlCompact from "html_compact"
 import Regex from "std/regex"
 import Spec from "spec"
 import WebUrl from "web_url"
@@ -135,7 +137,7 @@ def target(_ctx: Spec.Context, input: JSON.Value) -> Result[String]
 
   sent = given.keys.sort.map { |name| "#{name.downcase}:#{given[name]}" }.join("\n")
   digest = "#{method}\n#{sent}\n#{args.body.unwrap_or("")}\n#{args.json.unwrap_or("")}"
-  ok("#{url}\t#{method} #{OpenSSL.Digest.sha256_hexdigest(digest.bytes).slice(0, 12)}")
+  ok("#{url}\t#{method} #{OpenSSL.Digest.sha256_hexdigest(digest.bytes)}")
 end
 
 def method_of(args: FetchArgs) -> String = args.method.unwrap_or("GET").upcase
@@ -315,7 +317,8 @@ def shaped(settings: Settings, stream: HttpClient.Stream, content: Bytes) -> Pag
 end
 
 def process(text: String, type: String, html: Bool) -> Processed
-  return Processed(text: text, name: "none") if html or type == "application/json" or type.end_with?("+json")
+  return Processed(text: HtmlCompact.compact(text), name: "html_compact") if html
+  return Processed(text: text, name: "none") if type == "application/json" or type.end_with?("+json")
 
   words = Regex.split(text, /\s+/).select { |word| not word.empty? }
   Processed(text: words.join(" "), name: "plain")
