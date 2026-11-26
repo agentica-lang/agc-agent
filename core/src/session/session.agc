@@ -8,6 +8,7 @@
 import Actor from "std/actor"
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
+import Agent from "../agent/agent"
 import Catalog from "../providers/catalog"
 import Config from "../config/config"
 import Commands from "../ext/commands"
@@ -761,6 +762,7 @@ def entry(
     max_tokens: options.max_tokens,
     catalog: options.catalog,
     take_ms: options.take_ms,
+    max_rounds: options.max_rounds.unwrap_or(Agent.MAX_ROUNDS),
     catalog_wait_ms: options.catalog_wait_ms,
     approver: opened.approver,
     registry: options.registry.map { |served| served.registry },

@@ -324,9 +324,10 @@ def logged_out(name: Optional[String]) -> String
   "the key of #{name.unwrap_or("")} is removed"
 end
 
-## What a client says of a turn that `done` ended, past its stop reason: why a `max_tokens` stop happened; "" for
-## another stop.
+## What a client says of a turn that `done` ended, past its stop reason: why a `max_tokens` or `max_rounds` stop
+## happened; "" for another stop.
 def stop_note(done: Protocol.TurnFinished) -> String
+  return "the turn reached its limit of tool rounds" if done.stop_reason == Protocol.StopReason.MaxRounds
   return "" if done.stop_reason != Protocol.StopReason.MaxTokens
 
   case done.max_tokens

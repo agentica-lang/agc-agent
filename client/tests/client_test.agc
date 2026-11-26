@@ -404,16 +404,25 @@ def asked(reply: Protocol.ServerStatus) -> Result[Http.Display]
   ok(got)
 end
 
-# A max_tokens stop says the output limit it hit, when the server sent one; another stop has no note.
+# A max_tokens stop says the output limit it hit, when the server sent one; a max_rounds stop says the round limit;
+# another stop has no note.
 def test_a_max_tokens_stop_names_the_output_limit() -> Result[Void]
   cut = Protocol.TurnFinished(turn_id: "t", stop_reason: Protocol.StopReason.MaxTokens, max_tokens: some(500))
   notes = [
     Client.stop_note(cut),
     Client.stop_note(cut.with(max_tokens: none)),
     Client.stop_note(cut.with(stop_reason: Protocol.StopReason.EndTurn)),
+    Client.stop_note(cut.with(stop_reason: Protocol.StopReason.MaxRounds)),
   ]
 
-  Test.eq(notes, ["the reply hit the model's output limit (500 tokens)", "the reply hit the model's output limit", ""])
+  expected = [
+    "the reply hit the model's output limit (500 tokens)",
+    "the reply hit the model's output limit",
+    "",
+    "the turn reached its limit of tool rounds",
+  ]
+
+  Test.eq(notes, expected)
 end
 
 # The event stream has no heartbeat: its body is read with no time limit (only its head has one), so a session that is
