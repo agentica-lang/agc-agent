@@ -63,7 +63,7 @@ finn login opencode-go        # or set OPENCODE_API_KEY
 finn --provider opencode-go   # the model is deepseek-v4.1-flash; --model NAME picks another
 ```
 
-Each model is served with the API that [models.dev](https://models.dev) gives it: OpenAI chat completions, OpenAI Responses (`/responses`) or Anthropic Messages (`/messages`, the key in `x-api-key`), at the URL above, or at the URL the model's entry gives when that is on the same scheme, host and port, so your key goes to no other host. A model the catalog does not list uses chat completions. `/model` leaves out the models whose API Finn does not speak, such as Google's, and choosing one is refused. Each call carries `x-opencode-client: finn` and `x-opencode-session` with the session id, which OpenCode requires to route a call.
+Each model is served with the API that [models.dev](https://models.dev) gives it: OpenAI chat completions, OpenAI Responses (`/responses`) or Anthropic Messages (`/messages`, the key in `x-api-key`), at the URL above; a Responses or Messages model is called at the URL its entry gives instead when that has the same scheme, host and port, so your key goes to no other host. A model the catalog does not list uses chat completions. `/model` leaves out the models whose API Finn does not speak, such as Google's, and choosing one is refused. Each call carries `x-opencode-client: finn` and `x-opencode-session` with the session id, which OpenCode requires to route a call.
 
 ## Local: llama.cpp and other servers
 

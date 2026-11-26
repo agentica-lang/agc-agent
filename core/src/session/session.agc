@@ -936,10 +936,10 @@ def endpoint_of(options: Config.Options, provider: String, api: String) -> Resul
   )
 end
 
-# The endpoint of the API that the catalog gives `model` on a provider that routes its models (`opencode-go`), at
-# the URL
-# the catalog gives it when that is on the provider's host. None on another provider, and for a model the catalog does
-# not know (it stays on the provider's own API); an error for a model whose API Finn does not speak.
+# The endpoint of the API that the catalog gives `model` on a provider that routes its models (`opencode-go`). A model
+# of another API than chat completions is called at the URL the catalog gives it when that is on the provider's host;
+# chat completions keep the provider's URL. None on another provider, and for a model the catalog does not know (it
+# stays on the provider's own API); an error for a model whose API Finn does not speak.
 def routed_endpoint(
   options: Config.Options,
   provider: String,
@@ -956,7 +956,11 @@ def routed_endpoint(
         end
 
         endpoint = try endpoint_of(options, provider, listed.api)
-        url = Providers.model_url(found.base_url, listed.api_url)
+        url = found.base_url
+        if listed.api != "openai"
+          url = Providers.model_url(found.base_url, listed.api_url)
+        end
+
         for make in option_list(found.at)
           next if url == found.base_url
 

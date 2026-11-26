@@ -59,9 +59,8 @@ def test_a_chat_call_sends_the_key_and_the_model_to_the_preset_url() -> Result[V
 end
 
 # One session moves from model to model: each call goes to the API its catalog entry names, at the preset's URL (the
-# catalog's own URLs are on another host, so they are not used) with its key; a model the catalog does not list
-# stays on
-# chat completions, and one of an API Finn does not speak (Google's) is refused.
+# catalog's own URLs are on another host, so they are not used) with its key; a model the catalog does not list stays
+# on chat completions, and one of an API Finn does not speak (Google's) is refused, also when a turn starts.
 def test_each_model_goes_to_the_api_the_catalog_gives_it() -> Result[Void]
   within_catalog(false) do |catalog, _dir|
     replies = ["text.sse", "anthropic/text.sse", "openai_responses/text.sse", "text.sse"]
@@ -98,6 +97,10 @@ def test_each_model_goes_to_the_api_the_catalog_gives_it() -> Result[Void]
       google = Protocol.encode_update_session(Protocol.UpdateSession(model: some("gemini-4-argon")))
       try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), google, H.auth(h))).status, 400)
       try Test.eq((try H.session(h, id)).model, "not-in-the-catalog")
+      unsupported = try H.new_session_in(h, h.work, provider: some("opencode-go"), model: some("gemini-4-argon"))
+      refused = try H.send(h, unsupported, "Hello.")
+      try Test.eq(refused.status, 400)
+      try Test.assert(refused.text.include?("uses an API Finn does not speak"), refused.text)
       try Test.eq(
         Catalog.models(catalog, "opencode-go", true),
         ["deepseek-v4.1-flash", "gpt-6-luna", "kimi-k3", "qwen3.8-max"],
@@ -110,8 +113,8 @@ def test_each_model_goes_to_the_api_the_catalog_gives_it() -> Result[Void]
   end
 end
 
-# A model whose catalog entry puts its API on the preset's host is called there: the Messages API of the model under
-# its own root, not under the preset's URL.
+# A model of another API than chat completions whose catalog entry is on the preset's host is called at that URL; chat
+# completions keep the preset's.
 def test_a_model_uses_the_url_its_catalog_entry_gives_on_the_same_host() -> Result[Void]
   within_catalog(true) do |catalog, dir|
     setup = H.Setup(
@@ -134,17 +137,13 @@ def test_a_model_uses_the_url_its_catalog_entry_gives_on_the_same_host() -> Resu
 
       Test.eq(
         paths,
-        [
-          "/opencode-go/anthropic/v1/messages",
-          "/opencode-go/openai/v1/responses",
-          "/opencode-go/openai/v1/chat/completions",
-        ],
+        ["/opencode-go/anthropic/v1/messages", "/opencode-go/openai/v1/responses", "/opencode-go/chat/completions"],
       )
     end
   end
 end
 
-# The URL of the catalog is used only on the host, port and scheme of the preset's URL, so the key goes nowhere else.
+# The URL of the catalog is used only on the scheme, host and port of the preset's URL, so the key goes nowhere else.
 def test_a_catalog_url_on_another_host_is_ignored() -> Result[Void]
   base = "https://opencode.ai/inference/go/v1"
   same = "https://opencode.ai/inference/go/anthropic/v1"
@@ -152,10 +151,52 @@ def test_a_catalog_url_on_another_host_is_ignored() -> Result[Void]
   try Test.eq(Providers.model_url(base, "HTTPS://OpenCode.ai/x/v1"), "HTTPS://OpenCode.ai/x/v1")
   others = [
     "https://opencode.ai.evil.example/v1", "http://opencode.ai/v1", "https://opencode.ai:8443/v1",
-    "https://evil.example/v1", "",
+    "https://evil.example/v1", "https://opencode.ai@evil.example/v1", "https://evil.example@opencode.ai/v1", "",
   ]
 
   Test.eq(others.map { |u| Providers.model_url(base, u) }.uniq, [base])
+end
+
+# A compaction model the catalog does not list takes chat completions, not the API of the session's model; one whose
+# API Finn does not speak fails the fold.
+def test_an_unlisted_compaction_model_takes_chat_completions() -> Result[Void]
+  within_catalog(false) do |catalog, _dir|
+    for compact in ["not-in-the-catalog", "gemini-4-argon"]
+      setup = H.Setup(
+        replies: ["anthropic/text.sse", "anthropic/text.sse", "text.sse"],
+        presets: ["opencode-go"],
+        provider: "opencode-go",
+        model: "qwen3.8-max",
+        compact_model: compact,
+        approvals: false,
+        catalog: some(catalog),
+      )
+
+      try H.using(setup) do |h|
+        id = try H.new_session_in(h, h.work, provider: some("opencode-go"), model: some("qwen3.8-max"))
+        for text in ["One.", "Two."]
+          _ = try H.send(h, id, text)
+          _ = try H.idle(h, id)
+        end
+
+        folded = try H.post(h, Protocol.compact_path(id), "")
+        _ = try H.next_request(h)
+        _ = try H.next_request(h)
+        if compact == "gemini-4-argon"
+          try Test.assert(folded.status != 200, "the fold went on")
+          try Test.assert(folded.text.include?("uses an API Finn does not speak"), folded.text)
+        else
+          summary = try H.next_request(h)
+          try Test.eq(summary.path, "/opencode-go/chat/completions")
+          try Test.eq(JSON.get(try JSON.parse(summary.body), "model"), ok(JSON.from(compact)))
+        end
+
+        ok()
+      end
+    end
+
+    ok()
+  end
 end
 
 # The summary of a fold is written with the API of the compaction model, not of the session's model.
@@ -267,9 +308,9 @@ def offered(
   Providers.offered(customs, read, LLM.Options(), stored)
 end
 
-# A catalog of the models.dev fixture on a local server. With `rooted`, the server waits for the file `root` in
-# `dir` and
-# answers with the URLs of `opencode-go` moved under it (the fake of the test is known only once it runs).
+# A catalog of the models.dev fixture on a local server. With `rooted`, the server waits (10 s at most) for the file
+# `root` in `dir` and answers with the URLs of `opencode-go` moved under it: the fake of the test is known only once
+# it runs.
 def within_catalog(rooted: Bool, body: Fn[Catalog.Catalog, String, Result[Void]]) -> Result[Void]
   tmp = System.env("TMPDIR").unwrap_or("/tmp")
   dir = "#{tmp}/core-opencode-#{Random.int(0, 999999999)}"
@@ -279,8 +320,10 @@ def within_catalog(rooted: Bool, body: Fn[Catalog.Catalog, String, Result[Void]]
   answer = ->(_request: HTTP.Request) {
     text = json
     if rooted
-      while not File.stat("#{dir}/root").ok?
+      waited = 0
+      while not File.stat("#{dir}/root").ok? and waited < 10_000
         Task.sleep(10)
+        waited = waited + 10
       end
 
       root = File.read_text("#{dir}/root").unwrap_or("")

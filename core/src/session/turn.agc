@@ -215,6 +215,12 @@ def compaction_of(setup: Session.Setup, window: Int) -> Compaction.Settings
     headers: headers_of(setup),
   )
 
+  mine: Optional[Session.Endpoint] = none
+  case route(setup)
+    ok(found) -> mine = found
+    error(_) -> nil
+  end
+
   case route(asked)
     ok(found) ->
       for endpoint in option_list(found)
@@ -225,7 +231,12 @@ def compaction_of(setup: Session.Setup, window: Int) -> Compaction.Settings
         )
       end
 
-    error(_) -> nil
+      # A summary model the catalog does not list takes the provider's own API, not the one of the session's model.
+      if found.none? and mine.some?
+        settings = settings.with(provider: some(setup.provider))
+      end
+
+    error(e) -> settings = settings.with(refused: e.message)
   end
 
   settings
