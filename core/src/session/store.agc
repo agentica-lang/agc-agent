@@ -25,7 +25,7 @@ PROMPT_EXTENSION = ".prompt.json"
 ## A listing looks this far into a file for the first user message: the lines, and the bytes.
 TITLE_LINES = 64
 TITLE_BYTES = 262_144
-CONTENT = ["user", "queued", "messages", "answer", "compaction"]
+CONTENT = ["user", "queued", "messages", "answer", "compaction", "parked", "parked_set"]
 MAX_LINE_BYTES = 16_777_216
 MAX_WRITE_BYTES = 1_048_576
 ## A node of the tree has this much of its answer.
@@ -93,6 +93,18 @@ struct Saved
   usage: Optional[Protocol.Usage] = none
   ## The output of the commands since the last user message that go to the model before the next one.
   shells: List[String] = []
+  ## The wakes that wait for the next user message. A `parked` record adds one; the next user record
+  ## (no `source`) carries the ones it takes in its own `parked` field and drops them, so a restart replays
+  ## exactly the wakes no user message took yet. Wake records (with `source`) never take any. A `parked_set`
+  ## record replaces the list whole: a branch writes one atomically with its own record, so the waiting wakes
+  ## stay with the session and not with the branch history.
+  parked: List[Parked] = []
+end
+
+## A wake parked for the next user message: its text and who sent it (`child:ID` or `extension`).
+struct Parked
+  text: String
+  source: String
 end
 
 ## Where a branch or a copy starts: the entry the next record follows, and the user message it goes back before ("" at
@@ -222,13 +234,18 @@ end
 
 ## The message that starts a turn, the first of the turn's history; `typed` is what is shown when not empty (the text
 ## without what extensions put before it) and `marks` the names they noted. With `shells`, the model's message starts
-## with the output of the commands since the last user message, which their `shell_finished` events hold.
+## with the output of the commands since the last user message, which their `shell_finished` events hold. `source`
+## is who sent it when the user did not (`child:ID` or `extension`): a wake is saved with no `typed`. A user's message
+## carries the parked wakes it takes in `parked`, which it consumes: the same record both starts the turn and takes
+## them, so a restart never takes one twice and never loses one it did not take.
 def append_user(
   file: Ref,
   text: String,
   typed: String = "",
   marks: List[String] = [],
   shells: Bool = false,
+  source: Optional[String] = none,
+  parked: List[Parked] = [],
 ) -> Result[Void]
   fields = {"type": JSON.from("user"), "text": JSON.from(text)}
   if typed != "" and typed != text
@@ -239,13 +256,32 @@ def append_user(
     fields = fields.put("shells", JSON.from(true))
   end
 
+  for sent in option_list(source)
+    fields = fields.put("source", JSON.from(sent))
+  end
+
+  if not parked.empty?
+    fields = fields.put("parked", JSON.array(parked.map { |p| encode_parked(p) }))
+  end
+
   append(file, with_marks(fields, marks))
 end
 
-## A message sent during a turn, once the turn read it: shown as a user message that starts no turn. The history has it
-## in the `messages` record that follows.
-def append_queued(file: Ref, text: String) -> Result[Void]
-  append(file, {"type": JSON.from("queued"), "text": JSON.from(text)})
+## A wake that waits for the next user message. The `message_queued` event the clients see is saved separately;
+## this record is written first, so a crash between the two leaves at most an extra parked wake, never a lost one.
+def append_parked(file: Ref, text: String, source: String) -> Result[Void]
+  append(file, {"type": JSON.from("parked"), "text": JSON.from(text), "source": JSON.from(source)})
+end
+
+## A message sent during a turn, once the turn read it: shown as a user message that starts no turn, with who sent it
+## when the user did not (`child:ID` or `extension`). The history has it in the `messages` record that follows.
+def append_queued(file: Ref, text: String, source: Optional[String] = none) -> Result[Void]
+  fields = {"type": JSON.from("queued"), "text": JSON.from(text)}
+  for sent in option_list(source)
+    fields = fields.put("source", JSON.from(sent))
+  end
+
+  append(file, fields)
 end
 
 ## The messages a round added to the history, in one record so that a call never goes without its result, with the
@@ -311,10 +347,18 @@ end
 def reopen(file: Ref) -> Result[Void] = write(file, "\n")
 
 ## From now on the records follow entry `leaf`, a `Point` of the file. The branch takes event id `until`, so a client
-## that saw an id before it gets `resync`, after a restart too.
-def append_branch(file: Ref, leaf: Int, until: Int) -> Result[Void]
+## that saw an id before it gets `resync`, after a restart too. With `snapshot`, the same write carries a `parked_set`
+## record with the waiting wakes, so a crash leaves the old branch with the old list or the new branch with the new
+## one, never the new branch without them.
+def append_branch(file: Ref, leaf: Int, until: Int, snapshot: Optional[List[Parked]] = none) -> Result[Void]
   branch = try line({"type": JSON.from("branch"), "parent": JSON.from(leaf)})
-  write(file, branch + try line({"type": JSON.from("ids"), "until": JSON.from(until)}))
+  text = branch + try line({"type": JSON.from("ids"), "until": JSON.from(until)})
+  for waiting in option_list(snapshot)
+    parked = JSON.array(waiting.map { |p| encode_parked(p) })
+    text = text + try line({"type": JSON.from("parked_set"), "parked": parked})
+  end
+
+  write(file, text)
 end
 
 ## The tree of the file, reading only the lines after those `known` read when the file grew since: the session's
@@ -356,14 +400,16 @@ def point(entries: Entries, entry: Optional[Int]) -> Result[Point]
   error("no turn starts or ends at entry #{at}", kind: Protocol.KIND_INVALID)
 end
 
-## A new session file of `header` (0600) with the records of the branch that ends at `leaf`. A copy that
-## fails is removed.
+## A new session file of `header` (0600) with the records of the branch that ends at `leaf`. Waiting wakes stay
+## with the original session: `parked` and `parked_set` records are left out, so the copy starts with none. A copy
+## that fails is removed.
 def copy(file: Ref, dir: String, header: Header, leaf: Int) -> Result[Ref]
   entries = try read_entries(file)
   return error("no entry #{leaf}", kind: Protocol.KIND_INVALID) if not entry?(entries, leaf)
 
   created = try create(file.port, dir, header)
-  text = branch(entries, leaf).map { |record| "#{record.line}\n" }.join("")
+  kept = branch(entries, leaf).select { |record| record.kind != "parked" and record.kind != "parked_set" }
+  text = kept.map { |record| "#{record.line}\n" }.join("")
   written = copied_content(file, created, text)
   if not written.ok?
     _ = remove(created)
@@ -979,6 +1025,19 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
 
       message = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
       users = saved.users + 1
+      parked = saved.parked
+      # A user's message (no `source`) takes the parked wakes its own `parked` field names, atomically with
+      # starting its turn; a wake's message (with `source`) takes none. An old record without `parked` takes
+      # all of them when it is a user's, which is all of them then too since only new records park any.
+      if optional_string(json, "source").none?
+        taken = parked_of(json)
+        if JSON.get(json, "parked").ok?
+          parked = saved.parked.drop(taken.size)
+        else
+          parked = []
+        end
+      end
+
       ok(
         saved.with(
           history: saved.history.push(message),
@@ -988,8 +1047,13 @@ def added(saved: Saved, json: JSON.Value) -> Result[Saved]
           folded: none,
           marks: saved.marks + marks_of(json),
           shells: [],
+          parked: parked,
         ),
       )
+    "parked" ->
+      parked = Parked(text: try field(json, "text"), source: try field(json, "source"))
+      ok(saved.with(parked: saved.parked.push(parked)))
+    "parked_set" -> ok(saved.with(parked: try parked_list_of(json)))
     "queued" ->
       shown = Protocol.Message(role: Protocol.Role.User, text: try field(json, "text"))
       ok(saved.with(shown: saved.shown.push(shown)))
@@ -1057,6 +1121,33 @@ def with_marks(fields: Map[String, JSON.Value], marks: List[String]) -> Map[Stri
   return fields if marks.empty?
 
   fields.put("marks", JSON.from(marks))
+end
+
+def encode_parked(parked: Parked) -> JSON.Value
+  JSON.object({"text": JSON.from(parked.text), "source": JSON.from(parked.source)})
+end
+
+# The waiting wakes a `parked_set` record keeps; a missing or broken one is an error, so the load skips the
+# record and keeps the list it had.
+def parked_list_of(json: JSON.Value) -> Result[List[Parked]]
+  taken = try JSON.get(json, "parked")
+  case JSON.decode(taken, List[Parked])
+    ok(waiting) -> ok(waiting)
+    error(_) -> error("a parked_set with no parked wakes")
+  end
+end
+
+# The parked wakes a user record took; a missing or broken `parked` is none.
+def parked_of(json: JSON.Value) -> List[Parked]
+  case JSON.get(json, "parked")
+    ok(value) ->
+      case JSON.decode(value, List[Parked])
+        ok(taken) -> taken
+        error(_) -> []
+      end
+
+    error(_) -> []
+  end
 end
 
 # A `marks` that is missing or not a list of texts is none.

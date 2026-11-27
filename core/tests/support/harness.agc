@@ -121,6 +121,8 @@ struct Setup
   catalog: Optional[Catalog.Catalog] = none
   ## `FINN_MAX_TOKENS`.
   max_tokens: Optional[Int] = none
+  ## `FINN_WAKES_MAX`.
+  wakes_max: Int = 100
   ## The token that Anthropic fetches again after a 401; none when empty.
   fresh_token: String = ""
   ## How long a turn waits for its queued messages.
@@ -365,6 +367,7 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     code_mode: code_mode(setup.monty),
     catalog: setup.catalog,
     max_tokens: setup.max_tokens,
+    wakes_max: setup.wakes_max,
     take_ms: setup.take_ms,
     max_rounds: setup.max_rounds,
     catalog_wait_ms: setup.catalog_wait_ms,

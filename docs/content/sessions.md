@@ -34,14 +34,14 @@ A session is a tree. `/tree` shows your messages, with a branch one step in.
 - `/tree N` goes back to before message N: your next message starts a branch from there.
 - `/tree N+` goes back to after the answer to message N.
 
-Nothing is lost: the other branches stay in the file, and `/tree` shows them.
+Nothing is lost: the other branches stay in the file, and `/tree` shows them. A wake parked for the next user message stays with the session across a `/tree` move and a restart, and is still taken exactly once; a consumed wake never comes back by moving.
 
 ## Fork and clone
 
 - `/fork N` (or `/fork N+`) starts a new session with the history up to message N (or after its answer).
 - `/clone` starts a new session with the whole history.
 
-The new session keeps the folder, the system prompt, the provider, the model and the thinking level.
+The new session keeps the folder, the system prompt, the provider, the model and the thinking level. It starts with no parked wakes: wakes waiting in the original session stay there and are not cloned.
 
 ## Export
 

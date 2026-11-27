@@ -52,7 +52,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `GET /v1/sessions/ID/events` | the event stream of the session |
 | `GET /v1/sessions/ID/status-segments` | the text of the status segments of the extensions and of core, `chatgpt.quota` among them, for the session, as `{"segments":[{"name":"example.provider","text":"provider: local"}]}` |
 | `POST /v1/sessions/ID/approvals/AID` | answer an approval: `{"decision": "allow"}` |
-| `POST /v1/sessions/ID/stop` | stop the running turn or command, and the turns of its child sessions when it stops the parent's turn; `{"turn_id": "..."}` stops only that turn while it runs; answers `{"stopped": true}` or `false` |
+| `POST /v1/sessions/ID/stop` | stop the running turn or command, and the turns of its child sessions when it stops the parent's turn; `{"turn_id": "..."}` stops only that turn while it runs; answers `{"stopped": true}` or `false`; a stop that stops nothing leaves the wake window as it was |
 | `POST /v1/sessions/ID/compact` | fold the history now |
 | `GET /v1/sessions/ID/tree` | the user messages of every branch |
 | `POST /v1/sessions/ID/branch` | go on from an earlier message |
@@ -72,11 +72,11 @@ A failed request answers with `{"kind": "...", "message": "..."}`. Branch on `ki
 
 | Event | When |
 |---|---|
-| `turn_started` | a turn starts with a user message; `source` says who sent it when the user did not (`child:ID` or `extension`) |
+| `turn_started` | a turn starts with a user message, or with a wake from an extension or a child session; `source` says who sent it when the user did not (`child:ID` or `extension`), and a user's turn takes parked wakes before its own |
 | `text_delta`, `thinking_delta` | a piece of the model's answer or thinking |
 | `tool_started`, `tool_finished` | a tool call starts and ends, with its output and the diff of an edit; `session` names the child session whose call it is |
 | `approval_requested`, `approval_resolved` | a call waits for an answer, and gets one; `session` on the request names the child session whose call asks |
-| `message_queued` | a message sent while the turn runs; `source` says who sent it when the user did not (`child:ID` or `extension`) |
+| `message_queued` | a message sent while the turn runs, or a parked wake that waits for the next user message (an empty `turn_id` past the wake cap or after a stop, durable across a restart and a branch and taken exactly once; a fork starts with none); `source` says who sent it when the user did not (`child:ID` or `extension`) |
 | `message_delivered` | the turn read a queued message and sent it with the call it is making, after the tool results so far, as a user message; a turn that ended first starts the next one with its queued messages, and each is delivered when it starts (a reload of the session shows them joined as one message) |
 | `shell_started`, `shell_finished` | a command that a client ran in the session folder (`!CMD`) |
 | `usage` | the tokens of a model call: `input`, `cache_read`, `cache_write` and `context` of that call, `output` summed over the session, `cost`, `turn_cost` and `session_cost` when the catalog has prices, `window`, the model's window in tokens, when it is known, `call_output`, the output of that call alone, `output_ms`, the milliseconds from its first output to its end, and `session`, the child session whose call it prices |
