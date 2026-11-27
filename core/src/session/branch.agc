@@ -64,6 +64,8 @@ def moved(state: Session.State, entry: Int) -> Result[Moved]
     error(e) -> return error("the session file cannot be written: #{e.message}", kind: Protocol.KIND_SESSION_STORAGE)
   end
 
+  # The live parked wakes, count and window stay: a wake a user message already took never comes back by
+  # navigating, and a wake still waiting stays waiting on the new branch too.
   on_branch = known.with(
     history: saved.history,
     display: saved.shown,

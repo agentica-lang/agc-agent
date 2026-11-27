@@ -5,6 +5,7 @@
 import Protocol from "pkg/protocol/protocol"
 import Core from "../core"
 import Config from "../src/config/config"
+import Store from "../src/session/store"
 import H from "support/harness"
 
 # An idle parent woken by its child's answer starts a turn with the child's id as its source.
@@ -94,7 +95,11 @@ def test_a_wake_past_the_cap_parks_for_the_next_user_message() -> Result[Void]
     end
 
     carried = bodies[3]
-    Test.assert(carried.include?("two") and carried.include?("Hi."), "the user message did not carry the wake")
+    try Test.assert(carried.include?("two") and carried.include?("Hi."), "the user message did not carry the wake")
+    Test.assert(
+      carried.index_of("two").unwrap_or(1_000_000) < carried.index_of("Hi.").unwrap_or(-1),
+      "the wake: #{carried}",
+    )
   end
 end
 
@@ -194,6 +199,220 @@ def test_a_child_host_wakes_only_its_parent() -> Result[Void]
   end
 end
 
+# An idle stop stops nothing and leaves the window closed: the next wake still starts a turn.
+def test_an_idle_stop_leaves_the_window_closed() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    stopped = try Protocol.decode_stopped((try H.post(h, Protocol.stop_path(parent), "{}")).text)
+    try Test.eq(stopped.stopped, false)
+    host = try host_of(calls)
+    b = try H.subscribe(h, parent)
+    woke = try host.send.call(parent, "after idle stop")
+    try Test.assert(not woke.turn_id.empty?, "an idle stop parked the next wake")
+    b = try H.until(b, Protocol.EventKind.TurnStarted)
+    b = try H.until(b, Protocol.EventKind.TurnFinished)
+    H.close(b)
+    Test.eq(started_source(b.seen), "extension")
+  end
+end
+
+# A stop for a turn that is not running stops nothing and leaves the window closed.
+def test_a_stale_stop_leaves_the_window_closed() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    stopped = try Protocol.decode_stopped((try H.post(h, Protocol.stop_path(parent), "{\"turn_id\": \"stale\"}")).text)
+    try Test.eq(stopped.stopped, false)
+    host = try host_of(calls)
+    b = try H.subscribe(h, parent)
+    woke = try host.send.call(parent, "after stale stop")
+    try Test.assert(not woke.turn_id.empty?, "a stale stop parked the next wake")
+    b = try H.until(b, Protocol.EventKind.TurnStarted)
+    b = try H.until(b, Protocol.EventKind.TurnFinished)
+    H.close(b)
+    Test.eq(started_source(b.seen), "extension")
+  end
+end
+
+# A real stop opens the window, an idle stop keeps it open, and the next user message closes it again.
+def test_an_idle_stop_keeps_an_open_window_until_the_next_user_message() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse@hold", "text.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnStarted)
+    host = try host_of(calls)
+    stopped = try Protocol.decode_stopped((try H.post(h, Protocol.stop_path(parent), "{}")).text)
+    try Test.eq(stopped.stopped, true)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    idle = try Protocol.decode_stopped((try H.post(h, Protocol.stop_path(parent), "{}")).text)
+    try Test.eq(idle.stopped, false)
+    b = try H.subscribe(h, parent)
+    parked = try host.send.call(parent, "late")
+    try Test.eq(parked.turn_id, "")
+    b = try H.until(b, Protocol.EventKind.MessageQueued)
+    H.close(b)
+    _ = try H.send(h, parent, "Next.")
+    c = try H.until(try H.subscribe(h, parent), Protocol.EventKind.TurnFinished)
+    H.close(c)
+    bodies: List[String] = []
+    for _i in 1..3
+      bodies = bodies.push((try H.next_request(h)).body)
+    end
+
+    carried = bodies[2]
+    try Test.assert(carried.include?("late") and carried.include?("Next."), "the user message: #{carried}")
+    d = try H.subscribe(h, parent)
+    woke = try host.send.call(parent, "after")
+    try Test.assert(not woke.turn_id.empty?, "the window stayed open past the user message")
+    d = try H.until(d, Protocol.EventKind.TurnFinished)
+    H.close(d)
+    Test.eq(started_source(d.seen), "extension")
+  end
+end
+
+# A parked wake survives a restart: the next user message carries it before its own, with its source on the queued
+# event, and a second restart does not carry it again. Branching back after the user message takes it does not
+# bring it back either.
+def test_a_parked_wake_survives_a_restart_and_is_taken_once() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse", "text.sse", "text.sse", "text.sse"]
+  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false, wakes_max: 1)
+  H.using(setup) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    _ = try host.send.call(parent, "one")
+    _ = try H.idle(h, parent)
+    parked = try host.send.call(parent, "two")
+    try Test.eq(parked.turn_id, "")
+    H.restarted(h, setup, "") do |r|
+      saved = try Store.load(Store.Ref(port: Store.disk(), path: H.session_file(r, parent)))
+      try Test.eq(saved.parked.map { |p| p.text }, ["two"])
+      try Test.eq(saved.parked.map { |p| p.source }, ["extension"])
+      b = try H.subscribe(r, parent)
+      _ = try H.send(r, parent, "Hi.")
+      b = try H.until(b, Protocol.EventKind.TurnStarted)
+      b = try H.until(b, Protocol.EventKind.TurnFinished)
+      H.close(b)
+      try Test.eq(started_sources(b.seen).last, "user")
+      bodies: List[String] = []
+      for _i in 1..4
+        bodies = bodies.push((try H.next_request(r)).body)
+      end
+
+      carried = bodies[3]
+      try Test.assert(carried.include?("two") and carried.include?("Hi."), "the user message: #{carried}")
+      try Test.assert(
+        carried.index_of("two").unwrap_or(1_000_000) < carried.index_of("Hi.").unwrap_or(-1),
+        "the wake: #{carried}",
+      )
+
+      H.restarted(r, setup, "") do |s|
+        again = try Store.load(Store.Ref(port: Store.disk(), path: H.session_file(s, parent)))
+        try Test.eq(again.parked, [])
+        _ = try H.send(s, parent, "Again.")
+        _ = try H.idle(s, parent)
+        last = try last_user((try H.next_request(s)).body)
+        try Test.eq(last, "Again.")
+        nodes = try tree(s, parent)
+        _ = try H.post(s, Protocol.branch_path(parent), Protocol.encode_branch(Protocol.Branch(entry: nodes[0].id)))
+        _ = try H.send(s, parent, "Branched.")
+        _ = try H.idle(s, parent)
+        branched = try last_user((try H.next_request(s)).body)
+        Test.eq(branched, "Branched.")
+      end
+    end
+  end
+end
+
+# A parked wake waits with a shell's output: the next user message carries the shell first, then the wake.
+def test_a_shell_output_and_a_parked_wake_reach_the_next_turn_in_order() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse", "text.sse", "text.sse"]
+  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false, wakes_max: 1)
+  H.using(setup) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    _ = try host.send.call(parent, "one")
+    _ = try H.idle(h, parent)
+    parked = try host.send.call(parent, "two")
+    try Test.eq(parked.turn_id, "")
+    s = try H.subscribe(h, parent)
+    shell = try shell(h, parent, "echo hi", true)
+    try Test.eq(shell.status, 202)
+    s = try H.until(s, Protocol.EventKind.ShellFinished)
+    H.close(s)
+    _ = try H.send(h, parent, "Hi.")
+    _ = try H.idle(h, parent)
+    bodies: List[String] = []
+    for _i in 1..4
+      bodies = bodies.push((try H.next_request(h)).body)
+    end
+
+    carried = bodies[3]
+    hi = carried.index_of("hi").unwrap_or(1_000_000)
+    two = carried.index_of("two").unwrap_or(1_000_000)
+    said = carried.index_of("Hi.").unwrap_or(-1)
+    try Test.assert(carried.include?("hi") and carried.include?("two"), "the turn: #{carried}")
+    Test.assert(hi < two and two < said, "shell, wake, user: #{carried}")
+  end
+end
+
+# A wake while a shell runs is refused as busy, and a child may wake itself with its own id.
+def test_a_wake_during_a_shell_is_busy_and_a_child_may_wake_itself() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse", "spawn.sse", "text.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    _ = try shell(h, parent, "sleep 30", false)
+    busy = host.send.call(parent, "while busy")
+    try Test.eq(kind_of(busy), Protocol.KIND_SESSION_BUSY)
+    _ = try H.post(h, Protocol.stop_path(parent), "{}")
+    _ = try H.idle(h, parent)
+    child = try host.create.call(Core.NewChild())
+    _ = try host.send.call(child, "Say hi.")
+    c = try H.subscribe(h, child)
+    c = try H.until(c, Protocol.EventKind.TurnFinished)
+    H.close(c)
+    child_call = try calls.recv(5000)
+    child_host = try host_of_call(child_call)
+    me = try H.subscribe(h, child)
+    woke = try child_host.send.call(child, "myself")
+    try Test.assert(not woke.turn_id.empty?, "a child cannot wake itself")
+    me = try H.until(me, Protocol.EventKind.TurnStarted)
+    me = try H.until(me, Protocol.EventKind.TurnFinished)
+    H.close(me)
+    Test.eq(started_source(me.seen), "child:#{child}")
+  end
+end
+
 private
 
 def with_spawn(calls: Channel[Core.Call]) -> Core.Registry = Core.registry() |> Core.add_tool(spawn_tool(calls))
@@ -276,6 +495,28 @@ def option_list[T](value: Optional[T]) -> List[T]
     some(v) -> [v]
     none -> []
   end
+end
+
+def tree(h: H.Harness, id: String) -> Result[List[Protocol.TreeNode]]
+  ok((try Protocol.decode_session_tree((try H.get(h, Protocol.tree_path(id))).text)).nodes)
+end
+
+# The last user message of a model request, which is the turn's own text with what it carries.
+def last_user(body: String) -> Result[String]
+  messages = try JSON.list(try JSON.get(try JSON.parse(body), "messages"))
+  last = ""
+  for message in messages
+    role = JSON.string(JSON.get(message, "role").unwrap_or(JSON.null())).unwrap_or("")
+    if role == "user"
+      last = JSON.string(JSON.get(message, "content").unwrap_or(JSON.null())).unwrap_or(last)
+    end
+  end
+
+  ok(last)
+end
+
+def shell(h: H.Harness, id: String, command: String, context: Bool) -> Result[H.Answer]
+  H.post(h, Protocol.shell_path(id), Protocol.encode_run_shell(Protocol.RunShell(command: command, context: context)))
 end
 
 # The source of the last `message_queued` with an empty `turn_id` (a parked wake), "" when none.

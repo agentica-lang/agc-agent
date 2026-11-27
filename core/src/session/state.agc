@@ -269,11 +269,15 @@ struct State
   ## Messages sent while the turn runs, which it has not read yet. They live only here: a crash of the server loses
   ## them with no `queue_dropped`.
   queued: List[Unread] = []
-  ## The wakes since the last user message that started a turn.
+  ## The wakes since the last user message that started a turn. Per-process only: a restart counts again.
   wakes: Int = 0
-  ## The wakes that wait for the next user message, which takes them before its own.
+  ## The wakes that wait for the next user message, which takes them before its own. Durable: `parked` records
+  ## keep them in the file, and the user record that takes them carries them, so a restart replays exactly the
+  ## wakes no user message took yet; a branch keeps the live list, never what its target file holds, so a consumed
+  ## wake never comes back by navigating.
   parked: List[Parked] = []
-  ## A stop waits for the next user message: wakes park meanwhile, so none restarts a stopped turn.
+  ## A stop waits for the next user message: wakes park meanwhile, so none restarts a stopped turn. Per-process
+  ## only: a restart closes the window but keeps the parked wakes, so no parked answer is lost.
   stop_window: Bool = false
   ## The names the extensions noted: the skills the session loaded.
   marks: List[String] = []

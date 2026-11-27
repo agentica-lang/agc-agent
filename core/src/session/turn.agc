@@ -38,13 +38,26 @@ def wake(
   start_turn(state, text, reply, some(source))
 end
 
-## A wake that waits for the next user message: accepted and kept, with an empty `turn_id` for the clients.
+## A wake that waits for the next user message: accepted and kept, with an empty `turn_id` for the clients. The
+## parked record is saved first, so a crash between the two saves leaves at most an extra parked wake, never a
+## lost one; the next user message takes it with its own record.
 def park(
   state: Session.State,
   text: String,
   source: String,
   reply: Channel[Result[Protocol.MessageAccepted]],
 ) -> Session.State
+  case Stream.save(state, -> { Store.append_parked(state.setup.file, text, source) })
+    ok(_) -> nil
+    error(e) ->
+      Actor.reply(
+        reply,
+        error("the session file cannot be written: #{e.message}", kind: Protocol.KIND_SESSION_STORAGE),
+      )
+
+      return state.with(broken: some(e.message))
+  end
+
   parked = state.parked.push(Session.Parked(text: text, source: source))
   Actor.reply(reply, ok(Protocol.MessageAccepted(turn_id: "")))
   queued = Protocol.MessageQueued(turn_id: "", text: text, source: some(source))
@@ -112,8 +125,9 @@ def start_turn(
   expanded = handled.unwrap!
 
   shells = not state.shells.empty?
-  # The parked wakes go before the user's own message; a wake starts with no parked one. The record keeps them but
-  # not the shells, which the next load reads again from their own events.
+  # The parked wakes go before the user's own message; a wake starts with no parked one. The user record carries
+  # the parked wakes it takes, so the same record both starts the turn and consumes them exactly once; it keeps
+  # no shells, which the next load reads again from their own events.
   take: List[Session.Parked] = []
   if source.none?
     take = state.parked
@@ -122,7 +136,11 @@ def start_turn(
   taken = take.map { |parked| parked.text }
   own = (taken + [expanded.text]).join("\n\n")
   text = Store.with_shells(state.shells, own)
-  case Stream.save(state, -> { Store.append_user(state.setup.file, own, typed, expanded.names, shells, source) })
+  stored = take.map { |parked| Store.Parked(text: parked.text, source: parked.source) }
+  case Stream.save(
+    state,
+    -> { Store.append_user(state.setup.file, own, typed, expanded.names, shells, source, stored) },
+  )
     ok(_) -> state = state.with(marks: state.marks + expanded.names)
     error(e) ->
       Actor.reply(

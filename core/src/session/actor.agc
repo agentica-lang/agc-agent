@@ -314,9 +314,11 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
       Actor.reply(reply, Session.Place(root: state.setup.ctx.root, hidden: state.setup.ctx.hidden))
       Actor.continue(state)
     Session.Msg.Stop(_, reply) ->
-      Actor.reply(reply, state.turn.some? or state.shell.some?)
-      # The stop window opens: wakes park until the next user message, so none restarts a stopped turn.
-      Actor.continue(stop_shell(Turn.stop_turn(state.with(stop_window: true))))
+      ran = state.turn.some? or state.shell.some?
+      Actor.reply(reply, ran)
+      # The stop window opens only when the stop ended something: an idle stop leaves it as it was, so the
+      # next wake still starts a turn. Wakes park until the next user message, so none restarts a stopped turn.
+      Actor.continue(stop_shell(Turn.stop_turn(state.with(stop_window: state.stop_window or ran))))
     Session.Msg.Emit(turn_id, event) ->
       Actor.continue(if_current(state, turn_id, ->(s) { Stream.emit_counted(s, event) }))
     Session.Msg.Ask(turn_id, call, reply) ->
@@ -713,6 +715,7 @@ def restore(setup: Session.Setup, saved: Store.Saved) -> Session.State
     stripped: saved.stripped,
     display: saved.shown,
     shells: saved.shells,
+    parked: saved.parked.map { |p| Session.Parked(text: p.text, source: p.source) },
     turns: saved.turns,
     approvals: saved.approvals,
     resolved: resolved_ids(events),
