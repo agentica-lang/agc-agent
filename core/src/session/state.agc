@@ -85,6 +85,8 @@ struct Setup
   registry: Optional[Extensions.Registry] = none
   ## The observers of the extensions, which get the events of the session.
   observers: List[Extensions.Observer] = []
+  ## The session that started this one (`Core.Host`); none for a session of its own.
+  parent: Optional[String] = none
   ## Whether the session's profile shows a tool to the model; none shows every tool.
   shows: Optional[Fn[String, Bool]] = none
   ## The session's profile as clients see it, and why it does not load (empty when it does): a turn is refused then,
@@ -123,6 +125,8 @@ enum Msg
   Snapshot(Channel[Protocol.Session])
   Subscribe(Optional[Int], Channel[Channel[Bytes]])
   Send(String, Channel[Result[Protocol.MessageAccepted]])
+  ## Gives the events of `names` to `handler` until the session stops; watching the same names again keeps the first.
+  Watch(List[String], Fn[Extensions.Seen, Void], Channel[Bool])
   Answer(String, Protocol.Decision, Channel[Result[Void]])
   Stop(Optional[String], Channel[Bool])
   Place(Channel[Place])
@@ -223,6 +227,8 @@ end
 struct State
   setup: Setup
   prompt_pending: Bool = false
+  ## The observers of this session alone (`Core.Host.watch`).
+  watchers: List[Extensions.Observer] = []
   counter: Int = 0
   log: List[Store.Logged] = []
   subscribers: List[Channel[Bytes]] = []

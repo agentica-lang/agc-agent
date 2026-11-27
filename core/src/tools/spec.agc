@@ -1,5 +1,7 @@
 ## What a tool is, and what it needs to run.
 
+import Protocol from "pkg/protocol/protocol"
+
 MAX_OUTPUT_CHARS = 30000
 ## The kind of the error of a call that an extension stopped (`Before`).
 BLOCKED = "tool.blocked"
@@ -9,6 +11,39 @@ enum Verdict
   Allow
   Ask
   Deny
+end
+
+## A child session: its provider and model (the parent's provider, and its model there, when none) and its profile
+## (the parent's, when none).
+struct NewChild
+  provider: Optional[String] = none
+  model: Optional[String] = none
+  profile: Optional[String] = none
+end
+
+## What an extension tool may do with its session and the sessions it started (its children), as the server's routes
+## do: start a child (a child cannot), send a message to a child or to the session itself, stop a child's turn,
+## delete a child, read a session and watch its events. Ids of other sessions are refused (`session.not_found`).
+struct Host
+  create: Fn[NewChild, Result[String]]
+  send: Fn[String, String, Result[Protocol.MessageAccepted]]
+  stop: Fn[String, Result[Bool]]
+  delete: Fn[String, Result[Void]]
+  snapshot: Fn[String, Result[Protocol.Session]]
+  watch: Fn[String, List[String], Fn[Seen, Void], Result[Void]]
+end
+
+## An event of a session as an observer sees it: `name` is the event's name and `data` its JSON, as `GET
+## /v1/sessions/ID/events` sends them, and `root` is the session folder. Two more names have no SSE event:
+## `session_started` (`{"id", "new", "parent"}`: created, or loaded from its file), before any event of the
+## session, and `session_ended` (`{"id", "reason"}`: `deleted`, `parent_ended` or `stopping`), alone for a session
+## deleted before it was loaded. `parent` is the session that started this one. More fields may come.
+struct Seen
+  session: String
+  root: String
+  name: String
+  data: JSON.Value
+  parent: Optional[String] = none
 end
 
 struct Context
@@ -31,6 +66,8 @@ struct Context
   before: Optional[Before] = none
   ## The id of the session, none outside one.
   session: Optional[String] = none
+  ## The handle of the session for the extension tools; none outside one.
+  host: Optional[Host] = none
   ## The file tools reach only the session folder; off, any path (the rules of approval still apply).
   confine: Bool = false
 end
