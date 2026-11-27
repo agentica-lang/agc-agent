@@ -10,6 +10,7 @@ import Types from "types"
 
 ERROR_BODY_BYTES = 65_536
 MAX_REQUEST_BYTES = 1_048_576
+KIND_REQUEST_TOO_LARGE = "llm.request_too_large"
 EVENTS_CAPACITY = 64
 TAIL_WAIT_MS = 250
 POOL_WAIT_MS = 31_536_000_000
@@ -206,7 +207,11 @@ end
 def start_stream[S](config: Config, wire: Wire[S], request: Types.Request) -> Result[Api.Stream]
   body = (try wire.body.call(request)).bytes
   if body.size > MAX_REQUEST_BYTES
-    return error("llm: the request body exceeds #{MAX_REQUEST_BYTES} bytes", kind: "llm.invalid_request")
+    return error(
+      "llm: the request body exceeds #{MAX_REQUEST_BYTES} bytes",
+      kind: KIND_REQUEST_TOO_LARGE,
+      details: {"bytes": body.size.to_s, "limit": MAX_REQUEST_BYTES.to_s},
+    )
   end
 
   lease = try acquire(config)

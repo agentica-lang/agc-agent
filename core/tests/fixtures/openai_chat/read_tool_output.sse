@@ -1,0 +1,5 @@
+data: {"choices":[{"finish_reason":null,"index":0,"delta":{"role":"assistant","tool_calls":[{"index":0,"id":"call_artifact","type":"function","function":{"name":"read_tool_output","arguments":"{\"id\":\"e83feb292a0270cf910564ab1e020fef1c60c03d5db4dbbd123ed5c5b70a6a64\",\"offset\":32768}"}}]}}]}
+
+data: {"choices":[{"finish_reason":"tool_calls","index":0,"delta":{}}]}
+
+data: [DONE]

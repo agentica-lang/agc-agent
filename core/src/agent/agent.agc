@@ -7,7 +7,9 @@ import Protocol from "pkg/protocol/protocol"
 import Catalog from "../providers/catalog"
 import CodeMode from "../tools/code_mode"
 import Compaction from "compaction"
+import RequestBudget from "request_budget"
 import Spec from "../tools/spec"
+import Spill from "../tools/spill"
 import Todos from "../tools/todos"
 import Tools from "../tools/tools"
 import Logger from "std/logger"
@@ -26,6 +28,7 @@ DENIED_BY_RULE = "denied by a rule of the config"
 DENIED_BY_USER = "the user denied this call"
 BLOCKED_BY = "blocked by an extension: "
 CHANGED_BY = "an extension changed the input of this call to: "
+SKILL_INLINE_BYTES = 65_536
 
 ## How a turn reaches its session. `approve` waits for the answer; `commit` gets the history after each finished
 ## round, so a stopped turn keeps no unfinished tool call, with the marks the round's tools of extensions made.
@@ -126,6 +129,7 @@ struct Turn
   latest: Optional[ATS[String, List[Todos.Todo]]] = none
   ## Whether the session's profile shows a tool to the model; none shows every tool.
   shows: Optional[Fn[String, Bool]] = none
+  artifacts: Optional[Spill.Port] = none
 end
 
 # A `todo_write` call and its list.
@@ -138,6 +142,7 @@ end
 struct Ran
   block: LLM.Block
   mark: Optional[String]
+  digest: String
 end
 
 struct Outcome
@@ -208,10 +213,12 @@ def run(started: Turn) -> Outcome
 
     calls = tool_calls(response.message)
     results: List[LLM.Block] = []
+    digests: List[String] = []
     made: List[String] = []
     for call in calls
       ran = run_call(turn, call, marks + made)
       results = results.push(ran.block)
+      digests = digests.push(ran.digest)
       made = made + option_list(ran.mark)
     end
 
@@ -231,7 +238,7 @@ def run(started: Turn) -> Outcome
       messages = folded.messages
     end
 
-    this_round = JSON.encode(JSON.from([calls.map { |c| "#{c.name} #{c.arguments}" }, results.map { |r| text_of(r) }]))
+    this_round = JSON.encode(JSON.from([calls.map { |c| "#{c.name} #{c.arguments}" }, digests]))
     tool_rounds = tool_rounds + 1
     rounds = rounds.push(OpenSSL.Digest.sha256_hexdigest(this_round.bytes))
     if rounds.size > WINDOW
@@ -400,6 +407,10 @@ end
 # What a failed call says. A refusal or a connection that failed on the `local` provider, which a session gets when no
 # provider was picked, says so and what to do, and is logged as a warning.
 def failure_text(turn: Turn, e: Error) -> String
+  if e.kind == LLM.KIND_REQUEST_TOO_LARGE
+    return "#{e.message}; use /tree to go back before the large message, or start a new session with a shorter input"
+  end
+
   return e.message if not turn.source.start_with?("local/")
 
   # `FINN_BASE_URL` is an explicit choice of the user: the way out is its key, not another provider.
@@ -454,6 +465,11 @@ end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   tools = offered(turn).map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }
+  history = messages
+  if turn.provider.name != RESPONSES
+    history = messages.map { |message| message.with(content: message.content.map(&function_history)) }
+  end
+
   if turn.provider.name == RESPONSES and shown?(turn, Tools.PATCH)
     patch = Tools.patch()
     grammar = Tools.patch_grammar()
@@ -465,7 +481,7 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   request = LLM.Request(
     model: turn.model,
     system: turn.system,
-    messages: messages,
+    messages: history,
     tools: tools,
     extra: turn.extra,
     cache: turn.cache,
@@ -474,7 +490,7 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
     max_tokens: output_limit(turn),
   )
 
-  stream = try LLM.stream(turn.provider, request)
+  stream = try RequestBudget.stream(turn.provider, history, ->(kept) { request.with(messages: kept) }, turn.artifacts)
   first: Optional[Int] = none
   while true
     event = stream.events.recv(60000)
@@ -497,6 +513,21 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   used = usage(response.usage, turn.listed).with(output_ms: first.map { |at| ended - at })
   turn.link.emit.call(Protocol.Event.Usage(used))
   ok(response)
+end
+
+# Non-Responses APIs can carry the old patch call/result pair as a function call with an object argument.
+# This is only a projection for the outgoing request, not a callable tool or a change to saved history.
+# Only `apply_patch` is rewritten: its `{"input": text}` shape belongs to that tool, and any other custom
+# tool stays custom so its wire refuses it loudly instead of sending a made-up shape.
+def function_history(block: LLM.Block) -> LLM.Block
+  case block
+    LLM.Block.ToolUse(call) if call.kind == LLM.ToolKind.Custom and call.name == Tools.PATCH ->
+      input = input_of(call)
+      LLM.Block.ToolUse(
+        call.with(kind: LLM.ToolKind.Function, input: input, arguments: JSON.encode(input), replay: none),
+      )
+    _ -> block
+  end
 end
 
 # A piece of the answer: text, thinking or a tool call.
@@ -540,13 +571,16 @@ def offered(turn: Turn) -> List[Tools.Tool]
   base = shown_tools(turn)
   extras = turn.turn_tools.map { |t| t.tool }.select { |tool| shown?(turn, tool.name) }
   for _settings in option_list(turn.code_mode)
-    return base.push(CodeMode.spec(base)) + extras if shown?(turn, CodeMode.NAME)
+    return base.push(CodeMode.spec(script_tools(base))) + extras if shown?(turn, CodeMode.NAME)
   end
 
   base + extras
 end
 
 def shown_tools(turn: Turn) -> List[Tools.Tool] = Tools.offered(turn.ctx).select { |tool| shown?(turn, tool.name) }
+
+# Artifact pages are for direct model readback, not part of the script's tool vocabulary.
+def script_tools(tools: List[Tools.Tool]) -> List[Tools.Tool] = tools.select { |tool| tool.name != Spill.NAME }
 
 def shown?(turn: Turn, name: String) -> Bool
   for shows in option_list(turn.shows)
@@ -571,8 +605,18 @@ def run_call(turn: Turn, call: LLM.ToolCall, marks: List[String]) -> Ran
   ran = noticed_run(turn, given, checked, marks)
   output = ran.output
   content = "#{changed_note(given, checked)}#{output.text}"
-  block = LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: content, is_error: output.is_error))
-  Ran(block: block, mark: ran.mark)
+  inline = content
+  limit = Spill.INLINE_BYTES
+  if call.name == "activate_skill"
+    limit = SKILL_INLINE_BYTES
+  end
+
+  if call.name != Spill.NAME and content.bytesize > limit
+    inline = Spill.saved(content, turn.artifacts, Spill.PREVIEW_CHARS)
+  end
+
+  block = LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: call.id, content: inline, is_error: output.is_error))
+  Ran(block: block, mark: ran.mark, digest: OpenSSL.Digest.sha256_hexdigest(content.bytes))
 end
 
 def changed_note(call: LLM.ToolCall, checked: Result[JSON.Value]) -> String
@@ -584,10 +628,13 @@ end
 
 # A custom tool's call has its text as `input`, the field its tool reads.
 def with_input(call: LLM.ToolCall) -> LLM.ToolCall
-  return call if call.kind != LLM.ToolKind.Custom
+  return call if call.kind != LLM.ToolKind.Custom or call.name != Tools.PATCH
 
-  call.with(input: JSON.object({"input": JSON.from(call.arguments)}))
+  call.with(input: input_of(call))
 end
+
+# The freeform text of a custom patch call as the object its tool reads.
+def input_of(call: LLM.ToolCall) -> JSON.Value = JSON.object({"input": JSON.from(call.arguments)})
 
 # Runs the call between its `tool_started` and `tool_finished` events, on the input the extensions gave (`checked`).
 def noticed_run(turn: Turn, given: LLM.ToolCall, checked: Result[JSON.Value], marks: List[String]) -> Tools.TurnOutput
@@ -684,7 +731,7 @@ def base_run(turn: Turn, call: LLM.ToolCall) -> Tools.Output
 
   if call.name == CodeMode.NAME
     for settings in option_list(turn.code_mode)
-      names = shown_tools(turn).map { |tool| tool.name }
+      names = script_tools(shown_tools(turn)).map { |tool| tool.name }
       return CodeMode.run(
         settings,
         call.input,
@@ -708,12 +755,12 @@ def approved_run(turn: Turn, call: LLM.ToolCall, target: String) -> Tools.Output
 
   case verdict
     Tools.Verdict.Deny -> Tools.Output(text: DENIED_BY_RULE, is_error: true)
-    Tools.Verdict.Allow -> Tools.run(turn.ctx, call.name, call.input)
+    Tools.Verdict.Allow -> Tools.run(turn.ctx, call.name, call.input, false)
     Tools.Verdict.Ask ->
       ask = Ask(call_id: call.id, tool: call.name, target: target, detail: Tools.detail(call.name, call.input))
       case turn.link.approve.call(ask)
         Protocol.Decision.Deny -> Tools.Output(text: DENIED_BY_USER, is_error: true)
-        _ -> Tools.run(turn.ctx, call.name, call.input)
+        _ -> Tools.run(turn.ctx, call.name, call.input, false)
       end
   end
 end
@@ -722,7 +769,7 @@ end
 def nested(turn: Turn, script: LLM.ToolCall, name: String, input: JSON.Value) -> CodeMode.Reply
   id = "#{script.id}.#{Random.int(0, 999_999_999)}"
   call = LLM.ToolCall(id: id, name: name, arguments: JSON.encode(input), input: input)
-  output = noticed_run(turn, call, before(turn, call), []).output
+  output = Spec.bounded(noticed_run(turn, call, before(turn, call), []).output)
   return CodeMode.Reply.Done(output.text) if not output.is_error
   return CodeMode.Reply.Denied(output.text) if [DENIED_BY_RULE, DENIED_BY_USER].include?(output.text)
   return CodeMode.Reply.Denied(output.text) if output.text.start_with?(BLOCKED_BY)

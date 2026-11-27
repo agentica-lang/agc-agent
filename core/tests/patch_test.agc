@@ -1,8 +1,10 @@
 # `apply_patch`: offered to models on the Responses API as a custom tool with its grammar, approved as one call, and
 # the Codex patch format as models write it.
 
+import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Approval from "../src/approval/approval"
+import Store from "../src/session/store"
 import Patch from "../src/tools/patch"
 import Tools from "../src/tools/tools"
 import H from "support/harness"
@@ -30,6 +32,102 @@ def test_a_model_on_the_responses_api_patches_files() -> Result[Void]
     items = try JSON.list(try JSON.get(second, "input"))
     Test.eq(text(items.last, "output"), "Done. The files changed:\nM notes.txt\nA hello.txt")
   end
+end
+
+def test_switching_to_opencode_go_keeps_the_historical_patch_call_and_result() -> Result[Void]
+  setup = H.Setup(
+    api: "openai_responses",
+    replies: ["apply_patch.sse", "text.sse", "openai_chat/text.sse"],
+    providers: ["opencode-go"],
+  )
+
+  H.using(setup) do |h|
+    try File.write_text("#{h.work}/notes.txt", "one\ntwo\nthree\n")
+    id = try H.new_session(h)
+    a = try H.subscribe(h, id)
+    _ = try H.send(h, id, "Fix the notes.")
+    a = try H.until(a, Protocol.EventKind.ApprovalRequested)
+    _ = try H.approve(h, id, (try H.approval(a)).approval_id, Protocol.Decision.Allow)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    _ = try H.next_request(h)
+    original = try JSON.parse((try H.next_request(h)).body)
+    items = try JSON.list(try JSON.get(original, "input"))
+    patch = try items.find { |item| text(item, "type") == "custom_tool_call" }
+    try File.write_text("#{h.work}/hello.txt", "not reapplied\n")
+    change = Protocol.encode_update_session(
+      Protocol.UpdateSession(provider: some("opencode-go"), model: some("glm-5.3-flash")),
+    )
+
+    try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), change, H.auth(h))).status, 200)
+    H.restarted(h, setup, "") do |r|
+      b = try H.subscribe(r, id, some((try H.session(r, id)).last_event_id))
+      _ = try H.send(r, id, "Continue.")
+      b = try H.until(b, Protocol.EventKind.TurnFinished)
+      H.close(b)
+      for event in b.seen
+        case event.event
+          Protocol.Event.Error(failure) -> return error(failure.message, kind: failure.kind)
+          _ -> nil
+        end
+      end
+
+      try Test.eq(H.stop_reason(b), "end_turn")
+      seen = try H.next_request(r)
+      try Test.eq(seen.path, "/opencode-go/chat/completions")
+      try check_patch_history(try JSON.parse(seen.body), patch, items.last)
+      Test.eq(File.read_text("#{r.work}/hello.txt"), ok("not reapplied\n"))
+    end
+  end
+end
+
+# A custom call of another tool keeps its kind across a provider switch: only `apply_patch` history is
+# rewritten as a function call, so an unknown freeform tool fails loudly instead of going out with a made-up shape.
+def test_a_non_patch_custom_call_is_not_rewritten_as_a_function() -> Result[Void]
+  setup = H.Setup(api: "openai_responses", replies: ["openai_chat/text.sse"], providers: ["opencode-go"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    file = Store.Ref(port: Store.disk(), path: H.session_file(h, id))
+    try Store.append_user(file, "Original question.", "Original question.")
+    try Store.append_messages(file, custom_round())
+    change = Protocol.encode_update_session(
+      Protocol.UpdateSession(provider: some("opencode-go"), model: some("glm-5.3-flash")),
+    )
+
+    try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), change, H.auth(h))).status, 200)
+    H.restarted(h, setup, "") do |r|
+      a = try H.subscribe(r, id, some((try H.session(r, id)).last_event_id))
+      _ = try H.send(r, id, "Continue.")
+      ended = try H.until(a, Protocol.EventKind.TurnFinished)
+      H.close(ended)
+      failures = ended.seen.flat_map do |event|
+        case event.event
+          Protocol.Event.Error(failure) -> [failure]
+          _ -> []
+        end
+      end
+
+      try Test.eq(failures.size, 1)
+      try Test.eq(failures.first.kind, "llm.unsupported")
+      Test.assert(failures.first.message.include?("future_custom"), "the error did not name the custom tool")
+    end
+  end
+end
+
+def custom_round() -> List[LLM.Message]
+  call = LLM.Block.ToolUse(
+    LLM.ToolCall(
+      id: "custom-1",
+      name: "future_custom",
+      arguments: "freeform text",
+      input: JSON.object({}),
+      kind: LLM.ToolKind.Custom,
+    ),
+  )
+
+  result = LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: "custom-1", content: "done", is_error: false))
+
+  [LLM.Message(role: LLM.Role.Assistant, content: [call]), LLM.Message(role: LLM.Role.User, content: [result])]
 end
 
 # A patch is checked whole: one hunk that does not apply leaves every file as it was.
@@ -317,6 +415,25 @@ def plain(dir: String) -> Result[Tools.Context] = Tools.context(dir, ->(_n: Stri
 def run(ctx: Tools.Context, patch: String) -> Tools.Output = Tools.run(ctx, "apply_patch", input(patch))
 
 def input(patch: String) -> JSON.Value = JSON.object({"input": JSON.from(patch)})
+
+def check_patch_history(body: JSON.Value, patch: JSON.Value, result: JSON.Value) -> Result[Void]
+  try Test.eq(text(body, "model"), "glm-5.3-flash")
+  tools = try JSON.list(try JSON.get(body, "tools"))
+  names = tools.map { |tool| text(JSON.get(tool, "function").unwrap_or(JSON.null()), "name") }
+  try Test.eq(names.include?("apply_patch"), false)
+  messages = try JSON.list(try JSON.get(body, "messages"))
+  called = try messages.find { |message| JSON.get(message, "tool_calls").ok? }
+  calls = try JSON.list(try JSON.get(called, "tool_calls"))
+  try Test.eq(calls.size, 1)
+  call = calls.first
+  try Test.eq([text(call, "type"), text(call, "id")], ["function", text(patch, "call_id")])
+  function = try JSON.get(call, "function")
+  try Test.eq(text(function, "name"), "apply_patch")
+  args = try JSON.parse(text(function, "arguments"))
+  try Test.eq(text(args, "input"), text(patch, "input"))
+  output = try messages.find { |message| text(message, "role") == "tool" }
+  Test.eq([text(output, "tool_call_id"), text(output, "content")], [text(patch, "call_id"), text(result, "output")])
+end
 
 def text(json: JSON.Value, key: String) -> String
   JSON.string(JSON.get(json, key).unwrap_or(JSON.null())).unwrap_or("")

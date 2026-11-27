@@ -23,7 +23,7 @@ import Tools from "../tools/tools"
 
 DEFAULT = "build"
 PROJECT_FOLDER = ".finn/profiles"
-PLAN_TOOLS = ["read_file", "glob", "grep", "todo_write", "activate_skill"]
+PLAN_TOOLS = ["read_file", "read_tool_output", "glob", "grep", "todo_write", "activate_skill"]
 PLAN_PROMPT = "You are planning: read, search and keep a todo list, but change no file and run no command."
 NAME_CHARS = "abcdefghijklmnopqrstuvwxyz0123456789-_"
 KEYS = ["description", "tools_allow", "tools_deny", "model", "thinking"]
