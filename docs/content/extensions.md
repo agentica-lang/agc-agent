@@ -112,17 +112,40 @@ end
 
 The handlers of one event have 2 seconds together.
 
-`Core.on(registry, Core.Event.Seen(["turn_started", "tool_finished", "turn_finished"], fn))` observes the sessions. `fn` gets a `Core.Seen` with the session id, its folder, the event's name and its `data`, the JSON that [`/events`](server.md#events) sends. Two names have no SSE event: `session_started` (`{"id", "new"}`) comes before any event of the session, with `new` true when the session was just created and false when it was loaded from its file (a fork is loaded from the file it was written to). `session_ended` (`{"id", "reason"}`, `deleted` or `stopping`) comes last; a session deleted before it was loaded again gets it alone. Ask only for the names you need: the text deltas are events too.
+`Core.on(registry, Core.Event.Seen(["turn_started", "tool_finished", "turn_finished"], fn))` observes the sessions. `fn` gets a `Core.Seen` with the session id, its folder, its `parent` (the session that started it, a [child session](#child-sessions)'s), the event's name and its `data`, the JSON that [`/events`](server.md#events) sends. Two names have no SSE event: `session_started` (`{"id", "new", "parent"}`) comes before any event of the session, with `new` true when the session was just created and false when it was loaded from its file (a fork is loaded from the file it was written to). `session_ended` (`{"id", "reason"}`, `deleted`, `parent_ended` or `stopping`) comes last; a session deleted before it was loaded again gets it alone. Ask only for the names you need: the text deltas are events too.
 
 Nothing waits for an observer. It gets its events in order, one at a time, with 2 seconds each. One that falls 256 events behind loses the next ones, and the server log counts them. A crash or a hang is logged, and the next event comes.
 
-`Core.on(registry, Core.Event.ToolBefore(fn))` gets each tool call before anything else sees it, as a `Core.Pending` with the session id, its folder, the tool's name and the input. `fn` gives a `Core.Check`:
+`Core.on(registry, Core.Event.ToolBefore(fn))` gets each tool call before anything else sees it, as a `Core.Pending` with the session id, the session that started it (`parent`, none for a session of its own), its folder, the tool's name and the input. `fn` gives a `Core.Check`:
 
 - `Core.Check.Go` runs the call as it is.
 - `Core.Check.Input(json)` runs it on another input. The approval, its rules and the tool all see the new input. The result starts with `an extension changed the input of this call to: JSON`, so the model and the session file keep what ran.
 - `Core.Check.Stop(reason)` fails the call, and the model gets `blocked by an extension: REASON`, with the first 1000 characters of the reason as they are.
 
 Each handler gets the input the one before gave, in the order they were added, and the first stop ends the chain. The handlers of one call have 10 seconds together, so a slow first handler leaves less for the next and can fail the call. A crash or a hang fails the call. The calls of several sessions run the handlers at the same time: keep a handler free of state of its own. The calls a `run_script` script makes pass the handlers too, and a stop counts as denied there.
+
+## Child sessions
+
+A tool's `Core.Call` carries its `session` and `host`, a `Core.Host` that reaches that session and the sessions it starts, its children:
+
+- `host.create.call(Core.NewChild(provider: some("other"), model: some("m1"), profile: none))` starts a child in the same folder and gives its id. A child may use any configured provider; with none it takes the parent's provider and model. With no profile it takes the parent's, and its tools are those both profiles show, so a child is never wider than its parent.
+- `host.send.call(id, text)` sends a message to a child: it starts a turn, or joins the running one, as a user's message does. Sent to the session itself, it is sent as a user's message is.
+- `host.watch.call(id, ["turn_finished"], fn)` gives `fn` the events of the session or a child, as an observer. Watching the same names again keeps the first handler.
+- `host.snapshot.call(id)` reads the session or a child: its history, usage and settings.
+- `host.stop.call(id)` stops only a child's turn, and `host.delete.call(id)` deletes only a child; both refuse the session itself with `session.not_found`.
+
+So a tool can start a child, watch it, and send its answer back to its own session, which starts a turn:
+
+```agentica
+def answered(host: Core.Host, parent: String, seen: Core.Seen) -> Void
+  case host.snapshot.call(seen.session)
+    ok(child) -> _ = host.send.call(parent, "#{seen.session} said: #{child.history.last.text}")
+    error(e) -> IO.warn(e.message)
+  end
+end
+```
+
+Other ids are refused with `session.not_found`, and a child cannot start sessions. A child's ceiling is the parent's effective profile when the child starts (a `PATCH` before then counts); it is a snapshot, so a later change of the parent leaves the child's tools alone. The children are kept in memory only, so no file of theirs stays, and `GET /v1/sessions` does not list them. A `/stop` that stops the parent's turn stops their turns too and leaves them open, and a delete of the parent deletes them first.
 
 ## A service
 

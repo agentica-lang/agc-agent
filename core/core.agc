@@ -35,6 +35,8 @@ export Extensions.Call
 export Extensions.Tool
 export Extensions.Event
 export Extensions.Seen
+export Extensions.Host
+export Extensions.NewChild
 export Extensions.Pending
 export Extensions.Check
 export Extensions.Service

@@ -76,6 +76,14 @@ def send(address: Address[Session.Msg], text: String) -> Result[Protocol.Message
   ok(try try sent)
 end
 
+## Gives the session's events of `names` to `handler` until the session stops; watching the same names again keeps the
+## first handler.
+def watch(address: Address[Session.Msg], names: List[String], handler: Fn[Extensions.Seen, Void]) -> Result[Void]
+  watched: Result[Bool] = Actor.call(address, Session.CALL_MS) do |reply| Session.Msg.Watch(names, handler, reply) end
+  _ = try watched
+  ok()
+end
+
 def answer(address: Address[Session.Msg], approval_id: String, decision: Protocol.Decision) -> Result[Void]
   answered: Result[Result[Void]] = Actor.call(address, Session.CALL_MS) do |reply|
     Session.Msg.Answer(approval_id, decision, reply)
@@ -270,6 +278,14 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
       Actor.continue(state)
     Session.Msg.Subscribe(last, reply) -> Actor.continue(Stream.attach(state, last, reply))
     Session.Msg.Send(text, reply) -> Actor.continue(Turn.start_turn(state, text, reply))
+    Session.Msg.Watch(names, handler, reply) ->
+      Actor.reply(reply, true)
+      watchers = state.watchers
+      if not watchers.any? { |watcher| watcher.names == names }
+        watchers = watchers.push(Extensions.watcher(names, handler))
+      end
+
+      Actor.continue(state.with(watchers: watchers))
     Session.Msg.Answer(approval_id, decision, reply) ->
       Actor.continue(Turn.answer_approval(state, approval_id, decision, reply))
     Session.Msg.Close(reply) ->
@@ -332,6 +348,16 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
 end
 
 def terminate(state: Session.State) -> Void
+  ended = Extensions.Seen(
+    session: state.setup.id,
+    root: state.setup.ctx.root,
+    name: "session_ended",
+    data: JSON.object({"id": JSON.from(state.setup.id), "reason": JSON.from("stopping")}),
+    parent: state.setup.parent,
+  )
+
+  Extensions.publish(state.watchers, ended)
+  Extensions.close_observers(state.watchers)
   for turn in option_list(state.turn)
     Task.cancel(turn.task)
   end
