@@ -273,8 +273,9 @@ struct State
   wakes: Int = 0
   ## The wakes that wait for the next user message, which takes them before its own. Durable: `parked` records
   ## keep them in the file, and the user record that takes them carries them, so a restart replays exactly the
-  ## wakes no user message took yet; a branch keeps the live list, never what its target file holds, so a consumed
-  ## wake never comes back by navigating.
+  ## wakes no user message took yet; a branch keeps the live list with a `parked_set` in the same write, never what
+  ## its target file holds, so a consumed wake never comes back by navigating. A fork or copy keeps none: waiting
+  ## wakes stay with the original session.
   parked: List[Parked] = []
   ## A stop waits for the next user message: wakes park meanwhile, so none restarts a stopped turn. Per-process
   ## only: a restart closes the window but keeps the parked wakes, so no parked answer is lost.

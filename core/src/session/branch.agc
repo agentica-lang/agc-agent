@@ -59,13 +59,21 @@ def moved(state: Session.State, entry: Int) -> Result[Moved]
   # Read before the branch is written, so a session whose file follows the branch always has its state.
   saved = try Store.load(file, some(point.leaf))
   until = state.counter + 1
-  case Stream.save(state, -> { Store.append_branch(file, point.leaf, until) })
+  # The waiting wakes stay with the session, not with the branch history: the branch and the snapshot of the live
+  # list go in one write, so a crash leaves the old branch with the old list or the new branch with the new one. An
+  # empty snapshot clears what the target branch still waits for, so a consumed wake never comes back by navigating.
+  snapshot: Optional[List[Store.Parked]] = none
+  if not state.parked.empty? or not saved.parked.empty?
+    snapshot = some(state.parked.map { |parked| Store.Parked(text: parked.text, source: parked.source) })
+  end
+
+  case Stream.save(state, -> { Store.append_branch(file, point.leaf, until, snapshot) })
     ok(_) -> nil
     error(e) -> return error("the session file cannot be written: #{e.message}", kind: Protocol.KIND_SESSION_STORAGE)
   end
 
   # The live parked wakes, count and window stay: a wake a user message already took never comes back by
-  # navigating, and a wake still waiting stays waiting on the new branch too.
+  # navigating, and a wake still waiting stays waiting on the new branch too, in the file as well as live.
   on_branch = known.with(
     history: saved.history,
     display: saved.shown,

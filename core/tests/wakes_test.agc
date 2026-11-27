@@ -343,6 +343,84 @@ def test_a_parked_wake_survives_a_restart_and_is_taken_once() -> Result[Void]
   end
 end
 
+# A parked wake survives a branch to an earlier entry and a restart: the next user message still carries it, exactly
+# once. A branch keeps the live waiting wakes as session state, atomically with the branch record, so a crash
+# before the next user message never loses them and moving into history never resurrects a consumed one.
+def test_a_parked_wake_survives_a_branch_and_a_restart() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse", "text.sse", "text.sse"]
+  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false, wakes_max: 1)
+  H.using(setup) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    _ = try host.send.call(parent, "one")
+    _ = try H.idle(h, parent)
+    parked = try host.send.call(parent, "two")
+    try Test.eq(parked.turn_id, "")
+    nodes = try tree(h, parent)
+    _ = try H.post(h, Protocol.branch_path(parent), Protocol.encode_branch(Protocol.Branch(entry: nodes[0].id)))
+    H.restarted(h, setup, "") do |r|
+      saved = try Store.load(Store.Ref(port: Store.disk(), path: H.session_file(r, parent)))
+      try Test.eq(saved.parked.map { |p| p.text }, ["two"])
+      b = try H.subscribe(r, parent)
+      _ = try H.send(r, parent, "Hi.")
+      b = try H.until(b, Protocol.EventKind.TurnStarted)
+      b = try H.until(b, Protocol.EventKind.TurnFinished)
+      H.close(b)
+      bodies: List[String] = []
+      for _i in 1..4
+        bodies = bodies.push((try H.next_request(r)).body)
+      end
+
+      carried = bodies[3]
+      try Test.assert(carried.include?("two") and carried.include?("Hi."), "the user message: #{carried}")
+      H.restarted(r, setup, "") do |s|
+        again = try Store.load(Store.Ref(port: Store.disk(), path: H.session_file(s, parent)))
+        try Test.eq(again.parked, [])
+        _ = try H.send(s, parent, "Again.")
+        _ = try H.idle(s, parent)
+        last = try last_user((try H.next_request(s)).body)
+        Test.eq(last, "Again.")
+      end
+    end
+  end
+end
+
+# A fork keeps no parked wake: pending wakes stay with the original session and are not cloned into the new one.
+def test_a_fork_keeps_no_parked_wake() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse", "text.sse", "text.sse", "text.sse"]
+  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false, wakes_max: 1)
+  H.using(setup) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    _ = try host.send.call(parent, "one")
+    _ = try H.idle(h, parent)
+    parked = try host.send.call(parent, "two")
+    try Test.eq(parked.turn_id, "")
+    forked = try Protocol.decode_branched((try H.post(h, Protocol.fork_path(parent), "{}")).text)
+    child_file = H.session_file(h, forked.id)
+    saved = try Store.load(Store.Ref(port: Store.disk(), path: child_file))
+    try Test.eq(saved.parked, [])
+    _ = try H.send(h, forked.id, "Hi.")
+    _ = try H.idle(h, forked.id)
+    bodies: List[String] = []
+    for _i in 1..4
+      bodies = bodies.push((try H.next_request(h)).body)
+    end
+
+    Test.eq(try last_user(bodies[3]), "Hi.")
+  end
+end
+
 # A parked wake waits with a shell's output: the next user message carries the shell first, then the wake.
 def test_a_shell_output_and_a_parked_wake_reach_the_next_turn_in_order() -> Result[Void]
   calls: Channel[Core.Call] = Channel.new(4)
