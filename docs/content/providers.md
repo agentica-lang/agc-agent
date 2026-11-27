@@ -54,6 +54,8 @@ The login list also shows `Claude Pro/Max: coming`. It is listed but cannot be u
 
 The server takes any model name. `/model NAME` with a name that the session's provider does not list but another provider does, whole or in part, changes nothing and names those models (`/model local/NAME` keeps the name on `local`). When the first turn after `/model` fails, the client says so; check the name. When the local server does not answer, the client says that `/model PROVIDER/NAME` picks another provider.
 
+When a session leaves the OpenAI Responses API, Finn keeps its earlier `apply_patch` calls and their results in the conversation. It sends those calls as historical function calls with the patch text in a JSON argument. It does not run them again or make `apply_patch` available on the new API.
+
 ## OpenCode Go
 
 `opencode-go` is the OpenCode Go subscription, at `https://opencode.ai/inference/go/v1`. Give it the key of your OpenCode account, then pick a model:

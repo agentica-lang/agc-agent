@@ -465,6 +465,11 @@ end
 
 def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   tools = offered(turn).map { |t| LLM.Tool(name: t.name, description: t.description, input_schema: t.input_schema) }
+  history = messages
+  if turn.provider.name != RESPONSES
+    history = messages.map { |message| message.with(content: message.content.map(&function_history)) }
+  end
+
   if turn.provider.name == RESPONSES and shown?(turn, Tools.PATCH)
     patch = Tools.patch()
     grammar = Tools.patch_grammar()
@@ -476,7 +481,7 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   request = LLM.Request(
     model: turn.model,
     system: turn.system,
-    messages: messages,
+    messages: history,
     tools: tools,
     extra: turn.extra,
     cache: turn.cache,
@@ -485,7 +490,7 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
     max_tokens: output_limit(turn),
   )
 
-  stream = try RequestBudget.stream(turn.provider, messages, ->(kept) { request.with(messages: kept) }, turn.artifacts)
+  stream = try RequestBudget.stream(turn.provider, history, ->(kept) { request.with(messages: kept) }, turn.artifacts)
   first: Optional[Int] = none
   while true
     event = stream.events.recv(60000)
@@ -508,6 +513,19 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   used = usage(response.usage, turn.listed).with(output_ms: first.map { |at| ended - at })
   turn.link.emit.call(Protocol.Event.Usage(used))
   ok(response)
+end
+
+# Non-Responses APIs can carry the old call/result pair as a function call with an object argument.
+# This is only a projection for the outgoing request, not a callable tool or a change to saved history.
+def function_history(block: LLM.Block) -> LLM.Block
+  case block
+    LLM.Block.ToolUse(call) if call.kind == LLM.ToolKind.Custom ->
+      input = JSON.object({"input": JSON.from(call.arguments)})
+      LLM.Block.ToolUse(
+        call.with(kind: LLM.ToolKind.Function, input: input, arguments: JSON.encode(input), replay: none),
+      )
+    _ -> block
+  end
 end
 
 # A piece of the answer: text, thinking or a tool call.
