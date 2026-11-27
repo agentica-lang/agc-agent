@@ -710,12 +710,12 @@ end
 
 def decode_turn_started(data: String) -> Result[Event]
   wire = try Wire.decode(data, TurnStartedWire.codec)
-  source = case wire.source
-    JSON.Field.Value(text) -> some(text)
-    _ -> none
-  end
+  started = TurnStarted(
+    turn_id: wire.turn_id,
+    history_size: try history_size(wire.history_size),
+    source: Wire.optional(wire.source),
+  )
 
-  started = TurnStarted(turn_id: wire.turn_id, history_size: try history_size(wire.history_size), source: source)
   ok(Event.TurnStarted(started))
 end
 
@@ -733,14 +733,14 @@ end
 
 def decode_queued(data: String) -> Result[Event]
   wire = try Wire.decode(data, MessageQueuedWire.codec)
-  source = case wire.source
-    JSON.Field.Value(text) -> some(text)
-    _ -> none
-  end
-
   ok(
     Event.MessageQueued(
-      MessageQueued(turn_id: wire.turn_id, text: wire.text, message_id: wire.message_id, source: source),
+      MessageQueued(
+        turn_id: wire.turn_id,
+        text: wire.text,
+        message_id: wire.message_id,
+        source: Wire.optional(wire.source),
+      ),
     ),
   )
 end

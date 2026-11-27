@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- `turn_started` and `message_queued` carry who sent the message when the user did not (`source`: a child session's answer or an extension), and `tool_started`, `tool_finished`, `approval_requested` and `usage` carry the child session whose call it is (`session`).
 - A session can switch from OpenAI Responses to Chat Completions or Anthropic after `apply_patch`: Finn replays the old call and result in a compatible format, without offering or rerunning the patch.
 - Large tool results, including errors, are saved as private session artifacts with a preview and paginated readback. When the encoded model request exceeds 1 MiB, Finn shortens tool results from both new and resumed sessions and tries again without rerunning the tools.
 - OpenAI-format providers no longer fail with HTTP 400 on a tool with an `Int` or `UInt64` field: its 64-bit bounds are left out of the schema they get.
