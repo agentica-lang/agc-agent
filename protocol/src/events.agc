@@ -62,10 +62,12 @@ end
 
 ## `history_size` in `turn_started` and `turn_finished` is the size of the session's `history` once the event happened
 ## (the user message is in it at the start, the answer, if any, at the end); none in an event of an older server. A
-## client that reads the session again after a `resync` prints the history from there.
+## client that reads the session again after a `resync` prints the history from there. `source` is who sent the
+## message when the user did not (see `MessageQueued`).
 struct TurnStarted
   turn_id: String
   history_size: Optional[Int] = none
+  source: Optional[String] = none
 end
 
 struct TextDelta
@@ -76,10 +78,12 @@ struct ThinkingDelta
   text: String
 end
 
+## `session` is the child session whose call it is; none for a call of the session itself.
 struct ToolStarted
   call_id: String
   name: String
   summary: String
+  session: Optional[String] = none
 end
 
 ## `summary` is the first line of the result; `output` its first lines (none when it has one line at most), cut to a
@@ -92,6 +96,8 @@ struct ToolFinished
   duration_ms: Int
   output: Optional[String] = none
   diff: Optional[String] = none
+  ## The child session whose call it is; none for a call of the session itself.
+  session: Optional[String] = none
 end
 
 ## `preview` is what the call touches: the path, or the command for `bash`; an `allow_session` answer allows the same
@@ -105,6 +111,8 @@ struct ApprovalRequested
   preview: String
   detail: String
   prefix: Optional[String] = none
+  ## The child session whose call asks; none for a call of the session itself.
+  session: Optional[String] = none
 end
 
 struct ApprovalResolved
@@ -134,6 +142,44 @@ struct Usage
   call_output: Optional[Int] = none
   ## The milliseconds from the call's first output (text, thinking or a tool call) to its end; none when it gave none.
   output_ms: Optional[Int] = none
+  ## The child session whose call it prices; none for a call of the session itself.
+  session: Optional[String] = none
+end
+
+## A queued message without a source has no `source` key, as an older server sent it.
+struct MessageQueuedWire
+  turn_id: String
+  text: String
+  message_id: Optional[String] = none
+  source: JSON.Field[String]
+end
+
+## A call without a child session has no `session` key, as an older server sent it.
+struct ToolStartedWire
+  call_id: String
+  name: String
+  summary: String
+  session: JSON.Field[String]
+end
+
+struct ToolFinishedWire
+  call_id: String
+  ok: Bool
+  summary: String
+  duration_ms: Int
+  output: Optional[String] = none
+  diff: Optional[String] = none
+  session: JSON.Field[String]
+end
+
+struct ApprovalRequestedWire
+  approval_id: String
+  call_id: String
+  tool: String
+  preview: String
+  detail: String
+  prefix: Optional[String] = none
+  session: JSON.Field[String]
 end
 
 ## `Usage` on the wire: an absent value is left out, not `null`.
@@ -149,14 +195,18 @@ struct UsageWire
   window: JSON.Field[Int]
   call_output: JSON.Field[Int]
   output_ms: JSON.Field[Int]
+  session: JSON.Field[String]
 end
 
 ## A message sent while the turn `turn_id` runs: the turn reads it before its next model call. `message_id` is the one
-## the `202` of its sender has (none in the events a server older than it saved).
+## the `202` of its sender has (none in the events a server older than it saved). `source` is who sent it when the user
+## did not: `child:ID` (a child session's answer) or `extension`. An empty `turn_id` is a message that waits for the
+## next user message, which takes it to the model.
 struct MessageQueued
   turn_id: String
   text: String
   message_id: Optional[String] = none
+  source: Optional[String] = none
 end
 
 ## The turn `turn_id` read the queued message `message_id` and sent it with the call it is making, after the answer and
@@ -320,12 +370,18 @@ def event_name(event: Event) -> String = kind_name(event_kind(event))
 def encode_event(event: Event) -> String
   case event
     Event.TurnStarted(data) ->
-      JSON.encode(TurnStartedWire(turn_id: data.turn_id, history_size: field(data.history_size)))
+      wire = TurnStartedWire(
+        turn_id: data.turn_id,
+        history_size: field(data.history_size),
+        source: text_field(data.source),
+      )
+
+      JSON.encode(wire)
     Event.TextDelta(data) -> JSON.encode(data)
     Event.ThinkingDelta(data) -> JSON.encode(data)
-    Event.ToolStarted(data) -> JSON.encode(data)
-    Event.ToolFinished(data) -> JSON.encode(data)
-    Event.ApprovalRequested(data) -> JSON.encode(data)
+    Event.ToolStarted(data) -> JSON.encode(started_wire(data))
+    Event.ToolFinished(data) -> JSON.encode(finished_wire(data))
+    Event.ApprovalRequested(data) -> JSON.encode(requested_wire(data))
     Event.ApprovalResolved(data) ->
       JSON.encode(
         ResolvedWire(
@@ -346,7 +402,7 @@ def encode_event(event: Event) -> String
       JSON.encode(wire)
     Event.Error(data) -> Errors.encode_failure(data)
     Event.Resync -> "{}"
-    Event.MessageQueued(data) -> JSON.encode(data)
+    Event.MessageQueued(data) -> encode_queued(data)
     Event.MessageDelivered(data) -> JSON.encode(data)
     Event.ShellStarted(data) -> JSON.encode(data)
     Event.ShellFinished(data) -> JSON.encode(data)
@@ -361,15 +417,15 @@ def decode_event(name: String, data: String) -> Result[Event]
     EventKind.TurnStarted -> decode_turn_started(data)
     EventKind.TextDelta -> ok(Event.TextDelta(try Wire.decode(data, TextDelta.codec)))
     EventKind.ThinkingDelta -> ok(Event.ThinkingDelta(try Wire.decode(data, ThinkingDelta.codec)))
-    EventKind.ToolStarted -> ok(Event.ToolStarted(try Wire.decode(data, ToolStarted.codec)))
+    EventKind.ToolStarted -> decode_started(data)
     EventKind.ToolFinished -> decode_tool_finished(data)
-    EventKind.ApprovalRequested -> ok(Event.ApprovalRequested(try Wire.decode(data, ApprovalRequested.codec)))
+    EventKind.ApprovalRequested -> decode_requested(data)
     EventKind.ApprovalResolved -> decode_resolved(data)
     EventKind.Usage -> decode_usage(data)
     EventKind.TurnFinished -> decode_turn_finished(data)
     EventKind.Error -> ok(Event.Error(try Errors.decode_failure(data)))
     EventKind.Resync -> decode_resync(data)
-    EventKind.MessageQueued -> ok(Event.MessageQueued(try Wire.decode(data, MessageQueued.codec)))
+    EventKind.MessageQueued -> decode_queued(data)
     EventKind.MessageDelivered -> ok(Event.MessageDelivered(try Wire.decode(data, MessageDelivered.codec)))
     EventKind.ShellStarted -> ok(Event.ShellStarted(try Wire.decode(data, ShellStarted.codec)))
     EventKind.ShellFinished -> decode_shell_finished(data)
@@ -401,6 +457,10 @@ def shape() -> List[String]
     Wire.record("Usage", Usage.members),
     Wire.record("UsageWire", UsageWire.members),
     Wire.record("MessageQueued", MessageQueued.members),
+    Wire.record("MessageQueuedWire", MessageQueuedWire.members),
+    Wire.record("ToolStartedWire", ToolStartedWire.members),
+    Wire.record("ToolFinishedWire", ToolFinishedWire.members),
+    Wire.record("ApprovalRequestedWire", ApprovalRequestedWire.members),
     Wire.record("MessageDelivered", MessageDelivered.members),
     Wire.record("ShellStarted", ShellStarted.members),
     Wire.record("ShellFinished", ShellFinished.members),
@@ -436,6 +496,7 @@ def usage_wire(usage: Usage) -> UsageWire
     window: Wire.field(usage.window),
     call_output: Wire.field(usage.call_output),
     output_ms: Wire.field(usage.output_ms),
+    session: text_field(usage.session),
   )
 end
 
@@ -453,6 +514,7 @@ def usage_of_wire(wire: UsageWire) -> Result[Usage]
     window: Wire.optional(wire.window),
     call_output: Wire.optional(wire.call_output),
     output_ms: Wire.optional(wire.output_ms),
+    session: Wire.optional(wire.session),
   )
 
   counts = [usage.input, usage.output, usage.cache_read, usage.cache_write, usage.context]
@@ -469,6 +531,69 @@ def usage_of_wire(wire: UsageWire) -> Result[Usage]
   end
 
   ok(usage)
+end
+
+## The call `wire` names, with its child session when it has one.
+def tool_started_of(wire: ToolStartedWire) -> ToolStarted
+  ToolStarted(call_id: wire.call_id, name: wire.name, summary: wire.summary, session: Wire.optional(wire.session))
+end
+
+def tool_finished_of(wire: ToolFinishedWire) -> ToolFinished
+  ToolFinished(
+    call_id: wire.call_id,
+    ok: wire.ok,
+    summary: wire.summary,
+    duration_ms: wire.duration_ms,
+    output: wire.output,
+    diff: wire.diff,
+    session: Wire.optional(wire.session),
+  )
+end
+
+def requested_of(wire: ApprovalRequestedWire) -> ApprovalRequested
+  ApprovalRequested(
+    approval_id: wire.approval_id,
+    call_id: wire.call_id,
+    tool: wire.tool,
+    preview: wire.preview,
+    detail: wire.detail,
+    prefix: wire.prefix,
+    session: Wire.optional(wire.session),
+  )
+end
+
+## `started` on the wire: no `session` key without a child session.
+def started_wire(started: ToolStarted) -> ToolStartedWire
+  ToolStartedWire(
+    call_id: started.call_id,
+    name: started.name,
+    summary: started.summary,
+    session: text_field(started.session),
+  )
+end
+
+def finished_wire(finished: ToolFinished) -> ToolFinishedWire
+  ToolFinishedWire(
+    call_id: finished.call_id,
+    ok: finished.ok,
+    summary: finished.summary,
+    duration_ms: finished.duration_ms,
+    output: finished.output,
+    diff: finished.diff,
+    session: text_field(finished.session),
+  )
+end
+
+def requested_wire(requested: ApprovalRequested) -> ApprovalRequestedWire
+  ApprovalRequestedWire(
+    approval_id: requested.approval_id,
+    call_id: requested.call_id,
+    tool: requested.tool,
+    preview: requested.preview,
+    detail: requested.detail,
+    prefix: requested.prefix,
+    session: text_field(requested.session),
+  )
 end
 
 ## A list with an item whose status is out of `TODO_STATUSES` is invalid.
@@ -491,6 +616,7 @@ end
 struct TurnStartedWire
   turn_id: String
   history_size: JSON.Field[Int]
+  source: JSON.Field[String]
 end
 
 struct TurnFinishedWire
@@ -542,10 +668,21 @@ def following_reason(reason: StopReason) -> Optional[StopReason]
   end
 end
 
+def decode_started(data: String) -> Result[Event]
+  wire = try Wire.decode(data, ToolStartedWire.codec)
+  ok(Event.ToolStarted(tool_started_of(wire)))
+end
+
 def decode_tool_finished(data: String) -> Result[Event]
-  finished = try Wire.decode(data, ToolFinished.codec)
+  wire = try Wire.decode(data, ToolFinishedWire.codec)
+  finished = tool_finished_of(wire)
   try Wire.non_negative("duration_ms", finished.duration_ms)
   ok(Event.ToolFinished(finished))
+end
+
+def decode_requested(data: String) -> Result[Event]
+  wire = try Wire.decode(data, ApprovalRequestedWire.codec)
+  ok(Event.ApprovalRequested(requested_of(wire)))
 end
 
 def decode_shell_finished(data: String) -> Result[Event]
@@ -573,7 +710,46 @@ end
 
 def decode_turn_started(data: String) -> Result[Event]
   wire = try Wire.decode(data, TurnStartedWire.codec)
-  ok(Event.TurnStarted(TurnStarted(turn_id: wire.turn_id, history_size: try history_size(wire.history_size))))
+  source = case wire.source
+    JSON.Field.Value(text) -> some(text)
+    _ -> none
+  end
+
+  started = TurnStarted(turn_id: wire.turn_id, history_size: try history_size(wire.history_size), source: source)
+  ok(Event.TurnStarted(started))
+end
+
+# A message without a source has no `source` key, as an older server sent it.
+def encode_queued(queued: MessageQueued) -> String
+  wire = MessageQueuedWire(
+    turn_id: queued.turn_id,
+    text: queued.text,
+    message_id: queued.message_id,
+    source: text_field(queued.source),
+  )
+
+  JSON.encode(wire)
+end
+
+def decode_queued(data: String) -> Result[Event]
+  wire = try Wire.decode(data, MessageQueuedWire.codec)
+  source = case wire.source
+    JSON.Field.Value(text) -> some(text)
+    _ -> none
+  end
+
+  ok(
+    Event.MessageQueued(
+      MessageQueued(turn_id: wire.turn_id, text: wire.text, message_id: wire.message_id, source: source),
+    ),
+  )
+end
+
+def text_field(text: Optional[String]) -> JSON.Field[String]
+  case text
+    some(t) -> JSON.Field.Value(t)
+    none -> JSON.Field.Absent
+  end
 end
 
 def decode_turn_finished(data: String) -> Result[Event]
