@@ -129,7 +129,7 @@ Each handler gets the input the one before gave, in the order they were added, a
 A tool's `Core.Call` carries its `session` and `host`, a `Core.Host` that reaches that session and the sessions it starts, its children:
 
 - `host.create.call(Core.NewChild(provider: some("other"), model: some("m1"), profile: none))` starts a child in the same folder and gives its id. A child may use any configured provider; with none it takes the parent's provider and model. With no profile it takes the parent's, and its tools are those both profiles show, so a child is never wider than its parent.
-- `host.send.call(id, text)` sends a message to a child: it starts a turn, or joins the running one, as a user's message does. Sent to the session itself, it is sent as a user's message is.
+- `host.send.call(id, text)` sends a message to a child: it starts a turn, or joins the running one, as a user's message does. Sent to the session itself, it wakes it, with `child:ID` when its host is a child's and `extension` otherwise; a child wakes its parent the same way, with its own id, and only that: any other read or control of the parent stays `session.not_found`.
 - `host.watch.call(id, ["turn_finished"], fn)` gives `fn` the events of the session or a child, as an observer. Watching the same names again keeps the first handler.
 - `host.snapshot.call(id)` reads the session or a child: its history, usage and settings.
 - `host.stop.call(id)` stops only a child's turn, and `host.delete.call(id)` deletes only a child; both refuse the session itself with `session.not_found`.
@@ -145,7 +145,7 @@ def answered(host: Core.Host, parent: String, seen: Core.Seen) -> Void
 end
 ```
 
-Other ids are refused with `session.not_found`, and a child cannot start sessions. A child's ceiling is the parent's effective profile when the child starts (a `PATCH` before then counts); it is a snapshot, so a later change of the parent leaves the child's tools alone. The children are kept in memory only, so no file of theirs stays, and `GET /v1/sessions` does not list them. A `/stop` that stops the parent's turn stops their turns too and leaves them open, and a delete of the parent deletes them first.
+Other ids are refused with `session.not_found`, and a child cannot start sessions. A child's ceiling is the parent's effective profile when the child starts (a `PATCH` before then counts); it is a snapshot, so a later change of the parent leaves the child's tools alone. A wake that finds a running turn queues into it like a user's message and does not count; an idle wake starts a turn with its `source` (`child:ID` or `extension`) on `turn_started` and `message_queued`. Only a wake that starts a turn counts toward `FINN_WAKES_MAX` (100 per user message, `0` for no cap): past the cap, or after a user stop, a wake parks for the next user message (a `message_queued` with an empty `turn_id`), which takes parked wakes before its own and resets the count, so no watcher restarts a stopped parent. The children are kept in memory only, so no file of theirs stays, and `GET /v1/sessions` does not list them. A `/stop` that stops the parent's turn stops their turns too and leaves them open, and a delete of the parent deletes them first.
 
 ## A service
 

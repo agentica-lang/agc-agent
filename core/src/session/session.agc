@@ -350,6 +350,8 @@ end
 struct Reach
   at: Address[Msg]
   session: String
+  ## The session that started this one; none for a session of its own. A child wakes it with its answers.
+  parent: Optional[String] = none
 end
 
 struct Opened
@@ -844,6 +846,7 @@ def entry(
     reopen: some(-> { reopened(options, context.root) }),
     skills: skill_names(options, context.root, prompt.catalog),
     parent: header.parent,
+    wakes_max: options.wakes_max,
   )
 
   setup = SessionActor.switched(base, endpoint).with(model: header.model, refused: refusal(options, provider))
@@ -1359,7 +1362,7 @@ end
 
 # The handle of the session of `header` on itself and its children (`Core.Host`), through the registry at `at`.
 def host_of(at: Address[Msg], options: Config.Options, header: Store.Header) -> Extensions.Host
-  reach = Reach(at: at, session: header.id)
+  reach = Reach(at: at, session: header.id, parent: header.parent)
   Extensions.Host(
     create: ->(child: Extensions.NewChild) { child_created(at, options, header, child) },
     send: ->(id: String, text: String) { host_send(reach, id, text) },
@@ -1400,9 +1403,21 @@ def child_created(
   created_at(at, options, request, some(header.id), true, ceiling)
 end
 
-# A message to the session itself is sent as a user's is; one to a child starts or joins its turn.
+# A message to the session itself wakes it, with `child:ID` when its host is a child's and `extension` otherwise;
+# a child wakes its parent the same way, with its own id. One to a child is sent as a user's is.
 def host_send(reach: Reach, id: String, text: String) -> Result[Protocol.MessageAccepted]
-  return SessionActor.send(try find_at(reach.at, id), text) if id == reach.session
+  if id == reach.session
+    source = "extension"
+    for _parent in option_list(reach.parent)
+      source = "child:#{reach.session}"
+    end
+
+    return SessionActor.wake(try find_at(reach.at, id), text, source)
+  end
+
+  for parent in option_list(reach.parent)
+    return SessionActor.wake(try find_at(reach.at, id), text, "child:#{reach.session}") if id == parent
+  end
 
   SessionActor.send(try child_at(reach, id), text)
 end

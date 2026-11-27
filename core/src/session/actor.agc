@@ -76,6 +76,16 @@ def send(address: Address[Session.Msg], text: String) -> Result[Protocol.Message
   ok(try try sent)
 end
 
+## Wakes the session with `text` from `source` (`child:ID` for a child's answer, `extension` otherwise): it starts a
+## turn unless the stop window is open or the cap is reached, when it parks for the next user message.
+def wake(address: Address[Session.Msg], text: String, source: String) -> Result[Protocol.MessageAccepted]
+  sent: Result[Result[Protocol.MessageAccepted]] = Actor.call(address, Session.CALL_MS) do |reply|
+    Session.Msg.Wake(text, source, reply)
+  end
+
+  ok(try try sent)
+end
+
 ## Gives the session's events of `names` to `handler` until the session stops; watching the same names again keeps the
 ## first handler.
 def watch(address: Address[Session.Msg], names: List[String], handler: Fn[Extensions.Seen, Void]) -> Result[Void]
@@ -278,6 +288,7 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
       Actor.continue(state)
     Session.Msg.Subscribe(last, reply) -> Actor.continue(Stream.attach(state, last, reply))
     Session.Msg.Send(text, reply) -> Actor.continue(Turn.start_turn(state, text, reply))
+    Session.Msg.Wake(text, source, reply) -> Actor.continue(Turn.wake(state, text, source, reply))
     Session.Msg.Watch(names, handler, reply) ->
       Actor.reply(reply, true)
       watchers = state.watchers
@@ -304,7 +315,8 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
       Actor.continue(state)
     Session.Msg.Stop(_, reply) ->
       Actor.reply(reply, state.turn.some? or state.shell.some?)
-      Actor.continue(stop_shell(Turn.stop_turn(state)))
+      # The stop window opens: wakes park until the next user message, so none restarts a stopped turn.
+      Actor.continue(stop_shell(Turn.stop_turn(state.with(stop_window: true))))
     Session.Msg.Emit(turn_id, event) ->
       Actor.continue(if_current(state, turn_id, ->(s) { Stream.emit_counted(s, event) }))
     Session.Msg.Ask(turn_id, call, reply) ->

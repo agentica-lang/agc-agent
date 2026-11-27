@@ -222,13 +222,15 @@ end
 
 ## The message that starts a turn, the first of the turn's history; `typed` is what is shown when not empty (the text
 ## without what extensions put before it) and `marks` the names they noted. With `shells`, the model's message starts
-## with the output of the commands since the last user message, which their `shell_finished` events hold.
+## with the output of the commands since the last user message, which their `shell_finished` events hold. `source`
+## is who sent it when the user did not (`child:ID` or `extension`): a wake is saved with no `typed`.
 def append_user(
   file: Ref,
   text: String,
   typed: String = "",
   marks: List[String] = [],
   shells: Bool = false,
+  source: Optional[String] = none,
 ) -> Result[Void]
   fields = {"type": JSON.from("user"), "text": JSON.from(text)}
   if typed != "" and typed != text
@@ -239,13 +241,22 @@ def append_user(
     fields = fields.put("shells", JSON.from(true))
   end
 
+  for sent in option_list(source)
+    fields = fields.put("source", JSON.from(sent))
+  end
+
   append(file, with_marks(fields, marks))
 end
 
-## A message sent during a turn, once the turn read it: shown as a user message that starts no turn. The history has it
-## in the `messages` record that follows.
-def append_queued(file: Ref, text: String) -> Result[Void]
-  append(file, {"type": JSON.from("queued"), "text": JSON.from(text)})
+## A message sent during a turn, once the turn read it: shown as a user message that starts no turn, with who sent it
+## when the user did not (`child:ID` or `extension`). The history has it in the `messages` record that follows.
+def append_queued(file: Ref, text: String, source: Optional[String] = none) -> Result[Void]
+  fields = {"type": JSON.from("queued"), "text": JSON.from(text)}
+  for sent in option_list(source)
+    fields = fields.put("source", JSON.from(sent))
+  end
+
+  append(file, fields)
 end
 
 ## The messages a round added to the history, in one record so that a call never goes without its result, with the

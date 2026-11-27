@@ -101,6 +101,8 @@ struct Setup
   ## cannot reload. `skills` are the names the catalog of `system` lists now.
   reopen: Optional[Fn[Result[Reopened]]] = none
   skills: List[String] = []
+  ## How often a wake may start a turn per user message (`FINN_WAKES_MAX`); 0 is no cap.
+  wakes_max: Int = 100
 end
 
 ## What a reload gives a session: its system prompt with the project's `AGENTS.md` and the skills catalog read again,
@@ -125,6 +127,9 @@ enum Msg
   Snapshot(Channel[Protocol.Session])
   Subscribe(Optional[Int], Channel[Channel[Bytes]])
   Send(String, Channel[Result[Protocol.MessageAccepted]])
+  ## A wake: `text` from `source` (`child:ID` for a child's answer, `extension` otherwise). It starts a turn like a
+  ## user's message does, unless the stop window is open or the cap is reached, when it parks for the next one.
+  Wake(String, String, Channel[Result[Protocol.MessageAccepted]])
   ## Gives the events of `names` to `handler` until the session stops; watching the same names again keeps the first.
   Watch(List[String], Fn[Extensions.Seen, Void], Channel[Bool])
   Answer(String, Protocol.Decision, Channel[Result[Void]])
@@ -197,10 +202,18 @@ struct Waiting
   asked_ms: Int
 end
 
-## A message sent while a turn runs, until the turn reads it: the `message_id` its sender got, and its text.
+## A message sent while a turn runs, until the turn reads it: the `message_id` its sender got, its text, and who
+## sent it when the user did not (`child:ID` or `extension`; none for a user's message).
 struct Unread
   id: String
   text: String
+  source: Optional[String] = none
+end
+
+## A wake that waits for the next user message: its text, and who sent it (`child:ID` or `extension`).
+struct Parked
+  text: String
+  source: String
 end
 
 struct Running
@@ -256,6 +269,12 @@ struct State
   ## Messages sent while the turn runs, which it has not read yet. They live only here: a crash of the server loses
   ## them with no `queue_dropped`.
   queued: List[Unread] = []
+  ## The wakes since the last user message that started a turn.
+  wakes: Int = 0
+  ## The wakes that wait for the next user message, which takes them before its own.
+  parked: List[Parked] = []
+  ## A stop waits for the next user message: wakes park meanwhile, so none restarts a stopped turn.
+  stop_window: Bool = false
   ## The names the extensions noted: the skills the session loaded.
   marks: List[String] = []
   ## The model's window: 0 until it is known, -1 when the provider does not say.

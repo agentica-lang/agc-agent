@@ -16,9 +16,50 @@ import Todos from "../tools/todos"
 import Tools from "../tools/tools"
 import Logger from "std/logger"
 
+## A wake from `source` (`child:ID` for a child's answer, `extension` otherwise). One that finds a running turn queues
+## into it, like a user's message, and does not count. An idle one parks in the stop window, or past the cap, and
+## starts a turn otherwise: only a wake that starts a turn counts.
+def wake(
+  state: Session.State,
+  text: String,
+  source: String,
+  reply: Channel[Result[Protocol.MessageAccepted]],
+) -> Session.State
+  for _running in option_list(state.turn)
+    return park(state, text, source, reply) if state.stop_window
+
+    return start_turn(state, text, reply, some(source))
+  end
+
+  if state.stop_window or (state.setup.wakes_max > 0 and state.wakes >= state.setup.wakes_max)
+    return park(state, text, source, reply)
+  end
+
+  start_turn(state, text, reply, some(source))
+end
+
+## A wake that waits for the next user message: accepted and kept, with an empty `turn_id` for the clients.
+def park(
+  state: Session.State,
+  text: String,
+  source: String,
+  reply: Channel[Result[Protocol.MessageAccepted]],
+) -> Session.State
+  parked = state.parked.push(Session.Parked(text: text, source: source))
+  Actor.reply(reply, ok(Protocol.MessageAccepted(turn_id: "")))
+  queued = Protocol.MessageQueued(turn_id: "", text: text, source: some(source))
+  Stream.emit(state.with(parked: parked), Protocol.Event.MessageQueued(queued))
+end
+
 ## A message sent while a turn runs waits in the queue, which the turn reads before its next model call. The user's
-## `/name` of a skill puts its content before the message, unless the session has it already.
-def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protocol.MessageAccepted]]) -> Session.State
+## `/name` of a skill puts its content before the message, unless the session has it already. `source` is who sent it
+## when the user did not: a wake that queues into the running turn, or starts the next one from `next_turn`.
+def start_turn(
+  state: Session.State,
+  typed: String,
+  reply: Channel[Result[Protocol.MessageAccepted]],
+  source: Optional[String] = none,
+) -> Session.State
   if state.compacting or state.shell.some?
     Actor.reply(reply, error(Session.busy_reason(state), kind: Protocol.KIND_SESSION_BUSY))
     return state
@@ -43,9 +84,14 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
 
     message_id = "#{running.id}.#{running.queued + 1}"
     Actor.reply(reply, ok(Protocol.MessageAccepted(turn_id: running.id, message_id: some(message_id))))
-    waiting = state.queued.push(Session.Unread(id: message_id, text: typed))
-    queued = state.with(turn: some(running.with(queued: running.queued + 1)), queued: waiting)
-    event = Protocol.MessageQueued(turn_id: running.id, text: typed, message_id: some(message_id))
+    waiting = state.queued.push(Session.Unread(id: message_id, text: typed, source: source))
+    cleared = state
+    if source.none?
+      cleared = state.with(wakes: 0, stop_window: false)
+    end
+
+    queued = cleared.with(turn: some(running.with(queued: running.queued + 1)), queued: waiting)
+    event = Protocol.MessageQueued(turn_id: running.id, text: typed, message_id: some(message_id), source: source)
     return Stream.emit(queued, Protocol.Event.MessageQueued(event))
   end
 
@@ -66,8 +112,17 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
   expanded = handled.unwrap!
 
   shells = not state.shells.empty?
-  text = Store.with_shells(state.shells, expanded.text)
-  case Stream.save(state, -> { Store.append_user(state.setup.file, expanded.text, typed, expanded.names, shells) })
+  # The parked wakes go before the user's own message; a wake starts with no parked one. The record keeps them but
+  # not the shells, which the next load reads again from their own events.
+  take: List[Session.Parked] = []
+  if source.none?
+    take = state.parked
+  end
+
+  taken = take.map { |parked| parked.text }
+  own = (taken + [expanded.text]).join("\n\n")
+  text = Store.with_shells(state.shells, own)
+  case Stream.save(state, -> { Store.append_user(state.setup.file, own, typed, expanded.names, shells, source) })
     ok(_) -> state = state.with(marks: state.marks + expanded.names)
     error(e) ->
       Actor.reply(
@@ -134,11 +189,28 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
+  # A user's turn takes the parked wakes and resets the count; a wake's turn counts and keeps them (none wait).
+  wakes = state.wakes
+  fresh_parked = state.parked
+  window = state.stop_window
+  if source.none?
+    wakes = 0
+    fresh_parked = []
+    window = false
+  end
+
+  for _source in option_list(source)
+    wakes = state.wakes + 1
+  end
+
   running = Session.Running(id: turn_id, task: task, from_event_id: state.counter, shown: state.display.size + 1)
   started = state.with(
     turn: some(running),
     turns: state.turns + 1,
     turn_cost: 0.0,
+    wakes: wakes,
+    parked: fresh_parked,
+    stop_window: window,
     history: state.history.push(LLM.Message(role: LLM.Role.User, content: [Agent.text_block(text)])),
     display: state.display.push(Protocol.Message(role: Protocol.Role.User, text: typed)),
     broken: none,
@@ -146,10 +218,8 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
   )
 
   Actor.reply(reply, ok(Protocol.MessageAccepted(turn_id: turn_id)))
-  Stream.emit(
-    started,
-    Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: turn_id, history_size: some(started.display.size))),
-  )
+  begun = Protocol.TurnStarted(turn_id: turn_id, history_size: some(started.display.size), source: source)
+  Stream.emit(started, Protocol.Event.TurnStarted(begun))
 end
 
 ## The queued messages after the first `after`, each with the content of the skills it names. Nothing changes here: the
@@ -424,7 +494,14 @@ def commit(
   end
 
   for queued in read
-    case Stream.save(shown, -> { Store.append_queued(state.setup.file, queued.typed) })
+    source: Optional[String] = none
+    for waiting in state.queued
+      if waiting.id == queued.id
+        source = waiting.source
+      end
+    end
+
+    case Stream.save(shown, -> { Store.append_queued(state.setup.file, queued.typed, source) })
       ok(_) ->
         message = Protocol.Message(role: Protocol.Role.User, text: queued.typed)
         shown = shown.with(display: shown.display.push(message), queued: shown.queued.drop(1))
@@ -606,13 +683,19 @@ def dropped(state: Session.State) -> Session.State
   Stream.emit(state.with(queued: []), Protocol.Event.Error(failure))
 end
 
-# Messages that came after the turn's last read start the next turn, together.
+# Messages that came after the turn's last read start the next turn, together. When the first of them is a wake, it
+# starts the turn and counts; a user's first message takes the parked wakes before its own.
 def next_turn(state: Session.State) -> Session.State
   return state if state.queued.empty?
   return Stream.unsent(state) if state.broken.some?
 
+  first: Optional[String] = none
+  for waiting in state.queued.take(1)
+    first = waiting.source
+  end
+
   ignored: Channel[Result[Protocol.MessageAccepted]] = Channel.new(1)
-  started = start_turn(state.with(queued: []), texts(state.queued).join("\n\n"), ignored)
+  started = start_turn(state.with(queued: []), texts(state.queued).join("\n\n"), ignored, first)
   return Stream.unsent(started.with(queued: state.queued)) if started.turn.none?
 
   # The turn starts with all of them, as one message: each is delivered now. A client that attaches meanwhile gets the
