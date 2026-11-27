@@ -197,7 +197,7 @@ def tool_json(tool: Types.Tool) -> JSON.Value
   function = JSON.object({
     "name": JSON.from(tool.name),
     "description": JSON.from(tool.description),
-    "parameters": tool.input_schema,
+    "parameters": Body.provider_schema(tool.input_schema),
   })
 
   JSON.object({"type": JSON.from("function"), "function": function})
