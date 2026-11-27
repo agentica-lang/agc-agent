@@ -8,6 +8,8 @@
 
 import HTTP from "std/http"
 import LLM from "pkg/llm/llm"
+import RequestBudget from "request_budget"
+import Spill from "../tools/spill"
 
 PERCENT = 80
 ## The most tokens of a summary, thinking included: a limit that most models take.
@@ -55,6 +57,7 @@ struct Settings
   provider: Optional[LLM.Provider] = none
   ## Why no summary can be written (the summary model uses an API Finn does not speak); empty when one can.
   refused: String = ""
+  artifacts: Optional[Spill.Port] = none
 end
 
 def due?(settings: Settings, context: Int) -> Bool
@@ -104,18 +107,11 @@ def summarize(
 ) -> Result[Compaction]
   return error(settings.refused) if not settings.refused.empty?
 
-  text = transcript(history.drop(span.from).take(span.to - span.from))
-  prompt = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: text))])
-  stream = try LLM.stream(
+  stream = try RequestBudget.stream(
     provider,
-    LLM.Request(
-      model: settings.model,
-      system: SYSTEM,
-      messages: [prompt],
-      extra: settings.extra,
-      headers: settings.headers,
-      max_tokens: some(SUMMARY_MAX_TOKENS),
-    ),
+    history.drop(span.from).take(span.to - span.from),
+    ->(kept) { request(settings, kept) },
+    settings.artifacts,
   )
 
   response = try LLM.response(stream)
@@ -249,6 +245,18 @@ def transcript(messages: List[LLM.Message]) -> String
 end
 
 private
+
+def request(settings: Settings, messages: List[LLM.Message]) -> LLM.Request
+  prompt = LLM.Message(role: LLM.Role.User, content: [LLM.Block.Text(LLM.TextPart(text: transcript(messages)))])
+  LLM.Request(
+    model: settings.model,
+    system: SYSTEM,
+    messages: [prompt],
+    extra: settings.extra,
+    headers: settings.headers,
+    max_tokens: some(SUMMARY_MAX_TOKENS),
+  )
+end
 
 def props_window(settings: Settings) -> Result[Int]
   client = try HTTP.client(HTTP.ClientOptions(timeout_ms: PROPS_MS))

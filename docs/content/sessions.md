@@ -25,6 +25,8 @@ In a session, `/resume` lists the other sessions, the last changed first, withou
 
 Each session is one file under `~/.local/share/finn/sessions/` ([Configuration](config.md#folders)), in JSON Lines, written as the session goes. It keeps every event but the text as it streams, in plain text, tool output and file contents included, until you delete it. The folder is readable by you alone. The server reads a session's file the first time a client asks for it.
 
+Large [tool results](tools.md) are saved as private files next to the session, up to 256 artifacts per session. They are readable by ID even with file confinement on, survive a restart, and are removed with the session. A fork or clone copies artifacts referenced by the branch it copies.
+
 ## Go back: the tree
 
 A session is a tree. `/tree` shows your messages, with a branch one step in.
@@ -63,5 +65,7 @@ Past 80 % of the model's context window, the history after the first task become
 - `FINN_COMPACT_MODEL` names the model that writes the summary, for the sessions on the server's own provider and API. Else, and for the other sessions, it is the session's model. Its tokens are not in the session's usage or cost.
 - On Anthropic, the history folds only between turns. Past the limit inside a turn, the rest of the turn sends no thinking blocks.
 - A [skill](skills.md) that the folded part had loaded comes back after the summary.
+
+Finn also limits the encoded request body to 1 MiB. If the next request is too large, Finn shortens tool results for that request, even in sessions saved before artifacts existed, and tries again without rerunning tools. It does not silently shorten your messages. If the request still cannot fit, use `/tree` to go back before the large input or start a new session with a shorter input.
 
 To stop a turn, see [CLI and TUI](cli.md#stop).

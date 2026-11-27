@@ -4,7 +4,8 @@
 ## Errors have a kind and, for an HTTP answer, the status as `code`: `llm.auth`, `llm.rate_limit` (`retry_after_ms` in
 ## `details`), `llm.overloaded`, `llm.invalid_request`, `llm.server`, `llm.network`, `llm.protocol` (bad SSE or JSON,
 ## a cut stream), `llm.api` (an error inside the stream), `llm.cancelled`, `llm.slow_reader` (the events were not read
-## in time), `llm.unsupported` (a feature the provider does not have). A request is tried again only before the
+## in time), `llm.unsupported` (a feature the provider does not have), and `llm.request_too_large` (local limit,
+## `bytes` and `limit` in `details`). A request is tried again only before the
 ## first byte of its stream, on 429, 5xx and network errors.
 
 import Anthropic from "src/anthropic"
@@ -23,6 +24,7 @@ ANTHROPIC_CHEAP_MODEL = Anthropic.CHEAP_MODEL
 
 export Http.Options
 export Http.Transport
+export Http.KIND_REQUEST_TOO_LARGE
 export Http.transport
 export Http.close_transport
 export Anthropic.anthropic

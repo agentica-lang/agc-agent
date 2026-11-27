@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+- Large tool results, including errors, are saved as private session artifacts with a preview and paginated readback. When the encoded model request exceeds 1 MiB, Finn shortens tool results from both new and resumed sessions and tries again without rerunning the tools.
 - OpenAI-format providers no longer fail with HTTP 400 on a tool with an `Int` or `UInt64` field: its 64-bit bounds are left out of the schema they get.
 - `web_fetch` fetches an `http://` or `https://` URL for the model, as minibot's `http_request` does, but for public addresses only: the host is resolved, every address that is not public is refused (`web_fetch_private_address`), and the connection goes to the address that was checked. It asks for approval, follows no redirect, cuts the body at 16384 bytes, and gives HTML as compact text that keeps links, forms and tables (read in a task with a time limit and an input cap; a page that exceeds them comes as plain text).
 

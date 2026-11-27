@@ -131,9 +131,9 @@ def find(name: String) -> Result[Spec.Tool]
 end
 
 ## Runs the call. A failure, a refused path and a failed command are an output with `is_error`.
-def run(ctx: Spec.Context, name: String, input: JSON.Value) -> Spec.Output
+def run(ctx: Spec.Context, name: String, input: JSON.Value, capped: Bool = true) -> Spec.Output
   case offered_tool(ctx, name)
-    ok(tool) -> Spec.output(wrapped(ctx, tool).call(ctx, input))
+    ok(tool) -> Spec.output(wrapped(ctx, tool).call(ctx, input), capped)
     error(e) -> Spec.Output(text: e.message, is_error: true)
   end
 end

@@ -18,6 +18,7 @@ import Config from "src/config/config"
 import Extensions from "src/config/registry"
 import Server from "src/http/server"
 import Builtins from "src/session/builtins"
+import Spill from "src/tools/spill"
 import Tools from "src/tools/tools"
 import Log from "src/log"
 import Logger from "std/logger"
@@ -130,7 +131,7 @@ def stop_on_signals(server: Server.Server) -> Void
 end
 
 def start(registry: Extensions.Registry) -> Result[Server.Server]
-  clashes = Extensions.clashes(registry, Tools.all().map { |tool| tool.name })
+  clashes = Extensions.clashes(registry, Tools.all().map { |tool| tool.name }.push(Spill.NAME))
   return error(clashes.join("\n")) if not clashes.empty?
 
   transport = try LLM.transport()

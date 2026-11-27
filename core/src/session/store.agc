@@ -13,6 +13,7 @@
 import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Compaction from "../agent/compaction"
+import Spill from "../tools/spill"
 import Storage from "storage"
 
 export Storage.Port
@@ -164,6 +165,11 @@ def memory(folders: List[String]) -> Storage.Port = Storage.memory(MAX_LINE_BYTE
 
 def file_of(dir: String, id: String) -> String = "#{dir}/#{id}#{EXTENSION}"
 
+## The saved tool output readable by this session only.
+def artifacts(file: Ref) -> Spill.Port
+  Spill.Port(save: ->(text) { save_artifact(file, text) }, read: ->(id) { read_artifact(file, id) })
+end
+
 ## The session files of `dir`, by their extension.
 def all(port: Storage.Port, dir: String) -> Result[List[Ref]]
   names = (try port.names.call(dir)).select { |name| name.end_with?(EXTENSION) }
@@ -189,11 +195,16 @@ def create(port: Storage.Port, dir: String, header: Header) -> Result[Ref]
   ok(file)
 end
 
-## Removes a session file and the file beside it.
+## Removes a session file and its sidecars.
 def remove(file: Ref) -> Result[Void]
   try file.port.remove.call(file.path)
   _ = file.port.remove.call(settings_file(file.path))
   _ = file.port.remove.call(prompt_file(file.path))
+  empty: List[String] = []
+  for id in artifact_ids(file).unwrap_or(empty)
+    _ = file.port.remove.call(artifact_path(file, id))
+  end
+
   ok()
 end
 
@@ -349,9 +360,10 @@ def copy(file: Ref, dir: String, header: Header, leaf: Int) -> Result[Ref]
   return error("no entry #{leaf}", kind: Protocol.KIND_INVALID) if not entry?(entries, leaf)
 
   created = try create(file.port, dir, header)
-  written = write(created, branch(entries, leaf).map { |record| "#{record.line}\n" }.join(""))
+  text = branch(entries, leaf).map { |record| "#{record.line}\n" }.join("")
+  written = copied_content(file, created, text)
   if not written.ok?
-    _ = created.port.remove.call(created.path)
+    _ = remove(created)
   end
 
   try written
@@ -501,12 +513,66 @@ end
 
 private
 
+ARTIFACT_SUFFIX = ".tool-"
+ARTIFACT_BYTES = 1_048_576
+ARTIFACT_COUNT = 256
+
 struct Settings
   model: Optional[String] = none
   effort: Optional[String] = none
   provider: Optional[String] = none
   api: Optional[String] = none
   profile: Optional[String] = none
+end
+
+def artifact_path(file: Ref, id: String) -> String = "#{file.path}#{ARTIFACT_SUFFIX}#{id}"
+
+def artifact_id?(id: String) -> Bool = id.length == 64 and id.split("").all? { |c| "0123456789abcdef".include?(c) }
+
+def artifact_ids(file: Ref) -> Result[List[String]]
+  parts = file.path.split("/")
+  dir = parts.take(parts.size - 1).join("/")
+  prefix = "#{parts.last}#{ARTIFACT_SUFFIX}"
+  names = try file.port.names.call(dir)
+  ok(
+    names.select { |n| n.start_with?(prefix) }
+      .map { |n| n.slice(prefix.length, n.length - prefix.length) }
+      .select(&artifact_id?),
+  )
+end
+
+def save_artifact(file: Ref, text: String) -> Result[String]
+  return error("tool output exceeds the artifact size limit") if text.bytesize > ARTIFACT_BYTES
+
+  id = OpenSSL.Digest.sha256_hexdigest(text.bytes)
+  path = artifact_path(file, id)
+  return ok(id) if file.port.stat.call(path).ok?
+
+  return error("the session's tool artifact quota is full") if (try artifact_ids(file)).size >= ARTIFACT_COUNT
+
+  try file.port.create.call(path, text)
+  ok(id)
+end
+
+def read_artifact(file: Ref, id: String) -> Result[String]
+  return error("invalid tool output artifact ID") if not artifact_id?(id)
+
+  path = artifact_path(file, id)
+  case file.port.stat.call(path)
+    ok(info) if info.size <= ARTIFACT_BYTES -> file.port.read_text.call(path)
+    _ -> error("tool output artifact is not available in this session")
+  end
+end
+
+def copied_content(source: Ref, target: Ref, text: String) -> Result[Void]
+  for id in try artifact_ids(source)
+    if text.include?(id)
+      content = try read_artifact(source, id)
+      try target.port.create.call(artifact_path(target, id), content)
+    end
+  end
+
+  write(target, text)
 end
 
 # Every record of the file with its JSON and its line, for a load or a copy.

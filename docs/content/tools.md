@@ -13,6 +13,7 @@ The model works through tools. Each call shows in the client: the file it reads 
 | Tool | What it does |
 |---|---|
 | `read_file` | read a text file, from a line `offset`, `limit` lines (2000 by default, at most 5000) and at most 27000 characters |
+| `read_tool_output` | read saved tool output from this session by artifact `id`, up to 4096 characters from `offset` (0 by default) |
 | `write_file` | create or replace a file; missing folders are made |
 | `edit_file` | replace `old_string` with `new_string`; it must occur once, unless `replace_all` |
 | `glob` | list the files whose path matches a pattern such as `**/*.py` |
@@ -24,7 +25,7 @@ The model works through tools. Each call shows in the client: the file it reads 
 
 Skills add `activate_skill` ([Skills](skills.md)), MCP servers add their own tools ([MCP](mcp.md)), and an [extension](extensions.md) can add more. Which calls ask before they run is on [Approvals and security](security.md#what-asks).
 
-The model sees at most 30000 characters of a tool's output; the rest is cut, with a note that says how long it was.
+Tool results over 8192 bytes (65536 for `activate_skill`) go to a private session artifact. The model gets a preview, the byte count and an ID it can give to `read_tool_output`. A tool's own capture limits still apply. Calls inside a `run_script` keep their normal output limits; the script's final result can spill. If the profile hides readback, the result exceeds the 1 MiB artifact limit, or saving fails, Finn gives a bounded preview and says the rest was not saved.
 
 ## web_fetch
 
@@ -44,7 +45,7 @@ The model sees at most 30000 characters of a tool's output; the rest is cut, wit
 A profile decides which tools the model of a session sees. Pick one for a new session with `--profile NAME`, or change it with `/profile NAME` between turns (`/profile` alone lists them, and Shift+Tab in `finn` goes to the next one; while a turn runs the change is refused). The session keeps its profile across a restart, a `/tree` move and a fork. There are two built in:
 
 - `build`, the default: every tool;
-- `plan`: `read_file`, `glob`, `grep`, `todo_write` and `activate_skill`, with a note in the system prompt to change nothing. No `bash`, no writes, no MCP tools.
+- `plan`: `read_file`, `read_tool_output`, `glob`, `grep`, `todo_write` and `activate_skill`, with a note in the system prompt to change nothing. No `bash`, no writes, no MCP tools.
 
 A profile is a file `NAME.md` in `~/.config/finn/profiles/` (`$XDG_CONFIG_HOME/finn/profiles/`), or in `.finn/profiles/` of a [trusted](config.md#trusted-folders) project, which wins over yours. A file named `build.md` or `plan.md` replaces the built-in one, so a trusted project may replace `plan`; a project file that replaces a profile is a warning the clients show. NAME is lowercase letters, digits, `-` and `_`: another `.md` file there (a `README.md`, a link out of the folder) is skipped with a warning.
 

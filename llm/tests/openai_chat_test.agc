@@ -407,7 +407,11 @@ def test_a_generation_request_over_one_mib_is_refused_locally() -> Result[Void]
     ok(call) ->
       LLM.cancel(call)
       error("expected the request body to be refused")
-    error(e) -> Test.eq([e.kind, e.message], ["llm.invalid_request", "llm: the request body exceeds 1048576 bytes"])
+    error(e) ->
+      try Test.eq(e.kind, LLM.KIND_REQUEST_TOO_LARGE)
+      try Test.eq(e.details.get("limit"), some("1048576"))
+      bytes = try e.details.get("bytes").unwrap_or("0").to_i
+      Test.assert(bytes > 1_048_576, "the error did not report the encoded size")
   end
 end
 

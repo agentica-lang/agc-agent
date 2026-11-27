@@ -84,12 +84,18 @@ def args[T](input: JSON.Value, codec: Codec[T]) -> Result[T]
   end
 end
 
-def output(result: Result[String]) -> Output
-  case result
-    ok(text) -> Output(text: cap(text), is_error: false)
-    error(e) -> Output(text: cap(e.message), is_error: true)
+def output(result: Result[String], capped: Bool = true) -> Output
+  made = case result
+    ok(text) -> Output(text: text, is_error: false)
+    error(e) -> Output(text: e.message, is_error: true)
   end
+
+  return bounded(made) if capped
+
+  made
 end
+
+def bounded(output: Output) -> Output = output.with(text: cap(output.text))
 
 ## `ctx` with the tools there are now, so they stay the same for a whole turn.
 def snapshot(ctx: Context) -> Context = ctx.with(tools: more_tools(ctx), late: none)

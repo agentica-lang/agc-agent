@@ -8,6 +8,7 @@ import Agent from "../agent/agent"
 import Compaction from "../agent/compaction"
 import Extensions from "../config/registry"
 import Spec from "../tools/spec"
+import Spill from "../tools/spill"
 import Session from "state"
 import Store from "store"
 import Stream from "stream"
@@ -81,6 +82,12 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
   inbox: Channel[Session.Msg] = Actor.inbox
   address = inbox.address
   setup = routed(state.setup)
+  storage = artifacts(setup)
+  ctx = Spec.snapshot(setup.ctx)
+  for port in option_list(storage)
+    ctx = ctx.with(tools: [Spill.tool(port)] + ctx.tools)
+  end
+
   link = Agent.Link(
     emit: ->(event) { tell(address, Session.Msg.Emit(turn_id, event)) },
     approve: ->(call) { wait_approval(address, turn_id, call, setup.approval_timeout_ms) },
@@ -99,7 +106,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
     system: setup.system,
     history: state.history,
     text: text,
-    ctx: Spec.snapshot(setup.ctx),
+    ctx: ctx,
     link: link,
     extra: setup.extra,
     cache: setup.cache,
@@ -123,6 +130,7 @@ def start_turn(state: Session.State, typed: String, reply: Channel[Result[Protoc
     shows: setup.shows,
     effort: setup.effort,
     gate: gate(setup.approver),
+    artifacts: storage,
   )
 
   task = Task.spawn(&run_turn, Job(turn: turn, address: address))
@@ -213,6 +221,7 @@ def compaction_of(setup: Session.Setup, window: Int) -> Compaction.Settings
     api_key: setup.api_key,
     extra: setup.extra,
     headers: headers_of(setup),
+    artifacts: artifacts(setup),
   )
 
   mine: Optional[Session.Endpoint] = none
@@ -240,6 +249,14 @@ def compaction_of(setup: Session.Setup, window: Int) -> Compaction.Settings
   end
 
   settings
+end
+
+def artifacts(setup: Session.Setup) -> Optional[Spill.Port]
+  for shows in option_list(setup.shows)
+    return none if not shows.call(Spill.NAME)
+  end
+
+  some(Store.artifacts(setup.file))
 end
 
 def gate(approver: Optional[Extensions.Approver]) -> Optional[Fn[Tools.Context, String, JSON.Value, Tools.Verdict]]

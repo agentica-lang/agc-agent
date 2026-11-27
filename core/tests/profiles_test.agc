@@ -61,7 +61,7 @@ def test_plan_hides_bash_and_writes_and_refuses_a_call() -> Result[Void]
       a = try H.until(a, Protocol.EventKind.TurnFinished)
       H.close(a)
       try Test.eq(H.kinds(a.seen).include?("approval_requested"), false)
-      try Test.eq(names(try H.next_request(r)), ["read_file", "glob", "grep", "todo_write"])
+      try Test.eq(names(try H.next_request(r)), ["read_file", "glob", "grep", "todo_write", "read_tool_output"])
       second = try H.request_messages(r, 1)
       Test.eq(JSON.get(second.last, "content"), ok(JSON.from("Error: the session's profile hides bash")))
     end
@@ -213,7 +213,7 @@ def test_a_profile_chosen_later_is_kept() -> Result[Void]
     b = try H.until(b, Protocol.EventKind.TurnFinished)
     H.close(b)
     try Test.eq(names(try H.next_request(h)).include?("bash"), true)
-    try Test.eq(names(try H.next_request(h)), ["read_file", "glob", "grep", "todo_write"])
+    try Test.eq(names(try H.next_request(h)), ["read_file", "glob", "grep", "todo_write", "read_tool_output"])
     H.restarted(h, setup, "") do |r|
       nodes = (try Protocol.decode_session_tree((try H.get(r, Protocol.tree_path(id))).text)).nodes
       _ = try H.post(r, Protocol.branch_path(id), Protocol.encode_branch(Protocol.Branch(entry: nodes[0].id)))
