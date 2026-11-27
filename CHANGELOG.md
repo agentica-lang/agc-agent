@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-- The OpenAI-format providers (chat completions and Responses) take a tool whose input has an `Int` field: its 64-bit `minimum` and `maximum` are left out of the schema they get, since the provider refused it as too large (HTTP 400, `tools[0].parameters`).
+- OpenAI-format providers no longer fail with HTTP 400 on a tool with an `Int` or `UInt64` field: its 64-bit bounds are left out of the schema they get.
 - `web_fetch` fetches an `http://` or `https://` URL for the model, as minibot's `http_request` does, but for public addresses only: the host is resolved, every address that is not public is refused (`web_fetch_private_address`), and the connection goes to the address that was checked. It asks for approval, follows no redirect, cuts the body at 16384 bytes, and gives HTML as compact text that keeps links, forms and tables (read in a task with a time limit and an input cap; a page that exceeds them comes as plain text).
 
 ## [finn-20261126095207] - 2026-11-26

@@ -2,9 +2,10 @@
 
 ## A bigger magnitude than this is not a number a provider takes in a schema: 2^53, the largest integer a double holds.
 MAX_SCHEMA_BOUND = 9007199254740992
+BOUND_KEYS = ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"]
 
-## The schema of a tool's input as a provider takes it. An `Int` field's schema has the 64-bit bounds, which providers
-## refuse as too large, so a `minimum` or `maximum` past MAX_SCHEMA_BOUND is left out; every other key stays.
+## The schema of a tool's input as a provider takes it. An `Int` or `UInt64` field's schema has the 64-bit bounds, which
+## providers refuse as too large, so a bound key past MAX_SCHEMA_BOUND is left out; every other key stays.
 def provider_schema(schema: JSON.Value) -> JSON.Value
   case JSON.node(schema)
     JSON.Node.Object(fields) ->
@@ -40,9 +41,14 @@ end
 private
 
 def huge_bound?(key: String, value: JSON.Value) -> Bool
-  return false if key != "minimum" and key != "maximum"
-  bound = JSON.int(value).unwrap_or(0)
-  bound > MAX_SCHEMA_BOUND or bound < -MAX_SCHEMA_BOUND
+  return false if not BOUND_KEYS.include?(key)
+
+  case JSON.node(value)
+    JSON.Node.Int(bound) -> bound > MAX_SCHEMA_BOUND or bound < -MAX_SCHEMA_BOUND
+    JSON.Node.BigInt(_) -> true
+    JSON.Node.Float(bound) -> bound > MAX_SCHEMA_BOUND.to_f or bound < -MAX_SCHEMA_BOUND.to_f
+    _ -> false
+  end
 end
 
 def merge_objects(old: JSON.Value, value: JSON.Value) -> JSON.Value
