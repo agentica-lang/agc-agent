@@ -56,6 +56,8 @@ end
 private
 
 UNSAVED = "[tool output shortened:"
+## The longest first line `shortened` re-previews instead of saving again: a marker notice with its 64-char id
+## stays well under it, while a longer lookalike first line falls through to `saved`.
 NOTICE_CHARS = 180
 
 struct Args

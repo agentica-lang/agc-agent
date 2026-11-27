@@ -1,8 +1,10 @@
 # `apply_patch`: offered to models on the Responses API as a custom tool with its grammar, approved as one call, and
 # the Codex patch format as models write it.
 
+import LLM from "pkg/llm/llm"
 import Protocol from "pkg/protocol/protocol"
 import Approval from "../src/approval/approval"
+import Store from "../src/session/store"
 import Patch from "../src/tools/patch"
 import Tools from "../src/tools/tools"
 import H from "support/harness"
@@ -77,6 +79,55 @@ def test_switching_to_opencode_go_keeps_the_historical_patch_call_and_result() -
       Test.eq(File.read_text("#{r.work}/hello.txt"), ok("not reapplied\n"))
     end
   end
+end
+
+# A custom call of another tool keeps its kind across a provider switch: only `apply_patch` history is
+# rewritten as a function call, so an unknown freeform tool fails loudly instead of going out with a made-up shape.
+def test_a_non_patch_custom_call_is_not_rewritten_as_a_function() -> Result[Void]
+  setup = H.Setup(api: "openai_responses", replies: ["openai_chat/text.sse"], providers: ["opencode-go"])
+  H.using(setup) do |h|
+    id = try H.new_session(h)
+    file = Store.Ref(port: Store.disk(), path: H.session_file(h, id))
+    try Store.append_user(file, "Original question.", "Original question.")
+    try Store.append_messages(file, custom_round())
+    change = Protocol.encode_update_session(
+      Protocol.UpdateSession(provider: some("opencode-go"), model: some("glm-5.3-flash")),
+    )
+
+    try Test.eq((try H.call(h, "PATCH", Protocol.session_path(id), change, H.auth(h))).status, 200)
+    H.restarted(h, setup, "") do |r|
+      a = try H.subscribe(r, id, some((try H.session(r, id)).last_event_id))
+      _ = try H.send(r, id, "Continue.")
+      ended = try H.until(a, Protocol.EventKind.TurnFinished)
+      H.close(ended)
+      failures = ended.seen.flat_map do |event|
+        case event.event
+          Protocol.Event.Error(failure) -> [failure]
+          _ -> []
+        end
+      end
+
+      try Test.eq(failures.size, 1)
+      try Test.eq(failures.first.kind, "llm.unsupported")
+      Test.assert(failures.first.message.include?("future_custom"), "the error did not name the custom tool")
+    end
+  end
+end
+
+def custom_round() -> List[LLM.Message]
+  call = LLM.Block.ToolUse(
+    LLM.ToolCall(
+      id: "custom-1",
+      name: "future_custom",
+      arguments: "freeform text",
+      input: JSON.object({}),
+      kind: LLM.ToolKind.Custom,
+    ),
+  )
+
+  result = LLM.Block.ToolResult(LLM.ToolOutput(tool_use_id: "custom-1", content: "done", is_error: false))
+
+  [LLM.Message(role: LLM.Role.Assistant, content: [call]), LLM.Message(role: LLM.Role.User, content: [result])]
 end
 
 # A patch is checked whole: one hunk that does not apply leaves every file as it was.

@@ -515,12 +515,14 @@ def call_model(turn: Turn, messages: List[LLM.Message]) -> Result[LLM.Response]
   ok(response)
 end
 
-# Non-Responses APIs can carry the old call/result pair as a function call with an object argument.
+# Non-Responses APIs can carry the old patch call/result pair as a function call with an object argument.
 # This is only a projection for the outgoing request, not a callable tool or a change to saved history.
+# Only `apply_patch` is rewritten: its `{"input": text}` shape belongs to that tool, and any other custom
+# tool stays custom so its wire refuses it loudly instead of sending a made-up shape.
 def function_history(block: LLM.Block) -> LLM.Block
   case block
-    LLM.Block.ToolUse(call) if call.kind == LLM.ToolKind.Custom ->
-      input = JSON.object({"input": JSON.from(call.arguments)})
+    LLM.Block.ToolUse(call) if call.kind == LLM.ToolKind.Custom and call.name == Tools.PATCH ->
+      input = input_of(call)
       LLM.Block.ToolUse(
         call.with(kind: LLM.ToolKind.Function, input: input, arguments: JSON.encode(input), replay: none),
       )
@@ -626,10 +628,13 @@ end
 
 # A custom tool's call has its text as `input`, the field its tool reads.
 def with_input(call: LLM.ToolCall) -> LLM.ToolCall
-  return call if call.kind != LLM.ToolKind.Custom
+  return call if call.kind != LLM.ToolKind.Custom or call.name != Tools.PATCH
 
-  call.with(input: JSON.object({"input": JSON.from(call.arguments)}))
+  call.with(input: input_of(call))
 end
+
+# The freeform text of a custom patch call as the object its tool reads.
+def input_of(call: LLM.ToolCall) -> JSON.Value = JSON.object({"input": JSON.from(call.arguments)})
 
 # Runs the call between its `tool_started` and `tool_finished` events, on the input the extensions gave (`checked`).
 def noticed_run(turn: Turn, given: LLM.ToolCall, checked: Result[JSON.Value], marks: List[String]) -> Tools.TurnOutput
