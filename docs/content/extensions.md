@@ -132,7 +132,7 @@ A tool's `Core.Call` carries its `session` and `host`, a `Core.Host` that reache
 - `host.send.call(id, text)` sends a message to a child: it starts a turn, or joins the running one, as a user's message does. Sent to the session itself, it is sent as a user's message is.
 - `host.watch.call(id, ["turn_finished"], fn)` gives `fn` the events of the session or a child, as an observer. Watching the same names again keeps the first handler.
 - `host.snapshot.call(id)` reads the session or a child: its history, usage and settings.
-- `host.stop.call(id)` stops a child's turn, and `host.delete.call(id)` deletes a child.
+- `host.stop.call(id)` stops only a child's turn, and `host.delete.call(id)` deletes only a child; both refuse the session itself with `session.not_found`.
 
 So a tool can start a child, watch it, and send its answer back to its own session, which starts a turn:
 
@@ -145,7 +145,7 @@ def answered(host: Core.Host, parent: String, seen: Core.Seen) -> Void
 end
 ```
 
-Other ids are refused with `session.not_found`, and a child cannot start sessions. The children are kept in memory only, so no file of theirs stays, and `GET /v1/sessions` does not list them. A `/stop` that stops the parent's turn stops their turns too and leaves them open, and a delete of the parent deletes them first.
+Other ids are refused with `session.not_found`, and a child cannot start sessions. A child's ceiling is the parent's effective profile when the child starts (a `PATCH` before then counts); it is a snapshot, so a later change of the parent leaves the child's tools alone. The children are kept in memory only, so no file of theirs stays, and `GET /v1/sessions` does not list them. A `/stop` that stops the parent's turn stops their turns too and leaves them open, and a delete of the parent deletes them first.
 
 ## A service
 

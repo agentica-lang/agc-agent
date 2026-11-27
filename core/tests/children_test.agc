@@ -284,6 +284,111 @@ def test_answer_then_delete_from_the_child_watcher_returns_at_once() -> Result[V
   end
 end
 
+# `stop` and `delete` take only a child: the session itself is not found, while `snapshot` and `watch` read it, and
+# a child's own stop and delete still work.
+def test_host_stop_and_delete_reject_the_session_itself() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    try Test.eq((try host.snapshot.call(parent)).id, parent)
+    seen: Channel[Core.Seen] = Channel.new(4)
+    try host.watch.call(parent, ["turn_finished"], ->(event: Core.Seen) { _ = seen.send(event, 0) })
+    b = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Again.")
+    b = try H.until(b, Protocol.EventKind.TurnFinished)
+    H.close(b)
+    got = try seen.recv(5000)
+    try Test.eq([got.session, got.name], [parent, "turn_finished"])
+    try Test.eq(got.parent, none)
+    try Test.eq(kind_of(host.stop.call(parent)), Protocol.KIND_SESSION_NOT_FOUND)
+    try Test.eq(kind_of(host.delete.call(parent)), Protocol.KIND_SESSION_NOT_FOUND)
+    try Test.eq((try H.get(h, Protocol.session_path(parent))).status, 200)
+    child = try host.create.call(Core.NewChild())
+    try Test.eq(try host.stop.call(child), false)
+    try host.delete.call(child)
+    try Test.eq((try H.get(h, Protocol.session_path(child))).status, 404)
+    Test.eq((try H.get(h, Protocol.session_path(parent))).status, 200)
+  end
+end
+
+# A child's ceiling is the parent's effective profile when it starts: a `PATCH` before the start counts, and a
+# later change leaves a child made before alone (a snapshot, not a live narrowing).
+def test_a_child_ceiling_uses_the_patched_profile() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(8)
+  replies = ["spawn.sse", "text.sse", "text.sse", "text.sse", "text.sse"]
+  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false, profiles: true)
+  H.using(setup) do |h|
+    dir = "#{h.base}/config/finn/profiles"
+    try write("#{dir}/reader.md", "---\ntools_deny: [write_file]\n---\n")
+    try write("#{dir}/writer.md", "---\ntools_allow: [write_file, spawn]\n---\n")
+    parent = try H.new_session_in(h, h.work, profile: some("reader"))
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    before = try host.create.call(Core.NewChild())
+    c1 = try H.subscribe(h, before)
+    _ = try host.send.call(before, "Go.")
+    c1 = try H.until(c1, Protocol.EventKind.TurnFinished)
+    H.close(c1)
+    change = Protocol.encode_update_session(Protocol.UpdateSession(profile: some("writer")))
+    try Test.eq((try H.call(h, "PATCH", Protocol.session_path(parent), change, H.auth(h))).status, 200)
+    after = try host.create.call(Core.NewChild())
+    try Test.eq((try host.snapshot.call(after)).profile.map { |p| p.name }, some("writer"))
+    c2 = try H.subscribe(h, after)
+    _ = try host.send.call(after, "Go.")
+    c2 = try H.until(c2, Protocol.EventKind.TurnFinished)
+    H.close(c2)
+    c3 = try H.subscribe(h, before)
+    _ = try host.send.call(before, "Again.")
+    c3 = try H.until(c3, Protocol.EventKind.TurnFinished)
+    H.close(c3)
+    first = names(try H.next_request(h))
+    second = names(try H.next_request(h))
+    made = names(try H.next_request(h))
+    latest = names(try H.next_request(h))
+    again = names(try H.next_request(h))
+    try Test.eq([first.include?("spawn"), first.include?("write_file")], [true, false])
+    try Test.eq([second.include?("spawn"), second.include?("write_file")], [true, false])
+    try Test.eq([made.include?("spawn"), made.include?("write_file")], [true, false])
+    try Test.eq([latest.include?("spawn"), latest.include?("write_file")], [true, true])
+    Test.eq([again.include?("spawn"), again.include?("write_file")], [true, false])
+  end
+end
+
+# Watching the same names again keeps the first handler: only it sees the child's turn.
+def test_watch_same_names_keeps_first_handler() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse", "text.sse"]
+  H.using(H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    child = try host.create.call(Core.NewChild())
+    first: Channel[Core.Seen] = Channel.new(4)
+    second: Channel[Core.Seen] = Channel.new(4)
+    try host.watch.call(child, ["turn_finished"], ->(event: Core.Seen) { _ = first.send(event, 0) })
+    try host.watch.call(child, ["turn_finished"], ->(event: Core.Seen) { _ = second.send(event, 0) })
+    c = try H.subscribe(h, child)
+    _ = try host.send.call(child, "Go.")
+    c = try H.until(c, Protocol.EventKind.TurnFinished)
+    H.close(c)
+    got = try first.recv(5000)
+    try Test.eq([got.session, got.name], [child, "turn_finished"])
+    Test.assert(not second.recv(0).ok?, "the second handler ran")
+  end
+end
+
 private
 
 def with_spawn(calls: Channel[Core.Call]) -> Core.Registry = Core.registry() |> Core.add_tool(spawn_tool(calls))

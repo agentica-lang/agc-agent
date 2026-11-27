@@ -22,8 +22,11 @@ struct NewChild
 end
 
 ## What an extension tool may do with its session and the sessions it started (its children), as the server's routes
-## do: start a child (a child cannot), send a message to a child or to the session itself, stop a child's turn,
-## delete a child, read a session and watch its events. Ids of other sessions are refused (`session.not_found`).
+## do: start a child (a child cannot), send a message to a child or to the session itself, stop only a child's
+## turn, delete only a child, read the session or a child and watch the session or a child. `stop` and `delete`
+## refuse the session itself (`session.not_found`), as they do any other session. A child's ceiling is the parent's
+## effective profile when the child starts (a `PATCH` before then counts); it is a snapshot, so a later change of
+## the parent leaves the child's tools alone. Ids of other sessions are refused (`session.not_found`).
 struct Host
   create: Fn[NewChild, Result[String]]
   send: Fn[String, String, Result[Protocol.MessageAccepted]]

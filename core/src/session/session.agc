@@ -390,10 +390,12 @@ enum Found
 end
 
 enum Msg
-  ## A new session, started by the session of the id when one is given.
-  Create(Protocol.NewSession, Optional[String], Channel[Result[String]])
+  ## A new session, started by the session of the id when one is given, with the ceiling of its tools (the
+  ## parent's effective profile then; none without a parent). The ceiling is a snapshot: a later change of the
+  ## parent's profile leaves the child's tools alone.
+  Create(Protocol.NewSession, Optional[String], Optional[String], Channel[Result[String]])
   Find(String, Channel[Result[Found]])
-  ## The address of a child `id` of the session `parent`; another session is not found.
+  ## The address of a child `id` of the session `parent`; the session itself and any other session are not found.
   FindChild(String, String, Channel[Result[Found]])
   Delete(String, Channel[Result[Void]])
   List(Channel[List[Entry]])
@@ -470,7 +472,7 @@ end
 
 def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
   case msg
-    Msg.Create(request, parent, reply) ->
+    Msg.Create(request, parent, ceiling, reply) ->
       for id in option_list(parent)
         if not registry.sessions.any? { |entry| entry.summary.id == id }
           Actor.reply(reply, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
@@ -478,7 +480,7 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
         end
       end
 
-      case open_session(registry, request, parent)
+      case open_session(registry, request, parent, ceiling)
         ok(entry) ->
           Actor.reply(reply, ok(entry.summary.id))
           Actor.continue(registry.with(sessions: registry.sessions.push(entry)))
@@ -489,10 +491,7 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
 
     Msg.Find(id, reply) -> find_session(registry, id, reply)
     Msg.FindChild(parent, id, reply) ->
-      known = id == parent
-      if not known
-        known = registry.sessions.any? { |entry| entry.summary.id == id and entry.header.parent == some(parent) }
-      end
+      known = registry.sessions.any? { |entry| entry.summary.id == id and entry.header.parent == some(parent) }
 
       if not known
         Actor.reply(reply, error("no child session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
@@ -612,7 +611,12 @@ def summary_now(found: Cached) -> Protocol.SessionSummary
   )
 end
 
-def open_session(registry: Registry, request: Protocol.NewSession, parent: Optional[String]) -> Result[Entry]
+def open_session(
+  registry: Registry,
+  request: Protocol.NewSession,
+  parent: Optional[String],
+  ceiling: Optional[String],
+) -> Result[Entry]
   options = Config.now(registry.options)
   ctx = case Tools.context(
     request.cwd,
@@ -671,14 +675,7 @@ def open_session(registry: Registry, request: Protocol.NewSession, parent: Optio
   end
 
   file = try Store.create(port, folder(options), header)
-  entry(
-    options,
-    header,
-    opened(context, approver, registry.address),
-    file,
-    none,
-    ceiling_of(registry.sessions, parent),
-  )
+  entry(options, header, opened(context, approver, registry.address), file, none, ceiling)
 end
 
 def new_id(count: Int) -> String = "s#{count + 1}-#{OpenSSL.Random.hex(4)}"
@@ -1304,8 +1301,10 @@ def created_at(
   request: Protocol.NewSession,
   parent: Optional[String],
   profile_wins: Bool,
+  ceiling: Optional[String] = none,
 ) -> Result[String]
-  created: Result[Result[String]] = Actor.call(at, CALL_MS) do |reply| Msg.Create(request, parent, reply) end
+  created: Result[Result[String]] = Actor.call(at, CALL_MS) do |reply| Msg.Create(request, parent, ceiling, reply) end
+
   id = try try created
   for name in option_list(request.profile)
     address = try find_at(at, id)
@@ -1328,8 +1327,10 @@ end
 # The children of the session `id`.
 def children(all: List[Entry], id: String) -> List[Entry] = all.select { |entry| entry.header.parent == some(id) }
 
-# The profile of the session `parent`, for the ceiling of a child's tools; none without a parent. A parent that is
-# gone leaves no ceiling, which cannot happen: its delete takes its children.
+# The profile stored in the header of the session `parent`, for the ceiling of a child that loads from its file.
+# New children do not use it: `child_created` passes the parent's effective profile at creation (a `PATCH` before
+# then counts), and the ceiling stays a snapshot afterwards. A parent that is gone leaves no ceiling, which cannot
+# happen for a live child: its delete takes its children.
 def ceiling_of(sessions: List[Entry], parent: Optional[String]) -> Optional[String]
   for id in option_list(parent)
     for entry in sessions.select { |e| e.summary.id == id }
@@ -1371,8 +1372,9 @@ def host_of(at: Address[Msg], options: Config.Options, header: Store.Header) -> 
   )
 end
 
-# A child on the parent's provider and model, unless the request names a provider; with no profile, on the parent's.
-# A child has no children.
+# A child on the parent's provider and model, unless the request names a provider; with no profile, on the
+# parent's. The ceiling is the parent's effective profile now (a `PATCH` before this call counts); it stays a
+# snapshot, so a later change of the parent leaves this child alone. A child has no children.
 def child_created(
   at: Address[Msg],
   options: Config.Options,
@@ -1394,7 +1396,8 @@ def child_created(
     request = request.with(provider: some(parent.provider), model: some(child.model.unwrap_or(parent.model)))
   end
 
-  created_at(at, options, request, some(header.id), true)
+  ceiling = parent.profile.map { |shown| shown.name }
+  created_at(at, options, request, some(header.id), true, ceiling)
 end
 
 # A message to the session itself is sent as a user's is; one to a child starts or joins its turn.
