@@ -86,6 +86,161 @@ def test_events_round_trip_and_cover_every_variant() -> Result[Void]
   ok()
 end
 
+# The fields of a child's provenance: each event with them encodes and decodes back the same, and JSON
+# without them still reads, with none.
+def test_child_session_fields_round_trip() -> Result[Void]
+  started = Protocol.TurnStarted(turn_id: "t1", history_size: some(2), source: some("child:s2"))
+  try Test.eq(
+    Protocol.decode_event("turn_started", Protocol.encode_event(Protocol.Event.TurnStarted(started))),
+    ok(Protocol.Event.TurnStarted(started)),
+  )
+
+  try Test.eq(
+    Protocol.decode_event("turn_started", "{\"turn_id\": \"t1\"}"),
+    ok(Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: "t1"))),
+  )
+
+  queued = Protocol.MessageQueued(turn_id: "t1", text: "done", message_id: none, source: some("child:s2"))
+  try Test.eq(
+    Protocol.decode_event("message_queued", Protocol.encode_event(Protocol.Event.MessageQueued(queued))),
+    ok(Protocol.Event.MessageQueued(queued)),
+  )
+
+  try Test.eq(
+    Protocol.decode_event("message_queued", "{\"turn_id\": \"t1\", \"text\": \"done\"}"),
+    ok(Protocol.Event.MessageQueued(Protocol.MessageQueued(turn_id: "t1", text: "done"))),
+  )
+
+  started_call = Protocol.ToolStarted(call_id: "c", name: "bash", summary: "ls", session: some("s2"))
+  try Test.eq(
+    Protocol.decode_event("tool_started", Protocol.encode_event(Protocol.Event.ToolStarted(started_call))),
+    ok(Protocol.Event.ToolStarted(started_call)),
+  )
+
+  try Test.eq(
+    Protocol.decode_event("tool_started", "{\"call_id\": \"c\", \"name\": \"bash\", \"summary\": \"ls\"}"),
+    ok(Protocol.Event.ToolStarted(Protocol.ToolStarted(call_id: "c", name: "bash", summary: "ls"))),
+  )
+
+  finished = Protocol.ToolFinished(call_id: "c", ok: true, summary: "ok", duration_ms: 3, session: some("s2"))
+
+  try Test.eq(
+    Protocol.decode_event("tool_finished", Protocol.encode_event(Protocol.Event.ToolFinished(finished))),
+    ok(Protocol.Event.ToolFinished(finished)),
+  )
+
+  try Test.eq(
+    Protocol.decode_event(
+      "tool_finished",
+      "{\"call_id\": \"c\", \"ok\": true, \"summary\": \"ok\", \"duration_ms\": 3}",
+    ),
+    ok(Protocol.Event.ToolFinished(finished.with(session: none))),
+  )
+
+  requested = Protocol.ApprovalRequested(
+    approval_id: "a",
+    call_id: "c",
+    tool: "bash",
+    preview: "ls",
+    detail: "",
+    session: some("s2"),
+  )
+
+  try Test.eq(
+    Protocol.decode_event("approval_requested", Protocol.encode_event(Protocol.Event.ApprovalRequested(requested))),
+    ok(Protocol.Event.ApprovalRequested(requested)),
+  )
+
+  bare = "{\"approval_id\": \"a\", \"call_id\": \"c\", \"tool\": \"bash\""
+  bare = "#{bare}, \"preview\": \"ls\", \"detail\": \"\"}"
+  try Test.eq(
+    Protocol.decode_event("approval_requested", bare),
+    ok(Protocol.Event.ApprovalRequested(requested.with(session: none))),
+  )
+
+  used = Protocol.Usage(input: 1, output: 1, cache_read: 0, cache_write: 0, context: 1, session: some("s2"))
+  try Test.eq(
+    Protocol.decode_event("usage", Protocol.encode_event(Protocol.Event.Usage(used))),
+    ok(Protocol.Event.Usage(used)),
+  )
+
+  try Test.eq(
+    Protocol.decode_event(
+      "usage",
+      "{\"input\": 1, \"output\": 1, \"cache_read\": 0, \"cache_write\": 0, \"context\": 1}",
+    ),
+    ok(Protocol.Event.Usage(used.with(session: none))),
+  )
+
+  # An explicit null reads as none, as an older writer would send.
+  try Test.eq(
+    Protocol.decode_event("turn_started", "{\"turn_id\": \"t1\", \"source\": null}"),
+    ok(Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: "t1"))),
+  )
+
+  try Test.eq(
+    Protocol.decode_event(
+      "tool_started",
+      "{\"call_id\": \"c\", \"name\": \"bash\", \"summary\": \"ls\", \"session\": null}",
+    ),
+    ok(Protocol.Event.ToolStarted(Protocol.ToolStarted(call_id: "c", name: "bash", summary: "ls"))),
+  )
+
+  try Test.eq(
+    Protocol.decode_event(
+      "usage",
+      "{\"input\": 1, \"output\": 1, \"cache_read\": 0, \"cache_write\": 0, \"context\": 1, \"session\": null}",
+    ),
+    ok(Protocol.Event.Usage(Protocol.Usage(input: 1, output: 1, cache_read: 0, cache_write: 0, context: 1))),
+  )
+
+  # Without the child, no new key goes out.
+  started_none = Protocol.TurnStarted(turn_id: "t1")
+  queued_none = Protocol.MessageQueued(turn_id: "t1", text: "hi")
+  tool_none = Protocol.ToolStarted(call_id: "c", name: "bash", summary: "ls")
+  finished_none = Protocol.ToolFinished(call_id: "c", ok: true, summary: "ok", duration_ms: 3)
+  requested_none = Protocol.ApprovalRequested(approval_id: "a", call_id: "c", tool: "bash", preview: "ls", detail: "")
+
+  used_none = Protocol.Usage(input: 1, output: 1, cache_read: 0, cache_write: 0, context: 1)
+  quiet = [
+    Protocol.Event.TurnStarted(started_none),
+    Protocol.Event.MessageQueued(queued_none),
+    Protocol.Event.ToolStarted(tool_none),
+    Protocol.Event.ToolFinished(finished_none),
+    Protocol.Event.ApprovalRequested(requested_none),
+    Protocol.Event.Usage(used_none),
+  ]
+
+  for event in quiet
+    try Test.assert(not Protocol.encode_event(event).include?("\"session\""), "a session key without a session")
+    try Test.assert(not Protocol.encode_event(event).include?("\"source\""), "a source key without a source")
+  end
+
+  ok()
+end
+
+# A session whose calls belong to a child: its pending approvals, history and usage keep the `session`, and the
+# session round-trips.
+def test_session_child_fields_round_trip() -> Result[Void]
+  idle = try decode_fixture("session", &Protocol.decode_session, &Protocol.encode_session)
+  tool = Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "ls", session: some("s2"))
+  done = Protocol.ToolFinished(call_id: "c1", ok: true, summary: "ok", duration_ms: 3, session: some("s2"))
+  requested = Protocol.ApprovalRequested(
+    approval_id: "a1",
+    call_id: "c1",
+    tool: "bash",
+    preview: "ls",
+    detail: "",
+    session: some("s2"),
+  )
+
+  used = Protocol.Usage(input: 1, output: 1, cache_read: 0, cache_write: 0, context: 1, session: some("s2"))
+  history = idle.history.map { |m| m.with(tool: m.tool.map { |_| tool }, done: m.done.map { |_| done }) }
+
+  sess = idle.with(pending_approvals: [requested], history: history, usage: some(used))
+  Test.eq(Protocol.decode_session(Protocol.encode_session(sess)), ok(sess))
+end
+
 def test_requests_round_trip() -> Result[Void]
   new_session = try decode_fixture("new_session", &Protocol.decode_new_session, &Protocol.encode_new_session)
   expected = Protocol.NewSession(

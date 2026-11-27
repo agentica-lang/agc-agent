@@ -499,7 +499,7 @@ def encode_session(reply: Session) -> String
       last_event_id: reply.last_event_id,
       turn_id: reply.turn_id,
       turn_from_event_id: reply.turn_from_event_id,
-      pending_approvals: reply.pending_approvals,
+      pending_approvals: reply.pending_approvals.map { |a| Events.requested_wire(a) },
       history: history,
       accept_edits: some(reply.accept_edits),
       confine: some(reply.confine),
@@ -539,7 +539,7 @@ def decode_session(text: String) -> Result[Session]
       last_event_id: wire.last_event_id,
       turn_id: wire.turn_id,
       turn_from_event_id: wire.turn_from_event_id,
-      pending_approvals: wire.pending_approvals,
+      pending_approvals: wire.pending_approvals.map { |w| Events.requested_of(w) },
       history: history,
       accept_edits: wire.accept_edits.unwrap_or(false),
       confine: wire.confine.unwrap_or(false),
@@ -609,8 +609,8 @@ struct MessageWire
   role: String
   text: String
   thinking: JSON.Field[Bool]
-  tool: JSON.Field[Events.ToolStarted]
-  done: JSON.Field[Events.ToolFinished]
+  tool: JSON.Field[Events.ToolStartedWire]
+  done: JSON.Field[Events.ToolFinishedWire]
   stop: JSON.Field[String]
   turn_id: JSON.Field[String]
   max_tokens: JSON.Field[Int]
@@ -623,7 +623,7 @@ struct SessionWire
   last_event_id: Int
   turn_id: Optional[String]
   turn_from_event_id: Optional[Int]
-  pending_approvals: List[Events.ApprovalRequested]
+  pending_approvals: List[Events.ApprovalRequestedWire]
   history: List[MessageWire]
   accept_edits: Optional[Bool] = none
   confine: Optional[Bool] = none
@@ -666,8 +666,8 @@ def message_wire(m: Message) -> MessageWire
     role: role_name(m.role),
     text: m.text,
     thinking: Wire.field(thinking),
-    tool: Wire.field(m.tool),
-    done: Wire.field(m.done),
+    tool: Wire.field(m.tool.map { |t| Events.started_wire(t) }),
+    done: Wire.field(m.done.map { |d| Events.finished_wire(d) }),
     stop: Wire.field(m.stop.map { |f| Events.stop_reason_name(f.stop_reason) }),
     turn_id: Wire.field(m.stop.map { |f| f.turn_id }),
     max_tokens: Wire.field(m.stop.map { |f| f.max_tokens }.unwrap_or(none)),
@@ -684,8 +684,8 @@ def message_of_wire(wire: MessageWire) -> Result[Message]
       role: try parse_role(wire.role),
       text: wire.text,
       thinking: Wire.optional(wire.thinking).unwrap_or(false),
-      tool: Wire.optional(wire.tool),
-      done: Wire.optional(wire.done),
+      tool: Wire.optional(wire.tool).map { |w| Events.tool_started_of(w) },
+      done: Wire.optional(wire.done).map { |w| Events.tool_finished_of(w) },
       stop: Wire.optional(wire.stop).map { |name|
         Events.TurnFinished(
           turn_id: Wire.optional(wire.turn_id).unwrap_or(""),

@@ -30,5 +30,8 @@
   {"name": "error", "data": {"kind": "llm.rate_limit", "message": "too many requests"}},
   {"name": "resync", "data": {}},
   {"name": "todos", "data": {"todos": [{"content": "Write the test", "status": "completed"}, {"content": "Fix the bug", "status": "in_progress"}, {"content": "Update the docs", "status": "pending"}]}},
-  {"name": "todos", "data": {"todos": []}}
+  {"name": "todos", "data": {"todos": []}},
+  {"name": "turn_started", "data": {"turn_id": "t9", "history_size": 1, "source": "child:s2"}},
+  {"name": "tool_started", "data": {"call_id": "call_9", "name": "bash", "summary": "ls", "session": "s2"}},
+  {"name": "usage", "data": {"input": 10, "output": 5, "cache_read": 0, "cache_write": 0, "context": 10, "session": "s2"}}
 ]
