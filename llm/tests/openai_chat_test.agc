@@ -14,6 +14,12 @@ READ_FILE_SCHEMA = (
 )
 TOOL_ID = "kCTtkXcKcYcFeTlsauQ3UorEfEvfwSZp"
 
+struct ReadArgs
+  path: String
+  offset: Optional[Int]
+  limit: Optional[Int]
+end
+
 def test_streams_text_and_sends_the_request() -> Result[Void]
   fake = try Fake.start([try Fake.sse("openai_chat/text.sse")])
   request = LLM.Request(
@@ -471,4 +477,33 @@ end
 
 def provider(fake: Fake.Fake) -> LLM.Provider
   LLM.openai_chat(fake.url, KEY, LLM.Options(timeout_ms: 5000, retry_base_ms: 1))
+end
+
+# An Int field's schema has the 64-bit bounds, which OpenAI refuses as too large: both wires leave them out.
+def test_int_bounds_too_large_for_the_provider_are_left_out() -> Result[Void]
+  tool = LLM.Tool(name: "read_file", description: "Read a file.", input_schema: JSON.schema(ReadArgs))
+  request = LLM.Request(model: MODEL, messages: [Ev.user("Hi.")], tools: [tool])
+  parameters = (
+    "{\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\"}, " +
+    "\"offset\": {\"anyOf\": [{\"type\": \"integer\"}, {\"type\": \"null\"}]}, " +
+    "\"limit\": {\"anyOf\": [{\"type\": \"integer\"}, {\"type\": \"null\"}]}}, \"required\": [\"path\"]}"
+  )
+
+  chat = try ChatWire.request_body(request)
+  responses = try ResponsesWire.request_body(request)
+  try Test.eq(
+    JSON.get(JSON.parse(chat).unwrap!, "tools"),
+    JSON.parse(
+      "[{\"type\": \"function\", \"function\": {\"name\": \"read_file\", " +
+      "\"description\": \"Read a file.\", \"parameters\": #{parameters}}}]",
+    ),
+  )
+
+  Test.eq(
+    JSON.get(JSON.parse(responses).unwrap!, "tools"),
+    JSON.parse(
+      "[{\"type\": \"function\", \"name\": \"read_file\", " +
+      "\"description\": \"Read a file.\", \"parameters\": #{parameters}}]",
+    ),
+  )
 end

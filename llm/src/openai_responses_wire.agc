@@ -197,7 +197,7 @@ def tool_json(tool: Types.Tool) -> JSON.Value
         "type": JSON.from("function"),
         "name": JSON.from(tool.name),
         "description": JSON.from(tool.description),
-        "parameters": tool.input_schema,
+        "parameters": Body.provider_schema(tool.input_schema),
       })
     Types.ToolKind.Custom -> custom_tool_json(tool)
   end
