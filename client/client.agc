@@ -21,6 +21,10 @@ export Backends.unreachable_backend
 export Sessions.new_session
 export Sessions.replay_from
 export Sessions.resume_hint
+export Sessions.child_label
+export Sessions.wake_label
+export Sessions.wake_note
+export Sessions.waiting_line
 export Sessions.thinking
 export Sessions.confined
 export Sessions.compacted

@@ -75,6 +75,8 @@ struct Chat
   ## A `!` command of this client runs.
   shell: Bool = false
   stopping: Bool = false
+  ## Who sent each queued message that named a wake, by its message id, so its delivery names who answered.
+  sources: Map[String, String] = {}
   pending: List[Protocol.ApprovalRequested] = []
   asked: Bool = false
   flow: Render.Flow = Render.Flow.Idle
@@ -308,7 +310,8 @@ def on_event(chat: Chat, id: Optional[Int], event: Protocol.Event) -> Result[Ste
   repeated = id.some? and seen <= chat.shown_id
   shown = chat.with(last_event_id: seen, shown_id: [chat.shown_id, seen].max.unwrap!)
   if not repeated
-    shown = show(shown, Render.event(event, chat.style))
+    shown = show(shown, out(shown, event))
+    shown = tracked(shown, event)
   end
 
   changed = case event
@@ -744,6 +747,43 @@ def reconnect(chat: Chat, reason: String) -> Result[Step]
   Task.sleep(RECONNECT_MS * reconnects)
   try Client.recheck(chat.server)
   ok(Step(chat: subscribe(chat.with(reconnects: reconnects), chat.last_event_id)))
+end
+
+## What `event` prints: a delivered wake names who answered, never its text. Any other event prints as it would.
+def out(chat: Chat, event: Protocol.Event) -> Optional[Render.Out]
+  case event
+    Protocol.Event.MessageDelivered(delivered) ->
+      for id in option_list(delivered.message_id)
+        for source in option_list(chat.sources.get(id))
+          return some(Render.line("[delivered #{Client.wake_note(source)}]"))
+        end
+      end
+
+      Render.event(event, chat.style)
+    _ -> Render.event(event, chat.style)
+  end
+end
+
+## Who sent each queued wake, by message id, until its delivery; a user's turn takes the parked wakes, but those
+## have no id and never reach this map, so there is nothing to drop for them.
+def tracked(chat: Chat, event: Protocol.Event) -> Chat
+  case event
+    Protocol.Event.MessageQueued(queued) ->
+      for source in option_list(queued.source)
+        for id in option_list(queued.message_id)
+          return chat.with(sources: chat.sources.put(id, source))
+        end
+      end
+
+      chat
+    Protocol.Event.MessageDelivered(delivered) ->
+      for id in option_list(delivered.message_id)
+        return chat.with(sources: chat.sources.delete(id))
+      end
+
+      chat
+    _ -> chat
+  end
 end
 
 def added(

@@ -167,6 +167,130 @@ def test_a_tool_call_is_a_shell_line_with_its_folded_output() -> Result[Void]
   )
 end
 
+# Two children may use the same call id: their calls stay apart, labelled by child, and each end finds its own
+# start. A child's call with no open `agent` call of its own keeps its own labelled group at the end.
+def test_overlapping_call_ids_of_two_children_stay_apart() -> Result[Void]
+  s2 = Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "ls", session: some("s2"))
+  s3 = Protocol.ToolStarted(call_id: "c1", name: "read_file", summary: "notes.txt", session: some("s3"))
+  entries = Transcript.tool_started(Transcript.tool_started([], s2), s3)
+  try Test.eq(entries.map { |e| e.call_id }, ["c1", "c1"])
+  entries = Transcript.tool_finished(
+    entries,
+    Protocol.ToolFinished(call_id: "c1", ok: true, summary: "ok", duration_ms: 4, session: some("s2")),
+  )
+
+  entries = Transcript.tool_finished(
+    entries,
+    Protocol.ToolFinished(call_id: "c1", ok: false, summary: "denied", duration_ms: 0, session: some("s3")),
+  )
+
+  try Test.eq(entries.map { |e| e.call_id }, ["c1", "c1"])
+  Test.eq(
+    texts(entries, false),
+    ["child s2 · $ ls", "ok", "Took 0.0s", "", "child s3 · read notes.txt", "denied", "Took 0.0s"],
+  )
+end
+
+# A child's call goes under the open `agent` call that started it; with two open, or with its call already over, the
+# child keeps its own labelled group at the end instead of joining a call that may not be its.
+def test_a_child_call_nests_under_the_open_agent_call() -> Result[Void]
+  agent = Protocol.ToolStarted(call_id: "c0", name: "agent", summary: "2 tasks")
+  child = Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "ls", session: some("s2"))
+  nested = Transcript.tool_started(Transcript.tool_started([], agent), child)
+  try Test.eq(nested.map { |e| e.call_id }, ["c0", "c1"])
+  done = Protocol.ToolFinished(call_id: "c0", ok: true, summary: "s2: done", duration_ms: 9)
+  finished = Transcript.tool_finished(Transcript.tool_finished(nested, child_done()), done)
+  try Test.eq(texts(finished, false)[0], "agent 2 tasks")
+  try Test.eq(texts(finished, false)[4], "child s2 · $ ls")
+  two = Transcript.tool_started(Transcript.tool_started([], agent), agent.with(call_id: "c9"))
+  try Test.eq(Transcript.tool_started(two, child).map { |e| e.call_id }, ["c0", "c9", "c1"])
+  over = Transcript.tool_finished(Transcript.tool_started([], agent), done)
+  Test.eq(Transcript.tool_started(over, child).map { |e| e.call_id }, ["c0", "c1"])
+end
+
+# Two children under one open `agent` call keep their arrival order, with overlapping call ids and a parent entry
+# between them; each end still finds its own start. A replay from the history shows the same order where no parent
+# entry comes between the children's calls.
+def test_two_children_under_one_agent_keep_their_arrival_order() -> Result[Void]
+  agent = Protocol.ToolStarted(call_id: "c0", name: "agent", summary: "2 tasks")
+  first = Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "ls", session: some("s2"))
+  second = Protocol.ToolStarted(call_id: "c1", name: "read_file", summary: "notes.txt", session: some("s3"))
+  plain = Transcript.tool_started(Transcript.tool_started(Transcript.tool_started([], agent), first), second)
+  try Test.eq(plain.map { |e| e.session }, [none, some("s2"), some("s3")])
+  try Test.eq(plain.map { |e| e.call_id }, ["c0", "c1", "c1"])
+  parent = Protocol.ToolStarted(call_id: "c9", name: "bash", summary: "uptime")
+  mixed = Transcript.tool_started(Transcript.tool_started(Transcript.tool_started([], agent), first), parent)
+  mixed = Transcript.tool_started(mixed, second)
+  try Test.eq(mixed.map { |e| e.session }, [none, some("s2"), some("s3"), none])
+  try Test.eq(mixed.map { |e| e.call_id }, ["c0", "c1", "c1", "c9"])
+  finished = Transcript.tool_finished(
+    Transcript.tool_finished(mixed, child_done()),
+    Protocol.ToolFinished(call_id: "c1", ok: false, summary: "denied", duration_ms: 0, session: some("s3")),
+  )
+
+  try Test.eq(
+    texts(finished, false).select { |row| row.start_with?("child") },
+    ["child s2 · $ ls", "child s3 · read notes.txt"],
+  )
+
+  history = [
+    Protocol.Message(role: Protocol.Role.User, text: "go"),
+    Protocol.Message(
+      role: Protocol.Role.Assistant,
+      text: "",
+      tool: some(agent),
+      done: some(Protocol.ToolFinished(call_id: "c0", ok: true, summary: "done", duration_ms: 9)),
+    ),
+    Protocol.Message(role: Protocol.Role.Assistant, text: "", tool: some(first), done: some(child_done())),
+    Protocol.Message(
+      role: Protocol.Role.Assistant,
+      text: "",
+      tool: some(second),
+      done: some(
+        Protocol.ToolFinished(call_id: "c1", ok: false, summary: "denied", duration_ms: 0, session: some("s3")),
+      ),
+    ),
+  ]
+
+  replayed = Transcript.from_history(history)
+  try Test.eq(replayed.map { |e| e.session }, [none, none, some("s2"), some("s3")])
+  Test.eq(
+    texts(replayed, false).select { |row| row.start_with?("child") },
+    ["child s2 · $ ls", "child s3 · read notes.txt"],
+  )
+end
+
+def child_done() -> Protocol.ToolFinished
+  Protocol.ToolFinished(call_id: "c1", ok: true, summary: "ok", duration_ms: 4, session: some("s2"))
+end
+
+# A replayed history keeps the children's calls after their `agent` call, labelled by child, since the file holds
+# the session of every call.
+def test_a_replayed_history_groups_child_calls() -> Result[Void]
+  history = [
+    Protocol.Message(role: Protocol.Role.User, text: "go"),
+    Protocol.Message(
+      role: Protocol.Role.Assistant,
+      text: "",
+      tool: some(Protocol.ToolStarted(call_id: "c0", name: "agent", summary: "2 tasks")),
+      done: some(Protocol.ToolFinished(call_id: "c0", ok: true, summary: "s2: done", duration_ms: 9)),
+    ),
+    Protocol.Message(
+      role: Protocol.Role.Assistant,
+      text: "",
+      tool: some(Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "ls", session: some("s2"))),
+      done: some(child_done()),
+    ),
+  ]
+
+  entries = Transcript.from_history(history)
+  try Test.eq(entries.map { |e| e.call_id }, ["", "c0", "c1"])
+  Test.eq(
+    texts(entries, false),
+    ["go", "", "agent 2 tasks", "s2: done", "Took 0.0s", "", "child s2 · $ ls", "ok", "Took 0.0s"],
+  )
+end
+
 def test_markdown_headings_lists_code_and_bold() -> Result[Void]
   text = "## Plan\n- one **two** three\n12. last\n```\n  let x = 1\n```\nsee **this**, ok"
   rows = Markdown.rows(text, 40)

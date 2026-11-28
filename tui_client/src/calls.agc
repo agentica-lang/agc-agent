@@ -1,6 +1,7 @@
 ## A tool call as the transcript draws it, like a shell line: `$ make test`, `read src/app.agc`, `edit README.md`,
 ## then its diff and output, muted, and how long it took. Folded, the body shows its first FOLDED_ROWS rows. Pure.
 
+import Client from "pkg/client/client"
 import Markdown from "markdown"
 
 FOLDED_ROWS = 4
@@ -29,9 +30,21 @@ struct Call
   timed: Bool = true
 end
 
-## The rows of `call` in `width` columns; `open` shows the whole body.
-def rows(call: Call, width: Int, open: Bool, key: String = "^O") -> List[List[Markdown.Span]]
-  head = [[span(LEAD, Markdown.Look.Plain)] + title(call, [width - LEAD.length, 1].max.unwrap!)]
+## The rows of `call` in `width` columns; `open` shows the whole body. A call of a child session names it in the head
+## line, so interleaved children stay apart.
+def rows(
+  call: Call,
+  width: Int,
+  open: Bool,
+  key: String = "^O",
+  child: Optional[String] = none,
+) -> List[List[Markdown.Span]]
+  lead = LEAD
+  for id in option_list(child)
+    lead = "#{LEAD}#{Client.child_label(id)} · "
+  end
+
+  head = [[span(lead, Markdown.Look.Plain)] + title(call, [width - lead.length, 1].max.unwrap!)]
   return head if call.state == State.Running
 
   columns = [width - BODY.length, 1].max.unwrap!
@@ -65,6 +78,13 @@ struct Shown
 end
 
 def span(text: String, look: Markdown.Look) -> Markdown.Span = Markdown.Span(text: text, look: look)
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
+end
 
 # The title of the call (`$` for a command) and its argument, cut to `columns`.
 def title(call: Call, columns: Int) -> List[Markdown.Span]

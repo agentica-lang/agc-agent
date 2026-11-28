@@ -37,6 +37,9 @@ struct Entry
   ## The id of a tool call and the call.
   call_id: String = ""
   call: Optional[Calls.Call] = none
+  ## The child session whose call it is; none for a call of the session itself. Two children may use the same call
+  ## id, so a call is keyed by both.
+  session: Optional[String] = none
   ## A click opened or closed the entry (a thinking block, a tool call); none follows the default.
   open: Optional[Bool] = none
   ## The rows of the entry for the width and folds they were cut for; a change of the entry drops them.
@@ -100,13 +103,17 @@ end
 
 def note(entries: List[Entry], text: String) -> List[Entry] = entries.push(Entry(kind: Kind.Notice, text: text))
 
-## A tool call starts: its entry at the end, or in place of the one of the same call (a replay).
+## A tool call starts: its entry at the end, or in place of the one of the same call of the same session (a replay).
+## A child's call goes under the open `agent` call that started it, when exactly one runs; with none or several
+## running it goes at the end, still named by its child. Concurrent or async children can never be tied to a call
+## reliably, so they keep their own labelled group instead of joining a call that may not be theirs.
 def tool_started(entries: List[Entry], started: Protocol.ToolStarted) -> List[Entry]
   call = Calls.Call(name: started.name, target: started.summary)
-  entry = Entry(kind: Kind.ToolRunning, text: "", call_id: started.call_id, call: some(call))
-  case found(entries, started.call_id)
+  entry = Entry(kind: Kind.ToolRunning, text: "", call_id: started.call_id, call: some(call), session: started.session)
+
+  case found(entries, started.call_id, started.session)
     some(at) -> entries.set(at, entry.with(open: entries[at].open))
-    none -> entries.push(entry)
+    none -> nested(entries, entry)
   end
 end
 
@@ -124,8 +131,15 @@ def tool_finished(
     kind = Kind.Tool
   end
 
-  base = Entry(kind: kind, text: "", call_id: done.call_id, call: some(Calls.Call(name: "", target: done.summary)))
-  at = found(entries, done.call_id)
+  base = Entry(
+    kind: kind,
+    text: "",
+    call_id: done.call_id,
+    call: some(Calls.Call(name: "", target: done.summary)),
+    session: done.session,
+  )
+
+  at = found(entries, done.call_id, done.session)
   if at.some?
     base = entries[at.unwrap!].with(kind: kind, wrapped: none)
   end
@@ -284,10 +298,45 @@ def from_message(entries: List[Entry], message: Protocol.Message) -> List[Entry]
   end
 end
 
-def found(entries: List[Entry], call_id: String) -> Optional[Int]
+def found(entries: List[Entry], call_id: String, session: Optional[String]) -> Optional[Int]
   return none if call_id == ""
 
-  entries.find_index { |e| e.call_id == call_id }
+  entries.find_index { |e| e.call_id == call_id and e.session == session }
+end
+
+## Where a new call entry goes: after the calls already under the open `agent` call that started it, so two children
+## keep their arrival order, when exactly one such call runs; else at the end.
+def nested(entries: List[Entry], entry: Entry) -> List[Entry]
+  return entries.push(entry) if entry.session.none?
+
+  open: List[Int] = []
+  for index in 0...entries.size
+    current = entries[index]
+    if current.kind == Kind.ToolRunning and current.session.none? and parent_call?(current.call)
+      open = open.push(index)
+    end
+  end
+
+  return entries.push(entry) if open.size != 1
+
+  at = open[0]
+  last = at
+  index = at + 1
+  while index < entries.size and entries[index].session.some?
+    last = index
+    index = index + 1
+  end
+
+  entries.take(last + 1) + [entry] + entries.drop(last + 1)
+end
+
+## Whether `call` is an open `agent` call of the session itself, which a child's call nests under.
+def parent_call?(call: Optional[Calls.Call]) -> Bool
+  for started in option_list(call)
+    return ["agent", "agent_send", "agent_stop"].include?(started.name)
+  end
+
+  false
 end
 
 def unfolded(entry: Entry, kind: Kind) -> Entry
@@ -340,7 +389,7 @@ def entry_lines(entry: Entry, width: Int, folds: Folds) -> List[Line]
   end
 
   for call in option_list(entry.call)
-    return Calls.rows(call, width, open?(entry, folds.tools), folds.tools_key).map { |spans|
+    return Calls.rows(call, width, open?(entry, folds.tools), folds.tools_key, entry.session).map { |spans|
       Line(kind: entry.kind, spans: spans)
     }
   end

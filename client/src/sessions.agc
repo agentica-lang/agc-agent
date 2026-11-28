@@ -3,6 +3,7 @@
 ## come back.
 
 import Protocol from "pkg/protocol/protocol"
+import Commands from "commands"
 
 ## A new session in `cwd`, else the folder the client runs in.
 def new_session(
@@ -60,4 +61,39 @@ def compacted(folded: Bool) -> String
   return "compacted" if folded
 
   "nothing to compact yet"
+end
+
+## `child s2` for the child session `id`, as both clients name it.
+def child_label(id: String) -> String = "child #{id}"
+
+## Who sent a wake or a queued message with `source` (`child:ID` for a child's answer, `extension` otherwise), as
+## both clients name it. An async child's answer wakes with `extension`: the clients name the source they are given
+## and never guess a child from the wake's text.
+def wake_label(source: String) -> String
+  return child_label(source.slice(6, source.length - 6)) if source.start_with?("child:")
+
+  source
+end
+
+## What both clients show for a started or delivered wake with `source`: who answered, never its text, so a child's
+## answer never reads as typed input.
+def wake_note(source: String) -> String = "#{wake_label(source)} answered"
+
+## What both clients show above the prompt for a message that waits: a wake reads as who answered, never as typed
+## text; a user's own message reads as what it says.
+def waiting_line(text: String, source: Optional[String]) -> String
+  for sent in option_list(source)
+    return wake_note(sent)
+  end
+
+  "queued: #{Commands.printable(text)}"
+end
+
+private
+
+def option_list[T](value: Optional[T]) -> List[T]
+  case value
+    some(v) -> [v]
+    none -> []
+  end
 end

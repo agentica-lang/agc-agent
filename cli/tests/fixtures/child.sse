@@ -1,0 +1,24 @@
+id: 1
+event: turn_started
+data: {"turn_id":"t1","source":"child:s2"}
+
+id: 2
+event: tool_started
+data: {"call_id":"c0","name":"agent","summary":"2 tasks"}
+
+id: 3
+event: tool_started
+data: {"call_id":"c1","name":"bash","summary":"ls","session":"s2"}
+
+id: 4
+event: tool_started
+data: {"call_id":"c1","name":"read_file","summary":"notes.txt","session":"s3"}
+
+id: 5
+event: tool_finished
+data: {"call_id":"c1","ok":true,"summary":"ok","duration_ms":4,"session":"s2"}
+
+id: 6
+event: approval_requested
+data: {"approval_id":"s3:a9","call_id":"c1","tool":"bash","preview":"rm -r build","detail":"","session":"s3"}
+
