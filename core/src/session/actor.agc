@@ -319,8 +319,22 @@ def handle(state: Session.State, msg: Session.Msg) -> Actor.Step[Session.State]
       # The stop window opens only when the stop ended something: an idle stop leaves it as it was, so the
       # next wake still starts a turn. Wakes park until the next user message, so none restarts a stopped turn.
       Actor.continue(stop_shell(Turn.stop_turn(state.with(stop_window: state.stop_window or ran))))
-    Session.Msg.Emit(turn_id, event) ->
-      Actor.continue(if_current(state, turn_id, ->(s) { Stream.emit_counted(s, event) }))
+    Session.Msg.Emit(turn_id, event) -> Actor.continue(Turn.emit_turn(state, turn_id, event))
+    Session.Msg.ChildEmit(child, event) -> Actor.continue(Turn.child_emit(state, child, event))
+    Session.Msg.AllowsChild(tool, target, reply) ->
+      allowed = (
+        state.setup
+          .approver
+          .map { |a| a.allows_child.map { |check| check.call(tool, target) }.unwrap_or(false) }
+          .unwrap_or(false)
+      )
+
+      Actor.reply(reply, allowed)
+      Actor.continue(state)
+    Session.Msg.AloneSince(reply) ->
+      pruned = Stream.prune(state)
+      Actor.reply(reply, pruned.alone_since)
+      Actor.continue(pruned)
     Session.Msg.Ask(turn_id, call, reply) ->
       Actor.continue(if_current(state, turn_id, ->(s) { Turn.ask(s, call, reply) }))
     Session.Msg.Expire(turn_id) -> Actor.continue(if_current(state, turn_id, ->(s) { Turn.expire(s) }))

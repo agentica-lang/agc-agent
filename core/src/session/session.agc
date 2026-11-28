@@ -275,7 +275,40 @@ def files(sessions: Sessions, id: String) -> Result[Protocol.FileList]
 end
 
 def answer(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
-  SessionActor.answer(try find(sessions, id), approval_id, decision)
+  case SessionActor.answer(try find(sessions, id), approval_id, decision)
+    ok(_) -> ok()
+    error(e) if e.kind != Protocol.KIND_APPROVAL_NOT_FOUND -> error(e)
+    error(_) -> route_child(sessions, id, approval_id, decision)
+  end
+end
+
+## An answer on the parent's route with a child's approval id goes to the child. Only the children of that
+## session are tried: an approval of any other session stays not found. A child that resolved the approval since
+## answers `approval.resolved`, like the session itself would.
+def route_child(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
+  resolved: Optional[Error] = none
+  for child in children(try entries(sessions), id)
+    address = try child_address(sessions, child)
+    case SessionActor.answer(address, approval_id, decision)
+      ok(_) -> return ok()
+      error(e) if e.kind == Protocol.KIND_APPROVAL_RESOLVED -> resolved = some(e)
+      error(_) -> nil
+    end
+  end
+
+  for late in option_list(resolved)
+    return error(late.message, kind: late.kind)
+  end
+
+  error("approval #{approval_id} is not waiting", kind: Protocol.KIND_APPROVAL_NOT_FOUND)
+end
+
+def child_address(sessions: Sessions, child: Entry) -> Result[Address[SessionActor.Msg]]
+  for session in option_list(child.session)
+    return ok(session.address)
+  end
+
+  find(sessions, child.summary.id)
 end
 
 def shell(sessions: Sessions, id: String, request: Protocol.RunShell) -> Result[Protocol.ShellAccepted]
@@ -392,10 +425,10 @@ enum Found
 end
 
 enum Msg
-  ## A new session, started by the session of the id when one is given, with the ceiling of its tools (the
-  ## parent's effective profile then; none without a parent). The ceiling is a snapshot: a later change of the
-  ## parent's profile leaves the child's tools alone.
-  Create(Protocol.NewSession, Optional[String], Optional[String], Channel[Result[String]])
+  ## A new session, started by the session of the id when one is given (whose actor is `parent_at`), with the
+  ## ceiling of its tools (the parent's effective profile then; none without a parent). The ceiling is a snapshot:
+  ## a later change of the parent's profile leaves the child's tools alone.
+  Create(Protocol.NewSession, Optional[String], Optional[String], Optional[Address[SessionActor.Msg]], Channel[Result[String]])
   Find(String, Channel[Result[Found]])
   ## The address of a child `id` of the session `parent`; the session itself and any other session are not found.
   FindChild(String, String, Channel[Result[Found]])
@@ -474,7 +507,7 @@ end
 
 def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
   case msg
-    Msg.Create(request, parent, ceiling, reply) ->
+    Msg.Create(request, parent, ceiling, parent_at, reply) ->
       for id in option_list(parent)
         if not registry.sessions.any? { |entry| entry.summary.id == id }
           Actor.reply(reply, error("no session #{id}", kind: Protocol.KIND_SESSION_NOT_FOUND))
@@ -482,7 +515,7 @@ def handle(registry: Registry, msg: Msg) -> Actor.Step[Registry]
         end
       end
 
-      case open_session(registry, request, parent, ceiling)
+      case open_session(registry, request, parent, ceiling, parent_at)
         ok(entry) ->
           Actor.reply(reply, ok(entry.summary.id))
           Actor.continue(registry.with(sessions: registry.sessions.push(entry)))
@@ -618,6 +651,7 @@ def open_session(
   request: Protocol.NewSession,
   parent: Optional[String],
   ceiling: Optional[String],
+  parent_at: Optional[Address[SessionActor.Msg]],
 ) -> Result[Entry]
   options = Config.now(registry.options)
   ctx = case Tools.context(
@@ -677,7 +711,7 @@ def open_session(
   end
 
   file = try Store.create(port, folder(options), header)
-  entry(options, header, opened(context, approver, registry.address), file, none, ceiling)
+  entry(options, header, opened(context, approver, registry.address), file, none, ceiling, parent_at)
 end
 
 def new_id(count: Int) -> String = "s#{count + 1}-#{OpenSSL.Random.hex(4)}"
@@ -782,6 +816,7 @@ def entry(
   file: Store.Ref,
   saved: Optional[Store.Saved],
   ceiling: Optional[String],
+  parent_at: Optional[Address[SessionActor.Msg]] = none,
 ) -> Result[Entry]
   chosen = chosen_of(options, header)
   api = chosen.api
@@ -846,6 +881,7 @@ def entry(
     reopen: some(-> { reopened(options, context.root) }),
     skills: skill_names(options, context.root, prompt.catalog),
     parent: header.parent,
+    parent_at: parent_at,
     wakes_max: options.wakes_max,
   )
 
@@ -1305,8 +1341,11 @@ def created_at(
   parent: Optional[String],
   profile_wins: Bool,
   ceiling: Optional[String] = none,
+  parent_at: Optional[Address[SessionActor.Msg]] = none,
 ) -> Result[String]
-  created: Result[Result[String]] = Actor.call(at, CALL_MS) do |reply| Msg.Create(request, parent, ceiling, reply) end
+  created: Result[Result[String]] = Actor.call(at, CALL_MS) do |reply|
+    Msg.Create(request, parent, ceiling, parent_at, reply)
+  end
 
   id = try try created
   for name in option_list(request.profile)
@@ -1400,7 +1439,8 @@ def child_created(
   end
 
   ceiling = parent.profile.map { |shown| shown.name }
-  created_at(at, options, request, some(header.id), true, ceiling)
+  parent_at = some(try find_at(at, header.id))
+  created_at(at, options, request, some(header.id), true, ceiling, parent_at)
 end
 
 # A message to the session itself wakes it, with `child:ID` when its host is a child's and `extension` otherwise;

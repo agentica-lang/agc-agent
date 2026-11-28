@@ -356,6 +356,7 @@ end
 
 def ask(state: Session.State, call: Agent.Ask, reply: Channel[Protocol.Decision]) -> Session.State
   allowed = state.setup.approver.map { |a| a.allows.call(call.tool, call.target) }.unwrap_or(false)
+  allowed = allowed or parent_allows?(state, call.tool, call.target)
   if allowed
     _ = reply.send(Protocol.Decision.Allow, 0)
     return state
@@ -372,7 +373,9 @@ def ask(state: Session.State, call: Agent.Ask, reply: Channel[Protocol.Decision]
 
   waiting = Session.Waiting(request: request, reply: reply, asked_ms: Time.monotonic_ms)
   asked = state.with(pending: state.pending.push(waiting), approvals: state.approvals + 1)
-  Stream.emit(asked, Protocol.Event.ApprovalRequested(request))
+  forwarded = Stream.emit(asked, Protocol.Event.ApprovalRequested(request))
+  forward_to_parent(forwarded, Protocol.Event.ApprovalRequested(request))
+  forwarded
 end
 
 def answer_approval(
@@ -399,7 +402,7 @@ def expire(state: Session.State) -> Session.State
   pruned = Stream.prune(state)
   now = Time.monotonic_ms
   out = pruned
-  for alone in option_list(pruned.alone_since)
+  for alone in option_list(accompanied(pruned))
     for waiting in pruned.pending
       if now >= [waiting.asked_ms, alone].max.unwrap! + state.setup.approval_timeout_ms
         out = resolve(out, waiting.request.approval_id, Protocol.Decision.Deny, Protocol.ApprovalSource.Timeout)
@@ -408,6 +411,35 @@ def expire(state: Session.State) -> Session.State
   end
 
   out
+end
+
+## An event of a turn for the session's stream, and for its parent's when it is one of the five the parent keeps.
+## A stale turn's events are dropped, on both streams.
+def emit_turn(state: Session.State, turn_id: String, event: Protocol.Event) -> Session.State
+  current = state.turn.map { |t| t.id == turn_id }.unwrap_or(false)
+  return state if not current
+
+  out = Stream.emit_counted(state, event)
+  forward_to_parent(out, event)
+  out
+end
+
+## An event of the child session `child` on its parent's stream: stamped with the child's id for its provenance,
+## and saved with the parent's own events, so a replay shows it. The child's cost adds to the parent's sums, while
+## the parent keeps its own `context`. Anything but the tool, approval and usage events is dropped: the child's
+## text and thinking deltas never reach the parent.
+def child_emit(state: Session.State, child: String, event: Protocol.Event) -> Session.State
+  case event
+    Protocol.Event.ToolStarted(started) ->
+      Stream.emit(state, Protocol.Event.ToolStarted(started.with(session: some(child))))
+    Protocol.Event.ToolFinished(done) ->
+      Stream.emit(state, Protocol.Event.ToolFinished(done.with(session: some(child))))
+    Protocol.Event.ApprovalRequested(request) ->
+      Stream.emit(state, Protocol.Event.ApprovalRequested(request.with(session: some(child))))
+    Protocol.Event.ApprovalResolved(_) -> Stream.emit(state, event)
+    Protocol.Event.Usage(usage) -> Stream.emit_child_usage(state, child, usage)
+    _ -> state
+  end
 end
 
 def stop_turn(state: Session.State) -> Session.State
@@ -687,9 +719,72 @@ def resolve(
       )
 
       resolved = Protocol.ApprovalResolved(approval_id: approval_id, decision: decision, source: source)
-      Stream.emit(next_state, Protocol.Event.ApprovalResolved(resolved))
+      resolved_state = Stream.emit(next_state, Protocol.Event.ApprovalResolved(resolved))
+      forward_to_parent(resolved_state, Protocol.Event.ApprovalResolved(resolved))
+      resolved_state
     error(_) -> state
   end
+end
+
+## The child's event for its parent's stream: a cast, never a call, so the child's turn never waits for the parent
+## and no actor waits for another. A send to a parent that is gone is dropped, as its delete takes the children.
+def forward_to_parent(state: Session.State, event: Protocol.Event) -> Void
+  for _parent in option_list(state.setup.parent)
+    for at in option_list(state.setup.parent_at)
+      if forwardable?(event)
+        _ = Actor.cast(at, Session.Msg.ChildEmit(state.setup.id, event), Session.CALL_MS)
+      end
+    end
+  end
+end
+
+# Only the tool, approval and usage events go to the parent's stream; the child's text and thinking deltas never do.
+def forwardable?(event: Protocol.Event) -> Bool
+  case event
+    Protocol.Event.ToolStarted(_) -> true
+    Protocol.Event.ToolFinished(_) -> true
+    Protocol.Event.ApprovalRequested(_) -> true
+    Protocol.Event.ApprovalResolved(_) -> true
+    Protocol.Event.Usage(_) -> true
+    _ -> false
+  end
+end
+
+# Whether the parent's answers allow the child's call of `tool` on `target` again. The parent's accept-edits mode
+# never counts: `AllowsChild` strips it before it answers.
+def parent_allows?(state: Session.State, tool: String, target: String) -> Bool
+  for _parent in option_list(state.setup.parent)
+    for at in option_list(state.setup.parent_at)
+      replied: Result[Bool] = Actor.call(at, Session.CALL_MS) do |reply|
+        Session.Msg.AllowsChild(tool, target, reply)
+      end
+
+      return replied.unwrap_or(false)
+    end
+  end
+
+  false
+end
+
+# Since when the session is unattended: its own clients, and its parent's for a child, so a child's asks do not
+# time out while a client watches the parent. A parent that is gone leaves the child's own time.
+def accompanied(state: Session.State) -> Optional[Int]
+  alone = state.alone_since
+  for _parent in option_list(state.setup.parent)
+    for at in option_list(state.setup.parent_at)
+      replied: Result[Optional[Int]] = Actor.call(at, Session.CALL_MS) do |reply| Session.Msg.AloneSince(reply) end
+
+      parent_alone = replied.unwrap_or(alone)
+      if alone.none? or parent_alone.none?
+        alone = none
+      else
+        both = option_list(alone) + option_list(parent_alone)
+        alone = some(both.max.unwrap!)
+      end
+    end
+  end
+
+  alone
 end
 
 # Messages queued for a stopped turn are not sent; an `error` event says so.
