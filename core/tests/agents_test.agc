@@ -3,6 +3,9 @@
 ## runs its fixture alone, except for the children an `agent` call starts, which share identical replies.
 
 import Protocol from "pkg/protocol/protocol"
+import Agents from "../src/ext/agents"
+import Core from "../core"
+import Spec from "../src/tools/spec"
 import H from "support/harness"
 
 ANSWER = "Hello! It's a pleasure to meet you."
@@ -96,7 +99,7 @@ def test_with_cap_1_the_children_run_one_at_a_time() -> Result[Void]
   end
 end
 
-# `/stop` during a waited `agent` call ends the call and stops the children's turns.
+# `/stop` during a waited `agent` call ends the call and stops the children's turns, and they stay open.
 def test_stop_during_a_wait_ends_the_call_and_stops_the_children() -> Result[Void]
   replies = ["agent_one.sse", "bash_echo.sse", "text.sse@hold"]
   H.using(H.Setup(replies: replies, approvals: false)) do |h|
@@ -111,6 +114,7 @@ def test_stop_during_a_wait_ends_the_call_and_stops_the_children() -> Result[Voi
     try Test.eq(H.stop_reason(a), "cancelled")
     idle = try H.idle(h, child)
     try Test.eq(idle.turn_id.none?, true)
+    try Test.eq((try H.get(h, Protocol.session_path(child))).status, 200)
     Test.eq((try H.get(h, Protocol.session_path(parent))).status, 200)
   end
 end
@@ -172,6 +176,142 @@ def refused_input(fixture: String, complaint: String) -> Result[Void]
     H.close(a)
     _ = try H.next_request(h)
     Test.assert((try H.next_request(h)).body.include?(complaint), "no refusal of #{fixture}")
+  end
+end
+
+# A waited follow-up after an async start gets its own answer, and a second waited follow-up does too: one watcher
+# per child dispatches by turn, so no waiter is dropped and no wake is misdirected.
+def test_async_then_two_waited_followups_each_get_an_answer() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse", "text.sse", "text.sse", "text.sse", "text.sse", "text.sse"]
+  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)
+  H.using(setup) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    turns: ATS[String, String] = ATS.new()
+    waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+    names: ATS[String, String] = ATS.new()
+    roster: Fn[List[Agents.Profile]] = -> { [] }
+    limits = Agents.Limits(max: 0, timeout_ms: 0)
+    tools = Agents.tools(roster, limits, turns, waits, names)
+    ctx = Spec.Context(
+      root: h.work,
+      env: ->(_name: String) { error("no env") },
+      host: some(host),
+      session: some(parent),
+    )
+
+    async_input = try JSON.parse("{\"tasks\": [{\"prompt\": \"Say hi.\"}], \"wait\": false}")
+    child = (try tools[0].run.call(ctx, async_input)).strip()
+    try Test.assert(not child.empty?, "async start gave no id")
+    c = try H.subscribe(h, child)
+    c = try H.until(c, Protocol.EventKind.TurnFinished)
+    H.close(c)
+    first_input = try JSON.parse("{\"id\": \"" + child + "\", \"text\": \"Again.\", \"wait\": true}")
+    first = try tools[1].run.call(ctx, first_input)
+    try Test.assert(first.include?(ANSWER), "the first waited follow-up got no answer: #{first}")
+    second_input = try JSON.parse("{\"id\": \"" + child + "\", \"text\": \"Once more.\", \"wait\": true}")
+    second = try tools[1].run.call(ctx, second_input)
+    Test.assert(second.include?(ANSWER), "the second waited follow-up got no answer: #{second}")
+  end
+end
+
+# An async batch that does not fit the cap starts nothing, so no started id is ever lost and no unknown child is
+# left running.
+def test_async_batch_over_cap_starts_nothing() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse"]
+  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)
+  H.using(setup) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    turns: ATS[String, String] = ATS.new()
+    waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+    names: ATS[String, String] = ATS.new()
+    roster: Fn[List[Agents.Profile]] = -> { [] }
+    limits = Agents.Limits(max: 1, timeout_ms: 0)
+    tools = Agents.tools(roster, limits, turns, waits, names)
+    ctx = Spec.Context(
+      root: h.work,
+      env: ->(_name: String) { error("no env") },
+      host: some(host),
+      session: some(parent),
+    )
+
+    input = try JSON.parse("{\"tasks\": [{\"prompt\": \"One.\"}, {\"prompt\": \"Two.\"}], \"wait\": false}")
+    result = tools[0].run.call(ctx, input)
+    case result
+      ok(_) -> return error("an over-cap async batch started")
+      error(e) -> try Test.assert(e.message.include?("at most 1"), "no cap: #{e.message}")
+    end
+
+    Test.assert(turns.keys().empty?, "an over-cap batch left a turn behind")
+  end
+end
+
+# An empty profile means the session's own: `agent: ""` starts a child instead of refusing it.
+def test_empty_profile_means_the_sessions_own() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse", "text.sse"]
+  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)
+  H.using(setup) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    turns: ATS[String, String] = ATS.new()
+    waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+    names: ATS[String, String] = ATS.new()
+    roster: Fn[List[Agents.Profile]] = -> { [] }
+    limits = Agents.Limits(max: 0, timeout_ms: 0)
+    tools = Agents.tools(roster, limits, turns, waits, names)
+    ctx = Spec.Context(
+      root: h.work,
+      env: ->(_name: String) { error("no env") },
+      host: some(host),
+      session: some(parent),
+    )
+
+    input = try JSON.parse("{\"tasks\": [{\"agent\": \"\", \"prompt\": \"Say hi.\"}], \"wait\": true}")
+    text = try tools[0].run.call(ctx, input)
+    Test.assert(text.include?(ANSWER), "an empty profile gave no answer: #{text}")
+  end
+end
+
+# A child cannot start a grandchild: its handle refuses, so no waiter is ever needed past one level.
+def test_a_child_cannot_start_a_grandchild() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(8)
+  replies = ["spawn.sse", "text.sse", "spawn.sse", "text.sse"]
+  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)
+  H.using(setup) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    child = try host.create.call(Core.NewChild())
+    c = try H.subscribe(h, child)
+    _ = try host.send.call(child, "Go.")
+    c = try H.until(c, Protocol.EventKind.TurnFinished)
+    H.close(c)
+    child_call = try calls.recv(5000)
+    child_host = try host_of_call(child_call)
+    refused = child_host.create.call(Core.NewChild())
+    case refused
+      ok(_) -> Test.assert(false, "a grandchild started")
+      error(e) -> Test.assert(e.kind == Protocol.KIND_INVALID, "wrong kind: #{e.kind}")
+    end
   end
 end
 
@@ -255,6 +395,29 @@ def started_source(sub: H.Sub) -> String
 
   sources.last
 end
+
+def with_spawn(calls: Channel[Core.Call]) -> Core.Registry = Core.registry() |> Core.add_tool(spawn_tool(calls))
+
+def spawn_tool(calls: Channel[Core.Call]) -> Core.Tool
+  Core.Tool(
+    name: "spawn",
+    description: "Gives the test its call.",
+    input_schema: JSON.object({"type": JSON.from("object")}),
+    asks: false,
+    run: ->(call: Core.Call) {
+      _ = calls.send(call, 1000)
+      ok("ok")
+    },
+    target: ->(_call: Core.Call) { ok("") },
+  )
+end
+
+def host_of(calls: Channel[Core.Call]) -> Result[Core.Host]
+  call = try calls.recv(5000)
+  host_of_call(call)
+end
+
+def host_of_call(call: Core.Call) -> Result[Core.Host] = call.host.to_result("the call has no host")
 
 def write(path: String, text: String) -> Result[Void]
   try mkdirs(path.slice(0, path.length - path.split("/").last.length - 1))

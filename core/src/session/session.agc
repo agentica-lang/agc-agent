@@ -746,8 +746,13 @@ def open_session(
     none -> model = default_model(options, provider, api)
   end
 
-  running: ATS[String, Int] = ATS.new()
-  context = context.with(late: agents_late(context.late, options, context.root, provider, model, running))
+  turns: ATS[String, String] = ATS.new()
+  waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+  names: ATS[String, String] = ATS.new()
+  context = context.with(
+    late: agents_late(context.late, options, context.root, provider, model, parent, turns, waits, names),
+  )
+
   header = Store.Header(
     id: new_id(registry.sessions.size),
     cwd: context.root,
@@ -825,8 +830,23 @@ def read(options: Config.Options, listed: Entry, at: Address[Msg]) -> Result[Loa
   )
 
   provider = saved.header.provider.unwrap_or(provider_of_api(options, saved.header.api))
-  running: ATS[String, Int] = ATS.new()
-  context = base.with(late: agents_late(base.late, options, base.root, provider, saved.header.model, running))
+  turns: ATS[String, String] = ATS.new()
+  waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+  names: ATS[String, String] = ATS.new()
+  context = base.with(
+    late: agents_late(
+      base.late,
+      options,
+      base.root,
+      provider,
+      saved.header.model,
+      saved.header.parent,
+      turns,
+      waits,
+      names,
+    ),
+  )
+
   ok(Loaded(saved: saved, opened: opened(context, try approver_of(options, context.root), at)))
 end
 
@@ -948,6 +968,14 @@ def entry(
   setup = SessionActor.applied(setup, profiles_of(options, context.root), profile)
   for name in option_list(ceiling)
     setup = setup.with(shows: narrowed(setup.shows, ceiling_shows(profiles_of(options, context.root), name)))
+  end
+
+  for _ in option_list(header.parent)
+    setup = setup.with(shows: without_agents(setup.shows))
+  end
+
+  for _ in option_list(parent_at)
+    setup = setup.with(shows: without_agents(setup.shows))
   end
 
   # Before the actor starts: a restore can end a cut turn with events of its own.
@@ -1321,18 +1349,25 @@ def late_of(options: Config.Options) -> Optional[Fn[String, List[Tools.Tool]]]
 end
 
 # The tools that come later, with the subagents of a session in `root` on `provider` with `model` after them: read
-# again on every turn, past the tools that come later.
+# again on every turn, past the tools that come later. A child has no children, so it keeps only the tools it had.
 def agents_late(
   existing: Optional[Fn[String, List[Tools.Tool]]],
   options: Config.Options,
   root: String,
   provider: String,
   model: String,
-  running: ATS[String, Int],
+  parent: Optional[String],
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Agents.Heard]],
+  names: ATS[String, String],
 ) -> Optional[Fn[String, List[Tools.Tool]]]
+  for _ in option_list(parent)
+    return existing
+  end
+
   roster = -> { agent_roster(options, root, provider, model) }
   limits = Agents.Limits(max: options.subagents_max, timeout_ms: options.subagent_timeout_ms)
-  with_agents = ->(_root: String) { Agents.tools(roster, limits, running) }
+  with_agents = ->(_root: String) { Agents.tools(roster, limits, turns, waits, names) }
   case existing
     some(given) -> some(->(dir: String) { given.call(dir) + with_agents.call(dir) })
     none -> some(with_agents)
@@ -1505,12 +1540,27 @@ def ceiling_shows(loaded: Profiles.Loaded, name: String) -> Fn[String, Bool]
   end
 end
 
-# The tools both `shows` and `ceiling` show: a child is never wider than its parent.
+# The tools both `shows` and `ceiling` show: a child is never wider than its parent, and it never shows the
+# subagent tools, which cannot start a grandchild.
 def narrowed(shows: Optional[Fn[String, Bool]], ceiling: Fn[String, Bool]) -> Optional[Fn[String, Bool]]
   case shows
-    some(own) -> some(->(tool: String) { own.call(tool) and ceiling.call(tool) })
-    none -> some(ceiling)
+    some(own) -> some(->(tool: String) { own.call(tool) and ceiling.call(tool) and without_agent?(tool) })
+    none -> some(->(tool: String) { ceiling.call(tool) and without_agent?(tool) })
   end
+end
+
+# A child never shows the subagent tools, even with no ceiling to narrow it.
+def without_agents(shows: Optional[Fn[String, Bool]]) -> Optional[Fn[String, Bool]]
+  case shows
+    some(own) -> some(->(tool: String) { own.call(tool) and without_agent?(tool) })
+    none -> some(->(tool: String) { without_agent?(tool) })
+  end
+end
+
+def without_agent?(tool: String) -> Bool
+  return false if tool == "agent" or tool == "agent_send" or tool == "agent_stop"
+
+  true
 end
 
 # The handle of the session of `header` on itself and its children (`Core.Host`), through the registry at `at`.
@@ -1552,7 +1602,7 @@ def child_created(
     request = request.with(provider: some(parent.provider), model: some(child.model.unwrap_or(parent.model)))
   end
 
-  ceiling = parent.profile.map { |shown| shown.name }
+  ceiling = some(parent.profile.map { |shown| shown.name }.unwrap_or(Profiles.DEFAULT))
   parent_at = some(try find_at(at, header.id))
   created_at(at, options, request, some(header.id), true, ceiling, parent_at)
 end

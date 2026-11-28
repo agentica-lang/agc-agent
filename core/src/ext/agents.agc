@@ -3,8 +3,13 @@
 ## `agent_stop` stops a child's turn. They run over the session's own handle (`Spec.Context.host`), so a stranger's
 ## id, a deleted child and the session itself are refused exactly as the handle refuses them. A child's answer comes
 ## back cut at `MAX_ANSWER_CHARS` characters, under its name and provider and model. A wait ends when the child's
-## turn does, when `Limits.timeout_ms` stops it, or when the parent's turn stops first: then the children this call
-## started are stopped and deleted, while older ones only stop their turn.
+## turn does or when `Limits.timeout_ms` stops it; a parent's `/stop` stops the children's turns too through the
+## session route, and they stay open. A child that times out stays open for `agent_send` follow-up; an async child
+## stays open too, and every child dies with its parent. One watcher per child dispatches each `turn_finished` to
+## the waiter of its turn or to the parent's wake, by turn id, so a waited follow-up after an async start and two
+## waited follow-ups in a row each get their own answer and never wake twice. Transient waiter state (the expected
+## turns and the waiter addresses) is cleared on every completion, timeout or delete, so it never grows past the live
+## turns; the names keep one display name per live child.
 
 import Protocol from "pkg/protocol/protocol"
 import Spec from "../tools/spec"
@@ -25,17 +30,30 @@ struct Limits
   timeout_ms: Int = 0
 end
 
+## A `turn_finished` of a child: its id, the turn it ends and why it ended.
+struct Heard
+  id: String
+  turn_id: String
+  reason: String
+end
+
 ## The subagent tools: a roster read fresh on every call (and naming the profiles in their description), the bounds,
-## and the ids of the live children this session started, for the cap. The description is made when the tools are, so
-## a session reads its profiles again on every turn.
-def tools(roster: Fn[List[Profile]], limits: Limits, running: ATS[String, Int]) -> List[Spec.Tool]
+## and the per-session tables of expected turns, waiter addresses and display names. The description is made when the
+## tools are, so a session reads its profiles again on every turn.
+def tools(
+  roster: Fn[List[Profile]],
+  limits: Limits,
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
+) -> List[Spec.Tool]
   [
     Spec.Tool(
       name: AGENT,
       description: agent_description(roster),
       input_schema: JSON.schema(AgentArgs),
       asks: false,
-      run: ->(ctx: Spec.Context, input: JSON.Value) { run_all(ctx, input, roster, limits, running) },
+      run: ->(ctx: Spec.Context, input: JSON.Value) { run_all(ctx, input, roster, limits, turns, waits, names) },
       target: ->(_ctx: Spec.Context, input: JSON.Value) { ok(agent_target(input)) },
     ),
     Spec.Tool(
@@ -47,7 +65,7 @@ def tools(roster: Fn[List[Profile]], limits: Limits, running: ATS[String, Int]) 
       ),
       input_schema: JSON.schema(SendArgs),
       asks: false,
-      run: ->(ctx: Spec.Context, input: JSON.Value) { run_send(ctx, input, limits) },
+      run: ->(ctx: Spec.Context, input: JSON.Value) { run_send(ctx, input, limits, turns, waits, names) },
       target: ->(_ctx: Spec.Context, input: JSON.Value) { ok(send_target(input)) },
     ),
     Spec.Tool(
@@ -99,10 +117,9 @@ struct Active
   deadline: Optional[Int] = none
 end
 
-## A `turn_finished` of a child: its id and the reason its turn ended.
-struct Heard
-  id: String
-  reason: String
+struct Reaped
+  live: List[Active]
+  found: Map[Int, String]
 end
 
 def agent_description(roster: Fn[List[Profile]]) -> String
@@ -111,8 +128,8 @@ def agent_description(roster: Fn[List[Profile]]) -> String
     "Start one subagent per task: a child session with its own provider, model and profile that works on its " +
     "prompt and reports back, in parallel. `agent` names the profile it runs (the session's own when empty), " +
     "from the roster below; a profile whose provider is not set up is left out. With `wait` (the default) it " +
-    "answers with each answer in input order, each under `NAME (provider/model): reason`; without it, it answers " +
-    "with their ids, one per line, and each answer wakes this session."
+    "answers with each answer in input order, each under `NAME (provider/model): reason` and cut at 8000 characters; " +
+    "without it, it answers with their ids, one per line, and each answer wakes this session."
   )
 
   return "#{base} No profile is set up, so no subagent can start." if lines.empty?
@@ -156,7 +173,9 @@ def run_all(
   input: JSON.Value,
   roster: Fn[List[Profile]],
   limits: Limits,
-  running: ATS[String, Int],
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
 ) -> Result[String]
   args = try Spec.args(input, AgentArgs.codec)
   return error("agent needs at least one task") if args.tasks.empty?
@@ -166,7 +185,7 @@ def run_all(
   listed = roster.call()
   for task in args.tasks
     return error("a task needs a prompt") if task.prompt.strip.empty?
-    for name in option_list(task.agent)
+    for name in option_list(profile_of(task))
       if not listed.any? { |p| p.name == name }
         return error("unknown profile #{name.inspect}: one of #{listed.map { |p| p.name }.join(", ")}")
       end
@@ -175,13 +194,20 @@ def run_all(
 
   parent = try parent_profile(host, own)
   if args.wait.unwrap_or(true)
-    run_waiting(host, parent, args.tasks, limits, running)
+    run_waiting(host, parent, args.tasks, limits, turns, waits, names)
   else
-    run_async(host, own, parent, args.tasks, limits, running)
+    run_async(host, own, parent, args.tasks, limits, turns, waits, names)
   end
 end
 
-def run_send(ctx: Spec.Context, input: JSON.Value, limits: Limits) -> Result[String]
+def run_send(
+  ctx: Spec.Context,
+  input: JSON.Value,
+  limits: Limits,
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
+) -> Result[String]
   args = try Spec.args(input, SendArgs.codec)
   return error("agent_send needs some text") if args.text.strip.empty?
 
@@ -190,15 +216,17 @@ def run_send(ctx: Spec.Context, input: JSON.Value, limits: Limits) -> Result[Str
   return error("agent_send takes a subagent id, not the session's own") if args.id == own
 
   if args.wait.unwrap_or(true)
-    send_waiting(host, args, limits)
+    send_waiting(host, own, args, limits, turns, waits, names)
   else
-    send_async(host, own, args)
+    send_async(host, own, args, turns, waits, names)
   end
 end
 
 def run_stop(ctx: Spec.Context, input: JSON.Value) -> Result[String]
   args = try Spec.args(input, StopArgs.codec)
   host = try need_host(ctx, STOP)
+  own = need_session(ctx, STOP).unwrap_or("")
+  return error("agent_stop takes a subagent id, not the session's own") if args.id == own and not own.empty?
 
   case host.stop.call(args.id)
     ok(false) -> ok("idle")
@@ -208,22 +236,26 @@ def run_stop(ctx: Spec.Context, input: JSON.Value) -> Result[String]
 end
 
 # Every task's child, started up to `limits.max` at once (in input order) and collected as they finish, in input
-# order. A child that fails to start fails only its task.
+# order. A child that fails to start fails only its task. A wait with no timeout loops on its heartbeat instead of
+# stopping anything; a timed-out child is stopped but stays open for follow-up.
 def run_waiting(
   host: Spec.Host,
   parent: String,
   tasks: List[AgentTask],
   limits: Limits,
-  running: ATS[String, Int],
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
 ) -> Result[String]
   done: Channel[Heard] = Channel.new([2 * tasks.size + 2, 4].max.unwrap!)
+  addr = done.address
   live: List[Active] = []
   results: Map[Int, String] = {}
   next = 0
   while next < tasks.size or not live.empty?
-    while next < tasks.size and (limits.max == 0 or running_now(host, running) < limits.max)
+    while next < tasks.size and (limits.max == 0 or live_count(host, turns) < limits.max)
       name = named(tasks[next], parent)
-      case start_child(host, tasks[next], name, next, limits, done, running)
+      case start_child(host, tasks[next], name, next, limits, addr, turns, waits, names)
         ok(active) -> live = live.push(active)
         error(e) -> results = results.put(next, "#{name}: #{e.message}")
       end
@@ -246,7 +278,7 @@ def run_waiting(
         case live.find { |a| a.id == heard.id }
           ok(active) ->
             live = live.select { |a| a.id != active.id }
-            results = results.put(active.index, collected(host, active, heard.reason, running, true))
+            results = results.put(active.index, collected(host, active, heard.reason, turns, waits, names, true))
           error(_) -> nil
         end
 
@@ -256,16 +288,19 @@ def run_waiting(
           for active in overdue
             _ = host.stop.call(active.id)
             results = results.put(active.index, partial(host, active, limits))
+            forget(turns, waits, active.id)
             live = live.select { |a| a.id != active.id }
           end
         else
-          for active in live
-            _ = host.stop.call(active.id)
-            _ = host.delete.call(active.id)
-            running.delete(active.id)
+          # A heartbeat with nothing overdue: reap gone children and answers the watcher missed, then wait again.
+          # A real parent `/stop` cancels this task, so this never stops anything.
+          reaped = reap_finished(host, live, turns, waits, names)
+          live = reaped.live
+          for index in reaped.found.keys()
+            for text in option_list(reaped.found.get(index))
+              results = results.put(index, text)
+            end
           end
-
-          return error("the agent call stopped with its turn")
         end
     end
   end
@@ -282,107 +317,189 @@ def ordered(results: Map[Int, String], count: Int) -> List[String]
   out
 end
 
-# Every task's child at once, unless the cap is reached; each answer wakes the session when it comes.
+# Every task's child at once when the whole batch fits; otherwise nothing starts and the call fails with the cap, so
+# no started id is ever lost and no unknown child is left running. Each answer wakes the session when it comes.
 def run_async(
   host: Spec.Host,
   own: String,
   parent: String,
   tasks: List[AgentTask],
   limits: Limits,
-  running: ATS[String, Int],
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
 ) -> Result[String]
-  ids: List[String] = []
-  for task in tasks
-    return error(capped(limits.max)) if limits.max > 0 and running_now(host, running) >= limits.max
+  return error(capped(limits.max)) if limits.max > 0 and live_count(host, turns) + tasks.size > limits.max
 
+  started: List[String] = []
+  for task in tasks
     name = named(task, parent)
-    child = try host.create.call(Spec.NewChild(profile: task.agent))
-    running.put(child, 1)
-    case host.watch.call(child, ["turn_finished"], ->(seen: Spec.Seen) { woken(host, own, child, name, seen) })
+    created = host.create.call(Spec.NewChild(profile: profile_of(task)))
+    case created
       error(e) ->
-        cleanup(host, running, child)
+        cleanup_started(host, started, turns, waits, names)
+        return error(e.message)
+      ok(_) -> nil
+    end
+
+    child = created.unwrap_or("")
+    started = started.push(child)
+    names.put(child, name)
+    case ensure_watch(host, own, child, turns, waits, names)
+      error(e) ->
+        cleanup_started(host, started, turns, waits, names)
         return error(e.message)
       ok(_) -> nil
     end
 
     case host.send.call(child, task.prompt)
       error(e) ->
-        cleanup(host, running, child)
+        cleanup_started(host, started, turns, waits, names)
         return error(e.message)
-      ok(_) -> ids = ids.push(child)
+      ok(_) -> nil
+    end
+
+    case turn_of_child(host, child)
+      ok(turn) -> turns.put(child, turn)
+      error(e) ->
+        cleanup_started(host, started, turns, waits, names)
+        return error(e.message)
     end
   end
 
-  ok(ids.join("\n"))
+  ok(started.join("\n"))
 end
 
 def capped(max: Int) -> String
   "at most #{max} subagents run at once of this session: wait for one with agent_send, or stop one with agent_stop"
 end
 
-def send_waiting(host: Spec.Host, args: SendArgs, limits: Limits) -> Result[String]
+def send_waiting(
+  host: Spec.Host,
+  own: String,
+  args: SendArgs,
+  limits: Limits,
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
+) -> Result[String]
   done: Channel[Heard] = Channel.new(4)
+  addr = done.address
   id = args.id
-  case host.watch.call(
-    id,
-    ["turn_finished"],
-    ->(seen: Spec.Seen) { _ = done.send(Heard(id: id, reason: reason_of(seen)), 0) },
-  )
+  names.put(id, id)
+  case ensure_watch(host, own, id, turns, waits, names)
     error(e) -> return error(e.message)
     ok(_) -> nil
   end
 
+  waits.put(id, addr)
   case host.send.call(id, args.text)
-    error(e) -> return error(e.message)
+    error(e) ->
+      forget(turns, waits, id)
+      return error(e.message)
     ok(_) -> nil
+  end
+
+  case turn_of_child(host, id)
+    ok(turn) -> turns.put(id, turn)
+    error(e) ->
+      forget(turns, waits, id)
+      return error(e.message)
   end
 
   active = Active(index: 0, id: id, name: id, deadline: deadline(limits))
-  track: ATS[String, Int] = ATS.new()
-  case done.recv(wait_ms([active]))
-    ok(heard) -> ok(collected(host, active, heard.reason, track, false))
-    error(_) ->
-      if limits.timeout_ms > 0 and past?(active)
-        _ = host.stop.call(id)
-        return ok(partial(host, active, limits))
-      end
+  while true
+    case done.recv(wait_ms([active]))
+      ok(heard) -> return ok(collected(host, active, heard.reason, turns, waits, names, false))
+      error(_) ->
+        if limits.timeout_ms > 0 and past?(active)
+          _ = host.stop.call(id)
+          text = partial(host, active, limits)
+          forget(turns, waits, id)
+          return ok(text)
+        end
 
-      _ = host.stop.call(id)
-      error("the agent call stopped with its turn")
+        # A heartbeat with no deadline: the turn is still running, so wait again. A child gone since is an
+        # error, and an answer the watcher missed is collected from its snapshot.
+        case host.snapshot.call(id)
+          ok(session) ->
+            if session.turn_id.some?
+              nil
+            else
+              forget(turns, waits, id)
+              return ok(collected(host, active, "ended", turns, waits, names, false))
+            end
+
+          error(e) ->
+            forget(turns, waits, id)
+            return error(e.message)
+        end
+    end
   end
+
+  error("the agent call stopped with its turn")
 end
 
-def send_async(host: Spec.Host, own: String, args: SendArgs) -> Result[String]
+def send_async(
+  host: Spec.Host,
+  own: String,
+  args: SendArgs,
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
+) -> Result[String]
   id = args.id
-  case host.watch.call(id, ["turn_finished"], ->(seen: Spec.Seen) { woken(host, own, id, id, seen) })
+  names.put(id, id)
+  case ensure_watch(host, own, id, turns, waits, names)
     error(e) -> return error(e.message)
     ok(_) -> nil
   end
 
   case host.send.call(id, args.text)
-    error(e) -> error(e.message)
-    ok(_) -> ok(id)
+    error(e) ->
+      forget(turns, waits, id)
+      return error(e.message)
+    ok(_) -> nil
   end
+
+  case turn_of_child(host, id)
+    ok(turn) -> turns.put(id, turn)
+    error(e) ->
+      forget(turns, waits, id)
+      return error(e.message)
+  end
+
+  ok(id)
 end
 
 # One finished child: its last answer under its name, or why it cannot be read. A child this call started is deleted
-# with its answer, so no worker of it is left.
-def collected(host: Spec.Host, active: Active, reason: String, running: ATS[String, Int], remove: Bool) -> String
+# with its answer, so no worker of it is left; a follow-up child stays open.
+def collected(
+  host: Spec.Host,
+  active: Active,
+  reason: String,
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
+  remove: Bool,
+) -> String
   text = case host.snapshot.call(active.id)
     ok(session) ->
       "#{head(active.name, session.provider, session.model, reason)}\n#{cut(last_answer(session.history))}"
     error(e) -> "#{active.name}: could not read the answer: #{e.message}"
   end
 
+  forget(turns, waits, active.id)
   if remove
     _ = host.delete.call(active.id)
-    running.delete(active.id)
+    names.delete(active.id)
   end
 
   text
 end
 
-# A child past its deadline: its turn is stopped, and the result holds the part of the answer there is.
+# A child past its deadline: its turn is stopped, and the result holds the part of the answer there is. The child
+# stays open for `agent_send` follow-up.
 def partial(host: Spec.Host, active: Active, limits: Limits) -> String
   text = "timed out after #{limits.timeout_ms} ms"
   case host.snapshot.call(active.id)
@@ -395,7 +512,14 @@ def head(name: String, provider: String, model: String, reason: String) -> Strin
   "#{name} (#{provider}/#{model}): #{reason}"
 end
 
-def named(task: AgentTask, parent: String) -> String = task.agent.unwrap_or(parent)
+def named(task: AgentTask, parent: String) -> String = profile_of(task).unwrap_or(parent)
+
+def profile_of(task: AgentTask) -> Optional[String]
+  case task.agent
+    some(name) if not name.empty? -> some(name)
+    _ -> none
+  end
+end
 
 def parent_profile(host: Spec.Host, own: String) -> Result[String]
   case host.snapshot.call(own)
@@ -415,70 +539,210 @@ def start_child(
   name: String,
   index: Int,
   limits: Limits,
-  done: Channel[Heard],
-  running: ATS[String, Int],
+  addr: Address[Heard],
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
 ) -> Result[Active]
-  child = try host.create.call(Spec.NewChild(profile: task.agent))
-  running.put(child, 1)
-  active = Active(index: index, id: child, name: name, deadline: deadline(limits))
-  case host.watch.call(
-    child,
-    ["turn_finished"],
-    ->(seen: Spec.Seen) { _ = done.send(Heard(id: child, reason: reason_of(seen)), 0) },
-  )
+  child = try host.create.call(Spec.NewChild(profile: profile_of(task)))
+  names.put(child, name)
+  case ensure_watch(host, "", child, turns, waits, names)
     error(e) ->
-      cleanup(host, running, child)
+      cleanup_one(host, child, turns, waits, names)
       return error(e.message)
     ok(_) -> nil
   end
 
+  waits.put(child, addr)
   case host.send.call(child, task.prompt)
     error(e) ->
-      cleanup(host, running, child)
+      cleanup_one(host, child, turns, waits, names)
       return error(e.message)
     ok(_) -> nil
   end
 
-  ok(active)
+  case turn_of_child(host, child)
+    ok(turn) -> turns.put(child, turn)
+    error(e) ->
+      cleanup_one(host, child, turns, waits, names)
+      return error(e.message)
+  end
+
+  ok(Active(index: index, id: child, name: name, deadline: deadline(limits)))
 end
 
-def cleanup(host: Spec.Host, running: ATS[String, Int], child: String) -> Void
-  _ = host.delete.call(child)
-  running.delete(child)
+# The one watcher of a child: later watches of the same names keep this first handler by the `Watch` contract, so
+# every waiter registers through it. It sends the finish to the waiter of its turn, or wakes the parent when no
+# waiter waits for that turn. A turn id it does not expect is stale and dropped, so no duplicate or misdirected wake
+# ever runs.
+def ensure_watch(
+  host: Spec.Host,
+  own: String,
+  child: String,
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
+) -> Result[Void]
+  host.watch.call(
+    child,
+    ["turn_finished"],
+    ->(seen: Spec.Seen) { dispatch(host, own, child, turns, waits, names, seen) },
+  )
 end
 
-# The watcher that wakes the session with an answer: one event wakes once, and a child gone since is no wake. The
-# wake comes from the extension, since only a child's own handle wakes as the child.
-def woken(host: Spec.Host, parent: String, id: String, name: String, seen: Spec.Seen) -> Void
-  snapshot = case host.snapshot.call(id)
+def dispatch(
+  host: Spec.Host,
+  own: String,
+  child: String,
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
+  seen: Spec.Seen,
+) -> Void
+  turn = turn_of(seen)
+  reason = reason_of(seen)
+  case turns.get(child)
+    ok(expected) if turn != "" and turn != expected -> return
+    ok(_) -> nil
+    error(_) ->
+      # No expected turn yet: the send has not recorded it. A waiter still gets it, so a fast finish cannot hang;
+      # without a waiter there is nothing to wake yet.
+      case waits.get(child)
+        ok(addr) ->
+          _ = addr.send(Heard(id: child, turn_id: turn, reason: reason), 1000)
+          forget(turns, waits, child)
+          return
+        error(_) -> return
+      end
+  end
+
+  case waits.get(child)
+    ok(addr) ->
+      _ = addr.send(Heard(id: child, turn_id: turn, reason: reason), 1000)
+      forget(turns, waits, child)
+    error(_) ->
+      turns.delete(child)
+      wake_parent(host, own, child, names, seen, reason)
+  end
+end
+
+# The wake of an async answer: one event wakes once, and a child gone since is no wake. The wake comes from the
+# extension, since only a child's own handle wakes as the child.
+def wake_parent(
+  host: Spec.Host,
+  own: String,
+  child: String,
+  names: ATS[String, String],
+  seen: Spec.Seen,
+  reason: String,
+) -> Void
+  return if own.empty?
+
+  snapshot = case host.snapshot.call(child)
     ok(session) -> some(session)
     error(_) -> none
   end
 
   for session in option_list(snapshot)
-    headed = head(name, session.provider, session.model, reason_of(seen))
-    _ = host.send.call(parent, "#{headed}\n#{cut(last_answer(session.history))}")
+    display = case names.get(child)
+      ok(name) -> name
+      error(_) -> child
+    end
+
+    headed = head(display, session.provider, session.model, reason)
+    _ = host.send.call(own, "#{headed}\n#{cut(last_answer(session.history))}")
   end
 end
 
-# How many children this session started still run: the gone ones leave the table, the idle ones stay but count not.
-def running_now(host: Spec.Host, running: ATS[String, Int]) -> Int
-  running.keys().count { |id| runs?(host, running, id) }
+def cleanup_one(
+  host: Spec.Host,
+  child: String,
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
+) -> Void
+  forget(turns, waits, child)
+  names.delete(child)
+  _ = host.delete.call(child)
 end
 
-def runs?(host: Spec.Host, running: ATS[String, Int], id: String) -> Bool
-  case host.snapshot.call(id)
-    ok(session) -> session.turn_id.some?
-    error(e) -> forgotten(running, id, e.kind)
+def cleanup_started(
+  host: Spec.Host,
+  started: List[String],
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
+) -> Void
+  for child in started
+    cleanup_one(host, child, turns, waits, names)
   end
 end
 
-def forgotten(running: ATS[String, Int], id: String, kind: String) -> Bool
-  if kind == Protocol.KIND_SESSION_NOT_FOUND
-    running.delete(id)
+def forget(turns: ATS[String, String], waits: ATS[String, Address[Heard]], child: String) -> Void
+  turns.delete(child)
+  waits.delete(child)
+end
+
+# How many children of this session have an expected turn: the slots the cap counts. Children gone since leave the
+# table, so the count never grows past the live turns. This counts optimistically from the tables, not from snapshots,
+# so two calls in a row cannot evade the cap while a just-started turn is not yet visible.
+def live_count(host: Spec.Host, turns: ATS[String, String]) -> Int
+  for id in turns.keys()
+    case host.snapshot.call(id)
+      ok(_) -> nil
+      error(e) if e.kind == Protocol.KIND_SESSION_NOT_FOUND -> forget_turn(turns, id)
+      error(_) -> nil
+    end
   end
 
-  false
+  turns.keys().size
+end
+
+def forget_turn(turns: ATS[String, String], id: String) -> Void
+  turns.delete(id)
+end
+
+# A heartbeat with nothing overdue: children gone since fail their task, and answers the watcher missed are
+# collected from their snapshots, so a dropped event never hangs the call.
+def reap_finished(
+  host: Spec.Host,
+  live: List[Active],
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  names: ATS[String, String],
+) -> Reaped
+  kept: List[Active] = []
+  found: Map[Int, String] = {}
+  for active in live
+    case host.snapshot.call(active.id)
+      ok(session) ->
+        if session.turn_id.some?
+          kept = kept.push(active)
+        else
+          forget(turns, waits, active.id)
+          found = found.put(active.index, collected(host, active, "ended", turns, waits, names, true))
+        end
+
+      error(e) ->
+        forget(turns, waits, active.id)
+        names.delete(active.id)
+        found = found.put(active.index, "#{active.name}: #{e.message}")
+    end
+  end
+
+  Reaped(live: kept, found: found)
+end
+
+def turn_of_child(host: Spec.Host, child: String) -> Result[String]
+  case host.snapshot.call(child)
+    ok(session) ->
+      for turn in option_list(session.turn_id)
+        return ok(turn)
+      end
+
+      error("the subagent ended before its turn started")
+    error(e) -> error(e.message)
+  end
 end
 
 def last_answer(history: List[Protocol.Message]) -> String
@@ -489,7 +753,14 @@ def last_answer(history: List[Protocol.Message]) -> String
 end
 
 def reason_of(seen: Spec.Seen) -> String
-  JSON.string(JSON.get(seen.data, "stop_reason").unwrap_or(JSON.from(""))).unwrap_or("ended")
+  text = JSON.string(JSON.get(seen.data, "stop_reason").unwrap_or(JSON.from(""))).unwrap_or("")
+  return "ended" if text.empty?
+
+  text
+end
+
+def turn_of(seen: Spec.Seen) -> String
+  JSON.string(JSON.get(seen.data, "turn_id").unwrap_or(JSON.from(""))).unwrap_or("")
 end
 
 def cut(answer: String) -> String
