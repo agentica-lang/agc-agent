@@ -2,9 +2,19 @@
 ##
 ## A child works in the parent's folder unless its task names `cwd` (an existing folder) or `worktree` (a fresh Git
 ## worktree on `base_ref`, else on the parent's own commit). Either choice never widens what the child may do: a
-## confined parent keeps its folder, and a folder under no trusted folder never moves under one, since the move would
-## load that folder's skills, commands and project profile. A worktree isolates the Git changes, not the operating
-## system access: the child's commands run as the server's user and reach what that user reaches.
+## confined parent keeps its folder (the child inherits the parent's effective confinement at creation), and a folder
+## under no trusted folder never moves under one, since the move would load that folder's skills, commands and
+## project profile. A worktree isolates the Git changes, not the operating system access: the child's commands run as
+## the server's user and reach what that user reaches.
+##
+## A managed worktree starts only in a repository the workspace explicitly trusts (`FINN_TRUSTED_DIRS` covers the
+## repository's top folder): a checkout can run what the repository carries, so an untrusted repository never allocates
+## one, and a child never gains trust its parent lacks. A relative `cwd` resolves against the parent's folder, never
+## against the server's own working directory. Git runs with the ambient configuration shut out (its global and system
+## files ignored, hooks and the filesystem monitor disabled, `LC_ALL=C`) and with no shell; a repository that defines
+## an externally executing checkout filter still allocates nothing (fail closed). Cleanup owns nothing beyond the fresh
+## directory: it removes only an unlisted directory that holds nothing but the checkout, and a branch only when it did
+## not exist before and is fully merged, so ambiguity leaves residue behind instead of deleting work.
 ##
 ## The worktree lives under `.finn/worktrees` of the repository the parent works in, on a branch `finn/SLUG` (with a
 ## number while it is taken), one per writer. Allocation is atomic against races: the branch and the directory are
@@ -23,6 +33,8 @@ import Spec from "spec"
 GIT_MS = 20000
 ## How many branch and directory numbers allocation tries before it gives up.
 MAX_TRIES = 100
+## How long the whole allocation loop may run before it stops taking further numbers.
+ALLOC_BUDGET_MS = 60000
 ## The longest `base_ref` allocation resolves.
 MAX_REF = 256
 ## What `git worktree list --porcelain` prints before a worktree's path.
@@ -90,7 +102,7 @@ def release(root: String, branch: String, env: Fn[String, Result[String]]) -> Vo
   found = git(root, ["rev-parse", "--show-toplevel"], env)
   return if not found.ok?
 
-  toplevel = found.unwrap_or("")
+  toplevel = Path.real(found.unwrap_or("")).unwrap_or(found.unwrap_or(""))
 
   worktrees = git(toplevel, ["worktree", "list", "--porcelain"], env).unwrap_or("")
   if worktrees.split("\n").any? { |line| line == "#{LIST_PREFIX}#{root}" }
@@ -108,7 +120,8 @@ end
 
 private
 
-## `dir` as a child folder: an existing folder, inside the confined parent and never newly trusted.
+## `dir` as a child folder: an existing folder, inside the confined parent and never newly trusted. A relative `dir`
+## resolves against the parent's folder, never against the server's own working directory.
 def explicit_child(
   trusted_dirs: List[String],
   parent_root: String,
@@ -118,18 +131,24 @@ def explicit_child(
   return invalid("empty `cwd`") if dir == ""
   return invalid("`cwd` has a control character") if control?(dir)
 
-  opened = case Sandbox.open(dir)
+  home = canonical_parent(parent_root)
+  asked = dir
+  if not dir.start_with?("/")
+    asked = "#{home}/#{dir}"
+  end
+
+  opened = case Sandbox.open(asked)
     ok(found) -> ok(found)
     error(e) -> invalid("cannot use `cwd` #{dir.inspect}: #{e.message}")
   end
 
   root = try opened
 
-  if parent_confine and not Sandbox.inside?(parent_root, root)
+  if parent_confine and not Sandbox.inside?(home, root)
     return invalid("`cwd` #{root} is outside the confined session folder")
   end
 
-  if Sandbox.trusted?(trusted_dirs, root) and not Sandbox.trusted?(trusted_dirs, parent_root)
+  if Sandbox.trusted?(trusted_dirs, root) and not Sandbox.trusted?(trusted_dirs, home)
     return invalid("`cwd` #{root} is trusted and the session folder is not")
   end
 
@@ -165,15 +184,33 @@ def allocate(
 
   return invalid("a worktree leaves the confined session folder") if parent_confine
 
-  if Sandbox.trusted?(trusted_dirs, base_of(toplevel)) and not Sandbox.trusted?(trusted_dirs, parent_root)
+  home = canonical_parent(parent_root)
+  if not Sandbox.trusted?(trusted_dirs, toplevel)
+    return invalid("the repository #{toplevel} is not trusted, so no worktree starts there")
+  end
+
+  if not Sandbox.trusted?(trusted_dirs, home)
     return invalid("the repository #{toplevel} is trusted and the session folder is not")
   end
 
   commit = try base_commit(parent_root, base_ref, env)
+  if has_unsupported_filter?(toplevel, env)
+    return invalid("the repository #{toplevel} defines a checkout filter, so no worktree starts there")
+  end
+
   root = try worktree_root(toplevel)
+  if not Sandbox.trusted?(trusted_dirs, root)
+    return invalid("the repository #{toplevel} is trusted and the session folder is not")
+  end
+
   slug = slug_of(parent_id)
+  start_ms = Time.now_ms
   tried = 0
   while tried < MAX_TRIES
+    if Time.now_ms - start_ms > ALLOC_BUDGET_MS
+      return invalid("no free worktree directory under #{root} (budget of #{ALLOC_BUDGET_MS} ms spent)")
+    end
+
     suffix = ""
     if tried > 0
       suffix = "-#{tried}"
@@ -181,12 +218,24 @@ def allocate(
 
     branch = "finn/#{slug}#{suffix}"
     path = "#{root}/#{slug}#{suffix}"
-    if not branch_taken?(toplevel, branch, env) and not File.lstat(path).ok?
+    existed = branch_taken?(toplevel, branch, env)
+    if not existed and not File.lstat(path).ok?
       case git(toplevel, ["worktree", "add", "-b", branch, path, commit], env)
-        ok(_) -> return ok(Placed(root: try verified(toplevel, path), branch: some(branch)))
+        ok(_) ->
+          placed = case verified(toplevel, path)
+            ok(real) -> ok(real)
+            error(bad) ->
+              rollback(toplevel, path, env)
+              drop_branch(toplevel, branch, env)
+              error(bad.message, kind: bad.kind)
+          end
+
+          return ok(Placed(root: try placed, branch: some(branch)))
         error(e) if taken_message?(e.message) -> nil
+        error(_e) if branch_taken?(toplevel, branch, env) or File.lstat(path).ok? -> nil
         error(e) ->
           rollback(toplevel, path, env)
+          drop_branch(toplevel, branch, env)
           return error(e)
       end
     end
@@ -216,9 +265,10 @@ def base_commit(dir: String, base_ref: Optional[String], env: Fn[String, Result[
   check_commit("HEAD", try head)
 end
 
-## Whether `commit` is the commit `ref` resolved to.
+## Whether `commit` is the commit `ref` resolved to (SHA-1 or SHA-256).
 def check_commit(ref: String, commit: String) -> Result[String]
-  return ok(commit) if commit.length == 40 and commit.split("").all? { |c| hex?(c) }
+  hexed = commit.split("").all? { |c| hex?(c) }
+  return ok(commit) if hexed and (commit.length == 40 or commit.length == 64)
 
   invalid("ref #{ref.inspect} resolved to #{commit.inspect}, not a commit")
 end
@@ -276,6 +326,36 @@ end
 ## Whether the failed `worktree add` lost a race: its branch or directory was taken between the check and the run.
 def taken_message?(message: String) -> Bool = message.include?("already exists") or message.include?("already used")
 
+## The real path of `parent_root` when it resolves, else the path itself: checks never widen past a symlinked folder.
+def canonical_parent(parent_root: String) -> String = Path.real(parent_root).unwrap_or(parent_root)
+
+## Whether the repository defines a checkout filter that would run a program on checkout (`filter.*`, a `diff`
+## command or a `merge` driver): allocation refuses those repositories instead of checking the filter out.
+def has_unsupported_filter?(toplevel: String, env: Fn[String, Result[String]]) -> Bool
+  listed = git(toplevel, ["config", "--list"], env).unwrap_or("")
+  listed.split("\n").any? { |line| filter_key?(key_of(line)) }
+end
+
+def key_of(line: String) -> String
+  parts = line.split("=")
+  return "" if parts.empty?
+
+  parts[0].downcase
+end
+
+def filter_key?(key: String) -> Bool
+  return true if key.start_with?("filter.")
+  return true if key.start_with?("diff.") and key.end_with?(".command")
+  return true if key.start_with?("merge.") and key.end_with?(".driver")
+
+  false
+end
+
+## Drops the fresh `branch` when it did not exist before and is fully merged: never force, so unmerged work stays.
+def drop_branch(toplevel: String, branch: String, env: Fn[String, Result[String]]) -> Void
+  _ = git(toplevel, ["branch", "-d", branch], env)
+end
+
 ## The worktree Git made at `path`: its real path, inside `toplevel`.
 def verified(toplevel: String, path: String) -> Result[String]
   found = case Path.real(path)
@@ -308,8 +388,8 @@ def checkout_only?(path: String) -> Bool
   end
 end
 
-## Whether `root` is the worktrees folder, which is `toplevel` or below it.
-def inside_base?(toplevel: String, root: String) -> Bool = root == toplevel or Sandbox.inside?(toplevel, root)
+## Whether `root` is the managed worktrees folder or below it, never the repository top itself.
+def inside_base?(toplevel: String, root: String) -> Bool = Sandbox.inside?(base_of(toplevel), root)
 
 ## The slug a branch and directory of `id` are made of: letters, digits and `_` stay, `-` stays, the rest is `-`.
 def slug_of(id: String) -> String
@@ -355,10 +435,30 @@ end
 ## Whether `text` holds a control character.
 def control?(text: String) -> Bool = text.split("").any? { |c| c.code < 32 or c.code == 127 }
 
-## One Git command in `dir`: its standard output without the end of line, or its standard error.
+## One Git command in `dir`: its standard output without the end of line, or its standard error. It runs with no
+## shell, the ambient Git configuration shut out (global and system files ignored, hooks and the filesystem monitor
+## disabled), and a fixed locale so failure text never depends on the machine's language.
 def git(dir: String, args: List[String], env: Fn[String, Result[String]]) -> Result[String]
   options = Process.Options(chdir: dir, pgroup: true, timeout_ms: GIT_MS)
-  words = ["-i", "--"] + Shell.environment(env) + ["GIT_TERMINAL_PROMPT=0", "git"] + args
+  words = (
+    ["-i", "--"] +
+    Shell.environment(env) +
+    [
+      "LC_ALL=C",
+      "LANG=C",
+      "GIT_CONFIG_GLOBAL=/dev/null",
+      "GIT_CONFIG_SYSTEM=/dev/null",
+      "GIT_OPTIONAL_LOCKS=0",
+      "GIT_TERMINAL_PROMPT=0",
+      "git",
+      "-c",
+      "core.hooksPath=/dev/null",
+      "-c",
+      "core.fsmonitor=false",
+    ] +
+    args
+  )
+
   process = try Process.spawn_captured("/usr/bin/env", words, options)
   _ = Process.close_stdin(process, 1000)
   result = finish(process, GIT_MS)

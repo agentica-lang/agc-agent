@@ -1625,7 +1625,20 @@ def child_created(
 
   ceiling = some(parent.profile.map { |shown| shown.name }.unwrap_or(Profiles.DEFAULT))
   parent_at = some(try find_at(at, header.id))
-  created_at(at, options, request, some(header.id), true, ceiling, parent_at)
+  id = try created_at(at, options, request, some(header.id), true, ceiling, parent_at)
+  # The confinement of the file tools is a setting of the session, like the fork's: the child inherits the parent's
+  # effective confinement now (a `PATCH` before this call counts), never the server's default, and a child that is
+  # not as confined as its parent must not stay.
+  if parent.confine != options.confine_files
+    case SessionActor.update(try find_at(at, id), Protocol.UpdateSession(confine: some(parent.confine)))
+      ok(_) -> nil
+      error(e) ->
+        _ = Actor.call(at, CALL_MS) do |reply| Msg.Delete(id, reply) end
+        return error(e.message, kind: e.kind)
+    end
+  end
+
+  ok(id)
 end
 
 # A message to the session itself wakes it, with `child:ID` when its host is a child's and `extension` otherwise;

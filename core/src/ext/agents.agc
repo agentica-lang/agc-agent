@@ -851,13 +851,17 @@ def start_child(
 end
 
 ## Where the child works for the coordinator: its worktree path and branch, its explicit folder when it differs from
-## the session's (`home`), and nothing when it is the session's own. A child gone since works where it did.
+## the session's (`home`), and nothing when it is the session's own. A child gone since names nothing, never the
+## session's own folder as a worktree.
 def place_of(host: Spec.Host, child: String, home: String, managed: Bool, env: Fn[String, Result[String]]) -> Place
   seen = host.snapshot.call(child)
+  gone = not seen.ok?
   root = case seen
     ok(session) -> session.cwd
     error(_) -> home
   end
+
+  return Place(root: home, branch: none, text: "") if gone
 
   branch: Optional[String] = none
   if managed and seen.ok?

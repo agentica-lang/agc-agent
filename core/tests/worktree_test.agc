@@ -7,6 +7,7 @@
 import Agents from "../src/ext/agents"
 import Protocol from "pkg/protocol/protocol"
 import Core from "../core"
+import Sandbox from "../src/tools/sandbox"
 import Spec from "../src/tools/spec"
 import Worktree from "../src/tools/worktree"
 import H from "support/harness"
@@ -18,7 +19,7 @@ ANSWER = "Hello! It's a pleasure to meet you."
 def test_two_writers_get_distinct_branches_and_keep_the_parent_clean() -> Result[Void]
   calls: Channel[Core.Call] = Channel.new(4)
   replies = ["spawn.sse", "text.sse", "text.sse", "text.sse"]
-  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)
+  setup = trusted_setup(replies, some(with_spawn(calls)))
   H.using(setup) do |h|
     try init_repo(h.work)
     parent = try H.new_session(h)
@@ -80,7 +81,7 @@ end
 def test_rejected_folders_and_refs_leave_no_partial_allocation() -> Result[Void]
   calls: Channel[Core.Call] = Channel.new(4)
   replies = ["spawn.sse", "text.sse"]
-  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)
+  setup = trusted_setup(replies, some(with_spawn(calls)))
   H.using(setup) do |h|
     try init_repo(h.work)
     try Dir.mkdir("#{h.work}/sub")
@@ -125,7 +126,7 @@ end
 # checkout stays clean.
 def test_agent_tasks_name_their_worktrees_and_folders() -> Result[Void]
   replies = ["agent_worktree.sse", "text.sse", "text.sse", "text.sse"]
-  H.using(H.Setup(replies: replies, approvals: false)) do |h|
+  H.using(trusted_setup(replies, none)) do |h|
     try init_repo(h.work)
     try Dir.mkdir("#{h.work}/sub")
     parent = try H.new_session(h)
@@ -151,7 +152,7 @@ end
 def test_an_async_start_names_the_worktree_in_its_id_line() -> Result[Void]
   calls: Channel[Core.Call] = Channel.new(4)
   replies = ["spawn.sse", "text.sse", "text.sse"]
-  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)
+  setup = trusted_setup(replies, some(with_spawn(calls)))
   H.using(setup) do |h|
     try init_repo(h.work)
     parent = try H.new_session(h)
@@ -203,7 +204,112 @@ def test_only_plain_refs_start_a_worktree() -> Result[Void]
   ok()
 end
 
+# A managed worktree starts only in an explicitly trusted repository: without trust the child fails and leaves no
+# worktree, branch or directory behind.
+def test_a_worktree_starts_only_in_a_trusted_repository() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse"]
+  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)
+  H.using(setup) do |h|
+    try init_repo(h.work)
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    before_branches = try git(h.work, ["branch", "--list"])
+    case host.create.call(Core.NewChild(worktree: some(Spec.Worktree())))
+      ok(_) -> return error("a worktree started in a repository that is not trusted")
+      error(e) -> try Test.assert(e.message.include?("not trusted"), "unexpected refusal: #{e.message}")
+    end
+
+    try Test.eq(try git(h.work, ["branch", "--list"]), before_branches)
+    try Test.assert(not File.lstat("#{h.work}/.finn").ok?, "an untrusted child allocated #{h.work}/.finn")
+    ok()
+  end
+end
+
+# A confined parent keeps a confined child: the child inherits the parent's effective confinement at creation (a
+# `PATCH` before the call counts, the server's default stays off), a relative `cwd` resolves against the parent's
+# folder, and the child's file tools refuse a path outside its folder.
+def test_a_confined_parent_keeps_a_confined_child() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse"]
+  setup = trusted_setup(replies, some(with_spawn(calls)))
+  H.using(setup) do |h|
+    try init_repo(h.work)
+    try Dir.mkdir("#{h.work}/sub")
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    host = try host_of(calls)
+    free = try host.create.call(Core.NewChild(cwd: some("#{h.work}/sub")))
+    try Test.eq((try host.snapshot.call(free)).confine, false)
+    changed = try H.call(
+      h,
+      "PATCH",
+      Protocol.session_path(parent),
+      Protocol.encode_update_session(Protocol.UpdateSession(confine: some(true))),
+      H.auth(h),
+    )
+
+    try Test.eq(changed.status, 200)
+    child = try host.create.call(Core.NewChild(cwd: some("sub")))
+    snapshot = try host.snapshot.call(child)
+    try Test.eq(snapshot.cwd, try Path.real("#{h.work}/sub"))
+    try Test.eq(snapshot.confine, true)
+    outside = Sandbox.reach(snapshot.cwd, h.base, snapshot.confine)
+    try Test.assert(not outside.ok?, "the confined child reaches #{h.base}")
+    Test.eq((try host.snapshot.call(try host.create.call(Core.NewChild()))).confine, true)
+  end
+end
+
+# A repository that defines an externally executing checkout filter allocates nothing: the refusal happens before any
+# checkout runs, so no worktree, branch or directory is left behind. The driver value is inert (`cat`).
+def test_a_checkout_filter_refuses_a_worktree_before_any_checkout_runs() -> Result[Void]
+  H.using(H.Setup(replies: [])) do |h|
+    try init_repo(h.work)
+    try File.write_text("#{h.work}/note.inert-test", "plain\n")
+    try File.write_text("#{h.work}/.gitattributes", "*.inert-test filter=inerttest\n")
+    try git(h.work, ["add", ".gitattributes", "note.inert-test"])
+    try git(h.work, ["-c", "commit.gpgsign=false", "commit", "-qm", "attributes"])
+    try git(h.work, ["config", "filter.inerttest.smudge", "cat"])
+    before_branches = try git(h.work, ["branch", "--list"])
+    case Worktree.resolve_child([h.work], h.work, false, "s1", none, some(Spec.Worktree()), &env)
+      ok(_) -> return error("a worktree started with a checkout filter defined")
+      error(e) -> try Test.assert(e.message.include?("checkout filter"), "unexpected refusal: #{e.message}")
+    end
+
+    try Test.eq(try git(h.work, ["branch", "--list"]), before_branches)
+    try Test.assert(not File.lstat("#{h.work}/.finn").ok?, "a refused filter allocated #{h.work}/.finn")
+    ok()
+  end
+end
+
+# Ambient repository configuration never runs during allocation: hooks and the filesystem monitor stay disabled, so a
+# repository that names them still allocates.
+def test_ambient_git_configuration_never_runs_during_allocation() -> Result[Void]
+  H.using(H.Setup(replies: [])) do |h|
+    try init_repo(h.work)
+    try Dir.mkdir("#{h.work}/hooks-dir")
+    try git(h.work, ["config", "core.hooksPath", "#{h.work}/hooks-dir"])
+    placed = try Worktree.resolve_child([h.work], h.work, false, "s1", none, some(Spec.Worktree()), &env)
+    try Test.assert(File.lstat(placed.root).ok?, "no worktree directory: #{placed.root}")
+    listed = try git(h.work, ["worktree", "list", "--porcelain"])
+    try Test.assert(listed.include?(placed.root), "the worktree is not listed: #{listed}")
+    ok()
+  end
+end
+
 private
+
+# A server setup whose work folder counts as trusted, so managed worktrees may start there.
+def trusted_setup(replies: List[String], registry: Optional[Core.Registry]) -> H.Setup
+  H.Setup(replies: replies, registry: registry, approvals: false, skills: true, trust: some(["work"]))
+end
 
 def with_spawn(calls: Channel[Core.Call]) -> Core.Registry = Core.registry() |> Core.add_tool(spawn_tool(calls))
 
