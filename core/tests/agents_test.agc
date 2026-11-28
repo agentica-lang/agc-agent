@@ -315,6 +315,42 @@ def test_a_child_cannot_start_a_grandchild() -> Result[Void]
   end
 end
 
+# The child's provider request hides the subagent tools while the parent's offers them: the handle's grandchild
+# refusal alone cannot prove the schema is not offered. The child runs on `other`, so its request is the one to
+# `/other/`, found by path rather than by arrival order.
+def test_child_request_hides_subagent_tools() -> Result[Void]
+  replies = ["agent_other.sse", "text.sse", "text.sse"]
+  setup = H.Setup(replies: replies, providers: ["other"], approvals: false, profiles: true)
+  H.using(setup) do |h|
+    try write("#{h.base}/config/finn/profiles/fast.md", "---\ndescription: quick\nmodel: other/small\n---\n")
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    first = try H.next_request(h)
+    second = try H.next_request(h)
+    third = try H.next_request(h)
+    seen = [first, second, third]
+    parents = seen.select { |r| not r.path.start_with?("/other/") }
+    children = seen.select { |r| r.path.start_with?("/other/") }
+    try Test.eq(children.size, 1)
+    try Test.eq(parents.size, 2)
+    for request in parents
+      offered = tool_names(request.body)
+      try Test.assert(offered.include?("agent"), "the parent request hides agent: #{offered.join(", ")}")
+      try Test.assert(offered.include?("agent_send"), "the parent request hides agent_send")
+      try Test.assert(offered.include?("agent_stop"), "the parent request hides agent_stop")
+    end
+
+    child_tools = tool_names(children[0].body)
+    try Test.assert(not child_tools.include?("agent"), "the child request offers agent: #{child_tools.join(", ")}")
+    try Test.assert(not child_tools.include?("agent_send"), "the child request offers agent_send")
+    try Test.assert(not child_tools.include?("agent_stop"), "the child request offers agent_stop")
+    Test.assert(not child_tools.empty?, "the child request offers no tools at all")
+  end
+end
+
 private
 
 # The child whose tool call the events name.
@@ -418,6 +454,25 @@ def host_of(calls: Channel[Core.Call]) -> Result[Core.Host]
 end
 
 def host_of_call(call: Core.Call) -> Result[Core.Host] = call.host.to_result("the call has no host")
+
+# The tool names a provider request offers, in either wire shape.
+def tool_names(body: String) -> List[String]
+  json = JSON.parse(body).unwrap_or(JSON.object({}))
+  listed: List[JSON.Value] = JSON.list(JSON.get(json, "tools").unwrap_or(JSON.array([]))).unwrap_or([])
+  listed.map { |tool| tool_name(tool) }
+end
+
+def tool_name(tool: JSON.Value) -> String
+  case JSON.get(tool, "name")
+    ok(name) -> return JSON.string(name).unwrap_or("")
+    error(_) -> nil
+  end
+
+  case JSON.get(tool, "function")
+    ok(function) -> JSON.string(JSON.get(function, "name").unwrap_or(JSON.from(""))).unwrap_or("")
+    error(_) -> ""
+  end
+end
 
 def write(path: String, text: String) -> Result[Void]
   try mkdirs(path.slice(0, path.length - path.split("/").last.length - 1))
