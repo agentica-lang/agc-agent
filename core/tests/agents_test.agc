@@ -455,7 +455,49 @@ def test_stop_during_wait_then_capped_parent_launches_again() -> Result[Void]
   end
 end
 
+# An async `agent` start whose child finishes before the wake is registered still wakes the parent exactly once:
+# the send fires `turn_finished` at once, the wake carries the headed answer to the real parent, and a duplicate
+# or stale turn after it wakes nothing and leaves no turn, waiter or wake behind.
+def test_async_start_with_immediate_completion_wakes_once() -> Result[Void]
+  setup = immediate()
+  input = try JSON.parse("{\"tasks\": [{\"prompt\": \"Say hi.\"}], \"wait\": false}")
+  try Test.eq(try setup.tools[0].run.call(setup.ctx, input), "child-1")
+  check_immediate_wake(setup)
+end
+
+# An async `agent_send` whose child finishes before the post-send snapshot still wakes the parent exactly once:
+# the send fires `turn_finished` at once, the wake carries the headed answer to the real parent, and a duplicate
+# or stale turn after it wakes nothing and leaves no turn, waiter or wake behind.
+def test_async_send_with_immediate_completion_wakes_once() -> Result[Void]
+  setup = immediate()
+  # A follow-up to a child the first call started keeps its recorded display name.
+  setup.names.put("child-1", "build")
+  input = try JSON.parse("{\"id\": \"child-1\", \"text\": \"Again.\", \"wait\": false}")
+  try Test.eq(try setup.tools[1].run.call(setup.ctx, input), "child-1")
+  check_immediate_wake(setup)
+end
+
 private
+
+## A wake the immediate stub host recorded: the session it woke and the text it carried.
+struct Woke
+  id: String
+  text: String
+end
+
+## Everything an immediate-completion run needs: the channels the stub host fires and records on, the handle, the
+## subagent tables, the tools and the context of the parent.
+struct Immediate
+  handlers: Channel[Fn[Spec.Seen, Void]]
+  woken: Channel[Woke]
+  host: Spec.Host
+  turns: ATS[String, String]
+  waits: ATS[String, Address[Agents.Heard]]
+  wakes: ATS[String, String]
+  names: ATS[String, String]
+  tools: List[Spec.Tool]
+  ctx: Spec.Context
+end
 
 # The child whose tool call the events name.
 def child_of(a: H.Sub) -> Result[String]
@@ -637,4 +679,127 @@ def idle_session(id: String) -> Protocol.Session
     pending_approvals: [],
     history: [],
   )
+end
+
+def immediate() -> Immediate
+  handlers: Channel[Fn[Spec.Seen, Void]] = Channel.new(1)
+  woken: Channel[Woke] = Channel.new(4)
+  host = immediate_host(handlers, woken)
+  turns: ATS[String, String] = ATS.new()
+  waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+  wakes: ATS[String, String] = ATS.new()
+  names: ATS[String, String] = ATS.new()
+  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names)
+  ctx = Spec.Context(
+    root: "/tmp",
+    env: ->(_name: String) { error("no env") },
+    host: some(host),
+    session: some("parent"),
+  )
+
+  Immediate(
+    handlers: handlers,
+    woken: woken,
+    host: host,
+    turns: turns,
+    waits: waits,
+    wakes: wakes,
+    names: names,
+    tools: tools,
+    ctx: ctx,
+  )
+end
+
+# A session handle whose child finishes at once: `send` fires the watcher's `turn_finished` before it answers, so
+# the completion lands before the wake is registered and the post-send snapshot already shows an idle child with
+# its answer. A `send` to any other id records the parent's wake. The first watcher wins, as `watch` promises.
+def immediate_host(handlers: Channel[Fn[Spec.Seen, Void]], woken: Channel[Woke]) -> Spec.Host
+  Spec.Host(
+    create: ->(_child: Spec.NewChild) { ok("child-1") },
+    send: ->(id: String, text: String) {
+      if id == "child-1"
+        fire_now(handlers, id, "turn-1")
+        return ok(Protocol.MessageAccepted(turn_id: ""))
+      end
+
+      _ = woken.send(Woke(id: id, text: text), 1000)
+      ok(Protocol.MessageAccepted(turn_id: "wake-turn"))
+    },
+    stop: ->(_id: String) { ok(false) },
+    delete: ->(_id: String) { ok() },
+    snapshot: ->(id: String) {
+      return ok(immediate_child(id)) if id == "child-1"
+
+      ok(immediate_parent(id))
+    },
+    watch: ->(_id: String, _names: List[String], handler: Fn[Spec.Seen, Void]) {
+      _ = handlers.send(handler, 0)
+      ok()
+    },
+  )
+end
+
+def immediate_child(id: String) -> Protocol.Session
+  Protocol.Session(
+    id: id,
+    cwd: "/tmp",
+    model: "m",
+    last_event_id: 0,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [Protocol.Message(role: Protocol.Role.Assistant, text: ANSWER)],
+    provider: "local",
+  )
+end
+
+def immediate_parent(id: String) -> Protocol.Session
+  Protocol.Session(
+    id: id,
+    cwd: "/tmp",
+    model: "m",
+    last_event_id: 0,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+    provider: "local",
+  )
+end
+
+def finish_seen(child: String, turn: String) -> Spec.Seen
+  Spec.Seen(
+    session: child,
+    root: "/tmp",
+    name: "turn_finished",
+    data: JSON.object({"turn_id": JSON.from(turn), "stop_reason": JSON.from("end_turn")}),
+    parent: none,
+  )
+end
+
+# Fires the watcher kept for `child` with its `turn_finished`, keeping it for the next fire.
+def fire_now(handlers: Channel[Fn[Spec.Seen, Void]], child: String, turn: String) -> Void
+  case handlers.recv(0)
+    ok(handler) ->
+      _ = handlers.send(handler, 1000)
+      handler.call(finish_seen(child, turn))
+    error(_) -> nil
+  end
+end
+
+# One wake to the real parent with the headed answer, and nothing after: neither a duplicate of its turn nor a
+# stale turn wakes again, and no turn, waiter or wake is left behind. The async child stays open, so its display
+# name stays by design.
+def check_immediate_wake(setup: Immediate) -> Result[Void]
+  first = try setup.woken.recv(5000)
+  try Test.eq(first.id, "parent")
+  try Test.assert(first.text.include?(ANSWER), "the wake carried no answer: #{first.text}")
+  try Test.assert(first.text.include?("build (local/m): end_turn"), "the wake has no headed answer: #{first.text}")
+  fire_now(setup.handlers, "child-1", "turn-1")
+  try Test.assert(not setup.woken.recv(0).ok?, "a duplicate finish woke again")
+  fire_now(setup.handlers, "child-1", "other-turn")
+  try Test.assert(not setup.woken.recv(0).ok?, "a stale finish woke")
+  try Test.assert(setup.turns.keys().empty?, "a turn is left behind")
+  try Test.assert(setup.waits.keys().empty?, "a waiter is left behind")
+  Test.assert(setup.wakes.keys().empty?, "a wake is left behind")
 end

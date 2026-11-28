@@ -9,9 +9,10 @@
 ## by turn id: to the waiter of a waited turn, or to the parent's wake for an async turn, whose entry holds the
 ## real id of the session to wake. A turn nobody waits for and nobody is owed a wake for is stale and never wakes,
 ## so a waited follow-up after an async start and two waited follow-ups in a row each get their own answer and
-## never wake twice. Transient per-turn state (the expected turns, the waiter addresses and the async wakes) is
-## cleared on every completion, timeout or delete, so it never grows past the live turns; the names keep one display
-## name per live child.
+## never wake twice. An async wake is owed before its send runs, so a child that finishes before the post-send
+## snapshot still wakes exactly once. Transient per-turn state (the expected turns, the waiter addresses and the
+## async wakes) is cleared on every completion, timeout or delete, so it never grows past the live turns; the names
+## keep one display name per live child.
 
 import Protocol from "pkg/protocol/protocol"
 import Spec from "../tools/spec"
@@ -357,6 +358,9 @@ def run_async(
     child = created.unwrap_or("")
     started = started.push(child)
     names.put(child, name)
+    # The wake is owed before the send runs: a finish that lands before the post-send snapshot still finds who
+    # to wake, and the table holds the real session, so the finish wakes this session however the child started.
+    wakes.put(child, own)
     case ensure_watch(host, child, turns, waits, wakes, names)
       error(e) ->
         cleanup_started(host, started, turns, waits, wakes, names)
@@ -373,13 +377,22 @@ def run_async(
 
     case turn_of_child(host, child)
       ok(turn) ->
-        # The turn is recorded before what wakes it: the table holds the real session, so the finish wakes this
-        # session however the child started.
-        turns.put(child, turn)
-        wakes.put(child, own)
+        # The expected turn is only recorded while the wake is still owed: a finish already delivered forgot it,
+        # so nothing stale is left behind.
+        case wakes.get(child)
+          ok(_) -> turns.put(child, turn)
+          error(_) -> nil
+        end
+
       error(e) ->
-        cleanup_started(host, started, turns, waits, wakes, names)
-        return error(e.message)
+        # The turn already ended: its finish was delivered (nothing is owed anymore) or is on its way to the
+        # owed wake, so the child stays open with its answer instead of failing. Only a child gone since fails.
+        case host.snapshot.call(child)
+          error(_) ->
+            cleanup_started(host, started, turns, waits, wakes, names)
+            return error(e.message)
+          ok(_) -> nil
+        end
     end
   end
 
@@ -479,8 +492,13 @@ def send_async(
   names: ATS[String, String],
 ) -> Result[String]
   id = args.id
+  # The wake is owed before the send runs: a finish that lands before the post-send snapshot still finds who to
+  # wake, and the table holds the real session.
+  wakes.put(id, own)
   case ensure_watch(host, id, turns, waits, wakes, names)
-    error(e) -> return error(e.message)
+    error(e) ->
+      forget(turns, waits, wakes, id)
+      return error(e.message)
     ok(_) -> nil
   end
 
@@ -493,12 +511,22 @@ def send_async(
 
   case turn_of_child(host, id)
     ok(turn) ->
-      # The turn is recorded with who it wakes: the table holds the real session.
-      turns.put(id, turn)
-      wakes.put(id, own)
+      # The expected turn is only recorded while the wake is still owed: a finish already delivered forgot it,
+      # so nothing stale is left behind.
+      case wakes.get(id)
+        ok(_) -> turns.put(id, turn)
+        error(_) -> nil
+      end
+
     error(e) ->
-      forget(turns, waits, wakes, id)
-      return error(e.message)
+      # The turn already ended: its finish was delivered (nothing is owed anymore) or is on its way to the owed
+      # wake, so the id still answers. Only a child gone since fails.
+      case host.snapshot.call(id)
+        error(_) ->
+          forget(turns, waits, wakes, id)
+          return error(e.message)
+        ok(_) -> nil
+      end
   end
 
   ok(id)
@@ -648,13 +676,22 @@ def dispatch(
     ok(_) -> nil
     error(_) ->
       # No expected turn yet: the send has not recorded it. A waiter still gets it, so a fast finish cannot hang;
-      # without a waiter there is no turn to deliver and nothing owed a wake.
+      # without a waiter an owed async wake gets it, so a fast finish cannot drop it; otherwise there is no turn
+      # to deliver and nothing owed a wake.
       case waits.get(child)
         ok(addr) ->
           _ = addr.send(Heard(id: child, turn_id: turn, reason: reason), 1000)
           forget(turns, waits, wakes, child)
           return
-        error(_) -> return
+        error(_) ->
+          case wakes.get(child)
+            ok(own) ->
+              forget(turns, waits, wakes, child)
+              wake_parent(host, own, child, names, seen, reason)
+            error(_) -> return
+          end
+
+          return
       end
   end
 
