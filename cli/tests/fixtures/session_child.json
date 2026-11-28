@@ -1,0 +1,16 @@
+{
+  "id": "s1",
+  "cwd": "/work",
+  "model": "fake-model",
+  "last_event_id": 9,
+  "turn_id": null,
+  "turn_from_event_id": null,
+  "pending_approvals": [],
+  "history": [
+    {"role": "user", "text": "Research this."},
+    {"role": "assistant", "text": "", "tool": {"call_id": "c0", "name": "agent", "summary": "2 tasks"}, "done": {"call_id": "c0", "ok": true, "summary": "s2 (p/m): done", "duration_ms": 120}},
+    {"role": "assistant", "text": "", "tool": {"call_id": "c1", "name": "bash", "summary": "ls", "session": "s2"}, "done": {"call_id": "c1", "ok": true, "summary": "ok", "duration_ms": 4, "session": "s2"}},
+    {"role": "assistant", "text": "", "tool": {"call_id": "c1", "name": "read_file", "summary": "notes.txt", "session": "s3"}, "done": {"call_id": "c1", "ok": false, "summary": "denied", "duration_ms": 0, "session": "s3"}},
+    {"role": "assistant", "text": "Done."}
+  ]
+}

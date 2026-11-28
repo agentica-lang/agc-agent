@@ -110,6 +110,23 @@ def test_only_the_keys_row_has_buttons() -> Result[Void]
   Test.eq(Layout.hit(focused_rows[focused_rows.size - 1], 25), none)
 end
 
+# An approval of a child's call names the child, while the routed id stays the approval's own.
+def test_an_approval_of_a_child_names_it() -> Result[Void]
+  request = Protocol.ApprovalRequested(
+    approval_id: "s2:a1",
+    call_id: "c1",
+    tool: "bash",
+    preview: "rm -r build",
+    detail: "",
+    session: some("s2"),
+  )
+
+  panel = Approvals.requested(Approvals.Panel(), request, 1000)
+  rows = texts(Approvals.rows(panel, 200, 100))
+  try Test.assert(rows[0] == "approval s2:a1 · child s2 · bash: rm -r build", rows.join("|"))
+  Test.eq(texts(Approvals.rows(asked(["a1"]), 200, 100))[0], "approval a1 · write_file: hello.txt")
+end
+
 private
 
 def ctrl_plain(c: String) -> TUI.Event = TUI.Event.Key(TUI.Key.Ctrl(c), TUI.Mods())

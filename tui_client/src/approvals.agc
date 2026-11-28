@@ -3,6 +3,7 @@
 ## key answers in the first GUARD_MS after the asked approval changes, nor while the panel has no row on the screen.
 ## Pure.
 
+import Client from "pkg/client/client"
 import Protocol from "pkg/protocol/protocol"
 import TUI from "pkg/tui/tui"
 import Layout from "panel"
@@ -94,7 +95,11 @@ def rows(panel: Panel, width: Int, room: Int) -> List[Layout.Row]
   return [] if panel.pending.empty?
 
   request = panel.pending[0]
-  head = "approval #{request.approval_id} · #{request.tool}: #{request.preview}"
+  head = case request.session
+    some(id) -> "approval #{request.approval_id} · #{Client.child_label(id)} · #{request.tool}: #{request.preview}"
+    none -> "approval #{request.approval_id} · #{request.tool}: #{request.preview}"
+  end
+
   body = ->(left: Int) { detail(request.detail, width, [left, MAX_DETAIL_ROWS].min.unwrap!) }
   Layout.fit(head, keys(panel), body, width, room)
 end

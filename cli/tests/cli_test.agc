@@ -37,6 +37,75 @@ def test_a_resumed_session_prints_what_its_turns_did() -> Result[Void]
   end
 end
 
+# A resumed session prints the children's calls of its history under their labels, apart on overlapping call ids.
+def test_a_resumed_session_prints_the_children_calls() -> Result[Void]
+  Driver.within([Routes.session([Fake.Reply(session: "session_child.json")]), Routes.held_events()]) do |rig|
+    cli = try Driver.start(rig.dir, PLAIN + ["--session", "s1"])
+    lines = try Driver.read_until(cli, "assistant: Done.")
+    done = try Driver.finish(cli)
+    expected = [
+      "[session s1]",
+      "user: Research this.",
+      "[tool] agent 2 tasks",
+      "[tool ok] s2 (p/m): done (120 ms)",
+      "[tool] [child s2] bash ls",
+      "[tool ok] [child s2] ok (4 ms)",
+      "[tool] [child s3] read_file notes.txt",
+      "[tool failed] [child s3] denied (0 ms)",
+      "assistant: Done.",
+    ]
+
+    try Test.eq(lines, expected)
+    Test.eq(done.lines, ["[to come back: finn chat --session s1]"])
+  end
+end
+
+# A turn of subagents labels the children's calls apart on overlapping call ids: a woken start reads as who
+# answered, a child's approval names it while the routed id stays its own, a child's usage carries its id, and a
+# queued, delivered or parked wake never reads as typed text.
+def test_a_turn_of_subagents_labels_children_and_wakes() -> Result[Void]
+  routes = [
+    Routes.created(),
+    Routes.held_events(),
+    Routes.accepting(["child.sse"]),
+    Routes.answering("s3:a9", Fake.Reply(push: ["child_rest.sse"])),
+  ]
+
+  Driver.within(routes, &subagents)
+end
+
+def subagents(rig: Driver.Rig) -> Result[Void]
+  cli = try Driver.start(rig.dir, PLAIN)
+  try Driver.say(cli, "research this")
+  first = try Driver.read_until(cli, PROMPT)
+  try Driver.say(cli, "n")
+  last = try Driver.read_until(cli, "[turn finished]")
+  done = try Driver.finish(cli)
+  answer = try Fake.request(rig.fake, "POST", Protocol.approval_path("s1", "s3:a9"))
+  expected = [
+    "[session s1]",
+    "[child s2 answered]",
+    "[tool] agent 2 tasks",
+    "  [tool] [child s2] bash ls",
+    "  [tool] [child s3] read_file notes.txt",
+    "  [tool ok] [child s2] ok (4 ms)",
+    "[approval s3:a9] [child s3] bash: rm -r build",
+    PROMPT,
+    "[approval s3:a9] deny (client)",
+    "  [tool failed] [child s3] denied by the user (0 ms)",
+    "[usage] input 100, output (session) 60, cache read 0, cache write 0, context 1285 [child s2]",
+    "[tool ok] s2 (p/m): done (120 ms)",
+    "[queued child s3 answered]",
+    "[delivered child s3 answered]",
+    "[parked extension answered]",
+    "[turn finished] end_turn",
+  ]
+
+  try Test.eq(first + last, expected)
+  try Test.eq(Protocol.decode_approve(answer.body), ok(Protocol.Approve(decision: Protocol.Decision.Deny)))
+  Test.eq(done.code, 0)
+end
+
 # A session whose snapshot is over 1 MiB (here 300 long thinking blocks, not printed) is still resumed.
 def test_a_big_session_is_resumed() -> Result[Void]
   thought = (1..300).to_a.map { |_n|

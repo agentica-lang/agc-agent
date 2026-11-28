@@ -166,6 +166,47 @@ def test_a_queued_message_becomes_a_user_message_once_delivered() -> Result[Void
   Test.eq(delivered.entries.last.text, "too late")
 end
 
+# A wake that queues into the running turn reads as who answered, never as typed text; its delivery adds a notice,
+# not a user message. A parked wake of an extension waits without an id until the user's turn takes it, and a turn a
+# wake starts is named too.
+def test_a_wake_queues_and_delivers_as_who_answered() -> Result[Void]
+  model = model_of(60, 12).with(generation: 1, id: "s1", serving: "local/m", turn: true)
+  event = ->(n: Int, e: Protocol.Event) { App.Msg.Stream(1, [Client.Item.Event(some(n), e)]) }
+  queue = ->(id: String, text: String) {
+    Protocol.Event.MessageQueued(
+      Protocol.MessageQueued(turn_id: "t1", text: text, message_id: some(id), source: some("child:s2")),
+    )
+  }
+
+  step = ->(m: App.Model, n: Int, e: Protocol.Event) { App.update(m, event.call(n, e)).model }
+  waiting = step.call(model, 1, queue.call("t1.1", "an answer"))
+  try Test.eq(waiting.waiting.map { |w| w.text }, ["an answer"])
+  try Test.assert(rows(waiting).any? { |row| row.include?("child s2 answered") }, rows(waiting).join("\n"))
+  try Test.assert(not rows(waiting).any? { |row| row.include?("an answer") }, rows(waiting).join("\n"))
+  deliver = Protocol.MessageDelivered(turn_id: "t1", text: "an answer", message_id: some("t1.1"))
+  delivered = step.call(waiting, 2, Protocol.Event.MessageDelivered(deliver))
+  try Test.eq(delivered.waiting, [])
+  try Test.eq(delivered.entries.select { |e| e.kind == Transcript.Kind.User }.size, 0)
+  try Test.assert(delivered.entries.any? { |e| e.text == "child s2 answered" }, "the wake is a notice")
+  parked = step.call(
+    delivered,
+    3,
+    Protocol.Event.MessageQueued(Protocol.MessageQueued(turn_id: "", text: "async", source: some("extension"))),
+  )
+
+  try Test.assert(rows(parked).any? { |row| row.include?("extension answered") }, rows(parked).join("\n"))
+  woken = step.call(
+    parked,
+    4,
+    Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: "t9", source: some("extension"))),
+  )
+
+  try Test.assert(woken.entries.any? { |e| e.text == "extension answered" }, "the woken turn is named")
+  user = step.call(parked, 4, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: "t2")))
+  try Test.assert(not rows(user).any? { |row| row.include?("extension answered") }, rows(user).join("\n"))
+  Test.eq(user.waiting, [])
+end
+
 # A turn that stopped before it read the queue drops it: the `queue_dropped` error clears what waited above the prompt.
 def test_a_dropped_queue_leaves_the_prompt_area() -> Result[Void]
   model = model_of(60, 12).with(generation: 1, id: "s1", serving: "local/m", turn: true)

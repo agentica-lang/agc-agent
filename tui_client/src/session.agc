@@ -297,7 +297,7 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
     Protocol.Event.ThinkingDelta(delta) ->
       timed(shown, delta.text).with(entries: Transcript.add(shown.entries, Transcript.Kind.Thinking, delta.text))
     Protocol.Event.TurnStarted(started) ->
-      shown.with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)), streamed: none)
+      woken(shown, started).with(turn: true, yolo: Yolo.running(shown.yolo, some(started.turn_id)), streamed: none)
     Protocol.Event.TurnFinished(done) ->
       ended = shown.with(turn: false, stopping: false, new_model: none, yolo: Yolo.running(shown.yolo, none))
       read_branch(Turn.after_turn(finished(ended, done), done.stop_reason))
@@ -349,10 +349,9 @@ def on_event(app: State.Model, id: Optional[Int], event: Protocol.Event) -> Stat
 
     Protocol.Event.MessageQueued(queued) ->
       steered = shown.with(yolo: Yolo.steered(shown.yolo, queued))
-      steered.with(waiting: steered.waiting.push(State.Waiting(id: queued.message_id, text: queued.text)))
-    Protocol.Event.MessageDelivered(delivered) ->
-      read = shown.with(waiting: delivered_from(shown.waiting, delivered.message_id))
-      read.with(entries: Transcript.add(read.entries, Transcript.Kind.User, delivered.text))
+      waiting = State.Waiting(id: queued.message_id, text: queued.text, source: queued.source)
+      steered.with(waiting: steered.waiting.push(waiting))
+    Protocol.Event.MessageDelivered(delivered) -> delivered(shown, delivered)
     Protocol.Event.Todos(list) -> State.noted(shown, todos(list.todos))
     _ -> shown
   end
@@ -369,6 +368,38 @@ def todos(list: List[Protocol.Todo]) -> String
   return "todos: none" if list.empty?
 
   (["todos:"] + Client.todo_lines(list)).join("\n")
+end
+
+## A turn that a wake starts is named, never shown as typed input; a user's turn takes the parked wakes, so what
+## waited without an id (never delivered) leaves the prompt. A wake's text reaches the model, not the transcript:
+## the file keeps no provenance for it, so a replay from the history still shows it as a user message.
+def woken(app: State.Model, started: Protocol.TurnStarted) -> State.Model
+  case started.source
+    some(source) -> app.with(entries: Transcript.note(app.entries, Client.wake_note(source)))
+    none -> app.with(waiting: app.waiting.select { |w| w.id.some? })
+  end
+end
+
+## Who sent the delivered message `id`, when its queueing named a wake; none for a user's own message or one whose
+## queueing was not seen.
+def wake_of(waiting: List[State.Waiting], id: Optional[String]) -> Optional[String]
+  return none if id.none?
+
+  for w in waiting
+    return w.source if w.id == id
+  end
+
+  none
+end
+
+## A message the turn read: a wake reads as who answered, never as typed input; a user's own reads as what it
+## says. The file keeps no provenance for a wake's text, so a replay from the history still shows it as typed.
+def delivered(app: State.Model, delivered: Protocol.MessageDelivered) -> State.Model
+  read = app.with(waiting: delivered_from(app.waiting, delivered.message_id))
+  case wake_of(app.waiting, delivered.message_id)
+    some(source) -> read.with(entries: Transcript.note(read.entries, Client.wake_note(source)))
+    none -> read.with(entries: Transcript.add(read.entries, Transcript.Kind.User, delivered.text))
+  end
 end
 
 ## What waits once the message `id` was delivered: the queue without it, or without its oldest when none has that id.

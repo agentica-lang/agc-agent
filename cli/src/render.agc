@@ -39,16 +39,16 @@ def event(event: Protocol.Event, style: Style) -> Optional[Out]
   case event
     Protocol.Event.TextDelta(delta) -> some(streamed(delta.text, Flow.Text, delta.text))
     Protocol.Event.ThinkingDelta(delta) -> thinking(delta.text, style)
-    Protocol.Event.ToolStarted(tool) -> some(line("[tool] #{tool.name} #{tool.summary}"))
+    Protocol.Event.ToolStarted(tool) -> some(line(started(tool)))
     Protocol.Event.ToolFinished(tool) -> some(line(finished(tool)))
     Protocol.Event.ApprovalResolved(resolved) -> some(line(resolution(resolved)))
     Protocol.Event.Usage(usage) -> some(line(counts(usage)))
     Protocol.Event.TurnFinished(done) -> some(line(turn_finished(done)))
     Protocol.Event.Error(failure) -> some(line("[error] #{failure.kind}: #{failure.message}"))
-    Protocol.Event.TurnStarted(_) -> none
+    Protocol.Event.TurnStarted(started) -> woken(started)
     Protocol.Event.ApprovalRequested(_) -> none
     Protocol.Event.Resync -> none
-    Protocol.Event.MessageQueued(queued) -> some(line("[queued] #{Client.printable(queued.text)}"))
+    Protocol.Event.MessageQueued(queued) -> some(line(queued_line(queued)))
     Protocol.Event.MessageDelivered(delivered) -> some(line("[delivered] #{Client.printable(delivered.text)}"))
     Protocol.Event.ShellStarted(started) -> some(line(shell_started(started)))
     Protocol.Event.ShellFinished(finished) -> some(line(shell_finished(finished)))
@@ -56,8 +56,16 @@ def event(event: Protocol.Event, style: Style) -> Optional[Out]
   end
 end
 
+## A turn a wake starts reads as who answered; any other turn prints nothing.
+def woken(started: Protocol.TurnStarted) -> Optional[Out]
+  case started.source
+    some(source) -> some(line("[#{Client.wake_note(source)}]"))
+    none -> none
+  end
+end
+
 def prompt(request: Protocol.ApprovalRequested) -> Out
-  head = "[approval #{request.approval_id}] #{request.tool}: #{request.preview}"
+  head = "[approval #{request.approval_id}]#{child_of(request.session)} #{request.tool}: #{request.preview}"
   line("#{head}\n#{indented(request.detail)}#{ANSWER_HINT}")
 end
 
@@ -91,8 +99,8 @@ def history_lines(message: Protocol.Message, style: Style) -> List[String]
 
   case message.tool
     some(tool) ->
-      ended = message.done.map { |d| [finished(d)] }.unwrap_or([])
-      return ["[tool] #{tool.name} #{tool.summary}"] + ended
+      ended = message.done.map { |d| [finished_line(d)] }.unwrap_or([])
+      return ["[tool]#{child_of(tool.session)} #{tool.name} #{tool.summary}"] + ended
     none -> nil
   end
 
@@ -150,10 +158,47 @@ def dimmed(text: String, style: Style) -> String
   "#{esc}[2m#{text}#{esc}[0m"
 end
 
-def finished(tool: Protocol.ToolFinished) -> String
-  return "[tool ok] #{tool.summary} (#{tool.duration_ms} ms)" if tool.ok
+def started(tool: Protocol.ToolStarted) -> String
+  case tool.session
+    some(id) -> "  [tool] [#{Client.child_label(id)}] #{tool.name} #{tool.summary}"
+    none -> "[tool] #{tool.name} #{tool.summary}"
+  end
+end
 
-  "[tool failed] #{tool.summary} (#{tool.duration_ms} ms)"
+def finished(tool: Protocol.ToolFinished) -> String
+  line = finished_line(tool)
+  return "  #{line}" if tool.session.some?
+
+  line
+end
+
+def finished_line(tool: Protocol.ToolFinished) -> String
+  state = "ok"
+  if not tool.ok
+    state = "failed"
+  end
+
+  "[tool #{state}]#{child_of(tool.session)} #{tool.summary} (#{tool.duration_ms} ms)"
+end
+
+## A queued message as the client prints it: a wake reads as who answered, never as typed text; a parked wake (an
+## empty `turn_id`, waiting for the next user message) reads as parked.
+def queued_line(queued: Protocol.MessageQueued) -> String
+  case queued.source
+    some(source) ->
+      return "[parked #{Client.wake_note(source)}]" if queued.turn_id == ""
+
+      "[queued #{Client.wake_note(source)}]"
+    none -> "[queued] #{Client.printable(queued.text)}"
+  end
+end
+
+## " [child s2]" for a call of a child session, else "", so lines without one read as before.
+def child_of(session: Optional[String]) -> String
+  case session
+    some(id) -> " [#{Client.child_label(id)}]"
+    none -> ""
+  end
 end
 
 def shell_started(started: Protocol.ShellStarted) -> String
@@ -187,10 +232,12 @@ def resolution(resolved: Protocol.ApprovalResolved) -> String
 end
 
 def counts(usage: Protocol.Usage) -> String
-  (
+  text = (
     "[usage] input #{usage.input}, output (session) #{usage.output}, cache read #{usage.cache_read}, " +
     "cache write #{usage.cache_write}, context #{usage.context}"
   )
+
+  "#{text}#{child_of(usage.session)}"
 end
 
 def turn_finished(done: Protocol.TurnFinished) -> String
