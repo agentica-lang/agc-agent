@@ -1,6 +1,7 @@
 ## A tool call as the transcript draws it, like a shell line: `$ make test`, `read src/app.agc`, `edit README.md`,
 ## then its diff and output, muted, and how long it took. Folded, the body shows its first FOLDED_ROWS rows. Pure.
 
+import Client from "pkg/client/client"
 import Markdown from "markdown"
 
 FOLDED_ROWS = 4
@@ -40,7 +41,7 @@ def rows(
 ) -> List[List[Markdown.Span]]
   lead = LEAD
   for id in option_list(child)
-    lead = "#{LEAD}child #{id} · "
+    lead = "#{LEAD}#{Client.child_label(id)} · "
   end
 
   head = [[span(lead, Markdown.Look.Plain)] + title(call, [width - lead.length, 1].max.unwrap!)]

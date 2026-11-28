@@ -207,6 +207,39 @@ def test_a_wake_queues_and_delivers_as_who_answered() -> Result[Void]
   Test.eq(user.waiting, [])
 end
 
+# A user's turn takes only the parked wakes: an id-less queue of an older server stays until its delivery, and a
+# parked wake survives a turn a wake starts.
+def test_a_user_turn_takes_only_the_parked_wakes() -> Result[Void]
+  model = model_of(60, 12).with(generation: 1, id: "s1", serving: "local/m", turn: true)
+  event = ->(n: Int, e: Protocol.Event) { App.Msg.Stream(1, [Client.Item.Event(some(n), e)]) }
+  step = ->(m: App.Model, n: Int, e: Protocol.Event) { App.update(m, event.call(n, e)).model }
+  old = Protocol.Event.MessageQueued(Protocol.MessageQueued(turn_id: "t1", text: "old hello"))
+  parked = Protocol.Event.MessageQueued(Protocol.MessageQueued(turn_id: "", text: "async", source: some("extension")))
+
+  waiting = step.call(step.call(model, 1, old), 2, parked)
+  try Test.eq(waiting.waiting.map { |w| w.text }, ["old hello", "async"])
+  woken = step.call(
+    waiting,
+    3,
+    Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: "t9", source: some("extension"))),
+  )
+
+  try Test.eq(woken.waiting.map { |w| w.text }, ["old hello", "async"])
+  try Test.assert(woken.entries.any? { |e| e.text == "extension answered" }, "the woken turn is named")
+  user = step.call(woken, 4, Protocol.Event.TurnStarted(Protocol.TurnStarted(turn_id: "t2")))
+  try Test.eq(user.waiting.map { |w| w.text }, ["old hello"])
+  try Test.assert(user.waiting.all? { |w| w.source.none? }, "only the parked wake is taken")
+  try Test.assert(rows(user).any? { |row| row.include?("queued: old hello") }, rows(user).join("\n"))
+  delivered = step.call(
+    user,
+    5,
+    Protocol.Event.MessageDelivered(Protocol.MessageDelivered(turn_id: "t2", text: "old hello")),
+  )
+
+  try Test.eq(delivered.waiting, [])
+  Test.eq(delivered.entries.last.text, "old hello")
+end
+
 # A turn that stopped before it read the queue drops it: the `queue_dropped` error clears what waited above the prompt.
 def test_a_dropped_queue_leaves_the_prompt_area() -> Result[Void]
   model = model_of(60, 12).with(generation: 1, id: "s1", serving: "local/m", turn: true)

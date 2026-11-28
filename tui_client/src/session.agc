@@ -370,13 +370,14 @@ def todos(list: List[Protocol.Todo]) -> String
   (["todos:"] + Client.todo_lines(list)).join("\n")
 end
 
-## A turn that a wake starts is named, never shown as typed input; a user's turn takes the parked wakes, so what
-## waited without an id (never delivered) leaves the prompt. A wake's text reaches the model, not the transcript:
-## the file keeps no provenance for it, so a replay from the history still shows it as a user message.
+## A turn that a wake starts is named, never shown as typed input; a user's turn takes the parked wakes (a source
+## with no id), so an id-less queue of an older server stays until its delivery. A wake's text reaches the model,
+## not the transcript: the file keeps no provenance for it, so a replay from the history still shows it as a user
+## message.
 def woken(app: State.Model, started: Protocol.TurnStarted) -> State.Model
   case started.source
     some(source) -> app.with(entries: Transcript.note(app.entries, Client.wake_note(source)))
-    none -> app.with(waiting: app.waiting.select { |w| w.id.some? })
+    none -> app.with(waiting: app.waiting.select { |w| w.id.some? or w.source.none? })
   end
 end
 

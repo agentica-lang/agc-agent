@@ -208,6 +208,58 @@ def test_a_child_call_nests_under_the_open_agent_call() -> Result[Void]
   Test.eq(Transcript.tool_started(over, child).map { |e| e.call_id }, ["c0", "c1"])
 end
 
+# Two children under one open `agent` call keep their arrival order, with overlapping call ids and a parent entry
+# between them; each end still finds its own start. A replay from the history shows the same order where no parent
+# entry comes between the children's calls.
+def test_two_children_under_one_agent_keep_their_arrival_order() -> Result[Void]
+  agent = Protocol.ToolStarted(call_id: "c0", name: "agent", summary: "2 tasks")
+  first = Protocol.ToolStarted(call_id: "c1", name: "bash", summary: "ls", session: some("s2"))
+  second = Protocol.ToolStarted(call_id: "c1", name: "read_file", summary: "notes.txt", session: some("s3"))
+  plain = Transcript.tool_started(Transcript.tool_started(Transcript.tool_started([], agent), first), second)
+  try Test.eq(plain.map { |e| e.session }, [none, some("s2"), some("s3")])
+  try Test.eq(plain.map { |e| e.call_id }, ["c0", "c1", "c1"])
+  parent = Protocol.ToolStarted(call_id: "c9", name: "bash", summary: "uptime")
+  mixed = Transcript.tool_started(Transcript.tool_started(Transcript.tool_started([], agent), first), parent)
+  mixed = Transcript.tool_started(mixed, second)
+  try Test.eq(mixed.map { |e| e.session }, [none, some("s2"), some("s3"), none])
+  try Test.eq(mixed.map { |e| e.call_id }, ["c0", "c1", "c1", "c9"])
+  finished = Transcript.tool_finished(
+    Transcript.tool_finished(mixed, child_done()),
+    Protocol.ToolFinished(call_id: "c1", ok: false, summary: "denied", duration_ms: 0, session: some("s3")),
+  )
+
+  try Test.eq(
+    texts(finished, false).select { |row| row.start_with?("child") },
+    ["child s2 · $ ls", "child s3 · read notes.txt"],
+  )
+
+  history = [
+    Protocol.Message(role: Protocol.Role.User, text: "go"),
+    Protocol.Message(
+      role: Protocol.Role.Assistant,
+      text: "",
+      tool: some(agent),
+      done: some(Protocol.ToolFinished(call_id: "c0", ok: true, summary: "done", duration_ms: 9)),
+    ),
+    Protocol.Message(role: Protocol.Role.Assistant, text: "", tool: some(first), done: some(child_done())),
+    Protocol.Message(
+      role: Protocol.Role.Assistant,
+      text: "",
+      tool: some(second),
+      done: some(
+        Protocol.ToolFinished(call_id: "c1", ok: false, summary: "denied", duration_ms: 0, session: some("s3")),
+      ),
+    ),
+  ]
+
+  replayed = Transcript.from_history(history)
+  try Test.eq(replayed.map { |e| e.session }, [none, none, some("s2"), some("s3")])
+  Test.eq(
+    texts(replayed, false).select { |row| row.start_with?("child") },
+    ["child s2 · $ ls", "child s3 · read notes.txt"],
+  )
+end
+
 def child_done() -> Protocol.ToolFinished
   Protocol.ToolFinished(call_id: "c1", ok: true, summary: "ok", duration_ms: 4, session: some("s2"))
 end

@@ -48,10 +48,10 @@ def test_a_resumed_session_prints_the_children_calls() -> Result[Void]
       "user: Research this.",
       "[tool] agent 2 tasks",
       "[tool ok] s2 (p/m): done (120 ms)",
-      "[tool] [child s2] bash ls",
-      "[tool ok] [child s2] ok (4 ms)",
-      "[tool] [child s3] read_file notes.txt",
-      "[tool failed] [child s3] denied (0 ms)",
+      "  [tool] [child s2] bash ls",
+      "  [tool ok] [child s2] ok (4 ms)",
+      "  [tool] [child s3] read_file notes.txt",
+      "  [tool failed] [child s3] denied (0 ms)",
       "assistant: Done.",
     ]
 

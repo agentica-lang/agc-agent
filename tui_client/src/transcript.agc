@@ -304,7 +304,8 @@ def found(entries: List[Entry], call_id: String, session: Optional[String]) -> O
   entries.find_index { |e| e.call_id == call_id and e.session == session }
 end
 
-## Where a new call entry goes: under the open `agent` call that started it when exactly one runs, else at the end.
+## Where a new call entry goes: after the calls already under the open `agent` call that started it, so two children
+## keep their arrival order, when exactly one such call runs; else at the end.
 def nested(entries: List[Entry], entry: Entry) -> List[Entry]
   return entries.push(entry) if entry.session.none?
 
@@ -319,7 +320,14 @@ def nested(entries: List[Entry], entry: Entry) -> List[Entry]
   return entries.push(entry) if open.size != 1
 
   at = open[0]
-  entries.take(at + 1) + [entry] + entries.drop(at + 1)
+  last = at
+  index = at + 1
+  while index < entries.size and entries[index].session.some?
+    last = index
+    index = index + 1
+  end
+
+  entries.take(last + 1) + [entry] + entries.drop(last + 1)
 end
 
 ## Whether `call` is an open `agent` call of the session itself, which a child's call nests under.

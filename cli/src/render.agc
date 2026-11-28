@@ -100,7 +100,11 @@ def history_lines(message: Protocol.Message, style: Style) -> List[String]
   case message.tool
     some(tool) ->
       ended = message.done.map { |d| [finished_line(d)] }.unwrap_or([])
-      return ["[tool]#{child_of(tool.session)} #{tool.name} #{tool.summary}"] + ended
+      lines = ["[tool]#{child_of(tool.session)} #{tool.name} #{tool.summary}"] + ended
+      # A child's calls read as a group under their `agent` call, as they do live.
+      return lines.map { |line| "  #{line}" } if tool.session.some?
+
+      return lines
     none -> nil
   end
 

@@ -22,7 +22,8 @@ SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 SPIN_MS = 80
 
 ## A queued message: the `message_id` of its `message_queued` and its text. `source` names the wake it came from
-## (`child:ID` or `extension`) and stays empty for a user's own message; a parked wake has no id and is never delivered.
+## (`child:ID` or `extension`) and stays empty for a user's own message; a parked wake has no id and is never
+## delivered.
 struct Waiting
   id: Optional[String]
   text: String
