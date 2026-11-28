@@ -10,14 +10,18 @@
 ## real id of the session to wake. A turn nobody waits for and nobody is owed a wake for is stale and never wakes,
 ## so a waited follow-up after an async start and two waited follow-ups in a row each get their own answer and
 ## never wake twice. An async wake is owed before its send runs, unless a waiter with a running turn already owns
-## the child's answer: then the send owes no wake and the finish goes to the waiter alone. The send's accepted turn
+## the child's answer: then the send owes no wake and the finish goes to the waiter alone, and the contended send
+## removes nothing it did not add, so an owed wake stays owed for its own turn. The send's accepted turn
 ## is recorded at once; a finish that lands before that finds no expectation and wakes nothing, and the send
 ## reconciles it from its own snapshot, waking exactly once for a turn that already ended. The expected turn is
 ## always recorded while its turn runs, so the cap counts it however the wake went. One watcher per child reads its
 ## events serially, but never atomically with the sends, and a full inbox drops an event outright: the pre-ack arm
-## below therefore never consumes a wake, leaving every finish for the send that owns it to reconcile. Transient
-## per-turn state (the expected turns, the waiter addresses and the async wakes) is cleared on every completion,
-## timeout or delete, so it never grows past the live turns; the names keep one display name per live child.
+## below therefore never consumes a wake, leaving every finish for the send that owns it to reconcile. Of the
+## watcher and the reconciling send racing one finish, exactly one wakes: the per-child claim lock makes the
+## owed-wake check and its consume one atomic claim, held across the tables alone and never across a host call, so
+## a wake in flight cannot deadlock it. Transient per-turn state (the expected turns, the waiter addresses, the
+## async wakes and the claim locks) is cleared on every completion, timeout, delete or release, so it never grows
+## past the live turns; the names keep one display name per live child.
 
 import Protocol from "pkg/protocol/protocol"
 import Spec from "../tools/spec"
@@ -56,6 +60,7 @@ def tools(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  locks: ATS[String, Bool],
 ) -> List[Spec.Tool]
   [
     Spec.Tool(
@@ -64,7 +69,7 @@ def tools(
       input_schema: JSON.schema(AgentArgs),
       asks: false,
       run: ->(ctx: Spec.Context, input: JSON.Value) {
-        run_all(ctx, input, roster, limits, turns, waits, wakes, names)
+        run_all(ctx, input, roster, limits, turns, waits, wakes, names, locks)
       },
       target: ->(_ctx: Spec.Context, input: JSON.Value) { ok(agent_target(input)) },
     ),
@@ -77,7 +82,9 @@ def tools(
       ),
       input_schema: JSON.schema(SendArgs),
       asks: false,
-      run: ->(ctx: Spec.Context, input: JSON.Value) { run_send(ctx, input, limits, turns, waits, wakes, names) },
+      run: ->(ctx: Spec.Context, input: JSON.Value) {
+        run_send(ctx, input, limits, turns, waits, wakes, names, locks)
+      },
       target: ->(_ctx: Spec.Context, input: JSON.Value) { ok(send_target(input)) },
     ),
     Spec.Tool(
@@ -196,6 +203,7 @@ def run_all(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  locks: ATS[String, Bool],
 ) -> Result[String]
   args = try Spec.args(input, AgentArgs.codec)
   return error("agent needs at least one task") if args.tasks.empty?
@@ -214,9 +222,9 @@ def run_all(
 
   parent = try parent_profile(host, own)
   if args.wait.unwrap_or(true)
-    run_waiting(host, parent, args.tasks, limits, turns, waits, wakes, names)
+    run_waiting(host, parent, args.tasks, limits, turns, waits, wakes, names, locks)
   else
-    run_async(host, own, parent, args.tasks, limits, turns, waits, wakes, names)
+    run_async(host, own, parent, args.tasks, limits, turns, waits, wakes, names, locks)
   end
 end
 
@@ -228,6 +236,7 @@ def run_send(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  locks: ATS[String, Bool],
 ) -> Result[String]
   args = try Spec.args(input, SendArgs.codec)
   return error("agent_send needs some text") if args.text.strip.empty?
@@ -237,9 +246,9 @@ def run_send(
   return error("agent_send takes a subagent id, not the session's own") if args.id == own
 
   if args.wait.unwrap_or(true)
-    send_waiting(host, own, args, limits, turns, waits, wakes, names)
+    send_waiting(host, own, args, limits, turns, waits, wakes, names, locks)
   else
-    send_async(host, own, args, turns, waits, wakes, names)
+    send_async(host, own, args, turns, waits, wakes, names, locks)
   end
 end
 
@@ -268,6 +277,7 @@ def run_waiting(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  locks: ATS[String, Bool],
 ) -> Result[String]
   done: Channel[Heard] = Channel.new([2 * tasks.size + 2, 4].max.unwrap!)
   live: List[Active] = []
@@ -276,7 +286,7 @@ def run_waiting(
   while next < tasks.size or not live.empty?
     while next < tasks.size and (limits.max == 0 or live_count(host, turns, wakes) < limits.max)
       name = named(tasks[next], parent)
-      case start_child(host, tasks[next], name, next, limits, done, turns, waits, wakes, names)
+      case start_child(host, tasks[next], name, next, limits, done, turns, waits, wakes, names, locks)
         ok(active) -> live = live.push(active)
         error(e) -> results = results.put(next, "#{name}: #{e.message}")
       end
@@ -407,6 +417,44 @@ def forget_turn_if(turns: ATS[String, String], child: String, turn: String) -> V
   end
 end
 
+# The per-child wake-claim lock: `dispatch` and a reconciling send each hold it across the owed-wake check and
+# its consume only, never across a host call, so a wake in flight cannot deadlock it. Taking it only ever waits on
+# the tables of one child, which no other child touches. Only table reads and writes run inside: nothing there
+# yields, fails or returns early, so the lock always goes back.
+def claim_lock(locks: ATS[String, Bool], child: String) -> Void
+  while not locks.put_new(child, true)
+    Task.sleep(0)
+  end
+end
+
+def release_lock(locks: ATS[String, Bool], child: String) -> Void
+  locks.delete(child)
+end
+
+# The atomic claim of the owed async wake for `turn`: of `dispatch` and the reconciling send racing the same
+# finish, exactly one finds the wake still owed for the expected turn and consumes it, so exactly one wakes. Only
+# the delivered turn's entries go, so a newer turn stays tracked.
+def take_wake(
+  locks: ATS[String, Bool],
+  child: String,
+  turn: String,
+  turns: ATS[String, String],
+  wakes: ATS[String, String],
+) -> Optional[String]
+  claim_lock(locks, child)
+  owned = wakes.get(child).unwrap_or("")
+  live = turns.get(child).unwrap_or("")
+  claimed: Optional[String] = none
+  # An empty turn or a missing entry never matches a tracked turn, so only the expected turn's own entries go.
+  if not owned.empty? and not turn.empty? and live == turn
+    forget_own(turns, wakes, child, turn, none)
+    claimed = some(owned)
+  end
+
+  release_lock(locks, child)
+  claimed
+end
+
 # The turn a send to `child` started or queued into, so its finish can be reconciled.
 def send_turn(host: Spec.Host, child: String, text: String) -> Result[String]
   case host.send.call(child, text)
@@ -422,7 +470,7 @@ end
 # stays recorded, so the cap counts it however the wake went; an idle child already holds the accepted turn's
 # answer and wakes from it, with `ended` for the reason the deferred finish carried; only a child gone since
 # fails. The waiter with a running turn that made this call contended owns the ended turn instead, so nothing
-# wakes and its superseded entry goes.
+# wakes and nothing this call did not add is removed: an owed wake and the waiter entry belong to their own calls.
 def reconcile_async(
   host: Spec.Host,
   child: String,
@@ -432,6 +480,7 @@ def reconcile_async(
   turns: ATS[String, String],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  locks: ATS[String, Bool],
 ) -> Result[Void]
   if not claim.contended and not accepted.empty?
     turns.put(child, accepted)
@@ -441,19 +490,25 @@ def reconcile_async(
     ok(session) ->
       case session.turn_id
         some(running) if running != accepted ->
-          turns.put(child, running)
+          # The live turn stays recorded while it runs; a contended call records nothing of its own, since the
+          # waiter owns the answer and its own entries track it.
+          if not claim.contended
+            turns.put(child, running)
+          end
+
           ok()
         some(_) -> ok()
-        none if claim.contended ->
-          wakes.delete(child)
-          ok()
+        # A waiter with a running turn that made this call contended owns the ended turn instead, so nothing
+        # wakes and nothing this call did not add is removed.
+        none if claim.contended -> ok()
         none ->
-          case wakes.get(child)
-            ok(_) ->
+          # Idle: the accepted turn already ended. Whoever of this call and the racing watcher claims the
+          # still-owed wake delivers it; the wake itself runs past the claim, never under the lock.
+          case take_wake(locks, child, accepted, turns, wakes)
+            some(_) ->
               wake_now(host, own, child, names, "ended")
-              forget_own(turns, wakes, child, accepted, none)
               ok()
-            error(_) -> ok()
+            none -> ok()
           end
       end
 
@@ -478,6 +533,7 @@ def run_async(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  locks: ATS[String, Bool],
 ) -> Result[String]
   return error(capped(limits.max)) if limits.max > 0 and live_count(host, turns, wakes) + tasks.size > limits.max
 
@@ -497,7 +553,7 @@ def run_async(
     names.put(child, name)
     # The wake is owed before the send runs, unless a waiter with a running turn owns the child's answer already.
     claim = claim_wake(host, child, own, waits, wakes)
-    case ensure_watch(host, child, turns, waits, wakes, names)
+    case ensure_watch(host, child, turns, waits, wakes, names, locks)
       error(e) ->
         cleanup_started(host, started, turns, waits, wakes, names)
         return error(e.message)
@@ -509,7 +565,7 @@ def run_async(
         cleanup_started(host, started, turns, waits, wakes, names)
         return error(e.message)
       ok(accepted) ->
-        case reconcile_async(host, child, own, accepted, claim, turns, wakes, names)
+        case reconcile_async(host, child, own, accepted, claim, turns, wakes, names, locks)
           ok(_) -> nil
           error(e) ->
             cleanup_started(host, started, turns, waits, wakes, names)
@@ -534,6 +590,7 @@ def send_waiting(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  locks: ATS[String, Bool],
 ) -> Result[String]
   done: Channel[Heard] = Channel.new(4)
   addr = done.address
@@ -545,7 +602,7 @@ def send_waiting(
     error(_) -> id
   end
 
-  case ensure_watch(host, id, turns, waits, wakes, names)
+  case ensure_watch(host, id, turns, waits, wakes, names, locks)
     error(e) -> return error(e.message)
     ok(_) -> nil
   end
@@ -612,11 +669,12 @@ def send_async(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  locks: ATS[String, Bool],
 ) -> Result[String]
   id = args.id
   # The wake is owed before the send runs, unless a waiter with a running turn owns the child's answer already.
   claim = claim_wake(host, id, own, waits, wakes)
-  case ensure_watch(host, id, turns, waits, wakes, names)
+  case ensure_watch(host, id, turns, waits, wakes, names, locks)
     error(e) ->
       if not claim.contended
         abandon_wake(wakes, id, claim.prior)
@@ -634,7 +692,7 @@ def send_async(
 
       error(e.message)
     ok(accepted) ->
-      case reconcile_async(host, id, own, accepted, claim, turns, wakes, names)
+      case reconcile_async(host, id, own, accepted, claim, turns, wakes, names, locks)
         ok(_) -> ok(id)
         error(e) -> error(e.message)
       end
@@ -714,11 +772,12 @@ def start_child(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  locks: ATS[String, Bool],
 ) -> Result[Active]
   child = try host.create.call(Spec.NewChild(profile: profile_of(task)))
   names.put(child, name)
   addr = done.address
-  case ensure_watch(host, child, turns, waits, wakes, names)
+  case ensure_watch(host, child, turns, waits, wakes, names, locks)
     error(e) ->
       cleanup_one(host, child, turns, waits, wakes, names)
       return error(e.message)
@@ -761,11 +820,12 @@ def ensure_watch(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  locks: ATS[String, Bool],
 ) -> Result[Void]
   host.watch.call(
     child,
     ["turn_finished"],
-    ->(seen: Spec.Seen) { dispatch(host, child, turns, waits, wakes, names, seen) },
+    ->(seen: Spec.Seen) { dispatch(host, child, turns, waits, wakes, names, locks, seen) },
   )
 end
 
@@ -776,6 +836,7 @@ def dispatch(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  locks: ATS[String, Bool],
   seen: Spec.Seen,
 ) -> Void
   turn = turn_of(seen)
@@ -805,14 +866,16 @@ def dispatch(
       forget_turn_if(turns, child, turn)
       waits.delete(child)
     error(_) ->
+      # The async turn's wake: of this arm and the reconciling send racing the same finish, exactly one claims
+      # the still-owed wake and delivers it, so a second event for the turn finds nothing and never wakes twice.
+      # Only the delivered turn's entry goes, so a newer turn stays tracked. The wake itself runs past the claim,
+      # never under the lock.
       case wakes.get(child)
-        ok(own) ->
-          # The async turn's wake: owed exactly once, to the real session that sent it. The entries go before the
-          # wake, so a second event for the turn finds nothing and never wakes twice. Only the delivered turn's
-          # entry goes, so a newer turn stays tracked.
-          forget_turn_if(turns, child, turn)
-          wakes.delete(child)
-          wake_parent(host, own, child, names, seen, reason)
+        ok(_) ->
+          for own in option_list(take_wake(locks, child, turn, turns, wakes))
+            wake_parent(host, own, child, names, seen, reason)
+          end
+
         error(_) ->
           # A turn nobody waits for and nobody is owed a wake for: stale or idle, never a wake. Its entry goes so
           # the cap never counts a turn nobody owns.

@@ -195,10 +195,11 @@ def test_async_then_two_waited_followups_each_get_an_answer() -> Result[Void]
     turns: ATS[String, String] = ATS.new()
     waits: ATS[String, Address[Agents.Heard]] = ATS.new()
     wakes: ATS[String, String] = ATS.new()
+    locks: ATS[String, Bool] = ATS.new()
     names: ATS[String, String] = ATS.new()
     roster: Fn[List[Agents.Profile]] = -> { [] }
     limits = Agents.Limits(max: 0, timeout_ms: 0)
-    tools = Agents.tools(roster, limits, turns, waits, wakes, names)
+    tools = Agents.tools(roster, limits, turns, waits, wakes, names, locks)
     ctx = Spec.Context(
       root: h.work,
       env: ->(_name: String) { error("no env") },
@@ -237,10 +238,11 @@ def test_async_batch_over_cap_starts_nothing() -> Result[Void]
     turns: ATS[String, String] = ATS.new()
     waits: ATS[String, Address[Agents.Heard]] = ATS.new()
     wakes: ATS[String, String] = ATS.new()
+    locks: ATS[String, Bool] = ATS.new()
     names: ATS[String, String] = ATS.new()
     roster: Fn[List[Agents.Profile]] = -> { [] }
     limits = Agents.Limits(max: 1, timeout_ms: 0)
-    tools = Agents.tools(roster, limits, turns, waits, wakes, names)
+    tools = Agents.tools(roster, limits, turns, waits, wakes, names, locks)
     ctx = Spec.Context(
       root: h.work,
       env: ->(_name: String) { error("no env") },
@@ -274,10 +276,11 @@ def test_empty_profile_means_the_sessions_own() -> Result[Void]
     turns: ATS[String, String] = ATS.new()
     waits: ATS[String, Address[Agents.Heard]] = ATS.new()
     wakes: ATS[String, String] = ATS.new()
+    locks: ATS[String, Bool] = ATS.new()
     names: ATS[String, String] = ATS.new()
     roster: Fn[List[Agents.Profile]] = -> { [] }
     limits = Agents.Limits(max: 0, timeout_ms: 0)
-    tools = Agents.tools(roster, limits, turns, waits, wakes, names)
+    tools = Agents.tools(roster, limits, turns, waits, wakes, names, locks)
     ctx = Spec.Context(
       root: h.work,
       env: ->(_name: String) { error("no env") },
@@ -371,9 +374,10 @@ def test_waited_child_kept_open_then_sent_async_wakes_parent_once() -> Result[Vo
     turns: ATS[String, String] = ATS.new()
     waits: ATS[String, Address[Agents.Heard]] = ATS.new()
     wakes: ATS[String, String] = ATS.new()
+    locks: ATS[String, Bool] = ATS.new()
     names: ATS[String, String] = ATS.new()
     roster: Fn[List[Agents.Profile]] = -> { [] }
-    tools = Agents.tools(roster, Agents.Limits(max: 0, timeout_ms: 500), turns, waits, wakes, names)
+    tools = Agents.tools(roster, Agents.Limits(max: 0, timeout_ms: 500), turns, waits, wakes, names, locks)
     ctx = Spec.Context(
       root: h.work,
       env: ->(_name: String) { error("no env") },
@@ -404,10 +408,11 @@ def test_an_idle_child_with_an_expected_turn_frees_its_cap_slot() -> Result[Void
   turns: ATS[String, String] = ATS.new()
   waits: ATS[String, Address[Agents.Heard]] = ATS.new()
   wakes: ATS[String, String] = ATS.new()
+  locks: ATS[String, Bool] = ATS.new()
   names: ATS[String, String] = ATS.new()
   turns.put("child-1", "turn-1")
   roster: Fn[List[Agents.Profile]] = -> { [] }
-  tools = Agents.tools(roster, Agents.Limits(max: 1, timeout_ms: 0), turns, waits, wakes, names)
+  tools = Agents.tools(roster, Agents.Limits(max: 1, timeout_ms: 0), turns, waits, wakes, names, locks)
   ctx = Spec.Context(
     root: "/tmp",
     env: ->(_name: String) { error("no env") },
@@ -495,6 +500,7 @@ struct Immediate
   waits: ATS[String, Address[Agents.Heard]]
   wakes: ATS[String, String]
   names: ATS[String, String]
+  locks: ATS[String, Bool]
   tools: List[Spec.Tool]
   ctx: Spec.Context
 end
@@ -688,8 +694,9 @@ def immediate() -> Immediate
   turns: ATS[String, String] = ATS.new()
   waits: ATS[String, Address[Agents.Heard]] = ATS.new()
   wakes: ATS[String, String] = ATS.new()
+  locks: ATS[String, Bool] = ATS.new()
   names: ATS[String, String] = ATS.new()
-  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names)
+  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names, locks)
   ctx = Spec.Context(
     root: "/tmp",
     env: ->(_name: String) { error("no env") },
@@ -704,6 +711,7 @@ def immediate() -> Immediate
     turns: turns,
     waits: waits,
     wakes: wakes,
+    locks: locks,
     names: names,
     tools: tools,
     ctx: ctx,
@@ -715,8 +723,9 @@ def rig_on(handlers: Channel[Fn[Spec.Seen, Void]], woken: Channel[Woke], host: S
   turns: ATS[String, String] = ATS.new()
   waits: ATS[String, Address[Agents.Heard]] = ATS.new()
   wakes: ATS[String, String] = ATS.new()
+  locks: ATS[String, Bool] = ATS.new()
   names: ATS[String, String] = ATS.new()
-  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names)
+  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names, locks)
   ctx = Spec.Context(
     root: "/tmp",
     env: ->(_name: String) { error("no env") },
@@ -731,6 +740,7 @@ def rig_on(handlers: Channel[Fn[Spec.Seen, Void]], woken: Channel[Woke], host: S
     turns: turns,
     waits: waits,
     wakes: wakes,
+    locks: locks,
     names: names,
     tools: tools,
     ctx: ctx,
@@ -969,6 +979,112 @@ def fire_now(handlers: Channel[Fn[Spec.Seen, Void]], child: String, turn: String
   end
 end
 
+# A child whose observer finish lands while the reconciling send delivers its wake: `send` answers with the
+# accepted turn but fires nothing, the snapshot is idle with an answer, and the first parent wake re-fires the
+# observer's finish for the same turn, so both paths claim the same owed wake.
+def racing_setup() -> Immediate
+  handlers: Channel[Fn[Spec.Seen, Void]] = Channel.new(1)
+  woken: Channel[Woke] = Channel.new(4)
+  fired: ATS[String, Bool] = ATS.new()
+  rig_on(handlers, woken, racing_host(handlers, woken, fired))
+end
+
+def racing_host(handlers: Channel[Fn[Spec.Seen, Void]], woken: Channel[Woke], fired: ATS[String, Bool]) -> Spec.Host
+  Spec.Host(
+    create: ->(_child: Spec.NewChild) { ok("child-1") },
+    send: ->(id: String, text: String) {
+      return ok(Protocol.MessageAccepted(turn_id: "turn-1")) if id == "child-1"
+
+      # The reconciling send delivers the wake here; the same turn's finish lands mid-delivery. Only the first
+      # wake re-fires: the loser of the claim finds nothing owed.
+      if fired.put_new("once", true)
+        fire_now(handlers, "child-1", "turn-1")
+      end
+
+      _ = woken.send(Woke(id: id, text: text), 1000)
+      ok(Protocol.MessageAccepted(turn_id: "wake-turn"))
+    },
+    stop: ->(_id: String) { ok(false) },
+    delete: ->(_id: String) { ok() },
+    snapshot: ->(id: String) {
+      return ok(immediate_child(id)) if id == "child-1"
+
+      ok(immediate_parent(id))
+    },
+    watch: ->(_id: String, _names: List[String], handler: Fn[Spec.Seen, Void]) {
+      _ = handlers.send(handler, 0)
+      ok()
+    },
+  )
+end
+
+# A child whose turn ends between the contention check and the reconciliation: the first snapshot (the contention
+# check's) still runs the waiter's turn, every later one is idle with an answer.
+def contended_idle_host(
+  handlers: Channel[Fn[Spec.Seen, Void]],
+  woken: Channel[Woke],
+  checked: ATS[String, Bool],
+) -> Spec.Host
+  Spec.Host(
+    create: ->(_child: Spec.NewChild) { ok("child-1") },
+    send: ->(id: String, text: String) {
+      return ok(Protocol.MessageAccepted(turn_id: "turn-1")) if id == "child-1"
+
+      _ = woken.send(Woke(id: id, text: text), 1000)
+      ok(Protocol.MessageAccepted(turn_id: "wake-turn"))
+    },
+    stop: ->(_id: String) { ok(false) },
+    delete: ->(_id: String) { ok() },
+    snapshot: ->(id: String) {
+      if id == "child-1"
+        return ok(running_child(id, "turn-1")) if checked.put_new("once", true)
+
+        return ok(immediate_child(id))
+      end
+
+      ok(immediate_parent(id))
+    },
+    watch: ->(_id: String, _names: List[String], handler: Fn[Spec.Seen, Void]) {
+      _ = handlers.send(handler, 0)
+      ok()
+    },
+  )
+end
+
+# A child whose live turn swaps between the contention check and the reconciliation: the first snapshot (the
+# contention check's) runs the waiter's turn, every later one runs a newer turn, and `send` answers the turn it
+# queued into in between.
+def contended_swap_host(
+  handlers: Channel[Fn[Spec.Seen, Void]],
+  woken: Channel[Woke],
+  checked: ATS[String, Bool],
+) -> Spec.Host
+  Spec.Host(
+    create: ->(_child: Spec.NewChild) { ok("child-1") },
+    send: ->(id: String, text: String) {
+      return ok(Protocol.MessageAccepted(turn_id: "turn-2")) if id == "child-1"
+
+      _ = woken.send(Woke(id: id, text: text), 1000)
+      ok(Protocol.MessageAccepted(turn_id: "wake-turn"))
+    },
+    stop: ->(_id: String) { ok(false) },
+    delete: ->(_id: String) { ok() },
+    snapshot: ->(id: String) {
+      if id == "child-1"
+        return ok(running_child(id, "turn-1")) if checked.put_new("once", true)
+
+        return ok(running_child(id, "turn-9"))
+      end
+
+      ok(immediate_parent(id))
+    },
+    watch: ->(_id: String, _names: List[String], handler: Fn[Spec.Seen, Void]) {
+      _ = handlers.send(handler, 0)
+      ok()
+    },
+  )
+end
+
 # One wake to the real parent with the headed answer, and nothing after: neither a duplicate of its turn nor a
 # stale turn wakes again, and no turn, waiter or wake is left behind. The async child stays open, so its display
 # name stays by design.
@@ -1073,10 +1189,11 @@ def test_async_send_records_its_turn_despite_a_missing_wake() -> Result[Void]
   turns: ATS[String, String] = ATS.new()
   waits: ATS[String, Address[Agents.Heard]] = ATS.new()
   wakes: ATS[String, String] = ATS.new()
+  locks: ATS[String, Bool] = ATS.new()
   names: ATS[String, String] = ATS.new()
   names.put("child-1", "build")
   host = steal_host(handlers, woken, wakes)
-  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names)
+  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names, locks)
   ctx = Spec.Context(
     root: "/tmp",
     env: ->(_name: String) { error("no env") },
@@ -1130,10 +1247,11 @@ def test_async_send_queued_into_a_waited_turn_wakes_nothing() -> Result[Void]
   turns: ATS[String, String] = ATS.new()
   waits: ATS[String, Address[Agents.Heard]] = ATS.new()
   wakes: ATS[String, String] = ATS.new()
+  locks: ATS[String, Bool] = ATS.new()
   names: ATS[String, String] = ATS.new()
   turns.put("child-1", "turn-1")
   waits.put("child-1", waiter.address)
-  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names)
+  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names, locks)
   ctx = Spec.Context(
     root: "/tmp",
     env: ->(_name: String) { error("no env") },
@@ -1152,4 +1270,77 @@ def test_async_send_queued_into_a_waited_turn_wakes_nothing() -> Result[Void]
   try Test.assert(turns.keys().empty?, "a turn is left behind")
   try Test.assert(waits.keys().empty?, "a waiter is left behind")
   Test.assert(wakes.keys().empty?, "a wake is left behind")
+end
+
+# The observer's finish for the accepted turn lands while the reconciling send is delivering its wake: the send
+# checks the wake owed, the finish arrives mid-delivery, and both claim the same owed wake, so the parent wakes
+# exactly once with nothing left behind. (A check-then-act claim loses this race and wakes twice.)
+def test_async_send_with_observer_finish_mid_reconcile_wakes_once() -> Result[Void]
+  setup = racing_setup()
+  setup.names.put("child-1", "build")
+  input = try JSON.parse("{\"id\": \"child-1\", \"text\": \"Again.\", \"wait\": false}")
+  try Test.eq(try setup.tools[1].run.call(setup.ctx, input), "child-1")
+  first = try setup.woken.recv(5000)
+  try Test.assert(not setup.woken.recv(0).ok?, "the racing finish woke twice")
+  try Test.eq(first.id, "parent")
+  try Test.assert(first.text.include?(ANSWER), "the wake carried no answer: #{first.text}")
+  try Test.assert(first.text.include?("build (local/m): ended"), "the wake has no headed answer: #{first.text}")
+  try Test.assert(setup.turns.keys().empty?, "a turn is left behind")
+  try Test.assert(setup.waits.keys().empty?, "a waiter is left behind")
+  try Test.assert(setup.wakes.keys().empty?, "a wake is left behind")
+  Test.assert(setup.locks.keys().empty?, "a claim lock is left behind")
+end
+
+# An async send contended by a live waiter whose turn has since ended owns nothing: it wakes nothing and removes
+# neither the prior owed wake nor the waiter entry, so the waiter still gets its finish and the prior wake stays
+# owed for its own turn.
+def test_contended_idle_send_leaves_prior_wake_and_waiter_alone() -> Result[Void]
+  handlers: Channel[Fn[Spec.Seen, Void]] = Channel.new(1)
+  woken: Channel[Woke] = Channel.new(4)
+  checked: ATS[String, Bool] = ATS.new()
+  setup = rig_on(handlers, woken, contended_idle_host(handlers, woken, checked))
+  waiter: Channel[Agents.Heard] = Channel.new(4)
+  setup.turns.put("child-1", "turn-1")
+  setup.waits.put("child-1", waiter.address)
+  setup.wakes.put("child-1", "parent")
+  setup.names.put("child-1", "build")
+  input = try JSON.parse("{\"id\": \"child-1\", \"text\": \"Again.\", \"wait\": false}")
+  try Test.eq(try setup.tools[1].run.call(setup.ctx, input), "child-1")
+  try Test.assert(not setup.woken.recv(0).ok?, "a contended send woke")
+  try Test.eq(setup.wakes.get("child-1").unwrap_or(""), "parent")
+  try Test.eq(setup.turns.get("child-1").unwrap_or(""), "turn-1")
+  try Test.eq(setup.waits.keys().size, 1)
+  # The waiter still owns its finish: it arrives, wakes nothing, and the prior wake stays owed.
+  fire_now(setup.handlers, "child-1", "turn-1")
+  heard = try waiter.recv(5000)
+  try Test.eq(heard.turn_id, "turn-1")
+  try Test.assert(not setup.woken.recv(0).ok?, "the waiter’s finish woke as well")
+  try Test.eq(setup.wakes.get("child-1").unwrap_or(""), "parent")
+  try Test.assert(setup.turns.keys().empty?, "a turn is left behind")
+  try Test.assert(setup.waits.keys().empty?, "a waiter is left behind")
+  Test.assert(setup.locks.keys().empty?, "a claim lock is left behind")
+end
+
+# A contended send whose snapshot shows a newer running turn records nothing of its own: the waiter's expected turn
+# stays tracked for the cap, and the waiter still gets its finish alone.
+def test_contended_send_with_turn_swap_records_nothing() -> Result[Void]
+  handlers: Channel[Fn[Spec.Seen, Void]] = Channel.new(1)
+  woken: Channel[Woke] = Channel.new(4)
+  checked: ATS[String, Bool] = ATS.new()
+  setup = rig_on(handlers, woken, contended_swap_host(handlers, woken, checked))
+  waiter: Channel[Agents.Heard] = Channel.new(4)
+  setup.turns.put("child-1", "turn-1")
+  setup.waits.put("child-1", waiter.address)
+  input = try JSON.parse("{\"id\": \"child-1\", \"text\": \"Again.\", \"wait\": false}")
+  try Test.eq(try setup.tools[1].run.call(setup.ctx, input), "child-1")
+  try Test.assert(not setup.woken.recv(0).ok?, "a contended send woke")
+  try Test.eq(setup.turns.get("child-1").unwrap_or(""), "turn-1")
+  try Test.assert(setup.wakes.keys().empty?, "a contended send left a wake behind")
+  fire_now(setup.handlers, "child-1", "turn-1")
+  heard = try waiter.recv(5000)
+  try Test.eq(heard.turn_id, "turn-1")
+  try Test.assert(not setup.woken.recv(0).ok?, "the waiter’s finish woke as well")
+  try Test.assert(setup.turns.keys().empty?, "a turn is left behind")
+  try Test.assert(setup.waits.keys().empty?, "a waiter is left behind")
+  Test.assert(setup.locks.keys().empty?, "a claim lock is left behind")
 end
