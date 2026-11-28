@@ -334,8 +334,11 @@ end
 
 ## The body of a deliverable answer: the whole answer saved as a session artifact of the parent first, with the
 ## reference and a bounded preview, or a failure note with the preview when it could not be saved. The reference is
-## only ever answered after the save succeeded, so it always reads back.
+## only ever answered after the save succeeded, so it always reads back. An empty answer saves nothing and answers
+## with no reference, so it consumes no artifact quota.
 def deliver(answer: String, saving: Saving) -> String
+  return cut(answer) if answer.empty?
+
   for port in option_list(saving.port)
     case port.save.call(answer)
       ok(id) ->
@@ -382,7 +385,7 @@ def run_waiting(
   results: Map[Int, String] = {}
   next = 0
   while next < tasks.size or not live.empty?
-    while next < tasks.size and (limits.max == 0 or live_count(host, turns, wakes) < limits.max)
+    while next < tasks.size and (limits.max == 0 or live_count(host, turns, wakes, saving) < limits.max)
       name = named(tasks[next], parent)
       case start_child(
         host,
@@ -653,7 +656,9 @@ def run_async(
   home: String,
   env: Fn[String, Result[String]],
 ) -> Result[String]
-  return error(capped(limits.max)) if limits.max > 0 and live_count(host, turns, wakes) + tasks.size > limits.max
+  if limits.max > 0 and live_count(host, turns, wakes, saving) + tasks.size > limits.max
+    return error(capped(limits.max))
+  end
 
   started: List[String] = []
   shown: Map[String, String] = {}
@@ -1129,6 +1134,7 @@ def wake_now(
   saving: Saving,
   reason: String,
 ) -> Void
+  saved = take_save(saving, child)
   snapshot = case host.snapshot.call(child)
     ok(session) -> some(session)
     error(_) -> none
@@ -1142,7 +1148,7 @@ def wake_now(
 
     answer = last_answer(session.history)
     body = cut(answer)
-    if take_save(saving, child)
+    if saved
       body = deliver(answer, saving)
     end
 
@@ -1199,7 +1205,7 @@ end
 # never loses the wake. Children gone since leave the table. `send` starts a turn before it answers, so a snapshot
 # right after it already shows the turn: two calls in a row cannot evade the cap while a started turn is not yet
 # visible.
-def live_count(host: Spec.Host, turns: ATS[String, String], wakes: ATS[String, String]) -> Int
+def live_count(host: Spec.Host, turns: ATS[String, String], wakes: ATS[String, String], saving: Saving) -> Int
   count = 0
   for id in turns.keys()
     case host.snapshot.call(id)
@@ -1207,10 +1213,10 @@ def live_count(host: Spec.Host, turns: ATS[String, String], wakes: ATS[String, S
       ok(_) ->
         case wakes.get(id)
           ok(_) -> nil
-          error(_) -> forget_turn(turns, id)
+          error(_) -> forget_turn(turns, saving, id)
         end
 
-      error(e) if e.kind == Protocol.KIND_SESSION_NOT_FOUND -> forget_turn(turns, id)
+      error(e) if e.kind == Protocol.KIND_SESSION_NOT_FOUND -> forget_turn(turns, saving, id)
       error(_) -> count = count + 1
     end
   end
@@ -1218,8 +1224,9 @@ def live_count(host: Spec.Host, turns: ATS[String, String], wakes: ATS[String, S
   count
 end
 
-def forget_turn(turns: ATS[String, String], id: String) -> Void
+def forget_turn(turns: ATS[String, String], saving: Saving, id: String) -> Void
   turns.delete(id)
+  saving.wanted.delete(id)
 end
 
 # A heartbeat with nothing overdue: children gone since fail their task, and answers the watcher missed are

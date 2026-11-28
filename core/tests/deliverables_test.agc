@@ -280,6 +280,23 @@ def test_direct_full_quota_deliverable_is_not_claimed() -> Result[Void]
   Test.assert(text.include?(answer.slice(0, 8000)), "no preview past the failure")
 end
 
+# An empty answer with `deliverable` saves nothing: no reference and no failure note, and no artifact quota
+# consumed. The flag is still consumed, so no later completion can save an unasked deliverable.
+def test_direct_empty_deliverable_saves_nothing() -> Result[Void]
+  rig = try rig_manual("")
+  input = try JSON.parse("{\"tasks\": [{\"prompt\": \"Write it.\", \"deliverable\": true}], \"wait\": true}")
+  call = Task.spawn(-> { rig.tools[0].run.call(rig.ctx, input) })
+  handler = try rig.handlers.recv(5000)
+  _ = rig.handlers.send(handler, 0)
+  fire(rig, "child-1", "turn-1")
+  text = try awaited(Task.await(call, 5000))
+  try Test.assert(not text.include?("[deliverable:"), "an empty reference: #{clipped(text)}")
+  try Test.assert(not text.include?("was not saved"), "an unasked failure note: #{clipped(text)}")
+  try Test.eq(rig.saves.get("n").unwrap_or(0), 0)
+  try Test.assert(rig.saving.wanted.keys().empty?, "a flag is left behind")
+  Test.assert(rig.turns.keys().empty?, "a turn is left behind")
+end
+
 # A store that fails the write fails the deliverable but keeps the answer: no reference, the reason named.
 def test_direct_write_failure_keeps_the_answer_without_a_reference() -> Result[Void]
   answer = long_answer()
