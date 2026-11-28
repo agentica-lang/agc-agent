@@ -21,6 +21,7 @@ import Extensions from "../config/registry"
 import Sandbox from "../tools/sandbox"
 import Spec from "../tools/spec"
 import Tools from "../tools/tools"
+import Worktree from "../tools/worktree"
 import SessionActor from "actor"
 import Folder from "folder"
 import Prompt from "prompt"
@@ -1587,8 +1588,10 @@ def host_of(at: Address[Msg], options: Config.Options, header: Store.Header) -> 
 end
 
 # A child on the parent's provider and model, unless the request names a provider; with no profile, on the
-# parent's. The ceiling is the parent's effective profile now (a `PATCH` before this call counts); it stays a
-# snapshot, so a later change of the parent leaves this child alone. A child has no children.
+# parent's. It works in the parent's folder, in `cwd` when named, or in a managed worktree (`worktree`, never both);
+# either choice never widens it past the parent (a confined parent keeps its folder, and an untrusted folder never
+# moves under a trusted one). The ceiling is the parent's effective profile now (a `PATCH` before this call counts);
+# it stays a snapshot, so a later change of the parent leaves this child alone. A child has no children.
 def child_created(
   at: Address[Msg],
   options: Config.Options,
@@ -1605,7 +1608,17 @@ def child_created(
     end
   end
 
-  request = Protocol.NewSession(cwd: header.cwd, model: child.model, provider: child.provider, profile: profile)
+  placed = try Worktree.resolve_child(
+    options.trusted,
+    header.cwd,
+    parent.confine,
+    header.id,
+    child.cwd,
+    child.worktree,
+    options.env,
+  )
+
+  request = Protocol.NewSession(cwd: placed.root, model: child.model, provider: child.provider, profile: profile)
   if child.provider.none?
     request = request.with(provider: some(parent.provider), model: some(child.model.unwrap_or(parent.model)))
   end
