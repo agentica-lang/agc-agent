@@ -166,6 +166,9 @@ struct Approver
   verdict: Optional[Fn[Spec.Context, String, JSON.Value, Spec.Verdict]]
   ## Whether the session's answers allow a call of a tool on a target without asking.
   allows: Fn[String, String, Bool]
+  ## Whether the session's answers allow a call of its child on a tool and target again; none denies. It never
+  ## counts the accept-edits mode, which a child does not inherit.
+  allows_child: Optional[Fn[String, String, Bool]] = none
   ## The words that an answer for all such calls would allow (`git push` of `git push origin main`).
   prefix: Fn[String, String, Optional[String]]
   ## After an answer (its decision's name) to a call of a tool on a target.

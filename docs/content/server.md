@@ -51,7 +51,7 @@ curl -s -H "Authorization: Bearer $token" "http://127.0.0.1:$port/v1/sessions"
 | `POST /v1/sessions/ID/messages` | send `{"text": "..."}`; it starts a turn, or joins the running one |
 | `GET /v1/sessions/ID/events` | the event stream of the session |
 | `GET /v1/sessions/ID/status-segments` | the text of the status segments of the extensions and of core, `chatgpt.quota` among them, for the session, as `{"segments":[{"name":"example.provider","text":"provider: local"}]}` |
-| `POST /v1/sessions/ID/approvals/AID` | answer an approval: `{"decision": "allow"}` |
+| `POST /v1/sessions/ID/approvals/AID` | answer an approval: `{"decision": "allow"}`; with a child's approval id it answers the child, and no other session's approval answers through it |
 | `POST /v1/sessions/ID/stop` | stop the running turn or command, and the turns of its child sessions when it stops the parent's turn; `{"turn_id": "..."}` stops only that turn while it runs; answers `{"stopped": true}` or `false`; a stop that stops nothing leaves the wake window as it was |
 | `POST /v1/sessions/ID/compact` | fold the history now |
 | `GET /v1/sessions/ID/tree` | the user messages of every branch |

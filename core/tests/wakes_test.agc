@@ -246,6 +246,10 @@ def test_a_stale_stop_leaves_the_window_closed() -> Result[Void]
 end
 
 # A real stop opens the window, an idle stop keeps it open, and the next user message closes it again.
+#
+# The stop waits for both of the turn's model requests first: `text.sse@hold` is held at the fake, so stopping
+# before the second request leaves keeps that reply queued and the next turn eats its 5 s wait instead. The `Next.`
+# turn subscribes before it sends, as a subscribe after the send can miss that turn's fast `turn_finished`.
 def test_an_idle_stop_keeps_an_open_window_until_the_next_user_message() -> Result[Void]
   calls: Channel[Core.Call] = Channel.new(4)
   replies = ["spawn.sse", "text.sse@hold", "text.sse", "text.sse"]
@@ -255,6 +259,8 @@ def test_an_idle_stop_keeps_an_open_window_until_the_next_user_message() -> Resu
     _ = try H.send(h, parent, "Go.")
     a = try H.until(a, Protocol.EventKind.TurnStarted)
     host = try host_of(calls)
+    _ = try H.next_request(h)
+    _ = try H.next_request(h)
     stopped = try Protocol.decode_stopped((try H.post(h, Protocol.stop_path(parent), "{}")).text)
     try Test.eq(stopped.stopped, true)
     a = try H.until(a, Protocol.EventKind.TurnFinished)
@@ -266,15 +272,11 @@ def test_an_idle_stop_keeps_an_open_window_until_the_next_user_message() -> Resu
     try Test.eq(parked.turn_id, "")
     b = try H.until(b, Protocol.EventKind.MessageQueued)
     H.close(b)
+    c = try H.subscribe(h, parent)
     _ = try H.send(h, parent, "Next.")
-    c = try H.until(try H.subscribe(h, parent), Protocol.EventKind.TurnFinished)
+    c = try H.until(c, Protocol.EventKind.TurnFinished)
     H.close(c)
-    bodies: List[String] = []
-    for _i in 1..3
-      bodies = bodies.push((try H.next_request(h)).body)
-    end
-
-    carried = bodies[2]
+    carried = (try H.next_request(h)).body
     try Test.assert(carried.include?("late") and carried.include?("Next."), "the user message: #{carried}")
     d = try H.subscribe(h, parent)
     woke = try host.send.call(parent, "after")

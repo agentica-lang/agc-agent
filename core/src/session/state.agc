@@ -87,6 +87,9 @@ struct Setup
   observers: List[Extensions.Observer] = []
   ## The session that started this one (`Core.Host`); none for a session of its own.
   parent: Optional[String] = none
+  ## The actor of the session that started this one, for the child's events, approvals and cost; none without a
+  ## parent. Cached at creation: the parent stays loaded while the child runs, and a delete takes the children first.
+  parent_at: Optional[Address[Msg]] = none
   ## Whether the session's profile shows a tool to the model; none shows every tool.
   shows: Optional[Fn[String, Bool]] = none
   ## The session's profile as clients see it, and why it does not load (empty when it does): a turn is refused then,
@@ -137,6 +140,15 @@ enum Msg
   Place(Channel[Place])
   Close(Channel[Result[Void]])
   Emit(String, Protocol.Event)
+  ## An event of the child session `String` for the parent's stream: the parent stamps its `session` and saves it
+  ## with its own events, so a replay shows it with its provenance. Only the tool, approval and usage events come;
+  ## the child's text and thinking deltas never do.
+  ChildEmit(String, Protocol.Event)
+  ## Whether the answers of this session allow a call of the child's `tool` on `target` again, without the
+  ## accept-edits mode: the parent's session allows count for the child, but the mode is not inherited.
+  AllowsChild(String, String, Channel[Bool])
+  ## Since when no client is attached, after the subscribers that left are dropped; none while one is attached.
+  AloneSince(Channel[Optional[Int]])
   Ask(String, Agent.Ask, Channel[Protocol.Decision])
   Expire(String)
   Commit(String, List[LLM.Message], List[String], List[Agent.Queued])

@@ -40,6 +40,12 @@ def allows?(a: Approvals, tool: String, target: String) -> Bool
   Permissions.allows?(a.allows, a.rules, a.root, tool, target)
 end
 
+## Whether the session's answers allow a call of its child on a tool and target again. The accept-edits mode never
+## counts: a child does not inherit it.
+def allows_child?(a: Approvals, tool: String, target: String) -> Bool
+  Permissions.allows?(a.allows.with(accept_edits: false), a.rules, a.root, tool, target)
+end
+
 ## What an `allow_prefix` answer would allow: the patterns of `bash`, and `external_directory(FOLDER/*)`.
 def prefix(a: Approvals, tool: String, target: String) -> Optional[String]
   Permissions.prefix(a.root, tool, target).map { |found| found.map { |r| shown(r) }.join(", ") }

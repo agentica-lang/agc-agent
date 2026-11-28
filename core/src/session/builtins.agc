@@ -480,6 +480,7 @@ def approver(a: Extension.Approvals) -> Extensions.Approver
   Extensions.Approver(
     verdict: verdict_of(a),
     allows: ->(tool: String, target: String) { Extension.allows?(a, tool, target) },
+    allows_child: some(->(tool: String, target: String) { Extension.allows_child?(a, tool, target) }),
     prefix: ->(tool: String, target: String) { Extension.prefix(a, tool, target) },
     answered: ->(decision: String, tool: String, target: String) {
       approver(Extension.answered(a, decision, tool, target))
