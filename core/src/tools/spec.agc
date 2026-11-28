@@ -13,12 +13,20 @@ enum Verdict
   Deny
 end
 
-## A child session: its provider and model (the parent's provider, and its model there, when none) and its profile
-## (the parent's, when none).
+## Where a managed Git worktree of a child starts: the commit `base_ref` names (the parent's own commit when none).
+struct Worktree
+  base_ref: Optional[String] = none
+end
+
+## A child session: its provider and model (the parent's provider, and its model there, when none), its profile
+## (the parent's, when none), and where it works: the parent's folder, `cwd` when given, or a managed Git worktree
+## (`worktree`, never both). A worktree isolates the Git changes, not the operating system access.
 struct NewChild
   provider: Optional[String] = none
   model: Optional[String] = none
   profile: Optional[String] = none
+  cwd: Optional[String] = none
+  worktree: Optional[Worktree] = none
 end
 
 ## What an extension tool may do with its session and the sessions it started (its children), as the server's routes

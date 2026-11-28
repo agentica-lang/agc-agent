@@ -25,6 +25,7 @@
 
 import Protocol from "pkg/protocol/protocol"
 import Spec from "../tools/spec"
+import Worktree from "../tools/worktree"
 
 ## A profile a subagent may run, with the provider and model it would take on this session (the session's own when
 ## the profile keeps them; a project's profile never names another provider).
@@ -111,6 +112,11 @@ WAIT_MS = 3_600_000
 struct AgentTask
   agent: Optional[String] = none
   prompt: String
+  ## The folder the child works in (an existing folder; the session's own when none), or a managed Git worktree
+  ## (`worktree`, never both): a fresh `finn/SLUG` branch under `.finn/worktrees` of the session's repository, on
+  ## `base_ref` (the session's own commit when none). The answer names the folder and the branch.
+  cwd: Optional[String] = none
+  worktree: Optional[Spec.Worktree] = none
 end
 
 struct AgentArgs
@@ -128,11 +134,14 @@ struct StopArgs
   id: String
 end
 
-## A child this call waits for: its task, its display name and when its turn times out (none without a timeout).
+## A child this call waits for: its task, its display name, where it works for the coordinator (its worktree path
+## and branch, its explicit folder when it differs from the session's, and nothing when it is the session's own),
+## and when its turn times out (none without a timeout).
 struct Active
   index: Int
   id: String
   name: String
+  place: String = ""
   deadline: Optional[Int] = none
 end
 
@@ -148,14 +157,25 @@ struct WakeClaim
   prior: Optional[String]
 end
 
+## Where a child works for the coordinator: its folder, its worktree branch when it is a managed worktree, and how
+## the answer names it (`worktree: PATH (branch NAME)`, `cwd: PATH`, or nothing for the session's own folder).
+struct Place
+  root: String
+  branch: Optional[String]
+  text: String
+end
+
 def agent_description(roster: Fn[List[Profile]]) -> String
   lines = roster.call().map { |p| "- #{p.name}: #{shown_description(p)} (#{p.provider}/#{p.model})" }
   base = (
     "Start one subagent per task: a child session with its own provider, model and profile that works on its " +
     "prompt and reports back, in parallel. `agent` names the profile it runs (the session's own when empty), " +
-    "from the roster below; a profile whose provider is not set up is left out. With `wait` (the default) it " +
-    "answers with each answer in input order, each under `NAME (provider/model): reason` and cut at 8000 characters; " +
-    "without it, it answers with their ids, one per line, and each answer wakes this session."
+    "from the roster below; a profile whose provider is not set up is left out. Each task works in the session's " +
+    "folder unless it names `cwd` (an existing folder) or `worktree` (`{}` for a worktree on the session's own " +
+    "commit, or `{\"base_ref\": \"REF\"}` on the named ref): a fresh branch and directory per writer, which " +
+    "the answer names. With `wait` (the default) it answers with each answer in input order, each under " +
+    "`NAME (provider/model): reason` and cut at 8000 characters; without it, it answers with their ids, one per " +
+    "line (each with its worktree path and branch when it has one), and each answer wakes this session."
   )
 
   return "#{base} No profile is set up, so no subagent can start." if lines.empty?
@@ -213,6 +233,8 @@ def run_all(
   listed = roster.call()
   for task in args.tasks
     return error("a task needs a prompt") if task.prompt.strip.empty?
+    return error("a task takes either `cwd` or `worktree`, not both") if task.cwd.some? and task.worktree.some?
+
     for name in option_list(profile_of(task))
       if not listed.any? { |p| p.name == name }
         return error("unknown profile #{name.inspect}: one of #{listed.map { |p| p.name }.join(", ")}")
@@ -222,9 +244,9 @@ def run_all(
 
   parent = try parent_profile(host, own)
   if args.wait.unwrap_or(true)
-    run_waiting(host, parent, args.tasks, limits, turns, waits, wakes, names, locks)
+    run_waiting(host, parent, args.tasks, limits, turns, waits, wakes, names, locks, ctx.root, ctx.env)
   else
-    run_async(host, own, parent, args.tasks, limits, turns, waits, wakes, names, locks)
+    run_async(host, own, parent, args.tasks, limits, turns, waits, wakes, names, locks, ctx.root, ctx.env)
   end
 end
 
@@ -278,6 +300,8 @@ def run_waiting(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  home: String,
+  env: Fn[String, Result[String]],
 ) -> Result[String]
   done: Channel[Heard] = Channel.new([2 * tasks.size + 2, 4].max.unwrap!)
   live: List[Active] = []
@@ -286,7 +310,7 @@ def run_waiting(
   while next < tasks.size or not live.empty?
     while next < tasks.size and (limits.max == 0 or live_count(host, turns, wakes) < limits.max)
       name = named(tasks[next], parent)
-      case start_child(host, tasks[next], name, next, limits, done, turns, waits, wakes, names, locks)
+      case start_child(host, tasks[next], name, next, limits, done, turns, waits, wakes, names, locks, home, env)
         ok(active) -> live = live.push(active)
         error(e) -> results = results.put(next, "#{name}: #{e.message}")
       end
@@ -534,13 +558,16 @@ def run_async(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  home: String,
+  env: Fn[String, Result[String]],
 ) -> Result[String]
   return error(capped(limits.max)) if limits.max > 0 and live_count(host, turns, wakes) + tasks.size > limits.max
 
   started: List[String] = []
+  shown: Map[String, String] = {}
   for task in tasks
     name = named(task, parent)
-    created = host.create.call(Spec.NewChild(profile: profile_of(task)))
+    created = host.create.call(Spec.NewChild(profile: profile_of(task), cwd: task.cwd, worktree: task.worktree))
     case created
       error(e) ->
         cleanup_started(host, started, turns, waits, wakes, names)
@@ -551,10 +578,13 @@ def run_async(
     child = created.unwrap_or("")
     started = started.push(child)
     names.put(child, name)
+    place = place_of(host, child, home, task.worktree.some?, env)
+    shown = shown.put(child, suffixed(place))
     # The wake is owed before the send runs, unless a waiter with a running turn owns the child's answer already.
     claim = claim_wake(host, child, own, waits, wakes)
     case ensure_watch(host, child, turns, waits, wakes, names, locks)
       error(e) ->
+        unstarted(host, child, place, turns, waits, wakes, names, env)
         cleanup_started(host, started, turns, waits, wakes, names)
         return error(e.message)
       ok(_) -> nil
@@ -562,6 +592,7 @@ def run_async(
 
     case send_turn(host, child, task.prompt)
       error(e) ->
+        unstarted(host, child, place, turns, waits, wakes, names, env)
         cleanup_started(host, started, turns, waits, wakes, names)
         return error(e.message)
       ok(accepted) ->
@@ -574,7 +605,7 @@ def run_async(
     end
   end
 
-  ok(started.join("\n"))
+  ok(started.map { |id| id + shown.get(id).unwrap_or("") }.join("\n"))
 end
 
 def capped(max: Int) -> String
@@ -713,7 +744,7 @@ def collected(
 ) -> String
   text = case host.snapshot.call(active.id)
     ok(session) ->
-      "#{head(active.name, session.provider, session.model, reason)}\n#{cut(last_answer(session.history))}"
+      headed(active, head(active.name, session.provider, session.model, reason), cut(last_answer(session.history)))
     error(e) -> "#{active.name}: could not read the answer: #{e.message}"
   end
 
@@ -731,9 +762,17 @@ end
 def partial(host: Spec.Host, active: Active, limits: Limits) -> String
   text = "timed out after #{limits.timeout_ms} ms"
   case host.snapshot.call(active.id)
-    ok(session) -> "#{head(active.name, session.provider, session.model, text)}\n#{cut(last_answer(session.history))}"
+    ok(session) ->
+      headed(active, head(active.name, session.provider, session.model, text), cut(last_answer(session.history)))
     error(e) -> "#{active.name}: #{text}: #{e.message}"
   end
+end
+
+## A headed answer with where the child worked: its place between the head and the answer, or the head alone.
+def headed(active: Active, head: String, answer: String) -> String
+  return "#{head}\n#{answer}" if active.place.empty?
+
+  "#{head}\n#{active.place}\n#{answer}"
 end
 
 def head(name: String, provider: String, model: String, reason: String) -> String
@@ -773,13 +812,16 @@ def start_child(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  home: String,
+  env: Fn[String, Result[String]],
 ) -> Result[Active]
-  child = try host.create.call(Spec.NewChild(profile: profile_of(task)))
+  child = try host.create.call(Spec.NewChild(profile: profile_of(task), cwd: task.cwd, worktree: task.worktree))
   names.put(child, name)
+  place = place_of(host, child, home, task.worktree.some?, env)
   addr = done.address
   case ensure_watch(host, child, turns, waits, wakes, names, locks)
     error(e) ->
-      cleanup_one(host, child, turns, waits, wakes, names)
+      unstarted(host, child, place, turns, waits, wakes, names, env)
       return error(e.message)
     ok(_) -> nil
   end
@@ -787,7 +829,7 @@ def start_child(
   waits.put(child, addr)
   case host.send.call(child, task.prompt)
     error(e) ->
-      cleanup_one(host, child, turns, waits, wakes, names)
+      unstarted(host, child, place, turns, waits, wakes, names, env)
       return error(e.message)
     ok(_) -> nil
   end
@@ -805,7 +847,67 @@ def start_child(
       end
   end
 
-  ok(Active(index: index, id: child, name: name, deadline: deadline(limits)))
+  ok(Active(index: index, id: child, name: name, place: place.text, deadline: deadline(limits)))
+end
+
+## Where the child works for the coordinator: its worktree path and branch, its explicit folder when it differs from
+## the session's (`home`), and nothing when it is the session's own. A child gone since names nothing, never the
+## session's own folder as a worktree.
+def place_of(host: Spec.Host, child: String, home: String, managed: Bool, env: Fn[String, Result[String]]) -> Place
+  seen = host.snapshot.call(child)
+  gone = not seen.ok?
+  root = case seen
+    ok(session) -> session.cwd
+    error(_) -> home
+  end
+
+  return Place(root: home, branch: none, text: "") if gone
+
+  branch: Optional[String] = none
+  if managed and seen.ok?
+    case Worktree.branch_of(root, env)
+      ok(found) -> branch = some(found)
+      error(_) -> nil
+    end
+  end
+
+  if managed
+    line = "worktree: #{root}"
+    for name in option_list(branch)
+      line = "worktree: #{root} (branch #{name})"
+    end
+
+    return Place(root: root, branch: branch, text: line)
+  end
+
+  return Place(root: root, branch: none, text: "") if root == home
+
+  Place(root: root, branch: none, text: "cwd: #{root}")
+end
+
+## How the `agent` answer names a child with somewhere of its own: its id and its place, else its id alone.
+def suffixed(place: Place) -> String
+  return "" if place.text.empty?
+
+  " #{place.text}"
+end
+
+## A child whose turn never started is gone: its session is deleted, and its managed worktree (which never ran) is
+## removed when that is safe. A child past its first send keeps its worktree, whatever stopped it.
+def unstarted(
+  host: Spec.Host,
+  child: String,
+  place: Place,
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
+  names: ATS[String, String],
+  env: Fn[String, Result[String]],
+) -> Void
+  cleanup_one(host, child, turns, waits, wakes, names)
+  for branch in option_list(place.branch)
+    Worktree.release(place.root, branch, env)
+  end
 end
 
 # The one watcher of a child: later watches of the same names keep this first handler by the `Watch` contract,
