@@ -45,11 +45,13 @@ struct Profile
   model: String
 end
 
-## What bounds the subagents of a session: at most `max` children with a running turn (0 for no cap), and a child's
-## turn stops `timeout_ms` after its prompt was sent (0 for no timeout).
+## What bounds the subagents of a session: at most `max` children with a running turn (0 for no cap), a child's
+## turn stops `timeout_ms` after its prompt was sent (0 for no timeout), and a wait with no timeout reaps gone
+## children and missed answers every `heartbeat_ms` (0 for the hour-long production heartbeat; tests bound it).
 struct Limits
   max: Int = 0
   timeout_ms: Int = 0
+  heartbeat_ms: Int = 0
 end
 
 ## Where a Markdown deliverable goes: the parent session's artifact store, with one wanted flag per live child.
@@ -315,7 +317,8 @@ def gated(ctx: Spec.Context, saving: Saving) -> Saving
   saving.with(port: none)
 end
 
-## A task or follow-up that asks for a deliverable wants its child's next completion saved.
+## A task or follow-up that asks for a deliverable wants its child's next completion saved. Callers consume the
+## flag with `take_save` in their completion first; `deliver` itself never consumes it.
 def want(saving: Saving, child: String, deliverable: Optional[Bool]) -> Void
   if deliverable.unwrap_or(false)
     saving.wanted.put(child, true)
@@ -420,7 +423,7 @@ def run_waiting(
       break
     end
 
-    case done.recv(wait_ms(live))
+    case done.recv(wait_ms(limits, live))
       ok(heard) ->
         case live.find { |a| a.id == heard.id }
           ok(active) ->
@@ -761,7 +764,7 @@ def send_waiting(
   end
 
   while true
-    case done.recv(wait_ms([active]))
+    case done.recv(wait_ms(limits, [active]))
       ok(heard) -> return ok(collected(host, active, heard.reason, turns, waits, wakes, names, saving, false))
       error(_) ->
         if limits.timeout_ms > 0 and past?(active)
@@ -778,7 +781,8 @@ def send_waiting(
             if session.turn_id.some?
               nil
             else
-              forget(turns, waits, wakes, saving, id)
+              # Collected before anything is cleared: the completion consumes its deliverable flag while saving,
+              # and clears the tables itself; clearing first would lose the reference.
               return ok(collected(host, active, "ended", turns, waits, wakes, names, saving, false))
             end
 
@@ -1125,7 +1129,8 @@ end
 
 # The same wake without the event at hand: the answer the child's snapshot holds now, under the same headed line.
 # A send that reconciles an already-ended turn wakes this way, with `ended` for the reason the deferred finish
-# carried, as a missed answer the heartbeat reaps does.
+# carried, as a missed answer the heartbeat reaps does. The flag is consumed up front: `take_wake` claimed this
+# turn, so no newer flag for this child can exist at this point.
 def wake_now(
   host: Spec.Host,
   own: String,
@@ -1202,7 +1207,9 @@ end
 # (its parent `/stop` stopped it, or its answer is on its way) is idle and frees its slot at once, instead of
 # waiting for its `turn_finished` to reach the watcher; a call a stop cancelled still frees its slots even though it
 # never cleans up. An async turn owed its wake keeps its entry until the watcher delivers it, so freeing the slot
-# never loses the wake. Children gone since leave the table. `send` starts a turn before it answers, so a snapshot
+# never loses the wake. Freeing the slot only drops the expected turn, never a deliverable flag: the waiter or the
+# reaper still owns that answer and consumes the flag while saving it. Children gone since leave the table with
+# their flag, whose answer is unreadable anyway. `send` starts a turn before it answers, so a snapshot
 # right after it already shows the turn: two calls in a row cannot evade the cap while a started turn is not yet
 # visible.
 def live_count(host: Spec.Host, turns: ATS[String, String], wakes: ATS[String, String], saving: Saving) -> Int
@@ -1213,7 +1220,7 @@ def live_count(host: Spec.Host, turns: ATS[String, String], wakes: ATS[String, S
       ok(_) ->
         case wakes.get(id)
           ok(_) -> nil
-          error(_) -> forget_turn(turns, saving, id)
+          error(_) -> turns.delete(id)
         end
 
       error(e) if e.kind == Protocol.KIND_SESSION_NOT_FOUND -> forget_turn(turns, saving, id)
@@ -1248,7 +1255,8 @@ def reap_finished(
         if session.turn_id.some?
           kept = kept.push(active)
         else
-          forget(turns, waits, wakes, saving, active.id)
+          # Collected before anything is cleared: the completion consumes its deliverable flag while saving, and
+          # clears the tables itself; clearing first would lose the reference.
           found = found.put(active.index, collected(host, active, "ended", turns, waits, wakes, names, saving, true))
         end
 
@@ -1327,11 +1335,16 @@ def past?(active: Active) -> Bool
   false
 end
 
-def wait_ms(live: List[Active]) -> Int
-  ends = live.flat_map { |a| option_list(a.deadline) }
-  return WAIT_MS if ends.empty?
+def wait_ms(limits: Limits, live: List[Active]) -> Int
+  bound = WAIT_MS
+  if limits.heartbeat_ms > 0
+    bound = limits.heartbeat_ms
+  end
 
-  [[ends.min.unwrap! - Time.monotonic_ms, 0].max.unwrap!, WAIT_MS].min.unwrap!
+  ends = live.flat_map { |a| option_list(a.deadline) }
+  return bound if ends.empty?
+
+  [[ends.min.unwrap! - Time.monotonic_ms, 0].max.unwrap!, bound].min.unwrap!
 end
 
 def option_list[T](value: Optional[T]) -> List[T]

@@ -313,6 +313,72 @@ def test_direct_write_failure_keeps_the_answer_without_a_reference() -> Result[V
   Test.assert(text.include?(answer.slice(0, 8000)), "no preview past the failure")
 end
 
+# With cap 1 two waited `deliverable` tasks each save their own artifact: freeing a finished child's cap slot never
+# consumes its deliverable flag, so the first reference still reads back. Each child ends while the cap is
+# re-evaluated for the next task, and its finish lands only after: the waiter still owns the answer then.
+def test_waited_deliverables_survive_the_cap_with_delayed_finishes() -> Result[Void]
+  answer1 = long_answer()
+  answer2 = long_answer() + "\nSECOND-CHILD\n"
+  rig = try rig_capped(answer1, answer2)
+  input = try JSON.parse(
+    "{\"tasks\": [{\"prompt\": \"First.\", \"deliverable\": true}, {\"prompt\": \"Second.\", \"deliverable\": true}], \"wait\": true}",
+  )
+
+  call = Task.spawn(-> { rig.tools[0].run.call(rig.ctx, input) })
+  # Land each finish once it is safe: the release names each start and the idle cap check, and a finish fires only
+  # after its start (its waiter is registered) or the idle check (its answer already waits).
+  release = try release_of(rig)
+  case release.recv(10000)
+    ok(tag) if tag == "sent:child-1" -> nil
+    ok(tag) -> return error("the first release is #{tag}")
+    error(_) -> return error("the first start never released")
+  end
+
+  case release.recv(10000)
+    ok(tag) if tag == "idle:child-1" -> fire_once(rig.handlers, "child-1", "turn-1")
+    ok(tag) -> return error("the second release is #{tag}")
+    error(_) -> return error("the first finish never released")
+  end
+
+  case release.recv(10000)
+    ok(tag) if tag == "sent:child-2" -> fire_once(rig.handlers, "child-2", "turn-1")
+    ok(tag) -> return error("the third release is #{tag}")
+    error(_) -> return error("the second finish never released")
+  end
+
+  text = try awaited(Task.await(call, 5000))
+  id1 = OpenSSL.Digest.sha256_hexdigest(answer1.bytes)
+  id2 = OpenSSL.Digest.sha256_hexdigest(answer2.bytes)
+  try Test.assert(text.include?("[deliverable: #{id1}]"), "the first reference is lost: #{clipped(text)}")
+  try Test.assert(text.include?("[deliverable: #{id2}]"), "the second reference is lost: #{clipped(text)}")
+  try Test.eq(try rig.port.read.call(id1), answer1)
+  try Test.eq(try rig.port.read.call(id2), answer2)
+  try Test.eq(rig.saves.get("n").unwrap_or(0), 2)
+  try Test.assert(rig.saving.wanted.keys().empty?, "a flag is left behind")
+  Test.assert(rig.turns.keys().empty?, "a turn is left behind")
+end
+
+# A dropped watcher event still saves the deliverable: with nothing overdue the bounded heartbeat reaps the idle
+# child from its snapshot, collecting (and so saving) before clearing. The host drops every finish; its first two
+# snapshots still run the turn (the start and its check), later ones are idle with the answer. The 50 ms heartbeat
+# is the timeout under test, not a wait for something else.
+def test_dropped_event_reaps_and_saves_the_deliverable() -> Result[Void]
+  answer = long_answer()
+  rig = try rig_dropped(answer)
+  input = try JSON.parse("{\"tasks\": [{\"prompt\": \"Write it.\", \"deliverable\": true}], \"wait\": true}")
+  call = Task.spawn(-> { rig.tools[0].run.call(rig.ctx, input) })
+  text = try awaited(Task.await(call, 5000))
+  id = OpenSSL.Digest.sha256_hexdigest(answer.bytes)
+  try Test.assert(text.include?("[deliverable: #{id}]"), "the reaped reference is lost: #{clipped(text)}")
+  try Test.eq(try rig.port.read.call(id), answer)
+  try Test.eq(rig.saves.get("n").unwrap_or(0), 1)
+  fire(rig, "child-1", "turn-1")
+  try Test.assert(not rig.woken.recv(0).ok?, "a stale finish woke")
+  try Test.eq(rig.saves.get("n").unwrap_or(0), 1)
+  try Test.assert(rig.saving.wanted.keys().empty?, "a flag is left behind")
+  Test.assert(rig.turns.keys().empty?, "a turn is left behind")
+end
+
 # A stopped async child still completes: its finish wakes once with the saved reference.
 def test_direct_stopped_async_child_still_delivers_once() -> Result[Void]
   answer = long_answer()
@@ -354,6 +420,7 @@ struct Rig
   tools: List[Spec.Tool]
   ctx: Spec.Context
   names: ATS[String, String]
+  release: Optional[Channel[String]]
 end
 
 def finished(h: H.Harness, id: String, text: String) -> Result[Void]
@@ -457,11 +524,61 @@ def rig_broken(answer: String) -> Result[Rig]
   ok(rig.with(saving: saving, tools: tools))
 end
 
+# The same rig with cap 1, whose children end while the cap is re-evaluated and whose finishes land only after:
+# the first two snapshots of a child still run its turn (the start and its check), the third is idle and releases
+# its delayed finish, later ones are idle with the answer.
+def rig_capped(answer1: String, answer2: String) -> Result[Rig]
+  handlers: Channel[Fn[Spec.Seen, Void]] = Channel.new(4)
+  woken: Channel[Woke] = Channel.new(8)
+  answers: ATS[String, String] = ATS.new()
+  answers.put("child-1", answer1)
+  answers.put("child-2", answer2)
+  made: ATS[String, Int] = ATS.new()
+  seen: ATS[String, Int] = ATS.new()
+  release: Channel[String] = Channel.new(4)
+  rig = try rigged_limits(
+    handlers,
+    woken,
+    answers,
+    capped_host(handlers, woken, answers, made, seen, release),
+    Agents.Limits(max: 1, timeout_ms: 0),
+  )
+
+  ok(rig.with(release: some(release)))
+end
+
+# The same rig, but the watcher never fires: the child's turn ends unseen, so the bounded heartbeat reaps it from
+# its snapshot. The first two snapshots still run the turn (the start and its check); later ones are idle.
+def rig_dropped(answer: String) -> Result[Rig]
+  handlers: Channel[Fn[Spec.Seen, Void]] = Channel.new(1)
+  woken: Channel[Woke] = Channel.new(4)
+  answers: ATS[String, String] = ATS.new()
+  answers.put("child-1", answer)
+  seen: ATS[String, Int] = ATS.new()
+  rigged_limits(
+    handlers,
+    woken,
+    answers,
+    dropped_host(handlers, answers, seen),
+    Agents.Limits(max: 0, timeout_ms: 0, heartbeat_ms: 50),
+  )
+end
+
 def rigged(
   handlers: Channel[Fn[Spec.Seen, Void]],
   woken: Channel[Woke],
   answers: ATS[String, String],
   host: Spec.Host,
+) -> Result[Rig]
+  rigged_limits(handlers, woken, answers, host, Agents.Limits(max: 0, timeout_ms: 0))
+end
+
+def rigged_limits(
+  handlers: Channel[Fn[Spec.Seen, Void]],
+  woken: Channel[Woke],
+  answers: ATS[String, String],
+  host: Spec.Host,
+  limits: Agents.Limits,
 ) -> Result[Rig]
   file = try Store.create(Store.memory(["/data"]), "/data", header())
   bare = Store.artifacts(file)
@@ -480,7 +597,7 @@ def rigged(
   names: ATS[String, String] = ATS.new()
   locks: ATS[String, Bool] = ATS.new()
   saving = Agents.Saving(port: some(counting), wanted: ATS.new())
-  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names, locks, saving)
+  tools = Agents.tools(-> { [] }, limits, turns, waits, wakes, names, locks, saving)
   ctx = Spec.Context(
     root: "/tmp",
     env: ->(_name: String) { error("no env") },
@@ -504,7 +621,107 @@ def rigged(
       tools: tools,
       ctx: ctx,
       names: names,
+      release: none,
     ),
+  )
+end
+
+def release_of(rig: Rig) -> Result[Channel[String]]
+  case rig.release
+    some(release) -> ok(release)
+    none -> error("the rig has no release channel")
+  end
+end
+
+# A handle whose children end while the cap is re-evaluated and whose finishes land only after: `send` answers
+# with the running turn, and the third snapshot of a child releases its delayed finish to its own watcher.
+def capped_host(
+  handlers: Channel[Fn[Spec.Seen, Void]],
+  woken: Channel[Woke],
+  answers: ATS[String, String],
+  made: ATS[String, Int],
+  seen: ATS[String, Int],
+  release: Channel[String],
+) -> Spec.Host
+  Spec.Host(
+    create: ->(_child: Spec.NewChild) {
+      n = made.get("n").unwrap_or(0) + 1
+      made.put("n", n)
+      ok("child-#{n}")
+    },
+    send: ->(id: String, text: String) {
+      if id.start_with?("child-")
+        _ = release.send("sent:#{id}", 5000)
+        return ok(Protocol.MessageAccepted(turn_id: "turn-1"))
+      end
+
+      _ = woken.send(Woke(id: id, text: text), 1000)
+      ok(Protocol.MessageAccepted(turn_id: "wake-turn"))
+    },
+    stop: ->(_id: String) { ok(false) },
+    delete: ->(_id: String) { ok() },
+    snapshot: ->(id: String) {
+      if id.start_with?("child-")
+        n = seen.get(id).unwrap_or(0) + 1
+        seen.put(id, n)
+        if n == 3
+          _ = release.send("idle:#{id}", 5000)
+        end
+
+        return ok(child_session(answers, id, some("turn-1"))) if n <= 2
+
+        return ok(child_session(answers, id, none))
+      end
+
+      ok(parent_session(id))
+    },
+    watch: ->(_id: String, _names: List[String], handler: Fn[Spec.Seen, Void]) {
+      _ = handlers.send(handler, 0)
+      ok()
+    },
+  )
+end
+
+# Fires the watcher kept for `child` once, consuming it: each delayed finish pairs with the watcher its own start
+# registered, since the earlier child is collected before the later one starts.
+def fire_once(handlers: Channel[Fn[Spec.Seen, Void]], child: String, turn: String) -> Void
+  case handlers.recv(5000)
+    ok(handler) -> handler.call(finish_seen(child, turn))
+    error(_) -> nil
+  end
+end
+
+# A handle that drops every finish: `send` answers with the running turn but fires nothing, so the watcher never
+# learns the turn ended. The snapshots after the start are idle with the answer.
+def dropped_host(
+  handlers: Channel[Fn[Spec.Seen, Void]],
+  answers: ATS[String, String],
+  seen: ATS[String, Int],
+) -> Spec.Host
+  Spec.Host(
+    create: ->(_child: Spec.NewChild) { ok("child-1") },
+    send: ->(id: String, _text: String) {
+      return ok(Protocol.MessageAccepted(turn_id: "turn-1")) if id == "child-1"
+
+      error("no parent send here")
+    },
+    stop: ->(_id: String) { ok(false) },
+    delete: ->(_id: String) { ok() },
+    snapshot: ->(id: String) {
+      if id == "child-1"
+        n = seen.get("n").unwrap_or(0) + 1
+        seen.put("n", n)
+        return ok(child_session(answers, id, some("turn-1"))) if n <= 2
+
+        return ok(child_session(answers, id, none))
+      end
+
+      ok(parent_session(id))
+    },
+    watch: ->(_id: String, _names: List[String], handler: Fn[Spec.Seen, Void]) {
+      _ = handlers.send(handler, 0)
+      ok()
+    },
   )
 end
 
