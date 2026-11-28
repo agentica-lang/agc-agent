@@ -9,10 +9,15 @@
 ## by turn id: to the waiter of a waited turn, or to the parent's wake for an async turn, whose entry holds the
 ## real id of the session to wake. A turn nobody waits for and nobody is owed a wake for is stale and never wakes,
 ## so a waited follow-up after an async start and two waited follow-ups in a row each get their own answer and
-## never wake twice. An async wake is owed before its send runs, so a child that finishes before the post-send
-## snapshot still wakes exactly once. Transient per-turn state (the expected turns, the waiter addresses and the
-## async wakes) is cleared on every completion, timeout or delete, so it never grows past the live turns; the names
-## keep one display name per live child.
+## never wake twice. An async wake is owed before its send runs, unless a waiter with a running turn already owns
+## the child's answer: then the send owes no wake and the finish goes to the waiter alone. The send's accepted turn
+## is recorded at once; a finish that lands before that finds no expectation and wakes nothing, and the send
+## reconciles it from its own snapshot, waking exactly once for a turn that already ended. The expected turn is
+## always recorded while its turn runs, so the cap counts it however the wake went. One watcher per child reads its
+## events serially, but never atomically with the sends, and a full inbox drops an event outright: the pre-ack arm
+## below therefore never consumes a wake, leaving every finish for the send that owns it to reconcile. Transient
+## per-turn state (the expected turns, the waiter addresses and the async wakes) is cleared on every completion,
+## timeout or delete, so it never grows past the live turns; the names keep one display name per live child.
 
 import Protocol from "pkg/protocol/protocol"
 import Spec from "../tools/spec"
@@ -127,6 +132,13 @@ end
 struct Reaped
   live: List[Active]
   found: Map[Int, String]
+end
+
+## Who owns the async wake of one send: none while a waiter with a running turn owns the child's answer already
+## (`contended`), else this call, with the wake entry it overwrote (`prior`, none when there was none).
+struct WakeClaim
+  contended: Bool
+  prior: Optional[String]
 end
 
 def agent_description(roster: Fn[List[Profile]]) -> String
@@ -329,6 +341,131 @@ def ordered(results: Map[Int, String], count: Int) -> List[String]
   out
 end
 
+# The async wake this call owes for `child`, owed before its send runs: nobody while a waiter with a running turn
+# owns the child's answer already (its finish goes to the waiter alone, so this call records nothing of its own
+# for it); otherwise the wake, with any stale entry overwritten.
+def claim_wake(
+  host: Spec.Host,
+  child: String,
+  own: String,
+  waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
+) -> WakeClaim
+  return WakeClaim(contended: true, prior: none) if live_waiter?(host, child, waits)
+
+  prior = case wakes.get(child)
+    ok(owed) -> some(owed)
+    error(_) -> none
+  end
+
+  wakes.put(child, own)
+  WakeClaim(contended: false, prior: prior)
+end
+
+# Whether a waiter with a running turn owns the child's answer already: a stale waiter entry (no running turn)
+# owns nothing, so the caller overwrites it and reconciles the turn itself.
+def live_waiter?(host: Spec.Host, child: String, waits: ATS[String, Address[Heard]]) -> Bool
+  case waits.get(child)
+    ok(_) ->
+      case host.snapshot.call(child)
+        ok(session) -> session.turn_id.some?
+        error(_) -> false
+      end
+
+    error(_) -> false
+  end
+end
+
+# Take back what the claim added when the send never ran: only the owed wake (restoring any earlier entry, which
+# names the same session anyway), never another generation's turn or waiter.
+def abandon_wake(wakes: ATS[String, String], child: String, prior: Optional[String]) -> Void
+  case prior
+    some(owed) -> wakes.put(child, owed)
+    none -> wakes.delete(child)
+  end
+end
+
+# Forget what this call's send recorded when the child is gone since: the turn only while it is still the accepted
+# one, and the owed wake. A live turn or waiter belongs to another generation and is left alone.
+def forget_own(
+  turns: ATS[String, String],
+  wakes: ATS[String, String],
+  child: String,
+  accepted: String,
+  prior: Optional[String],
+) -> Void
+  forget_turn_if(turns, child, accepted)
+  abandon_wake(wakes, child, prior)
+end
+
+# Delete the expected turn only while it is still `turn`: a newer turn another send recorded stays tracked.
+def forget_turn_if(turns: ATS[String, String], child: String, turn: String) -> Void
+  case turns.get(child)
+    ok(recorded) if recorded == turn -> turns.delete(child)
+    ok(_) -> nil
+    error(_) -> nil
+  end
+end
+
+# The turn a send to `child` started or queued into, so its finish can be reconciled.
+def send_turn(host: Spec.Host, child: String, text: String) -> Result[String]
+  case host.send.call(child, text)
+    ok(sent) -> ok(sent.turn_id)
+    error(e) -> error(e.message)
+  end
+end
+
+# The send answered with `accepted`, the turn it started or queued into: a child send always answers with one
+# (only a parked wake answers empty, which never comes from a send). It is recorded at once, so a finish landing
+# between the send and the snapshot below still finds its turn. The snapshot then reconciles it: a running turn is
+# the live one (the accepted turn when nothing slipped between, else the turn holding the queued text now) and
+# stays recorded, so the cap counts it however the wake went; an idle child already holds the accepted turn's
+# answer and wakes from it, with `ended` for the reason the deferred finish carried; only a child gone since
+# fails. The waiter with a running turn that made this call contended owns the ended turn instead, so nothing
+# wakes and its superseded entry goes.
+def reconcile_async(
+  host: Spec.Host,
+  child: String,
+  own: String,
+  accepted: String,
+  claim: WakeClaim,
+  turns: ATS[String, String],
+  wakes: ATS[String, String],
+  names: ATS[String, String],
+) -> Result[Void]
+  if not claim.contended and not accepted.empty?
+    turns.put(child, accepted)
+  end
+
+  case host.snapshot.call(child)
+    ok(session) ->
+      case session.turn_id
+        some(running) if running != accepted ->
+          turns.put(child, running)
+          ok()
+        some(_) -> ok()
+        none if claim.contended ->
+          wakes.delete(child)
+          ok()
+        none ->
+          case wakes.get(child)
+            ok(_) ->
+              wake_now(host, own, child, names, "ended")
+              forget_own(turns, wakes, child, accepted, none)
+              ok()
+            error(_) -> ok()
+          end
+      end
+
+    error(e) ->
+      if not claim.contended
+        forget_own(turns, wakes, child, accepted, claim.prior)
+      end
+
+      error(e.message)
+  end
+end
+
 # Every task's child at once when the whole batch fits; otherwise nothing starts and the call fails with the cap, so
 # no started id is ever lost and no unknown child is left running. Each answer wakes the session when it comes.
 def run_async(
@@ -358,9 +495,8 @@ def run_async(
     child = created.unwrap_or("")
     started = started.push(child)
     names.put(child, name)
-    # The wake is owed before the send runs: a finish that lands before the post-send snapshot still finds who
-    # to wake, and the table holds the real session, so the finish wakes this session however the child started.
-    wakes.put(child, own)
+    # The wake is owed before the send runs, unless a waiter with a running turn owns the child's answer already.
+    claim = claim_wake(host, child, own, waits, wakes)
     case ensure_watch(host, child, turns, waits, wakes, names)
       error(e) ->
         cleanup_started(host, started, turns, waits, wakes, names)
@@ -368,30 +504,16 @@ def run_async(
       ok(_) -> nil
     end
 
-    case host.send.call(child, task.prompt)
+    case send_turn(host, child, task.prompt)
       error(e) ->
         cleanup_started(host, started, turns, waits, wakes, names)
         return error(e.message)
-      ok(_) -> nil
-    end
-
-    case turn_of_child(host, child)
-      ok(turn) ->
-        # The expected turn is only recorded while the wake is still owed: a finish already delivered forgot it,
-        # so nothing stale is left behind.
-        case wakes.get(child)
-          ok(_) -> turns.put(child, turn)
-          error(_) -> nil
-        end
-
-      error(e) ->
-        # The turn already ended: its finish was delivered (nothing is owed anymore) or is on its way to the
-        # owed wake, so the child stays open with its answer instead of failing. Only a child gone since fails.
-        case host.snapshot.call(child)
-          error(_) ->
+      ok(accepted) ->
+        case reconcile_async(host, child, own, accepted, claim, turns, wakes, names)
+          ok(_) -> nil
+          error(e) ->
             cleanup_started(host, started, turns, waits, wakes, names)
             return error(e.message)
-          ok(_) -> nil
         end
     end
   end
@@ -492,44 +614,31 @@ def send_async(
   names: ATS[String, String],
 ) -> Result[String]
   id = args.id
-  # The wake is owed before the send runs: a finish that lands before the post-send snapshot still finds who to
-  # wake, and the table holds the real session.
-  wakes.put(id, own)
+  # The wake is owed before the send runs, unless a waiter with a running turn owns the child's answer already.
+  claim = claim_wake(host, id, own, waits, wakes)
   case ensure_watch(host, id, turns, waits, wakes, names)
     error(e) ->
-      forget(turns, waits, wakes, id)
+      if not claim.contended
+        abandon_wake(wakes, id, claim.prior)
+      end
+
       return error(e.message)
     ok(_) -> nil
   end
 
-  case host.send.call(id, args.text)
+  case send_turn(host, id, args.text)
     error(e) ->
-      forget(turns, waits, wakes, id)
-      return error(e.message)
-    ok(_) -> nil
-  end
-
-  case turn_of_child(host, id)
-    ok(turn) ->
-      # The expected turn is only recorded while the wake is still owed: a finish already delivered forgot it,
-      # so nothing stale is left behind.
-      case wakes.get(id)
-        ok(_) -> turns.put(id, turn)
-        error(_) -> nil
+      if not claim.contended
+        abandon_wake(wakes, id, claim.prior)
       end
 
-    error(e) ->
-      # The turn already ended: its finish was delivered (nothing is owed anymore) or is on its way to the owed
-      # wake, so the id still answers. Only a child gone since fails.
-      case host.snapshot.call(id)
-        error(_) ->
-          forget(turns, waits, wakes, id)
-          return error(e.message)
-        ok(_) -> nil
+      error(e.message)
+    ok(accepted) ->
+      case reconcile_async(host, id, own, accepted, claim, turns, wakes, names)
+        ok(_) -> ok(id)
+        error(e) -> error(e.message)
       end
   end
-
-  ok(id)
 end
 
 # One finished child: its last answer under its name, or why it cannot be read. A child this call started is deleted
@@ -676,35 +785,33 @@ def dispatch(
     ok(_) -> nil
     error(_) ->
       # No expected turn yet: the send has not recorded it. A waiter still gets it, so a fast finish cannot hang;
-      # without a waiter an owed async wake gets it, so a fast finish cannot drop it; otherwise there is no turn
-      # to deliver and nothing owed a wake.
+      # without a waiter nothing is delivered: an owed async wake stays owed for its send to reconcile, so a late
+      # or duplicate turn can neither wake nor hide the live turn, and anything else is stale and dropped.
       case waits.get(child)
         ok(addr) ->
           _ = addr.send(Heard(id: child, turn_id: turn, reason: reason), 1000)
-          forget(turns, waits, wakes, child)
+          waits.delete(child)
           return
-        error(_) ->
-          case wakes.get(child)
-            ok(own) ->
-              forget(turns, waits, wakes, child)
-              wake_parent(host, own, child, names, seen, reason)
-            error(_) -> return
-          end
-
-          return
+        error(_) -> return
       end
   end
 
   case waits.get(child)
     ok(addr) ->
+      # The waiter owns this turn's answer: a waited call waits for it, and a follow-up sent while an async turn
+      # ran is answered by it. Its entries go, but never an async wake: the send that owes one reconciles it from
+      # its own snapshot, and a send that queued into this turn never owed one.
       _ = addr.send(Heard(id: child, turn_id: turn, reason: reason), 1000)
-      forget(turns, waits, wakes, child)
+      forget_turn_if(turns, child, turn)
+      waits.delete(child)
     error(_) ->
       case wakes.get(child)
         ok(own) ->
           # The async turn's wake: owed exactly once, to the real session that sent it. The entries go before the
-          # wake, so a second event for the turn finds nothing and never wakes twice.
-          forget(turns, waits, wakes, child)
+          # wake, so a second event for the turn finds nothing and never wakes twice. Only the delivered turn's
+          # entry goes, so a newer turn stays tracked.
+          forget_turn_if(turns, child, turn)
+          wakes.delete(child)
           wake_parent(host, own, child, names, seen, reason)
         error(_) ->
           # A turn nobody waits for and nobody is owed a wake for: stale or idle, never a wake. Its entry goes so
@@ -724,6 +831,13 @@ def wake_parent(
   seen: Spec.Seen,
   reason: String,
 ) -> Void
+  wake_now(host, own, child, names, reason)
+end
+
+# The same wake without the event at hand: the answer the child's snapshot holds now, under the same headed line.
+# A send that reconciles an already-ended turn wakes this way, with `ended` for the reason the deferred finish
+# carried, as a missed answer the heartbeat reaps does.
+def wake_now(host: Spec.Host, own: String, child: String, names: ATS[String, String], reason: String) -> Void
   snapshot = case host.snapshot.call(child)
     ok(session) -> some(session)
     error(_) -> none
