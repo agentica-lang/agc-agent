@@ -22,9 +22,18 @@
 ## a wake in flight cannot deadlock it. Transient per-turn state (the expected turns, the waiter addresses, the
 ## async wakes and the claim locks) is cleared on every completion, timeout, delete or release, so it never grows
 ## past the live turns; the names keep one display name per live child.
+##
+## A task or follow-up with `deliverable: true` saves the child's whole answer as a Markdown deliverable in the
+## parent session's artifact store (`saving.port`, the same store `read_tool_output` reads), and answers with a
+## bounded preview and a stable `[deliverable: ID]` reference instead of the whole text. The reference is only ever
+## answered after the save succeeded, so it always reads back: waited and async completions save before the reference
+## is claimed, a partial answer saves under its timeout head, and a write failure answers with a failure note and no
+## reference. The deliverable stays after the child is deleted and after a server restart, under the store's own size
+## limit, quota and cleanup; no sibling or stranger can read it, since `read_tool_output` reads only its own session.
 
 import Protocol from "pkg/protocol/protocol"
 import Spec from "../tools/spec"
+import Spill from "../tools/spill"
 import Worktree from "../tools/worktree"
 
 ## A profile a subagent may run, with the provider and model it would take on this session (the session's own when
@@ -43,6 +52,14 @@ struct Limits
   timeout_ms: Int = 0
 end
 
+## Where a Markdown deliverable goes: the parent session's artifact store, with one wanted flag per live child.
+## The flag is set when a task or follow-up asks for one and consumed by its completion, so each completion saves
+## at most once; every completion, timeout, delete or release clears it, so it never grows past the live turns.
+struct Saving
+  port: Optional[Spill.Port]
+  wanted: ATS[String, Bool]
+end
+
 ## A `turn_finished` of a child: its id, the turn it ends and why it ended.
 struct Heard
   id: String
@@ -51,9 +68,9 @@ struct Heard
 end
 
 ## The subagent tools: a roster read fresh on every call (and naming the profiles in their description), the bounds,
-## and the per-session tables of expected turns, waiter addresses, async wakes (one parent id per child with an
-## async turn: who its finish wakes) and display names. The description is made when the tools are, so a session
-## reads its profiles again on every turn.
+## the per-session tables of expected turns, waiter addresses, async wakes (one parent id per child with an
+## async turn: who its finish wakes) and display names, and where Markdown deliverables go. The description is made
+## when the tools are, so a session reads its profiles again on every turn.
 def tools(
   roster: Fn[List[Profile]],
   limits: Limits,
@@ -62,6 +79,7 @@ def tools(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  saving: Saving,
 ) -> List[Spec.Tool]
   [
     Spec.Tool(
@@ -70,7 +88,7 @@ def tools(
       input_schema: JSON.schema(AgentArgs),
       asks: false,
       run: ->(ctx: Spec.Context, input: JSON.Value) {
-        run_all(ctx, input, roster, limits, turns, waits, wakes, names, locks)
+        run_all(ctx, input, roster, limits, turns, waits, wakes, names, locks, saving)
       },
       target: ->(_ctx: Spec.Context, input: JSON.Value) { ok(agent_target(input)) },
     ),
@@ -79,12 +97,14 @@ def tools(
       description: (
         "Send a follow-up message to one of the session's subagents. With `wait` (the default) it answers with " +
         "the child's next answer, or the part of it there is when `FINN_SUBAGENT_TIMEOUT_MS` stops its turn; " +
-        "without it, it answers with the id and the answer wakes this session."
+        "without it, it answers with the id and the answer wakes this session. With `deliverable: true` it also " +
+        "saves the answer as a Markdown deliverable in this session (the wake carries the reference when it " +
+        "does not wait), read back with `read_tool_output`."
       ),
       input_schema: JSON.schema(SendArgs),
       asks: false,
       run: ->(ctx: Spec.Context, input: JSON.Value) {
-        run_send(ctx, input, limits, turns, waits, wakes, names, locks)
+        run_send(ctx, input, limits, turns, waits, wakes, names, locks, saving)
       },
       target: ->(_ctx: Spec.Context, input: JSON.Value) { ok(send_target(input)) },
     ),
@@ -117,6 +137,10 @@ struct AgentTask
   ## `base_ref` (the session's own commit when none). The answer names the folder and the branch.
   cwd: Optional[String] = none
   worktree: Optional[Spec.Worktree] = none
+  ## Save the child's whole answer as a Markdown deliverable in this session: the result carries a stable
+  ## `[deliverable: ID]` reference with a bounded preview, read back with `read_tool_output`, also after the child
+  ## is gone. Without it the answer comes back cut at 8000 characters with no reference.
+  deliverable: Optional[Bool] = none
 end
 
 struct AgentArgs
@@ -128,6 +152,8 @@ struct SendArgs
   id: String
   text: String
   wait: Optional[Bool] = none
+  ## Save the child's answer as a Markdown deliverable in this session, as a task with `deliverable` does.
+  deliverable: Optional[Bool] = none
 end
 
 struct StopArgs
@@ -175,7 +201,10 @@ def agent_description(roster: Fn[List[Profile]]) -> String
     "commit, or `{\"base_ref\": \"REF\"}` on the named ref): a fresh branch and directory per writer, which " +
     "the answer names. With `wait` (the default) it answers with each answer in input order, each under " +
     "`NAME (provider/model): reason` and cut at 8000 characters; without it, it answers with their ids, one per " +
-    "line (each with its worktree path and branch when it has one), and each answer wakes this session."
+    "line (each with its worktree path and branch when it has one), and each answer wakes this session. A task " +
+    "with `deliverable: true` also saves its whole answer as a Markdown deliverable in this session: the result " +
+    "carries a `[deliverable: ID]` reference with the first 8000 characters, and `read_tool_output` reads the " +
+    "whole answer by that ID, also after the child is gone."
   )
 
   return "#{base} No profile is set up, so no subagent can start." if lines.empty?
@@ -224,6 +253,7 @@ def run_all(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  saving: Saving,
 ) -> Result[String]
   args = try Spec.args(input, AgentArgs.codec)
   return error("agent needs at least one task") if args.tasks.empty?
@@ -243,10 +273,11 @@ def run_all(
   end
 
   parent = try parent_profile(host, own)
+  store = gated(ctx, saving)
   if args.wait.unwrap_or(true)
-    run_waiting(host, parent, args.tasks, limits, turns, waits, wakes, names, locks, ctx.root, ctx.env)
+    run_waiting(host, parent, args.tasks, limits, turns, waits, wakes, names, locks, store, ctx.root, ctx.env)
   else
-    run_async(host, own, parent, args.tasks, limits, turns, waits, wakes, names, locks, ctx.root, ctx.env)
+    run_async(host, own, parent, args.tasks, limits, turns, waits, wakes, names, locks, store, ctx.root, ctx.env)
   end
 end
 
@@ -259,6 +290,7 @@ def run_send(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  saving: Saving,
 ) -> Result[String]
   args = try Spec.args(input, SendArgs.codec)
   return error("agent_send needs some text") if args.text.strip.empty?
@@ -267,11 +299,52 @@ def run_send(
   own = try need_session(ctx, SEND)
   return error("agent_send takes a subagent id, not the session's own") if args.id == own
 
+  store = gated(ctx, saving)
   if args.wait.unwrap_or(true)
-    send_waiting(host, own, args, limits, turns, waits, wakes, names, locks)
+    send_waiting(host, own, args, limits, turns, waits, wakes, names, locks, store)
   else
-    send_async(host, own, args, turns, waits, wakes, names, locks)
+    send_async(host, own, args, turns, waits, wakes, names, locks, store)
   end
+end
+
+## The deliverable store of this call: the session's own when the turn's tools offer `read_tool_output` to read it
+## back with, else none, so no reference is ever answered that the coordinator cannot read.
+def gated(ctx: Spec.Context, saving: Saving) -> Saving
+  return saving if ctx.tools.any? { |tool| tool.name == Spill.NAME }
+
+  saving.with(port: none)
+end
+
+## A task or follow-up that asks for a deliverable wants its child's next completion saved.
+def want(saving: Saving, child: String, deliverable: Optional[Bool]) -> Void
+  if deliverable.unwrap_or(false)
+    saving.wanted.put(child, true)
+  end
+end
+
+## Whether the next completion of `child` is a Markdown deliverable, consumed: each completion saves at most once.
+def take_save(saving: Saving, child: String) -> Bool
+  case saving.wanted.get(child)
+    ok(_) ->
+      saving.wanted.delete(child)
+      true
+    error(_) -> false
+  end
+end
+
+## The body of a deliverable answer: the whole answer saved as a session artifact of the parent first, with the
+## reference and a bounded preview, or a failure note with the preview when it could not be saved. The reference is
+## only ever answered after the save succeeded, so it always reads back.
+def deliver(answer: String, saving: Saving) -> String
+  for port in option_list(saving.port)
+    case port.save.call(answer)
+      ok(id) ->
+        return "[deliverable: #{id}] #{answer.bytesize} bytes; use read_tool_output with this ID.\n#{cut(answer)}"
+      error(e) -> return "[the deliverable was not saved: #{e.message}]\n#{cut(answer)}"
+    end
+  end
+
+  "[the deliverable was not saved: read_tool_output is not shown in this session]\n#{cut(answer)}"
 end
 
 def run_stop(ctx: Spec.Context, input: JSON.Value) -> Result[String]
@@ -300,6 +373,7 @@ def run_waiting(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  saving: Saving,
   home: String,
   env: Fn[String, Result[String]],
 ) -> Result[String]
@@ -310,7 +384,22 @@ def run_waiting(
   while next < tasks.size or not live.empty?
     while next < tasks.size and (limits.max == 0 or live_count(host, turns, wakes) < limits.max)
       name = named(tasks[next], parent)
-      case start_child(host, tasks[next], name, next, limits, done, turns, waits, wakes, names, locks, home, env)
+      case start_child(
+        host,
+        tasks[next],
+        name,
+        next,
+        limits,
+        done,
+        turns,
+        waits,
+        wakes,
+        names,
+        locks,
+        saving,
+        home,
+        env,
+      )
         ok(active) -> live = live.push(active)
         error(e) -> results = results.put(next, "#{name}: #{e.message}")
       end
@@ -335,7 +424,7 @@ def run_waiting(
             live = live.select { |a| a.id != active.id }
             results = results.put(
               active.index,
-              collected(host, active, heard.reason, turns, waits, wakes, names, true),
+              collected(host, active, heard.reason, turns, waits, wakes, names, saving, true),
             )
           error(_) -> nil
         end
@@ -345,14 +434,14 @@ def run_waiting(
         if limits.timeout_ms > 0 and not overdue.empty?
           for active in overdue
             _ = host.stop.call(active.id)
-            results = results.put(active.index, partial(host, active, limits))
-            forget(turns, waits, wakes, active.id)
+            results = results.put(active.index, partial(host, active, limits, saving))
+            forget(turns, waits, wakes, saving, active.id)
             live = live.select { |a| a.id != active.id }
           end
         else
           # A heartbeat with nothing overdue: reap gone children and answers the watcher missed, then wait again.
           # A real parent `/stop` cancels this task, so this never stops anything.
-          reaped = reap_finished(host, live, turns, waits, wakes, names)
+          reaped = reap_finished(host, live, turns, waits, wakes, names, saving)
           live = reaped.live
           for index in reaped.found.keys()
             for text in option_list(reaped.found.get(index))
@@ -505,6 +594,7 @@ def reconcile_async(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  saving: Saving,
 ) -> Result[Void]
   if not claim.contended and not accepted.empty?
     turns.put(child, accepted)
@@ -530,7 +620,7 @@ def reconcile_async(
           # still-owed wake delivers it; the wake itself runs past the claim, never under the lock.
           case take_wake(locks, child, accepted, turns, wakes)
             some(_) ->
-              wake_now(host, own, child, names, "ended")
+              wake_now(host, own, child, names, saving, "ended")
               ok()
             none -> ok()
           end
@@ -539,6 +629,7 @@ def reconcile_async(
     error(e) ->
       if not claim.contended
         forget_own(turns, wakes, child, accepted, claim.prior)
+        saving.wanted.delete(child)
       end
 
       error(e.message)
@@ -558,6 +649,7 @@ def run_async(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  saving: Saving,
   home: String,
   env: Fn[String, Result[String]],
 ) -> Result[String]
@@ -570,7 +662,7 @@ def run_async(
     created = host.create.call(Spec.NewChild(profile: profile_of(task), cwd: task.cwd, worktree: task.worktree))
     case created
       error(e) ->
-        cleanup_started(host, started, turns, waits, wakes, names)
+        cleanup_started(host, started, turns, waits, wakes, names, saving)
         return error(e.message)
       ok(_) -> nil
     end
@@ -582,24 +674,25 @@ def run_async(
     shown = shown.put(child, suffixed(place))
     # The wake is owed before the send runs, unless a waiter with a running turn owns the child's answer already.
     claim = claim_wake(host, child, own, waits, wakes)
-    case ensure_watch(host, child, turns, waits, wakes, names, locks)
+    case ensure_watch(host, child, turns, waits, wakes, names, locks, saving)
       error(e) ->
-        unstarted(host, child, place, turns, waits, wakes, names, env)
-        cleanup_started(host, started, turns, waits, wakes, names)
+        unstarted(host, child, place, turns, waits, wakes, names, saving, env)
+        cleanup_started(host, started, turns, waits, wakes, names, saving)
         return error(e.message)
       ok(_) -> nil
     end
 
     case send_turn(host, child, task.prompt)
       error(e) ->
-        unstarted(host, child, place, turns, waits, wakes, names, env)
-        cleanup_started(host, started, turns, waits, wakes, names)
+        unstarted(host, child, place, turns, waits, wakes, names, saving, env)
+        cleanup_started(host, started, turns, waits, wakes, names, saving)
         return error(e.message)
       ok(accepted) ->
-        case reconcile_async(host, child, own, accepted, claim, turns, wakes, names, locks)
+        want(saving, child, task.deliverable)
+        case reconcile_async(host, child, own, accepted, claim, turns, wakes, names, locks, saving)
           ok(_) -> nil
           error(e) ->
-            cleanup_started(host, started, turns, waits, wakes, names)
+            cleanup_started(host, started, turns, waits, wakes, names, saving)
             return error(e.message)
         end
     end
@@ -622,6 +715,7 @@ def send_waiting(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  saving: Saving,
 ) -> Result[String]
   done: Channel[Heard] = Channel.new(4)
   addr = done.address
@@ -633,7 +727,7 @@ def send_waiting(
     error(_) -> id
   end
 
-  case ensure_watch(host, id, turns, waits, wakes, names, locks)
+  case ensure_watch(host, id, turns, waits, wakes, names, locks, saving)
     error(e) -> return error(e.message)
     ok(_) -> nil
   end
@@ -641,11 +735,12 @@ def send_waiting(
   waits.put(id, addr)
   case host.send.call(id, args.text)
     error(e) ->
-      forget(turns, waits, wakes, id)
+      forget(turns, waits, wakes, saving, id)
       return error(e.message)
     ok(_) -> nil
   end
 
+  want(saving, id, args.deliverable)
   active = Active(index: 0, id: id, name: name, deadline: deadline(limits))
   case turn_of_child(host, id)
     ok(turn) -> turns.put(id, turn)
@@ -653,21 +748,21 @@ def send_waiting(
       # The turn may have finished between `send` and the snapshot: its finish is already waiting, so it is
       # collected instead of failing a child that has an answer.
       case done.recv(0)
-        ok(heard) -> return ok(collected(host, active, heard.reason, turns, waits, wakes, names, false))
+        ok(heard) -> return ok(collected(host, active, heard.reason, turns, waits, wakes, names, saving, false))
         error(_) ->
-          forget(turns, waits, wakes, id)
+          forget(turns, waits, wakes, saving, id)
           return error(e.message)
       end
   end
 
   while true
     case done.recv(wait_ms([active]))
-      ok(heard) -> return ok(collected(host, active, heard.reason, turns, waits, wakes, names, false))
+      ok(heard) -> return ok(collected(host, active, heard.reason, turns, waits, wakes, names, saving, false))
       error(_) ->
         if limits.timeout_ms > 0 and past?(active)
           _ = host.stop.call(id)
-          text = partial(host, active, limits)
-          forget(turns, waits, wakes, id)
+          text = partial(host, active, limits, saving)
+          forget(turns, waits, wakes, saving, id)
           return ok(text)
         end
 
@@ -678,12 +773,12 @@ def send_waiting(
             if session.turn_id.some?
               nil
             else
-              forget(turns, waits, wakes, id)
-              return ok(collected(host, active, "ended", turns, waits, wakes, names, false))
+              forget(turns, waits, wakes, saving, id)
+              return ok(collected(host, active, "ended", turns, waits, wakes, names, saving, false))
             end
 
           error(e) ->
-            forget(turns, waits, wakes, id)
+            forget(turns, waits, wakes, saving, id)
             return error(e.message)
         end
     end
@@ -701,11 +796,12 @@ def send_async(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  saving: Saving,
 ) -> Result[String]
   id = args.id
   # The wake is owed before the send runs, unless a waiter with a running turn owns the child's answer already.
   claim = claim_wake(host, id, own, waits, wakes)
-  case ensure_watch(host, id, turns, waits, wakes, names, locks)
+  case ensure_watch(host, id, turns, waits, wakes, names, locks, saving)
     error(e) ->
       if not claim.contended
         abandon_wake(wakes, id, claim.prior)
@@ -723,15 +819,17 @@ def send_async(
 
       error(e.message)
     ok(accepted) ->
-      case reconcile_async(host, id, own, accepted, claim, turns, wakes, names, locks)
+      want(saving, id, args.deliverable)
+      case reconcile_async(host, id, own, accepted, claim, turns, wakes, names, locks, saving)
         ok(_) -> ok(id)
         error(e) -> error(e.message)
       end
   end
 end
 
-# One finished child: its last answer under its name, or why it cannot be read. A child this call started is deleted
-# with its answer, so no worker of it is left; a follow-up child stays open.
+# One finished child: its last answer under its name, or why it cannot be read. A deliverable answer is saved
+# as the parent's artifact before anything else, so the reference it carries always reads back. A child this call
+# started is deleted with its answer, so no worker of it is left; a follow-up child stays open.
 def collected(
   host: Spec.Host,
   active: Active,
@@ -740,15 +838,22 @@ def collected(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  saving: Saving,
   remove: Bool,
 ) -> String
   text = case host.snapshot.call(active.id)
     ok(session) ->
-      headed(active, head(active.name, session.provider, session.model, reason), cut(last_answer(session.history)))
+      answer = last_answer(session.history)
+      body = cut(answer)
+      if take_save(saving, active.id)
+        body = deliver(answer, saving)
+      end
+
+      headed(active, head(active.name, session.provider, session.model, reason), body)
     error(e) -> "#{active.name}: could not read the answer: #{e.message}"
   end
 
-  forget(turns, waits, wakes, active.id)
+  forget(turns, waits, wakes, saving, active.id)
   if remove
     _ = host.delete.call(active.id)
     names.delete(active.id)
@@ -757,13 +862,19 @@ def collected(
   text
 end
 
-# A child past its deadline: its turn is stopped, and the result holds the part of the answer there is. The child
-# stays open for `agent_send` follow-up.
-def partial(host: Spec.Host, active: Active, limits: Limits) -> String
+# A child past its deadline: its turn is stopped, and the result holds the part of the answer there is, saved as
+# a deliverable when one was asked for. The child stays open for `agent_send` follow-up.
+def partial(host: Spec.Host, active: Active, limits: Limits, saving: Saving) -> String
   text = "timed out after #{limits.timeout_ms} ms"
   case host.snapshot.call(active.id)
     ok(session) ->
-      headed(active, head(active.name, session.provider, session.model, text), cut(last_answer(session.history)))
+      answer = last_answer(session.history)
+      body = cut(answer)
+      if take_save(saving, active.id)
+        body = deliver(answer, saving)
+      end
+
+      headed(active, head(active.name, session.provider, session.model, text), body)
     error(e) -> "#{active.name}: #{text}: #{e.message}"
   end
 end
@@ -812,6 +923,7 @@ def start_child(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  saving: Saving,
   home: String,
   env: Fn[String, Result[String]],
 ) -> Result[Active]
@@ -819,9 +931,9 @@ def start_child(
   names.put(child, name)
   place = place_of(host, child, home, task.worktree.some?, env)
   addr = done.address
-  case ensure_watch(host, child, turns, waits, wakes, names, locks)
+  case ensure_watch(host, child, turns, waits, wakes, names, locks, saving)
     error(e) ->
-      unstarted(host, child, place, turns, waits, wakes, names, env)
+      unstarted(host, child, place, turns, waits, wakes, names, saving, env)
       return error(e.message)
     ok(_) -> nil
   end
@@ -829,10 +941,12 @@ def start_child(
   waits.put(child, addr)
   case host.send.call(child, task.prompt)
     error(e) ->
-      unstarted(host, child, place, turns, waits, wakes, names, env)
+      unstarted(host, child, place, turns, waits, wakes, names, saving, env)
       return error(e.message)
     ok(_) -> nil
   end
+
+  want(saving, child, task.deliverable)
 
   case turn_of_child(host, child)
     ok(turn) -> turns.put(child, turn)
@@ -842,7 +956,7 @@ def start_child(
       case done.recv(0)
         ok(heard) -> turns.put(child, heard.turn_id)
         error(_) ->
-          cleanup_one(host, child, turns, waits, wakes, names)
+          cleanup_one(host, child, turns, waits, wakes, names, saving)
           return error(e.message)
       end
   end
@@ -902,9 +1016,10 @@ def unstarted(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  saving: Saving,
   env: Fn[String, Result[String]],
 ) -> Void
-  cleanup_one(host, child, turns, waits, wakes, names)
+  cleanup_one(host, child, turns, waits, wakes, names, saving)
   for branch in option_list(place.branch)
     Worktree.release(place.root, branch, env)
   end
@@ -923,11 +1038,12 @@ def ensure_watch(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  saving: Saving,
 ) -> Result[Void]
   host.watch.call(
     child,
     ["turn_finished"],
-    ->(seen: Spec.Seen) { dispatch(host, child, turns, waits, wakes, names, locks, seen) },
+    ->(seen: Spec.Seen) { dispatch(host, child, turns, waits, wakes, names, locks, saving, seen) },
   )
 end
 
@@ -939,6 +1055,7 @@ def dispatch(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  saving: Saving,
   seen: Spec.Seen,
 ) -> Void
   turn = turn_of(seen)
@@ -975,13 +1092,14 @@ def dispatch(
       case wakes.get(child)
         ok(_) ->
           for own in option_list(take_wake(locks, child, turn, turns, wakes))
-            wake_parent(host, own, child, names, seen, reason)
+            wake_parent(host, own, child, names, saving, seen, reason)
           end
 
         error(_) ->
           # A turn nobody waits for and nobody is owed a wake for: stale or idle, never a wake. Its entry goes so
-          # the cap never counts a turn nobody owns.
+          # the cap never counts a turn nobody owns, with a deliverable nobody will collect.
           turns.delete(child)
+          saving.wanted.delete(child)
       end
   end
 end
@@ -993,16 +1111,24 @@ def wake_parent(
   own: String,
   child: String,
   names: ATS[String, String],
+  saving: Saving,
   seen: Spec.Seen,
   reason: String,
 ) -> Void
-  wake_now(host, own, child, names, reason)
+  wake_now(host, own, child, names, saving, reason)
 end
 
 # The same wake without the event at hand: the answer the child's snapshot holds now, under the same headed line.
 # A send that reconciles an already-ended turn wakes this way, with `ended` for the reason the deferred finish
 # carried, as a missed answer the heartbeat reaps does.
-def wake_now(host: Spec.Host, own: String, child: String, names: ATS[String, String], reason: String) -> Void
+def wake_now(
+  host: Spec.Host,
+  own: String,
+  child: String,
+  names: ATS[String, String],
+  saving: Saving,
+  reason: String,
+) -> Void
   snapshot = case host.snapshot.call(child)
     ok(session) -> some(session)
     error(_) -> none
@@ -1014,8 +1140,14 @@ def wake_now(host: Spec.Host, own: String, child: String, names: ATS[String, Str
       error(_) -> child
     end
 
+    answer = last_answer(session.history)
+    body = cut(answer)
+    if take_save(saving, child)
+      body = deliver(answer, saving)
+    end
+
     headed = head(display, session.provider, session.model, reason)
-    _ = host.send.call(own, "#{headed}\n#{cut(last_answer(session.history))}")
+    _ = host.send.call(own, "#{headed}\n#{body}")
   end
 end
 
@@ -1026,8 +1158,9 @@ def cleanup_one(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  saving: Saving,
 ) -> Void
-  forget(turns, waits, wakes, child)
+  forget(turns, waits, wakes, saving, child)
   names.delete(child)
   _ = host.delete.call(child)
 end
@@ -1039,9 +1172,10 @@ def cleanup_started(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  saving: Saving,
 ) -> Void
   for child in started
-    cleanup_one(host, child, turns, waits, wakes, names)
+    cleanup_one(host, child, turns, waits, wakes, names, saving)
   end
 end
 
@@ -1049,11 +1183,13 @@ def forget(
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
+  saving: Saving,
   child: String,
 ) -> Void
   turns.delete(child)
   waits.delete(child)
   wakes.delete(child)
+  saving.wanted.delete(child)
 end
 
 # How many children of this session run a turn now: the slots the cap counts. A child whose turn has ended since
@@ -1095,6 +1231,7 @@ def reap_finished(
   waits: ATS[String, Address[Heard]],
   wakes: ATS[String, String],
   names: ATS[String, String],
+  saving: Saving,
 ) -> Reaped
   kept: List[Active] = []
   found: Map[Int, String] = {}
@@ -1104,12 +1241,12 @@ def reap_finished(
         if session.turn_id.some?
           kept = kept.push(active)
         else
-          forget(turns, waits, wakes, active.id)
-          found = found.put(active.index, collected(host, active, "ended", turns, waits, wakes, names, true))
+          forget(turns, waits, wakes, saving, active.id)
+          found = found.put(active.index, collected(host, active, "ended", turns, waits, wakes, names, saving, true))
         end
 
       error(e) ->
-        forget(turns, waits, wakes, active.id)
+        forget(turns, waits, wakes, saving, active.id)
         names.delete(active.id)
         found = found.put(active.index, "#{active.name}: #{e.message}")
     end

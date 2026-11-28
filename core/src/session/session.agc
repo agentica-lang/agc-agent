@@ -752,9 +752,7 @@ def open_session(
   wakes: ATS[String, String] = ATS.new()
   names: ATS[String, String] = ATS.new()
   locks: ATS[String, Bool] = ATS.new()
-  context = context.with(
-    late: agents_late(context.late, options, context.root, provider, model, parent, turns, waits, wakes, names, locks),
-  )
+  wanted: ATS[String, Bool] = ATS.new()
 
   header = Store.Header(
     id: new_id(registry.sessions.size),
@@ -775,6 +773,28 @@ def open_session(
   end
 
   file = try Store.create(port, folder(options), header)
+  saving = Agents.Saving(port: none, wanted: wanted)
+  if parent.none?
+    saving = Agents.Saving(port: some(Store.artifacts(file)), wanted: wanted)
+  end
+
+  context = context.with(
+    late: agents_late(
+      context.late,
+      options,
+      context.root,
+      provider,
+      model,
+      parent,
+      turns,
+      waits,
+      wakes,
+      names,
+      locks,
+      saving,
+    ),
+  )
+
   entry(options, header, opened(context, approver, registry.address), file, none, ceiling, parent_at)
 end
 
@@ -838,6 +858,12 @@ def read(options: Config.Options, listed: Entry, at: Address[Msg]) -> Result[Loa
   wakes: ATS[String, String] = ATS.new()
   names: ATS[String, String] = ATS.new()
   locks: ATS[String, Bool] = ATS.new()
+  wanted: ATS[String, Bool] = ATS.new()
+  saving = Agents.Saving(port: none, wanted: wanted)
+  if saved.header.parent.none?
+    saving = Agents.Saving(port: some(Store.artifacts(listed.file)), wanted: wanted)
+  end
+
   context = base.with(
     late: agents_late(
       base.late,
@@ -851,6 +877,7 @@ def read(options: Config.Options, listed: Entry, at: Address[Msg]) -> Result[Loa
       wakes,
       names,
       locks,
+      saving,
     ),
   )
 
@@ -1357,6 +1384,8 @@ end
 
 # The tools that come later, with the subagents of a session in `root` on `provider` with `model` after them: read
 # again on every turn, past the tools that come later. A child has no children, so it keeps only the tools it had.
+# A deliverable a child saves goes to the parent session's artifact store (`saving`), the same store
+# `read_tool_output` reads back from.
 def agents_late(
   existing: Optional[Fn[String, List[Tools.Tool]]],
   options: Config.Options,
@@ -1369,6 +1398,7 @@ def agents_late(
   wakes: ATS[String, String],
   names: ATS[String, String],
   locks: ATS[String, Bool],
+  saving: Agents.Saving,
 ) -> Optional[Fn[String, List[Tools.Tool]]]
   for _ in option_list(parent)
     return existing
@@ -1376,7 +1406,7 @@ def agents_late(
 
   roster = -> { agent_roster(options, root, provider, model) }
   limits = Agents.Limits(max: options.subagents_max, timeout_ms: options.subagent_timeout_ms)
-  with_agents = ->(_root: String) { Agents.tools(roster, limits, turns, waits, wakes, names, locks) }
+  with_agents = ->(_root: String) { Agents.tools(roster, limits, turns, waits, wakes, names, locks, saving) }
   case existing
     some(given) -> some(->(dir: String) { given.call(dir) + with_agents.call(dir) })
     none -> some(with_agents)
