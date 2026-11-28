@@ -199,7 +199,17 @@ def test_async_then_two_waited_followups_each_get_an_answer() -> Result[Void]
     names: ATS[String, String] = ATS.new()
     roster: Fn[List[Agents.Profile]] = -> { [] }
     limits = Agents.Limits(max: 0, timeout_ms: 0)
-    tools = Agents.tools(roster, limits, turns, waits, wakes, names, locks)
+    tools = Agents.tools(
+      roster,
+      limits,
+      turns,
+      waits,
+      wakes,
+      names,
+      locks,
+      Agents.Saving(port: none, wanted: ATS.new()),
+    )
+
     ctx = Spec.Context(
       root: h.work,
       env: ->(_name: String) { error("no env") },
@@ -242,7 +252,17 @@ def test_async_batch_over_cap_starts_nothing() -> Result[Void]
     names: ATS[String, String] = ATS.new()
     roster: Fn[List[Agents.Profile]] = -> { [] }
     limits = Agents.Limits(max: 1, timeout_ms: 0)
-    tools = Agents.tools(roster, limits, turns, waits, wakes, names, locks)
+    tools = Agents.tools(
+      roster,
+      limits,
+      turns,
+      waits,
+      wakes,
+      names,
+      locks,
+      Agents.Saving(port: none, wanted: ATS.new()),
+    )
+
     ctx = Spec.Context(
       root: h.work,
       env: ->(_name: String) { error("no env") },
@@ -280,7 +300,17 @@ def test_empty_profile_means_the_sessions_own() -> Result[Void]
     names: ATS[String, String] = ATS.new()
     roster: Fn[List[Agents.Profile]] = -> { [] }
     limits = Agents.Limits(max: 0, timeout_ms: 0)
-    tools = Agents.tools(roster, limits, turns, waits, wakes, names, locks)
+    tools = Agents.tools(
+      roster,
+      limits,
+      turns,
+      waits,
+      wakes,
+      names,
+      locks,
+      Agents.Saving(port: none, wanted: ATS.new()),
+    )
+
     ctx = Spec.Context(
       root: h.work,
       env: ->(_name: String) { error("no env") },
@@ -377,7 +407,17 @@ def test_waited_child_kept_open_then_sent_async_wakes_parent_once() -> Result[Vo
     locks: ATS[String, Bool] = ATS.new()
     names: ATS[String, String] = ATS.new()
     roster: Fn[List[Agents.Profile]] = -> { [] }
-    tools = Agents.tools(roster, Agents.Limits(max: 0, timeout_ms: 500), turns, waits, wakes, names, locks)
+    tools = Agents.tools(
+      roster,
+      Agents.Limits(max: 0, timeout_ms: 500),
+      turns,
+      waits,
+      wakes,
+      names,
+      locks,
+      Agents.Saving(port: none, wanted: ATS.new()),
+    )
+
     ctx = Spec.Context(
       root: h.work,
       env: ->(_name: String) { error("no env") },
@@ -412,7 +452,17 @@ def test_an_idle_child_with_an_expected_turn_frees_its_cap_slot() -> Result[Void
   names: ATS[String, String] = ATS.new()
   turns.put("child-1", "turn-1")
   roster: Fn[List[Agents.Profile]] = -> { [] }
-  tools = Agents.tools(roster, Agents.Limits(max: 1, timeout_ms: 0), turns, waits, wakes, names, locks)
+  tools = Agents.tools(
+    roster,
+    Agents.Limits(max: 1, timeout_ms: 0),
+    turns,
+    waits,
+    wakes,
+    names,
+    locks,
+    Agents.Saving(port: none, wanted: ATS.new()),
+  )
+
   ctx = Spec.Context(
     root: "/tmp",
     env: ->(_name: String) { error("no env") },
@@ -696,7 +746,17 @@ def immediate() -> Immediate
   wakes: ATS[String, String] = ATS.new()
   locks: ATS[String, Bool] = ATS.new()
   names: ATS[String, String] = ATS.new()
-  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names, locks)
+  tools = Agents.tools(
+    -> { [] },
+    Agents.Limits(max: 0, timeout_ms: 0),
+    turns,
+    waits,
+    wakes,
+    names,
+    locks,
+    Agents.Saving(port: none, wanted: ATS.new()),
+  )
+
   ctx = Spec.Context(
     root: "/tmp",
     env: ->(_name: String) { error("no env") },
@@ -725,7 +785,17 @@ def rig_on(handlers: Channel[Fn[Spec.Seen, Void]], woken: Channel[Woke], host: S
   wakes: ATS[String, String] = ATS.new()
   locks: ATS[String, Bool] = ATS.new()
   names: ATS[String, String] = ATS.new()
-  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names, locks)
+  tools = Agents.tools(
+    -> { [] },
+    Agents.Limits(max: 0, timeout_ms: 0),
+    turns,
+    waits,
+    wakes,
+    names,
+    locks,
+    Agents.Saving(port: none, wanted: ATS.new()),
+  )
+
   ctx = Spec.Context(
     root: "/tmp",
     env: ->(_name: String) { error("no env") },
@@ -1193,7 +1263,17 @@ def test_async_send_records_its_turn_despite_a_missing_wake() -> Result[Void]
   names: ATS[String, String] = ATS.new()
   names.put("child-1", "build")
   host = steal_host(handlers, woken, wakes)
-  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names, locks)
+  tools = Agents.tools(
+    -> { [] },
+    Agents.Limits(max: 0, timeout_ms: 0),
+    turns,
+    waits,
+    wakes,
+    names,
+    locks,
+    Agents.Saving(port: none, wanted: ATS.new()),
+  )
+
   ctx = Spec.Context(
     root: "/tmp",
     env: ->(_name: String) { error("no env") },
@@ -1251,7 +1331,17 @@ def test_async_send_queued_into_a_waited_turn_wakes_nothing() -> Result[Void]
   names: ATS[String, String] = ATS.new()
   turns.put("child-1", "turn-1")
   waits.put("child-1", waiter.address)
-  tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names, locks)
+  tools = Agents.tools(
+    -> { [] },
+    Agents.Limits(max: 0, timeout_ms: 0),
+    turns,
+    waits,
+    wakes,
+    names,
+    locks,
+    Agents.Saving(port: none, wanted: ATS.new()),
+  )
+
   ctx = Spec.Context(
     root: "/tmp",
     env: ->(_name: String) { error("no env") },

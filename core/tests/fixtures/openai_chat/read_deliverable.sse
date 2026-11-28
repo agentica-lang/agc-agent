@@ -1,0 +1,5 @@
+data: {"choices": [{"finish_reason": null, "index": 0, "delta": {"role": "assistant", "tool_calls": [{"index": 0, "id": "call_artifact", "type": "function", "function": {"name": "read_tool_output", "arguments": "{\"id\": \"f861e833c231a9f1bd580b677f5521e02071391fdf84a127da7f2b41ecc4f438\"}"}}]}}]}
+
+data: {"choices": [{"finish_reason": "tool_calls", "index": 0, "delta": {}}]}
+
+data: [DONE]

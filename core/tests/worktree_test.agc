@@ -166,7 +166,17 @@ def test_an_async_start_names_the_worktree_in_its_id_line() -> Result[Void]
     wakes: ATS[String, String] = ATS.new()
     names: ATS[String, String] = ATS.new()
     locks: ATS[String, Bool] = ATS.new()
-    tools = Agents.tools(-> { [] }, Agents.Limits(max: 0, timeout_ms: 0), turns, waits, wakes, names, locks)
+    tools = Agents.tools(
+      -> { [] },
+      Agents.Limits(max: 0, timeout_ms: 0),
+      turns,
+      waits,
+      wakes,
+      names,
+      locks,
+      Agents.Saving(port: none, wanted: ATS.new()),
+    )
+
     ctx = Spec.Context(
       root: h.work,
       env: ->(name: String) { H.fake_env(name) },
