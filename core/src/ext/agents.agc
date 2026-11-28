@@ -5,11 +5,13 @@
 ## back cut at `MAX_ANSWER_CHARS` characters, under its name and provider and model. A wait ends when the child's
 ## turn does or when `Limits.timeout_ms` stops it; a parent's `/stop` stops the children's turns too through the
 ## session route, and they stay open. A child that times out stays open for `agent_send` follow-up; an async child
-## stays open too, and every child dies with its parent. One watcher per child dispatches each `turn_finished` to
-## the waiter of its turn or to the parent's wake, by turn id, so a waited follow-up after an async start and two
-## waited follow-ups in a row each get their own answer and never wake twice. Transient waiter state (the expected
-## turns and the waiter addresses) is cleared on every completion, timeout or delete, so it never grows past the live
-## turns; the names keep one display name per live child.
+## stays open too, and every child dies with its parent. One watcher per child dispatches each `turn_finished`
+## by turn id: to the waiter of a waited turn, or to the parent's wake for an async turn, whose entry holds the
+## real id of the session to wake. A turn nobody waits for and nobody is owed a wake for is stale and never wakes,
+## so a waited follow-up after an async start and two waited follow-ups in a row each get their own answer and
+## never wake twice. Transient per-turn state (the expected turns, the waiter addresses and the async wakes) is
+## cleared on every completion, timeout or delete, so it never grows past the live turns; the names keep one display
+## name per live child.
 
 import Protocol from "pkg/protocol/protocol"
 import Spec from "../tools/spec"
@@ -38,13 +40,15 @@ struct Heard
 end
 
 ## The subagent tools: a roster read fresh on every call (and naming the profiles in their description), the bounds,
-## and the per-session tables of expected turns, waiter addresses and display names. The description is made when the
-## tools are, so a session reads its profiles again on every turn.
+## and the per-session tables of expected turns, waiter addresses, async wakes (one parent id per child with an
+## async turn: who its finish wakes) and display names. The description is made when the tools are, so a session
+## reads its profiles again on every turn.
 def tools(
   roster: Fn[List[Profile]],
   limits: Limits,
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> List[Spec.Tool]
   [
@@ -53,7 +57,9 @@ def tools(
       description: agent_description(roster),
       input_schema: JSON.schema(AgentArgs),
       asks: false,
-      run: ->(ctx: Spec.Context, input: JSON.Value) { run_all(ctx, input, roster, limits, turns, waits, names) },
+      run: ->(ctx: Spec.Context, input: JSON.Value) {
+        run_all(ctx, input, roster, limits, turns, waits, wakes, names)
+      },
       target: ->(_ctx: Spec.Context, input: JSON.Value) { ok(agent_target(input)) },
     ),
     Spec.Tool(
@@ -65,7 +71,7 @@ def tools(
       ),
       input_schema: JSON.schema(SendArgs),
       asks: false,
-      run: ->(ctx: Spec.Context, input: JSON.Value) { run_send(ctx, input, limits, turns, waits, names) },
+      run: ->(ctx: Spec.Context, input: JSON.Value) { run_send(ctx, input, limits, turns, waits, wakes, names) },
       target: ->(_ctx: Spec.Context, input: JSON.Value) { ok(send_target(input)) },
     ),
     Spec.Tool(
@@ -175,6 +181,7 @@ def run_all(
   limits: Limits,
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> Result[String]
   args = try Spec.args(input, AgentArgs.codec)
@@ -194,9 +201,9 @@ def run_all(
 
   parent = try parent_profile(host, own)
   if args.wait.unwrap_or(true)
-    run_waiting(host, parent, args.tasks, limits, turns, waits, names)
+    run_waiting(host, parent, args.tasks, limits, turns, waits, wakes, names)
   else
-    run_async(host, own, parent, args.tasks, limits, turns, waits, names)
+    run_async(host, own, parent, args.tasks, limits, turns, waits, wakes, names)
   end
 end
 
@@ -206,6 +213,7 @@ def run_send(
   limits: Limits,
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> Result[String]
   args = try Spec.args(input, SendArgs.codec)
@@ -216,9 +224,9 @@ def run_send(
   return error("agent_send takes a subagent id, not the session's own") if args.id == own
 
   if args.wait.unwrap_or(true)
-    send_waiting(host, own, args, limits, turns, waits, names)
+    send_waiting(host, own, args, limits, turns, waits, wakes, names)
   else
-    send_async(host, own, args, turns, waits, names)
+    send_async(host, own, args, turns, waits, wakes, names)
   end
 end
 
@@ -245,17 +253,17 @@ def run_waiting(
   limits: Limits,
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> Result[String]
   done: Channel[Heard] = Channel.new([2 * tasks.size + 2, 4].max.unwrap!)
-  addr = done.address
   live: List[Active] = []
   results: Map[Int, String] = {}
   next = 0
   while next < tasks.size or not live.empty?
-    while next < tasks.size and (limits.max == 0 or live_count(host, turns) < limits.max)
+    while next < tasks.size and (limits.max == 0 or live_count(host, turns, wakes) < limits.max)
       name = named(tasks[next], parent)
-      case start_child(host, tasks[next], name, next, limits, addr, turns, waits, names)
+      case start_child(host, tasks[next], name, next, limits, done, turns, waits, wakes, names)
         ok(active) -> live = live.push(active)
         error(e) -> results = results.put(next, "#{name}: #{e.message}")
       end
@@ -278,7 +286,10 @@ def run_waiting(
         case live.find { |a| a.id == heard.id }
           ok(active) ->
             live = live.select { |a| a.id != active.id }
-            results = results.put(active.index, collected(host, active, heard.reason, turns, waits, names, true))
+            results = results.put(
+              active.index,
+              collected(host, active, heard.reason, turns, waits, wakes, names, true),
+            )
           error(_) -> nil
         end
 
@@ -288,13 +299,13 @@ def run_waiting(
           for active in overdue
             _ = host.stop.call(active.id)
             results = results.put(active.index, partial(host, active, limits))
-            forget(turns, waits, active.id)
+            forget(turns, waits, wakes, active.id)
             live = live.select { |a| a.id != active.id }
           end
         else
           # A heartbeat with nothing overdue: reap gone children and answers the watcher missed, then wait again.
           # A real parent `/stop` cancels this task, so this never stops anything.
-          reaped = reap_finished(host, live, turns, waits, names)
+          reaped = reap_finished(host, live, turns, waits, wakes, names)
           live = reaped.live
           for index in reaped.found.keys()
             for text in option_list(reaped.found.get(index))
@@ -327,9 +338,10 @@ def run_async(
   limits: Limits,
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> Result[String]
-  return error(capped(limits.max)) if limits.max > 0 and live_count(host, turns) + tasks.size > limits.max
+  return error(capped(limits.max)) if limits.max > 0 and live_count(host, turns, wakes) + tasks.size > limits.max
 
   started: List[String] = []
   for task in tasks
@@ -337,7 +349,7 @@ def run_async(
     created = host.create.call(Spec.NewChild(profile: profile_of(task)))
     case created
       error(e) ->
-        cleanup_started(host, started, turns, waits, names)
+        cleanup_started(host, started, turns, waits, wakes, names)
         return error(e.message)
       ok(_) -> nil
     end
@@ -345,24 +357,28 @@ def run_async(
     child = created.unwrap_or("")
     started = started.push(child)
     names.put(child, name)
-    case ensure_watch(host, own, child, turns, waits, names)
+    case ensure_watch(host, child, turns, waits, wakes, names)
       error(e) ->
-        cleanup_started(host, started, turns, waits, names)
+        cleanup_started(host, started, turns, waits, wakes, names)
         return error(e.message)
       ok(_) -> nil
     end
 
     case host.send.call(child, task.prompt)
       error(e) ->
-        cleanup_started(host, started, turns, waits, names)
+        cleanup_started(host, started, turns, waits, wakes, names)
         return error(e.message)
       ok(_) -> nil
     end
 
     case turn_of_child(host, child)
-      ok(turn) -> turns.put(child, turn)
+      ok(turn) ->
+        # The turn is recorded before what wakes it: the table holds the real session, so the finish wakes this
+        # session however the child started.
+        turns.put(child, turn)
+        wakes.put(child, own)
       error(e) ->
-        cleanup_started(host, started, turns, waits, names)
+        cleanup_started(host, started, turns, waits, wakes, names)
         return error(e.message)
     end
   end
@@ -381,13 +397,20 @@ def send_waiting(
   limits: Limits,
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> Result[String]
   done: Channel[Heard] = Channel.new(4)
   addr = done.address
   id = args.id
-  names.put(id, id)
-  case ensure_watch(host, own, id, turns, waits, names)
+  # The follow-up keeps the display name the child's first call recorded: an unknown id keeps its id, and nothing
+  # is stored for it, so a refused id leaves no name behind.
+  name = case names.get(id)
+    ok(known) -> known
+    error(_) -> id
+  end
+
+  case ensure_watch(host, id, turns, waits, wakes, names)
     error(e) -> return error(e.message)
     ok(_) -> nil
   end
@@ -395,27 +418,33 @@ def send_waiting(
   waits.put(id, addr)
   case host.send.call(id, args.text)
     error(e) ->
-      forget(turns, waits, id)
+      forget(turns, waits, wakes, id)
       return error(e.message)
     ok(_) -> nil
   end
 
+  active = Active(index: 0, id: id, name: name, deadline: deadline(limits))
   case turn_of_child(host, id)
     ok(turn) -> turns.put(id, turn)
     error(e) ->
-      forget(turns, waits, id)
-      return error(e.message)
+      # The turn may have finished between `send` and the snapshot: its finish is already waiting, so it is
+      # collected instead of failing a child that has an answer.
+      case done.recv(0)
+        ok(heard) -> return ok(collected(host, active, heard.reason, turns, waits, wakes, names, false))
+        error(_) ->
+          forget(turns, waits, wakes, id)
+          return error(e.message)
+      end
   end
 
-  active = Active(index: 0, id: id, name: id, deadline: deadline(limits))
   while true
     case done.recv(wait_ms([active]))
-      ok(heard) -> return ok(collected(host, active, heard.reason, turns, waits, names, false))
+      ok(heard) -> return ok(collected(host, active, heard.reason, turns, waits, wakes, names, false))
       error(_) ->
         if limits.timeout_ms > 0 and past?(active)
           _ = host.stop.call(id)
           text = partial(host, active, limits)
-          forget(turns, waits, id)
+          forget(turns, waits, wakes, id)
           return ok(text)
         end
 
@@ -426,12 +455,12 @@ def send_waiting(
             if session.turn_id.some?
               nil
             else
-              forget(turns, waits, id)
-              return ok(collected(host, active, "ended", turns, waits, names, false))
+              forget(turns, waits, wakes, id)
+              return ok(collected(host, active, "ended", turns, waits, wakes, names, false))
             end
 
           error(e) ->
-            forget(turns, waits, id)
+            forget(turns, waits, wakes, id)
             return error(e.message)
         end
     end
@@ -446,26 +475,29 @@ def send_async(
   args: SendArgs,
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> Result[String]
   id = args.id
-  names.put(id, id)
-  case ensure_watch(host, own, id, turns, waits, names)
+  case ensure_watch(host, id, turns, waits, wakes, names)
     error(e) -> return error(e.message)
     ok(_) -> nil
   end
 
   case host.send.call(id, args.text)
     error(e) ->
-      forget(turns, waits, id)
+      forget(turns, waits, wakes, id)
       return error(e.message)
     ok(_) -> nil
   end
 
   case turn_of_child(host, id)
-    ok(turn) -> turns.put(id, turn)
+    ok(turn) ->
+      # The turn is recorded with who it wakes: the table holds the real session.
+      turns.put(id, turn)
+      wakes.put(id, own)
     error(e) ->
-      forget(turns, waits, id)
+      forget(turns, waits, wakes, id)
       return error(e.message)
   end
 
@@ -480,6 +512,7 @@ def collected(
   reason: String,
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
   remove: Bool,
 ) -> String
@@ -489,7 +522,7 @@ def collected(
     error(e) -> "#{active.name}: could not read the answer: #{e.message}"
   end
 
-  forget(turns, waits, active.id)
+  forget(turns, waits, wakes, active.id)
   if remove
     _ = host.delete.call(active.id)
     names.delete(active.id)
@@ -539,16 +572,18 @@ def start_child(
   name: String,
   index: Int,
   limits: Limits,
-  addr: Address[Heard],
+  done: Channel[Heard],
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> Result[Active]
   child = try host.create.call(Spec.NewChild(profile: profile_of(task)))
   names.put(child, name)
-  case ensure_watch(host, "", child, turns, waits, names)
+  addr = done.address
+  case ensure_watch(host, child, turns, waits, wakes, names)
     error(e) ->
-      cleanup_one(host, child, turns, waits, names)
+      cleanup_one(host, child, turns, waits, wakes, names)
       return error(e.message)
     ok(_) -> nil
   end
@@ -556,7 +591,7 @@ def start_child(
   waits.put(child, addr)
   case host.send.call(child, task.prompt)
     error(e) ->
-      cleanup_one(host, child, turns, waits, names)
+      cleanup_one(host, child, turns, waits, wakes, names)
       return error(e.message)
     ok(_) -> nil
   end
@@ -564,38 +599,45 @@ def start_child(
   case turn_of_child(host, child)
     ok(turn) -> turns.put(child, turn)
     error(e) ->
-      cleanup_one(host, child, turns, waits, names)
-      return error(e.message)
+      # The turn may have finished between `send` and the snapshot: its finish is already waiting for the waiter,
+      # so the child keeps its turn instead of failing with an answer on its way.
+      case done.recv(0)
+        ok(heard) -> turns.put(child, heard.turn_id)
+        error(_) ->
+          cleanup_one(host, child, turns, waits, wakes, names)
+          return error(e.message)
+      end
   end
 
   ok(Active(index: index, id: child, name: name, deadline: deadline(limits)))
 end
 
-# The one watcher of a child: later watches of the same names keep this first handler by the `Watch` contract, so
-# every waiter registers through it. It sends the finish to the waiter of its turn, or wakes the parent when no
-# waiter waits for that turn. A turn id it does not expect is stale and dropped, so no duplicate or misdirected wake
-# ever runs.
+# The one watcher of a child: later watches of the same names keep this first handler by the `Watch` contract,
+# so every waiter registers through it. It sends the finish to the waiter of its turn, or wakes the parent when an
+# async turn owes it a wake. The handler reads who to wake from the tables, never from what the registering call
+# captured, so a child a waited start registered wakes the same as one an async start did. A turn id it does not
+# expect is stale and dropped, so no duplicate or misdirected wake ever runs.
 def ensure_watch(
   host: Spec.Host,
-  own: String,
   child: String,
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> Result[Void]
   host.watch.call(
     child,
     ["turn_finished"],
-    ->(seen: Spec.Seen) { dispatch(host, own, child, turns, waits, names, seen) },
+    ->(seen: Spec.Seen) { dispatch(host, child, turns, waits, wakes, names, seen) },
   )
 end
 
 def dispatch(
   host: Spec.Host,
-  own: String,
   child: String,
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
   seen: Spec.Seen,
 ) -> Void
@@ -606,11 +648,11 @@ def dispatch(
     ok(_) -> nil
     error(_) ->
       # No expected turn yet: the send has not recorded it. A waiter still gets it, so a fast finish cannot hang;
-      # without a waiter there is nothing to wake yet.
+      # without a waiter there is no turn to deliver and nothing owed a wake.
       case waits.get(child)
         ok(addr) ->
           _ = addr.send(Heard(id: child, turn_id: turn, reason: reason), 1000)
-          forget(turns, waits, child)
+          forget(turns, waits, wakes, child)
           return
         error(_) -> return
       end
@@ -619,10 +661,19 @@ def dispatch(
   case waits.get(child)
     ok(addr) ->
       _ = addr.send(Heard(id: child, turn_id: turn, reason: reason), 1000)
-      forget(turns, waits, child)
+      forget(turns, waits, wakes, child)
     error(_) ->
-      turns.delete(child)
-      wake_parent(host, own, child, names, seen, reason)
+      case wakes.get(child)
+        ok(own) ->
+          # The async turn's wake: owed exactly once, to the real session that sent it. The entries go before the
+          # wake, so a second event for the turn finds nothing and never wakes twice.
+          forget(turns, waits, wakes, child)
+          wake_parent(host, own, child, names, seen, reason)
+        error(_) ->
+          # A turn nobody waits for and nobody is owed a wake for: stale or idle, never a wake. Its entry goes so
+          # the cap never counts a turn nobody owns.
+          turns.delete(child)
+      end
   end
 end
 
@@ -636,8 +687,6 @@ def wake_parent(
   seen: Spec.Seen,
   reason: String,
 ) -> Void
-  return if own.empty?
-
   snapshot = case host.snapshot.call(child)
     ok(session) -> some(session)
     error(_) -> none
@@ -659,9 +708,10 @@ def cleanup_one(
   child: String,
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> Void
-  forget(turns, waits, child)
+  forget(turns, waits, wakes, child)
   names.delete(child)
   _ = host.delete.call(child)
 end
@@ -671,31 +721,49 @@ def cleanup_started(
   started: List[String],
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> Void
   for child in started
-    cleanup_one(host, child, turns, waits, names)
+    cleanup_one(host, child, turns, waits, wakes, names)
   end
 end
 
-def forget(turns: ATS[String, String], waits: ATS[String, Address[Heard]], child: String) -> Void
+def forget(
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
+  child: String,
+) -> Void
   turns.delete(child)
   waits.delete(child)
+  wakes.delete(child)
 end
 
-# How many children of this session have an expected turn: the slots the cap counts. Children gone since leave the
-# table, so the count never grows past the live turns. This counts optimistically from the tables, not from snapshots,
-# so two calls in a row cannot evade the cap while a just-started turn is not yet visible.
-def live_count(host: Spec.Host, turns: ATS[String, String]) -> Int
+# How many children of this session run a turn now: the slots the cap counts. A child whose turn has ended since
+# (its parent `/stop` stopped it, or its answer is on its way) is idle and frees its slot at once, instead of
+# waiting for its `turn_finished` to reach the watcher; a call a stop cancelled still frees its slots even though it
+# never cleans up. An async turn owed its wake keeps its entry until the watcher delivers it, so freeing the slot
+# never loses the wake. Children gone since leave the table. `send` starts a turn before it answers, so a snapshot
+# right after it already shows the turn: two calls in a row cannot evade the cap while a started turn is not yet
+# visible.
+def live_count(host: Spec.Host, turns: ATS[String, String], wakes: ATS[String, String]) -> Int
+  count = 0
   for id in turns.keys()
     case host.snapshot.call(id)
-      ok(_) -> nil
+      ok(session) if session.turn_id.some? -> count = count + 1
+      ok(_) ->
+        case wakes.get(id)
+          ok(_) -> nil
+          error(_) -> forget_turn(turns, id)
+        end
+
       error(e) if e.kind == Protocol.KIND_SESSION_NOT_FOUND -> forget_turn(turns, id)
-      error(_) -> nil
+      error(_) -> count = count + 1
     end
   end
 
-  turns.keys().size
+  count
 end
 
 def forget_turn(turns: ATS[String, String], id: String) -> Void
@@ -709,6 +777,7 @@ def reap_finished(
   live: List[Active],
   turns: ATS[String, String],
   waits: ATS[String, Address[Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> Reaped
   kept: List[Active] = []
@@ -719,12 +788,12 @@ def reap_finished(
         if session.turn_id.some?
           kept = kept.push(active)
         else
-          forget(turns, waits, active.id)
-          found = found.put(active.index, collected(host, active, "ended", turns, waits, names, true))
+          forget(turns, waits, wakes, active.id)
+          found = found.put(active.index, collected(host, active, "ended", turns, waits, wakes, names, true))
         end
 
       error(e) ->
-        forget(turns, waits, active.id)
+        forget(turns, waits, wakes, active.id)
         names.delete(active.id)
         found = found.put(active.index, "#{active.name}: #{e.message}")
     end

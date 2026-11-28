@@ -748,9 +748,10 @@ def open_session(
 
   turns: ATS[String, String] = ATS.new()
   waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+  wakes: ATS[String, String] = ATS.new()
   names: ATS[String, String] = ATS.new()
   context = context.with(
-    late: agents_late(context.late, options, context.root, provider, model, parent, turns, waits, names),
+    late: agents_late(context.late, options, context.root, provider, model, parent, turns, waits, wakes, names),
   )
 
   header = Store.Header(
@@ -832,6 +833,7 @@ def read(options: Config.Options, listed: Entry, at: Address[Msg]) -> Result[Loa
   provider = saved.header.provider.unwrap_or(provider_of_api(options, saved.header.api))
   turns: ATS[String, String] = ATS.new()
   waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+  wakes: ATS[String, String] = ATS.new()
   names: ATS[String, String] = ATS.new()
   context = base.with(
     late: agents_late(
@@ -843,6 +845,7 @@ def read(options: Config.Options, listed: Entry, at: Address[Msg]) -> Result[Loa
       saved.header.parent,
       turns,
       waits,
+      wakes,
       names,
     ),
   )
@@ -1359,6 +1362,7 @@ def agents_late(
   parent: Optional[String],
   turns: ATS[String, String],
   waits: ATS[String, Address[Agents.Heard]],
+  wakes: ATS[String, String],
   names: ATS[String, String],
 ) -> Optional[Fn[String, List[Tools.Tool]]]
   for _ in option_list(parent)
@@ -1367,7 +1371,7 @@ def agents_late(
 
   roster = -> { agent_roster(options, root, provider, model) }
   limits = Agents.Limits(max: options.subagents_max, timeout_ms: options.subagent_timeout_ms)
-  with_agents = ->(_root: String) { Agents.tools(roster, limits, turns, waits, names) }
+  with_agents = ->(_root: String) { Agents.tools(roster, limits, turns, waits, wakes, names) }
   case existing
     some(given) -> some(->(dir: String) { given.call(dir) + with_agents.call(dir) })
     none -> some(with_agents)

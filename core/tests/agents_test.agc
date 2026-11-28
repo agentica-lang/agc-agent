@@ -194,10 +194,11 @@ def test_async_then_two_waited_followups_each_get_an_answer() -> Result[Void]
     host = try host_of(calls)
     turns: ATS[String, String] = ATS.new()
     waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+    wakes: ATS[String, String] = ATS.new()
     names: ATS[String, String] = ATS.new()
     roster: Fn[List[Agents.Profile]] = -> { [] }
     limits = Agents.Limits(max: 0, timeout_ms: 0)
-    tools = Agents.tools(roster, limits, turns, waits, names)
+    tools = Agents.tools(roster, limits, turns, waits, wakes, names)
     ctx = Spec.Context(
       root: h.work,
       env: ->(_name: String) { error("no env") },
@@ -235,10 +236,11 @@ def test_async_batch_over_cap_starts_nothing() -> Result[Void]
     host = try host_of(calls)
     turns: ATS[String, String] = ATS.new()
     waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+    wakes: ATS[String, String] = ATS.new()
     names: ATS[String, String] = ATS.new()
     roster: Fn[List[Agents.Profile]] = -> { [] }
     limits = Agents.Limits(max: 1, timeout_ms: 0)
-    tools = Agents.tools(roster, limits, turns, waits, names)
+    tools = Agents.tools(roster, limits, turns, waits, wakes, names)
     ctx = Spec.Context(
       root: h.work,
       env: ->(_name: String) { error("no env") },
@@ -271,10 +273,11 @@ def test_empty_profile_means_the_sessions_own() -> Result[Void]
     host = try host_of(calls)
     turns: ATS[String, String] = ATS.new()
     waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+    wakes: ATS[String, String] = ATS.new()
     names: ATS[String, String] = ATS.new()
     roster: Fn[List[Agents.Profile]] = -> { [] }
     limits = Agents.Limits(max: 0, timeout_ms: 0)
-    tools = Agents.tools(roster, limits, turns, waits, names)
+    tools = Agents.tools(roster, limits, turns, waits, wakes, names)
     ctx = Spec.Context(
       root: h.work,
       env: ->(_name: String) { error("no env") },
@@ -348,6 +351,107 @@ def test_child_request_hides_subagent_tools() -> Result[Void]
     try Test.assert(not child_tools.include?("agent_send"), "the child request offers agent_send")
     try Test.assert(not child_tools.include?("agent_stop"), "the child request offers agent_stop")
     Test.assert(not child_tools.empty?, "the child request offers no tools at all")
+  end
+end
+
+# A waited child kept open by its timeout, later sent a follow-up with `wait: false`, wakes this session exactly
+# once with the child's answer: the wake is owed to the async turn, not to the watcher the waited start
+# registered. The child's first reply is delayed past the timeout, so the wait ends while the child is still
+# running; the follow-up's reply is immediate, so the wake follows at once.
+def test_waited_child_kept_open_then_sent_async_wakes_parent_once() -> Result[Void]
+  calls: Channel[Core.Call] = Channel.new(4)
+  replies = ["spawn.sse", "text.sse", "text.sse@1500", "text.sse", "text.sse"]
+  setup = H.Setup(replies: replies, registry: some(with_spawn(calls)), approvals: false)
+  H.using(setup) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    host = try host_of(calls)
+    turns: ATS[String, String] = ATS.new()
+    waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+    wakes: ATS[String, String] = ATS.new()
+    names: ATS[String, String] = ATS.new()
+    roster: Fn[List[Agents.Profile]] = -> { [] }
+    tools = Agents.tools(roster, Agents.Limits(max: 0, timeout_ms: 500), turns, waits, wakes, names)
+    ctx = Spec.Context(
+      root: h.work,
+      env: ->(_name: String) { error("no env") },
+      host: some(host),
+      session: some(parent),
+    )
+
+    waited = try JSON.parse("{\"tasks\": [{\"prompt\": \"Say hi.\"}], \"wait\": true}")
+    partial = try tools[0].run.call(ctx, waited)
+    try Test.assert(partial.include?("timed out after 500 ms"), "no partial answer after the timeout: #{partial}")
+    try Test.eq(names.keys().size, 1)
+    child = names.keys()[0]
+    followup = try JSON.parse("{\"id\": \"" + child + "\", \"text\": \"Again.\", \"wait\": false}")
+    try Test.eq(try tools[1].run.call(ctx, followup), child)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    try Test.eq(extension_wakes(a), 1)
+    texts = (try H.session(h, parent)).history.map { |m| m.text }
+    try Test.assert(texts.any? { |t| t.include?(ANSWER) }, "the wake carried no answer")
+    Test.assert(texts.any? { |t| t.include?("build (local/") }, "the wake has no headed answer")
+  end
+end
+
+# A child whose turn has ended since frees its cap slot at once: the cap counts running turns, not table entries,
+# so a `/stop` that cancels the waiting call (which never cleans up) still lets the parent launch again. The stub
+# host's child is always idle, so its expected turn is stale by definition.
+def test_an_idle_child_with_an_expected_turn_frees_its_cap_slot() -> Result[Void]
+  turns: ATS[String, String] = ATS.new()
+  waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+  wakes: ATS[String, String] = ATS.new()
+  names: ATS[String, String] = ATS.new()
+  turns.put("child-1", "turn-1")
+  roster: Fn[List[Agents.Profile]] = -> { [] }
+  tools = Agents.tools(roster, Agents.Limits(max: 1, timeout_ms: 0), turns, waits, wakes, names)
+  ctx = Spec.Context(
+    root: "/tmp",
+    env: ->(_name: String) { error("no env") },
+    host: some(stub_host()),
+    session: some("parent"),
+  )
+
+  input = try JSON.parse("{\"tasks\": [{\"prompt\": \"Say hi.\"}], \"wait\": false}")
+  case tools[0].run.call(ctx, input)
+    ok(_) -> return error("the stubbed create should fail")
+    error(e) ->
+      try Test.assert(not e.message.include?("at most 1"), "an idle child still holds its cap slot: #{e.message}")
+  end
+
+  Test.assert(turns.keys().empty?, "an idle child keeps its expected turn")
+end
+
+# `/stop` during a capped waited call still lets the parent launch again: the stopped child is idle, so the next
+# call starts a new child instead of failing every task with the cap. The child's first answer is held, so the wait
+# is still in flight when the stop lands.
+def test_stop_during_wait_then_capped_parent_launches_again() -> Result[Void]
+  replies = [
+    "agent_one.sse", "bash_echo.sse", "text.sse@hold", "agent_one.sse", "bash_echo.sse", "text.sse", "text.sse",
+  ]
+
+  setup = H.Setup(replies: replies, approvals: false, subagents_max: 1)
+  H.using(setup) do |h|
+    parent = try H.new_session(h)
+    a = try H.subscribe(h, parent)
+    _ = try H.send(h, parent, "Go.")
+    a = try H.until(a, Protocol.EventKind.ToolFinished)
+    child = try child_of(a)
+    try Test.eq((try H.post(h, Protocol.stop_path(parent), "{}")).status, 200)
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    try Test.eq(H.stop_reason(a), "cancelled")
+    idle = try H.idle(h, child)
+    try Test.eq(idle.turn_id.none?, true)
+    try Test.eq((try H.get(h, Protocol.session_path(child))).status, 200)
+    H.release(h)
+    _ = try H.send(h, parent, "Go again.")
+    a = try H.until(a, Protocol.EventKind.TurnFinished)
+    H.close(a)
+    history = (try H.session(h, parent)).history.map { |m| m.text }.join("\n")
+    Test.assert(history.include?(ANSWER), "the capped parent gave no answer after the stop")
   end
 end
 
@@ -491,4 +595,46 @@ def option_list[T](value: Optional[T]) -> List[T]
     some(v) -> [v]
     none -> []
   end
+end
+
+# How many turns of `sub` an extension wake started.
+def extension_wakes(sub: H.Sub) -> Int
+  woken = 0
+  for seen in sub.seen
+    case seen.event
+      Protocol.Event.TurnStarted(started) ->
+        if started.source == some("extension")
+          woken = woken + 1
+        end
+
+      _ -> nil
+    end
+  end
+
+  woken
+end
+
+# A session handle whose child is always idle: its snapshots show no running turn.
+def stub_host() -> Spec.Host
+  Spec.Host(
+    create: ->(_child: Spec.NewChild) { error("no child starts here") },
+    send: ->(_id: String, _text: String) { error("no child sends here") },
+    stop: ->(_id: String) { error("no child stops here") },
+    delete: ->(_id: String) { ok() },
+    snapshot: ->(id: String) { ok(idle_session(id)) },
+    watch: ->(_id: String, _names: List[String], _handler: Fn[Spec.Seen, Void]) { ok() },
+  )
+end
+
+def idle_session(id: String) -> Protocol.Session
+  Protocol.Session(
+    id: id,
+    cwd: "/tmp",
+    model: "m",
+    last_event_id: 0,
+    turn_id: none,
+    turn_from_event_id: none,
+    pending_approvals: [],
+    history: [],
+  )
 end
