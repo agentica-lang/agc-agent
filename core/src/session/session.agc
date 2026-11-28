@@ -11,6 +11,7 @@ import Protocol from "pkg/protocol/protocol"
 import Agent from "../agent/agent"
 import Catalog from "../providers/catalog"
 import Config from "../config/config"
+import Agents from "../ext/agents"
 import Commands from "../ext/commands"
 import Profiles from "../config/profiles"
 import Skills from "../ext/skills"
@@ -745,6 +746,14 @@ def open_session(
     none -> model = default_model(options, provider, api)
   end
 
+  turns: ATS[String, String] = ATS.new()
+  waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+  wakes: ATS[String, String] = ATS.new()
+  names: ATS[String, String] = ATS.new()
+  context = context.with(
+    late: agents_late(context.late, options, context.root, provider, model, parent, turns, waits, wakes, names),
+  )
+
   header = Store.Header(
     id: new_id(registry.sessions.size),
     cwd: context.root,
@@ -811,7 +820,7 @@ def read(options: Config.Options, listed: Entry, at: Address[Msg]) -> Result[Loa
     Logger.warning("session #{saved.header.id}: #{saved.skipped} records skipped")
   end
 
-  context = try Tools.context(
+  base = try Tools.context(
     saved.header.cwd,
     options.env,
     options.confine_files,
@@ -819,6 +828,26 @@ def read(options: Config.Options, listed: Entry, at: Address[Msg]) -> Result[Loa
     late_of(options),
     options.diff,
     wrap_of(options),
+  )
+
+  provider = saved.header.provider.unwrap_or(provider_of_api(options, saved.header.api))
+  turns: ATS[String, String] = ATS.new()
+  waits: ATS[String, Address[Agents.Heard]] = ATS.new()
+  wakes: ATS[String, String] = ATS.new()
+  names: ATS[String, String] = ATS.new()
+  context = base.with(
+    late: agents_late(
+      base.late,
+      options,
+      base.root,
+      provider,
+      saved.header.model,
+      saved.header.parent,
+      turns,
+      waits,
+      wakes,
+      names,
+    ),
   )
 
   ok(Loaded(saved: saved, opened: opened(context, try approver_of(options, context.root), at)))
@@ -942,6 +971,14 @@ def entry(
   setup = SessionActor.applied(setup, profiles_of(options, context.root), profile)
   for name in option_list(ceiling)
     setup = setup.with(shows: narrowed(setup.shows, ceiling_shows(profiles_of(options, context.root), name)))
+  end
+
+  for _ in option_list(header.parent)
+    setup = setup.with(shows: without_agents(setup.shows))
+  end
+
+  for _ in option_list(parent_at)
+    setup = setup.with(shows: without_agents(setup.shows))
   end
 
   # Before the actor starts: a restore can end a cut turn with events of its own.
@@ -1314,6 +1351,69 @@ def late_of(options: Config.Options) -> Optional[Fn[String, List[Tools.Tool]]]
   none
 end
 
+# The tools that come later, with the subagents of a session in `root` on `provider` with `model` after them: read
+# again on every turn, past the tools that come later. A child has no children, so it keeps only the tools it had.
+def agents_late(
+  existing: Optional[Fn[String, List[Tools.Tool]]],
+  options: Config.Options,
+  root: String,
+  provider: String,
+  model: String,
+  parent: Optional[String],
+  turns: ATS[String, String],
+  waits: ATS[String, Address[Agents.Heard]],
+  wakes: ATS[String, String],
+  names: ATS[String, String],
+) -> Optional[Fn[String, List[Tools.Tool]]]
+  for _ in option_list(parent)
+    return existing
+  end
+
+  roster = -> { agent_roster(options, root, provider, model) }
+  limits = Agents.Limits(max: options.subagents_max, timeout_ms: options.subagent_timeout_ms)
+  with_agents = ->(_root: String) { Agents.tools(roster, limits, turns, waits, wakes, names) }
+  case existing
+    some(given) -> some(->(dir: String) { given.call(dir) + with_agents.call(dir) })
+    none -> some(with_agents)
+  end
+end
+
+# The profiles a subagent of a session on `provider` with `model` in `root` may run: those whose provider is set up,
+# with the provider and model they would take (a project's never crosses providers, as `profiled` keeps it). The
+# others are left out with a warning.
+def agent_roster(options: Config.Options, root: String, provider: String, model: String) -> List[Agents.Profile]
+  out: List[Agents.Profile] = []
+  for profile in profiles_of(options, root).profiles
+    endpoint = agent_endpoint(profile, provider, model)
+    if options.providers.has_key?(endpoint.provider)
+      out = out.push(endpoint)
+    else
+      Logger.warning("subagents: the profile #{profile.name} needs #{endpoint.provider}, which is not set up")
+    end
+  end
+
+  out
+end
+
+# The provider and model of `profile` on a session on `provider` with `model`, as `profiled` in actor.agc applies
+# them: `PROVIDER/NAME` moves to that provider when the profile may cross providers, else the whole text is the model
+# on the session's.
+def agent_endpoint(profile: Profiles.Profile, provider: String, model: String) -> Agents.Profile
+  name = provider
+  decided = model
+  if not profile.model.empty?
+    decided = profile.model
+    for at in option_list(profile.model.index_of("/"))
+      if profile.source != Profiles.PROJECT
+        name = profile.model.slice(0, at)
+        decided = profile.model.slice(at + 1, profile.model.length - at - 1)
+      end
+    end
+  end
+
+  Agents.Profile(name: profile.name, description: profile.description, provider: name, model: decided)
+end
+
 def place_of(options: Config.Options, root: String) -> Extensions.Place
   Extensions.Place(
     root: root,
@@ -1444,12 +1544,27 @@ def ceiling_shows(loaded: Profiles.Loaded, name: String) -> Fn[String, Bool]
   end
 end
 
-# The tools both `shows` and `ceiling` show: a child is never wider than its parent.
+# The tools both `shows` and `ceiling` show: a child is never wider than its parent, and it never shows the
+# subagent tools, which cannot start a grandchild.
 def narrowed(shows: Optional[Fn[String, Bool]], ceiling: Fn[String, Bool]) -> Optional[Fn[String, Bool]]
   case shows
-    some(own) -> some(->(tool: String) { own.call(tool) and ceiling.call(tool) })
-    none -> some(ceiling)
+    some(own) -> some(->(tool: String) { own.call(tool) and ceiling.call(tool) and without_agent?(tool) })
+    none -> some(->(tool: String) { ceiling.call(tool) and without_agent?(tool) })
   end
+end
+
+# A child never shows the subagent tools, even with no ceiling to narrow it.
+def without_agents(shows: Optional[Fn[String, Bool]]) -> Optional[Fn[String, Bool]]
+  case shows
+    some(own) -> some(->(tool: String) { own.call(tool) and without_agent?(tool) })
+    none -> some(->(tool: String) { without_agent?(tool) })
+  end
+end
+
+def without_agent?(tool: String) -> Bool
+  return false if tool == "agent" or tool == "agent_send" or tool == "agent_stop"
+
+  true
 end
 
 # The handle of the session of `header` on itself and its children (`Core.Host`), through the registry at `at`.
@@ -1491,7 +1606,7 @@ def child_created(
     request = request.with(provider: some(parent.provider), model: some(child.model.unwrap_or(parent.model)))
   end
 
-  ceiling = parent.profile.map { |shown| shown.name }
+  ceiling = some(parent.profile.map { |shown| shown.name }.unwrap_or(Profiles.DEFAULT))
   parent_at = some(try find_at(at, header.id))
   created_at(at, options, request, some(header.id), true, ceiling, parent_at)
 end

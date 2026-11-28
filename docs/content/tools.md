@@ -22,6 +22,9 @@ The model works through tools. Each call shows in the client: the file it reads 
 | `web_fetch` | fetch an `http://` or `https://` URL on the public internet, see [web_fetch](#web_fetch) |
 | `todo_write` | keep a todo list for a task of several steps: each call gives the whole list, at most 100 items of at most 500 characters, each `pending`, `in_progress` or `completed` and one in progress at most; the clients show it, the session keeps it, and a compaction gives it back to the model |
 | `apply_patch` | add, delete and change files with one patch, in the format of Codex; offered on the OpenAI Responses API only |
+| `agent` | start one child session per task, each with its own provider, model and profile, and collect their answers, see [Sub-agents](#sub-agents) |
+| `agent_send` | send a follow-up message to a child, waiting for its next answer or not, see [Sub-agents](#sub-agents) |
+| `agent_stop` | stop a child's turn, see [Sub-agents](#sub-agents) |
 
 Skills add `activate_skill` ([Skills](skills.md)), MCP servers add their own tools ([MCP](mcp.md)), and an [extension](extensions.md) can add more. Which calls ask before they run is on [Approvals and security](security.md#what-asks).
 
@@ -39,6 +42,12 @@ Tool results over 8192 bytes (65536 for `activate_skill`) go to a private sessio
 - HTML comes as compact text (`processor_used` is `html_compact`): one line for each element that means something, indented by depth, with links keeping their targets (`a "Docs" /docs`), forms their action and method (`form POST /login`), inputs their type and name, tables as rows of pipes, and `pre` its lines; scripts, styles, SVG, comments, hidden elements, classes and other attributes are dropped. The compact text is still the page's own text, untrusted like any page, and an attribute or a `pre` line cannot add a line of its own (line breaks and control characters in them are spaces). Hidden elements are the ones minibot drops (`hidden`, `aria-hidden="true"`, `display:none` and `visibility:hidden` in `style`), no more: text a page hides in another way (off-screen, the same color as the background, a class) is read. The compaction reads the first 512,000 characters of a page and runs for at most 5 seconds in a task of its own; a page that is longer, takes longer, fails or gives no text comes as plain text (`plain`), with the markup in it. Plain text has its whitespace normalized (`plain`), and JSON comes as it is (`none`).
 - A header name must be an HTTP token and a value has no control character; `Host`, `Content-Length`, `Transfer-Encoding` and `Connection` are the client's.
 - With the approvals on it asks, showing the method, the URL, the headers and the body, and a rule matches its URL whatever the method: `allow web_fetch(https://docs.example.com/*)`. An answer for the session covers that call only. The `plan` profile does not show it. See [Approvals and security](security.md#what-asks).
+
+## Sub-agents
+
+`agent` starts one child session per task: a subagent with its own provider, model and profile that works on its prompt and reports back, in parallel. `agent` names the profile each task runs (the session's own when empty), from the roster in the tool's description; a profile whose provider is not set up is left out. With `wait` (the default) it answers with each answer in input order, each under `NAME (provider/model): reason` and cut at 8000 characters; without it, it answers with their ids, one per line, and each answer wakes the session. `agent_send` sends a follow-up message to a child, waiting for its next answer or not, and `agent_stop` stops a child's turn (`stopped`, or `idle` when no turn runs).
+
+A user profile may name another provider; a project profile stays on the session's provider. A child never shows more tools than its parent and never shows the subagent tools, and the tools are on by default: a profile hides them with `tools_deny: [agent, agent_send, agent_stop]`, and `plan` never shows them. They are calls of the model itself, not of code mode: a `run_script` script cannot call them. `FINN_SUBAGENTS_MAX` caps how many subagents of one session run at once (`0` for no cap; an async batch that does not fit starts nothing), and `FINN_SUBAGENT_TIMEOUT_MS` stops a child's turn past its milliseconds (`0` for no timeout); a parent's `/stop` during a waited call stops the children's turns and they stay open. A waited child that finishes is deleted with its answer; a timed-out or async child stays open for follow-up and dies with its parent.
 
 ## Profiles
 

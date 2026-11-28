@@ -129,6 +129,8 @@ A config file that does not read stays as it was, with the reason as a warning: 
 | `FINN_MODELS_PROVIDER` | the provider of the model in that catalog |
 | `FINN_DRAIN_MS` | how long `finn server stop` waits for the running turns (60000) |
 | `FINN_WAKES_MAX` | how often an extension may wake a session per user message (100; `0` for no cap): past the cap a wake parks for the next user message; parked wakes are durable across a restart and a branch, while the count and the stop window are per-process; a fork starts with none |
+| `FINN_SUBAGENTS_MAX` | how many subagents of one session run at once (`0` for no cap): a waited `agent` call starts the next child as each running one finishes, and `wait: false` is refused past the cap ([Tools](tools.md#sub-agents)) |
+| `FINN_SUBAGENT_TIMEOUT_MS` | how long a subagent's turn runs before the `agent` call stops it (`0` for no timeout); the result keeps the part of the answer there is ([Tools](tools.md#sub-agents)) |
 | `FINN_HTTP2` | `0` or `off` keeps HTTP/1.1 to the model providers; by default an `https://` provider is reached over HTTP/2 (ALPN) and a plain `http://` one over HTTP/1.1 |
 | `FINN_STATE_DIR`, `FINN_DATA_DIR` | the folders above |
 | `FINN_SERVER_COMMAND` | the program a client runs to start a server |

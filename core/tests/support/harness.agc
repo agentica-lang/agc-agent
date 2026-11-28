@@ -123,6 +123,10 @@ struct Setup
   max_tokens: Optional[Int] = none
   ## `FINN_WAKES_MAX`.
   wakes_max: Int = 100
+  ## `FINN_SUBAGENTS_MAX`.
+  subagents_max: Int = 0
+  ## `FINN_SUBAGENT_TIMEOUT_MS`.
+  subagent_timeout_ms: Int = 0
   ## The token that Anthropic fetches again after a 401; none when empty.
   fresh_token: String = ""
   ## How long a turn waits for its queued messages.
@@ -368,6 +372,8 @@ def start(setup: Setup, base: String, fake: Fake.Fake) -> Result[Harness]
     catalog: setup.catalog,
     max_tokens: setup.max_tokens,
     wakes_max: setup.wakes_max,
+    subagents_max: setup.subagents_max,
+    subagent_timeout_ms: setup.subagent_timeout_ms,
     take_ms: setup.take_ms,
     max_rounds: setup.max_rounds,
     catalog_wait_ms: setup.catalog_wait_ms,

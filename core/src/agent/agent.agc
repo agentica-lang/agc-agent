@@ -27,6 +27,9 @@ LATEST = "todos"
 DENIED_BY_RULE = "denied by a rule of the config"
 DENIED_BY_USER = "the user denied this call"
 BLOCKED_BY = "blocked by an extension: "
+## The built-in subagent tools (`ext/agents.agc`): model calls only, never the script's vocabulary. The names
+## match `Core.RESERVED`, so no extension tool takes them either.
+AGENT_TOOLS = ["agent", "agent_send", "agent_stop"]
 CHANGED_BY = "an extension changed the input of this call to: "
 SKILL_INLINE_BYTES = 65_536
 
@@ -579,8 +582,12 @@ end
 
 def shown_tools(turn: Turn) -> List[Tools.Tool] = Tools.offered(turn.ctx).select { |tool| shown?(turn, tool.name) }
 
-# Artifact pages are for direct model readback, not part of the script's tool vocabulary.
-def script_tools(tools: List[Tools.Tool]) -> List[Tools.Tool] = tools.select { |tool| tool.name != Spill.NAME }
+# Artifact pages are for direct model readback, not part of the script's tool vocabulary. The subagent tools
+# stay out for the same reason: a script task cannot wait on a child turn the way a model turn does, so `agent`,
+# `agent_send` and `agent_stop` are calls of the model itself (see `ext/agents.agc`).
+def script_tools(tools: List[Tools.Tool]) -> List[Tools.Tool]
+  tools.select { |tool| tool.name != Spill.NAME and not AGENT_TOOLS.include?(tool.name) }
+end
 
 def shown?(turn: Turn, name: String) -> Bool
   for shows in option_list(turn.shows)
@@ -766,7 +773,10 @@ def approved_run(turn: Turn, call: LLM.ToolCall, target: String) -> Tools.Output
 end
 
 # A tool call of a script: a call of its own for the notices and the approval, with an id under the script's.
+# The subagent tools never run here: a script task cannot wait on a child turn the way a model turn does.
 def nested(turn: Turn, script: LLM.ToolCall, name: String, input: JSON.Value) -> CodeMode.Reply
+  return CodeMode.Reply.Denied("a run_script script cannot call #{name}") if AGENT_TOOLS.include?(name)
+
   id = "#{script.id}.#{Random.int(0, 999_999_999)}"
   call = LLM.ToolCall(id: id, name: name, arguments: JSON.encode(input), input: input)
   output = Spec.bounded(noticed_run(turn, call, before(turn, call), []).output)

@@ -34,7 +34,7 @@ STATUS_TOTAL_MS = 50_000
 OBSERVER_INBOX = 256
 ## Names an extension tool cannot take: those of the tools of the core that `Tools.all` does not list, and the prefix
 ## of the MCP tools.
-RESERVED = ["apply_patch", "run_script", "activate_skill"]
+RESERVED = ["apply_patch", "run_script", "activate_skill", "agent", "agent_send", "agent_stop"]
 MCP_PREFIX = "mcp__"
 
 ## A call of a tool, made by the core: the session folder, the input of the model, and how a path of the call is
