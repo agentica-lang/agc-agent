@@ -363,7 +363,7 @@ def ask(state: Session.State, call: Agent.Ask, reply: Channel[Protocol.Decision]
   end
 
   request = Protocol.ApprovalRequested(
-    approval_id: "a#{state.approvals + 1}",
+    approval_id: approval_id_of(state),
     call_id: call.call_id,
     tool: call.tool,
     preview: call.target,
@@ -376,6 +376,17 @@ def ask(state: Session.State, call: Agent.Ask, reply: Channel[Protocol.Decision]
   forwarded = Stream.emit(asked, Protocol.Event.ApprovalRequested(request))
   forward_to_parent(forwarded, Protocol.Event.ApprovalRequested(request))
   forwarded
+end
+
+## The id of the next approval of a session. A child names its owner (`SESSION:aN`), so the parent's route stays
+## unambiguous across concurrent siblings; a session of its own keeps the bare `aN` it always had.
+def approval_id_of(state: Session.State) -> String
+  local = "a#{state.approvals + 1}"
+  for _parent in option_list(state.setup.parent)
+    return "#{state.setup.id}:#{local}"
+  end
+
+  local
 end
 
 def answer_approval(

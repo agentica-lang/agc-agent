@@ -93,7 +93,8 @@ def emit_counted(state: Session.State, event: Protocol.Event) -> Session.State
   end
 end
 
-## A `usage` of a child's call: it adds the child's cost to the parent's turn and session sums, like `emit_counted`.
+## A `usage` of a child's call: it adds the child's cost to the parent's session sums, like `emit_counted`, and
+## to the turn sum only while the parent has a running turn, so a late child call never lands in a future turn.
 ## The parent keeps its own `context`: the child's prompt size never becomes the parent's.
 def emit_child_usage(state: Session.State, child: String, usage: Protocol.Usage) -> Session.State
   output = state.output + usage.output
@@ -101,7 +102,9 @@ def emit_child_usage(state: Session.State, child: String, usage: Protocol.Usage)
   turn_cost = state.turn_cost
   for call in option_list(usage.cost)
     cost = some(cost.unwrap_or(0.0) + call)
-    turn_cost = turn_cost + call
+    if state.turn.some?
+      turn_cost = turn_cost + call
+    end
   end
 
   window: Optional[Int] = none

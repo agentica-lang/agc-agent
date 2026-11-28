@@ -236,7 +236,29 @@ def delete(sessions: Sessions, id: String) -> Result[Void]
 end
 
 def snapshot(sessions: Sessions, id: String) -> Result[Protocol.Session]
-  SessionActor.snapshot(try find(sessions, id))
+  own = try SessionActor.snapshot(try find(sessions, id))
+  ok(own.with(pending_approvals: own.pending_approvals + children_pending(sessions, id)))
+end
+
+## The pending approvals of the loaded children of `id`, each stamped with its owner, so a client that attaches
+## while a child asks recovers it from the snapshot with its provenance (the replay shows the same events).
+def children_pending(sessions: Sessions, id: String) -> List[Protocol.ApprovalRequested]
+  all: List[Entry] = entries(sessions).unwrap_or([])
+  pending: List[Protocol.ApprovalRequested] = []
+  for child in children(all, id)
+    for session in option_list(child.session)
+      case SessionActor.snapshot(session.address)
+        ok(seen) ->
+          for request in seen.pending_approvals
+            pending = pending.push(request.with(session: some(child.summary.id)))
+          end
+
+        error(_) -> nil
+      end
+    end
+  end
+
+  pending
 end
 
 ## The events of a session from after `last` (from its last event when none).
@@ -275,32 +297,63 @@ def files(sessions: Sessions, id: String) -> Result[Protocol.FileList]
 end
 
 def answer(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
-  case SessionActor.answer(try find(sessions, id), approval_id, decision)
+  address = try find(sessions, id)
+  case SessionActor.answer(address, approval_id, decision)
     ok(_) -> ok()
     error(e) if e.kind != Protocol.KIND_APPROVAL_NOT_FOUND -> error(e)
-    error(_) -> route_child(sessions, id, approval_id, decision)
+    error(_) ->
+      # A bare id never routes to a child: only the session itself answers it. A full `OWNER:local` id routes
+      # directly to its owner when that is a child of this session; anything else stays not found. IDs are opaque
+      # beyond that split: no first-match over pending lists, and no need for a client to watch the parent.
+      for full in option_list(aliased(address, approval_id))
+        case SessionActor.answer(address, full, decision)
+          ok(_) -> return ok()
+          error(e) if e.kind != Protocol.KIND_APPROVAL_NOT_FOUND -> return error(e)
+          error(_) -> nil
+        end
+      end
+
+      route_owner(sessions, id, approval_id, decision)
   end
 end
 
-## An answer on the parent's route with a child's approval id goes to the child. Only the children of that
-## session are tried: an approval of any other session stays not found. A child that resolved the approval since
+## The full id of a bare `approval_id` on its own session, for a client that answers without the owner part (`aN`
+## for `SESSION:aN`); none when the session has no such pending ask. A session of its own needs no alias: its ids
+## are bare already.
+def aliased(address: Address[SessionActor.Msg], approval_id: String) -> Optional[String]
+  return none if approval_id.include?(":")
+  case SessionActor.snapshot(address)
+    ok(seen) ->
+      for request in seen.pending_approvals
+        parts = request.approval_id.split(":")
+        local = parts[parts.size - 1]
+        return some(request.approval_id) if local == approval_id and request.approval_id != approval_id
+      end
+
+      none
+    error(_) -> none
+  end
+end
+
+## An answer on the parent's route with a child's full approval id goes directly to that child. Only a child of
+## that session counts: an approval of any other session stays not found. A child that resolved the approval since
 ## answers `approval.resolved`, like the session itself would.
-def route_child(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
-  resolved: Optional[Error] = none
-  for child in children(try entries(sessions), id)
-    address = try child_address(sessions, child)
-    case SessionActor.answer(address, approval_id, decision)
-      ok(_) -> return ok()
-      error(e) if e.kind == Protocol.KIND_APPROVAL_RESOLVED -> resolved = some(e)
-      error(_) -> nil
-    end
-  end
+def route_owner(sessions: Sessions, id: String, approval_id: String, decision: Protocol.Decision) -> Result[Void]
+  parts = approval_id.split(":")
+  return error("approval #{approval_id} is not waiting", kind: Protocol.KIND_APPROVAL_NOT_FOUND) if parts.size != 2
 
-  for late in option_list(resolved)
-    return error(late.message, kind: late.kind)
-  end
+  owner = parts[0]
+  return error("approval #{approval_id} is not waiting", kind: Protocol.KIND_APPROVAL_NOT_FOUND) if owner == id
 
-  error("approval #{approval_id} is not waiting", kind: Protocol.KIND_APPROVAL_NOT_FOUND)
+  all = try entries(sessions)
+  owned = all.select { |entry| entry.summary.id == owner and entry.header.parent == some(id) }
+  return error("approval #{approval_id} is not waiting", kind: Protocol.KIND_APPROVAL_NOT_FOUND) if owned.empty?
+
+  address = try child_address(sessions, owned[0])
+  case SessionActor.answer(address, approval_id, decision)
+    ok(_) -> ok()
+    error(e) -> error(e.message, kind: e.kind)
+  end
 end
 
 def child_address(sessions: Sessions, child: Entry) -> Result[Address[SessionActor.Msg]]
