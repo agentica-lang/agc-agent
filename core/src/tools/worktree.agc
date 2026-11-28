@@ -12,7 +12,8 @@
 ## one, and a child never gains trust its parent lacks. A relative `cwd` resolves against the parent's folder, never
 ## against the server's own working directory. Git runs with the ambient configuration shut out (its global and system
 ## files ignored, hooks and the filesystem monitor disabled, `LC_ALL=C`) and with no shell; a repository that defines
-## an externally executing checkout filter still allocates nothing (fail closed). Cleanup owns nothing beyond the fresh
+## an externally executing checkout filter still allocates nothing (fail closed, as does one whose configuration
+## cannot be inspected). Cleanup owns nothing beyond the fresh
 ## directory: it removes only an unlisted directory that holds nothing but the checkout, and a branch only when it did
 ## not exist before and is fully merged, so ambiguity leaves residue behind instead of deleting work.
 ##
@@ -194,7 +195,7 @@ def allocate(
   end
 
   commit = try base_commit(parent_root, base_ref, env)
-  if has_unsupported_filter?(toplevel, env)
+  if try has_unsupported_filter?(toplevel, env)
     return invalid("the repository #{toplevel} defines a checkout filter, so no worktree starts there")
   end
 
@@ -330,10 +331,13 @@ def taken_message?(message: String) -> Bool = message.include?("already exists")
 def canonical_parent(parent_root: String) -> String = Path.real(parent_root).unwrap_or(parent_root)
 
 ## Whether the repository defines a checkout filter that would run a program on checkout (`filter.*`, a `diff`
-## command or a `merge` driver): allocation refuses those repositories instead of checking the filter out.
-def has_unsupported_filter?(toplevel: String, env: Fn[String, Result[String]]) -> Bool
-  listed = git(toplevel, ["config", "--list"], env).unwrap_or("")
-  listed.split("\n").any? { |line| filter_key?(key_of(line)) }
+## command or a `merge` driver): allocation refuses those repositories instead of checking the filter out. A
+## configuration that cannot be inspected refuses too, so an inspection failure never reads as a clean listing.
+def has_unsupported_filter?(toplevel: String, env: Fn[String, Result[String]]) -> Result[Bool]
+  case git(toplevel, ["config", "--list"], env)
+    ok(listed) -> ok(listed.split("\n").any? { |line| filter_key?(key_of(line)) })
+    error(e) -> error("cannot inspect the Git configuration in #{toplevel}: #{e.message}", kind: Protocol.KIND_INVALID)
+  end
 end
 
 def key_of(line: String) -> String
@@ -365,7 +369,8 @@ def verified(toplevel: String, path: String) -> Result[String]
 
   real = try found
 
-  return invalid("the worktree at #{path} escapes the repository") if not Sandbox.inside?(toplevel, real)
+  return invalid("the worktree at #{path} escapes the repository") if not inside_base?(toplevel, real)
+  return invalid("the worktree at #{path} escapes the repository") if real == base_of(toplevel)
 
   ok(real)
 end

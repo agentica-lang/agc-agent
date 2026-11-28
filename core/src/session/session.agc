@@ -1633,7 +1633,19 @@ def child_created(
     case SessionActor.update(try find_at(at, id), Protocol.UpdateSession(confine: some(parent.confine)))
       ok(_) -> nil
       error(e) ->
-        _ = Actor.call(at, CALL_MS) do |reply| Msg.Delete(id, reply) end
+        deleted: Result[Result[Void]] = Actor.call(at, CALL_MS) do |reply| Msg.Delete(id, reply) end
+        case deleted
+          ok(inner) ->
+            case inner
+              ok(_) -> nil
+              error(d) ->
+                Logger.warning("child session #{id} is not deleted after a confinement update failure: #{d.message}")
+            end
+
+          error(d) ->
+            Logger.warning("child session #{id} is not deleted after a confinement update failure: #{d.message}")
+        end
+
         return error(e.message, kind: e.kind)
     end
   end

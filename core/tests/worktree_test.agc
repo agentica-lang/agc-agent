@@ -289,6 +289,44 @@ def test_a_checkout_filter_refuses_a_worktree_before_any_checkout_runs() -> Resu
   end
 end
 
+# When the Git configuration cannot be inspected, no worktree starts: the inspection failure refuses the allocation
+# instead of reading an empty listing as clean, and leaves no worktree, branch or directory behind. The stub fails
+# only `config --list` with an inert message; every other Git call runs the real binary.
+def test_a_config_inspection_failure_refuses_a_worktree() -> Result[Void]
+  H.using(H.Setup(replies: [])) do |h|
+    try init_repo(h.work)
+    stub = "#{h.work}/stub-bin"
+    try Dir.mkdir(stub)
+    script = "#{stub}/git"
+    text = (
+      "#!/bin/sh\n" +
+      "saw_config=false\nsaw_list=false\n" +
+      "for arg in \"$@\"; do\n" +
+      "if [ \"$arg\" = \"config\" ]; then saw_config=true; fi\n" +
+      "if [ \"$arg\" = \"--list\" ]; then saw_list=true; fi\n" +
+      "done\n" +
+      "if $saw_config && $saw_list; then\n" +
+      "echo \"injected config inspection failure\" >&2\nexit 1\n" +
+      "fi\n" +
+      "exec /usr/bin/git \"$@\"\n"
+    )
+
+    try File.write_text(script, text)
+    try Test.eq(try H.run("chmod", ["755", script]), 0)
+    path = try System.env("PATH")
+    before_branches = try git(h.work, ["branch", "--list"])
+    stubbed = ->(name: String) { stub_env(stub, path, name) }
+    case Worktree.resolve_child([h.work], h.work, false, "s1", none, some(Spec.Worktree()), stubbed)
+      ok(_) -> return error("a worktree started when the Git configuration could not be inspected")
+      error(e) -> try Test.assert(e.message.include?("cannot inspect"), "unexpected refusal: #{e.message}")
+    end
+
+    try Test.eq(try git(h.work, ["branch", "--list"]), before_branches)
+    try Test.assert(not File.lstat("#{h.work}/.finn").ok?, "a refused inspection allocated #{h.work}/.finn")
+    ok()
+  end
+end
+
 # Ambient repository configuration never runs during allocation: hooks and the filesystem monitor stay disabled, so a
 # repository that names them still allocates.
 def test_ambient_git_configuration_never_runs_during_allocation() -> Result[Void]
@@ -340,6 +378,12 @@ def refused_child[T](result: Result[T], complaint: String) -> Result[Void]
 end
 
 def env(name: String) -> Result[String] = System.env(name)
+
+def stub_env(stub: String, path: String, name: String) -> Result[String]
+  return ok("#{stub}:#{path}") if name == "PATH"
+
+  System.env(name)
+end
 
 def git(dir: String, args: List[String]) -> Result[String]
   options = Process.Options(chdir: dir, pgroup: true, timeout_ms: 10000)
