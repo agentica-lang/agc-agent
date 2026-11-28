@@ -27,6 +27,9 @@ LATEST = "todos"
 DENIED_BY_RULE = "denied by a rule of the config"
 DENIED_BY_USER = "the user denied this call"
 BLOCKED_BY = "blocked by an extension: "
+## The built-in subagent tools (`ext/agents.agc`): model calls only, never the script's vocabulary. The names
+## match `Core.RESERVED`, so no extension tool takes them either.
+AGENT_TOOLS = ["agent", "agent_send", "agent_stop"]
 CHANGED_BY = "an extension changed the input of this call to: "
 SKILL_INLINE_BYTES = 65_536
 
@@ -579,8 +582,12 @@ end
 
 def shown_tools(turn: Turn) -> List[Tools.Tool] = Tools.offered(turn.ctx).select { |tool| shown?(turn, tool.name) }
 
-# Artifact pages are for direct model readback, not part of the script's tool vocabulary.
-def script_tools(tools: List[Tools.Tool]) -> List[Tools.Tool] = tools.select { |tool| tool.name != Spill.NAME }
+# Artifact pages are for direct model readback, not part of the script's tool vocabulary. The subagent tools
+# stay out for the same reason: a script task cannot wait on a child turn the way a model turn does, so `agent`,
+# `agent_send` and `agent_stop` are calls of the model itself (see `ext/agents.agc`).
+def script_tools(tools: List[Tools.Tool]) -> List[Tools.Tool]
+  tools.select { |tool| tool.name != Spill.NAME and not AGENT_TOOLS.include?(tool.name) }
+end
 
 def shown?(turn: Turn, name: String) -> Bool
   for shows in option_list(turn.shows)

@@ -4,6 +4,8 @@
 ## local llama-server by default), `FINN_API_KEY` and `FINN_MODEL`; `FINN_MAX_TOKENS` (the most tokens of a reply; by
 ## default the model's own limit in the catalog, else the API's); `FINN_CONTEXT_WINDOW` and `FINN_COMPACT_MODEL` for
 ## compaction; `FINN_WAKES_MAX` (how often an extension may wake a session per user message, 100; 0 for no cap);
+## `FINN_SUBAGENTS_MAX` (how many subagents of one session run at once, 0 for no cap) and `FINN_SUBAGENT_TIMEOUT_MS`
+## (how long a subagent's turn runs before the `agent` call stops it, 0 for no timeout);
 ## `FINN_DRAIN_MS` (how long a stop waits for the turns, 60000); `FINN_MODELS_URL` (the models.dev catalog
 ## of prices and windows, `off` for none) and `FINN_MODELS_PROVIDER` (the provider of the model there); `FINN_HTTP2`
 ## (`0` keeps HTTP/1.1 to the providers).
@@ -104,6 +106,10 @@ struct Options
   max_tokens: Optional[Int] = none
   ## How many times a session may be woken (`Core.Host`) per user message (`FINN_WAKES_MAX`); 0 has no cap.
   wakes_max: Int = WAKES_MAX
+  ## How many subagents of one session (`agent`) run at once (`FINN_SUBAGENTS_MAX`); 0 has no cap.
+  subagents_max: Int = 0
+  ## How long a subagent's turn runs before the `agent` call stops it (`FINN_SUBAGENT_TIMEOUT_MS`); 0 never stops it.
+  subagent_timeout_ms: Int = 0
   ## The model that writes the summary of a compaction; empty is the session's model.
   compact_model: String = ""
   ## llama-server's `/props`, asked for the window before `GET /models`; empty for another API.
@@ -363,6 +369,8 @@ def from_env_with(
       context_window: try context_window(read),
       max_tokens: try tokens_of(read, "FINN_MAX_TOKENS"),
       wakes_max: try wakes_max(read),
+      subagents_max: try subagents_max(read),
+      subagent_timeout_ms: try subagent_timeout_ms(read),
       drain_ms: try drain_ms(read),
       compact_model: set(read, "FINN_COMPACT_MODEL").unwrap_or(""),
       props_url: props_url(server.base_url),
@@ -985,6 +993,31 @@ def wakes_max(read: Fn[String, Result[String]]) -> Result[Int]
   end
 
   ok(WAKES_MAX)
+end
+
+def subagents_max(read: Fn[String, Result[String]]) -> Result[Int]
+  for text in option_list(set(read, "FINN_SUBAGENTS_MAX"))
+    case text.to_i
+      ok(count) if count >= 0 -> return ok(count)
+      _ -> return error("FINN_SUBAGENTS_MAX must be a number of subagents, 0 for no cap, not #{text.inspect}")
+    end
+  end
+
+  ok(0)
+end
+
+def subagent_timeout_ms(read: Fn[String, Result[String]]) -> Result[Int]
+  for text in option_list(set(read, "FINN_SUBAGENT_TIMEOUT_MS"))
+    case text.to_i
+      ok(ms) if ms >= 0 -> return ok(ms)
+      _ ->
+        return error(
+          "FINN_SUBAGENT_TIMEOUT_MS must be a number of milliseconds, 0 for no timeout, not #{text.inspect}",
+        )
+    end
+  end
+
+  ok(0)
 end
 
 def tokens_of(read: Fn[String, Result[String]], name: String) -> Result[Optional[Int]]

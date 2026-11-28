@@ -11,6 +11,7 @@ import Protocol from "pkg/protocol/protocol"
 import Agent from "../agent/agent"
 import Catalog from "../providers/catalog"
 import Config from "../config/config"
+import Agents from "../ext/agents"
 import Commands from "../ext/commands"
 import Profiles from "../config/profiles"
 import Skills from "../ext/skills"
@@ -745,6 +746,8 @@ def open_session(
     none -> model = default_model(options, provider, api)
   end
 
+  running: ATS[String, Int] = ATS.new()
+  context = context.with(late: agents_late(context.late, options, context.root, provider, model, running))
   header = Store.Header(
     id: new_id(registry.sessions.size),
     cwd: context.root,
@@ -811,7 +814,7 @@ def read(options: Config.Options, listed: Entry, at: Address[Msg]) -> Result[Loa
     Logger.warning("session #{saved.header.id}: #{saved.skipped} records skipped")
   end
 
-  context = try Tools.context(
+  base = try Tools.context(
     saved.header.cwd,
     options.env,
     options.confine_files,
@@ -821,6 +824,9 @@ def read(options: Config.Options, listed: Entry, at: Address[Msg]) -> Result[Loa
     wrap_of(options),
   )
 
+  provider = saved.header.provider.unwrap_or(provider_of_api(options, saved.header.api))
+  running: ATS[String, Int] = ATS.new()
+  context = base.with(late: agents_late(base.late, options, base.root, provider, saved.header.model, running))
   ok(Loaded(saved: saved, opened: opened(context, try approver_of(options, context.root), at)))
 end
 
@@ -1312,6 +1318,61 @@ def late_of(options: Config.Options) -> Optional[Fn[String, List[Tools.Tool]]]
   end
 
   none
+end
+
+# The tools that come later, with the subagents of a session in `root` on `provider` with `model` after them: read
+# again on every turn, past the tools that come later.
+def agents_late(
+  existing: Optional[Fn[String, List[Tools.Tool]]],
+  options: Config.Options,
+  root: String,
+  provider: String,
+  model: String,
+  running: ATS[String, Int],
+) -> Optional[Fn[String, List[Tools.Tool]]]
+  roster = -> { agent_roster(options, root, provider, model) }
+  limits = Agents.Limits(max: options.subagents_max, timeout_ms: options.subagent_timeout_ms)
+  with_agents = ->(_root: String) { Agents.tools(roster, limits, running) }
+  case existing
+    some(given) -> some(->(dir: String) { given.call(dir) + with_agents.call(dir) })
+    none -> some(with_agents)
+  end
+end
+
+# The profiles a subagent of a session on `provider` with `model` in `root` may run: those whose provider is set up,
+# with the provider and model they would take (a project's never crosses providers, as `profiled` keeps it). The
+# others are left out with a warning.
+def agent_roster(options: Config.Options, root: String, provider: String, model: String) -> List[Agents.Profile]
+  out: List[Agents.Profile] = []
+  for profile in profiles_of(options, root).profiles
+    endpoint = agent_endpoint(profile, provider, model)
+    if options.providers.has_key?(endpoint.provider)
+      out = out.push(endpoint)
+    else
+      Logger.warning("subagents: the profile #{profile.name} needs #{endpoint.provider}, which is not set up")
+    end
+  end
+
+  out
+end
+
+# The provider and model of `profile` on a session on `provider` with `model`, as `profiled` in actor.agc applies
+# them: `PROVIDER/NAME` moves to that provider when the profile may cross providers, else the whole text is the model
+# on the session's.
+def agent_endpoint(profile: Profiles.Profile, provider: String, model: String) -> Agents.Profile
+  name = provider
+  decided = model
+  if not profile.model.empty?
+    decided = profile.model
+    for at in option_list(profile.model.index_of("/"))
+      if profile.source != Profiles.PROJECT
+        name = profile.model.slice(0, at)
+        decided = profile.model.slice(at + 1, profile.model.length - at - 1)
+      end
+    end
+  end
+
+  Agents.Profile(name: profile.name, description: profile.description, provider: name, model: decided)
 end
 
 def place_of(options: Config.Options, root: String) -> Extensions.Place
